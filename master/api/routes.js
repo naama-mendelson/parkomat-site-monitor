@@ -340,16 +340,18 @@ function resolvePeriod(period) {
     };
   }
 
-  // ברירת מחדל: שבוע — חלון מתגלגל של 7 ימים
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-  const from = new Date(now.getTime() - WEEK_MS);
+  // ברירת מחדל: שבוע — 7 ימים קלנדריים כולל היום, מיושר לחצות.
+  // חשוב: חלון שמתחיל בשעה שרירותית (now פחות 168 שעות) יוצר ימים חלקיים
+  // בשני הקצוות, והדלי של *היום* נופל מחוץ לסדרה — כך אבדו פעולות ותקלות של היום.
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+  const prevFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 13);
   return {
     period: "week",
     label: "7 הימים האחרונים",
     comparisonLabel: "לעומת השבוע הקודם",
     granularity: "day",
     range: { from: iso(from), to: iso(now) },
-    prev: { from: iso(new Date(from.getTime() - WEEK_MS)), to: iso(from) },
+    prev: { from: iso(prevFrom), to: iso(from) },   // 7 הימים הקלנדריים שלפני כן
   };
 }
 

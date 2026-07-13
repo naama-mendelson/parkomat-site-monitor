@@ -634,6 +634,15 @@ function getPeriodBreakdown(siteId, { from, to, granularity }) {
     )
     .all(siteId, from, to);
 
+  // תחזוקה — כמה פעמים האתר נכנס למצב תחזוקה באותו יום/חודש.
+  // מקביל ל-errors (כניסות למצב), כדי שהיחידות בגרף יישארו אחידות.
+  const maintRows = db
+    .prepare(
+      `SELECT started_at FROM status_history
+       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND status = 'maintenance'`
+    )
+    .all(siteId, from, to);
+
   const tally = (rows, field) => {
     const map = new Map();
     for (const row of rows) {
@@ -645,13 +654,23 @@ function getPeriodBreakdown(siteId, { from, to, granularity }) {
 
   const ops = tally(opsRows, "occurred_at");
   const errs = tally(errRows, "started_at");
+  const maints = tally(maintRows, "started_at");
 
-  // סדרה רציפה מ-from עד to (דלי ריק מקבל 0, כדי שהגרף לא "יקפוץ").
+  // סדרה רציפה: דלי לכל יום/חודש מ-from ועד to *כולל*.
+  // הלולאה נעצרת לפי מפתח הדלי של to, ולא לפי הזמן — תנאי כמו `cursor < to`
+  // היה מפיל את הדלי של היום הנוכחי (שעדיין לא הסתיים), ואיתו כל הפעולות
+  // והתקלות שקרו היום. דלי ריק מקבל 0, כדי שהגרף לא "יקפוץ".
   const points = [];
-  const end = Date.parse(to);
+  const lastKey = keyOfDate(new Date(to));
   const cursor = new Date(from);
 
-  while (cursor.getTime() < end) {
+  // עיגון לתחילת היום/החודש, כדי שהמפתחות ייפלו על גבולות קלנדריים
+  if (byMonth) cursor.setDate(1);
+  cursor.setHours(0, 0, 0, 0);
+
+  const MAX_POINTS = byMonth ? 24 : 400;   // בלם בטיחות מפני לולאה אינסופית
+
+  while (points.length < MAX_POINTS) {
     const key = keyOfDate(cursor);
     points.push({
       label: byMonth
@@ -659,7 +678,10 @@ function getPeriodBreakdown(siteId, { from, to, granularity }) {
         : `${cursor.getDate()}.${cursor.getMonth() + 1}`,
       operations: ops.get(key) || 0,
       errors: errs.get(key) || 0,
+      maintenance: maints.get(key) || 0,
     });
+
+    if (key === lastKey) break;
 
     if (byMonth) cursor.setMonth(cursor.getMonth() + 1);
     else cursor.setDate(cursor.getDate() + 1);
@@ -807,6 +829,34 @@ function getSiteInsights(siteId, { from, to }) {
   const hrs = (ms) => Math.round((ms / 3600000) * 100) / 100;
   const incidents = errorRows.length;
 
+  // ===== תחזוקה — מתוכננת, ולכן נמדדת בנפרד מהשבתות =====
+  // שני מקורות: מצב תחזוקה שמדווח מה-PLC, וחלונות תחזוקה ידניים שהופעלו מהדשבורד.
+  const maintRows = db
+    .prepare(
+      `SELECT started_at, ended_at FROM status_history
+       WHERE site_id = ? AND status = 'maintenance' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
+    )
+    .all(siteId, to, from);
+
+  let maintMs = 0, longestMaintMs = 0;
+  for (const row of maintRows) {
+    const s = Math.max(Date.parse(row.started_at), windowStart);
+    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
+    const span = e - s;
+    if (span <= 0) continue;
+    maintMs += span;
+    if (span > longestMaintMs) longestMaintMs = span;
+  }
+
+  const windows = db
+    .prepare(
+      `SELECT set_by_name, reason, started_at, duration_hours, cancelled_at
+       FROM maintenance_windows
+       WHERE site_id = ? AND started_at >= ? AND started_at < ?
+       ORDER BY started_at DESC`
+    )
+    .all(siteId, from, to);
+
   return {
     totals: {
       operations,
@@ -841,6 +891,20 @@ function getSiteInsights(siteId, { from, to }) {
       longestHours: hrs(longestMs),
       averageHours: incidents > 0 ? hrs(totalDownMs / incidents) : 0,
       longestAt,
+    },
+    maintenance: {
+      plcEntries: maintRows.length,                // כמה פעמים האתר נכנס למצב תחזוקה
+      totalHours: hrs(maintMs),                    // סך הזמן בתחזוקה
+      longestHours: hrs(longestMaintMs),
+      manualWindows: windows.length,               // חלונות שהופעלו ידנית מהדשבורד
+      cancelledWindows: windows.filter((w) => w.cancelled_at).length,
+      recentWindows: windows.slice(0, 5).map((w) => ({
+        setBy: w.set_by_name,
+        reason: w.reason,
+        startedAt: w.started_at,
+        durationHours: w.duration_hours,
+        cancelled: Boolean(w.cancelled_at),
+      })),
     },
   };
 }
@@ -882,6 +946,15 @@ function getActivityLog(siteId, { from, to, limit = 300 }) {
   const countIn = (table, timeCol) =>
     db.prepare(
       `SELECT COUNT(*) AS n FROM ${table} WHERE site_id = ? AND ${timeCol} >= ? AND ${timeCol} < ?`
+    ).get(siteId, from, to).n;
+
+  // תחזוקה מגיעה משני מקורות: חלון ידני (maintenance_windows) *וגם* מצב
+  // תחזוקה שמדווח מה-PLC (status_history.status='maintenance'). המונים חייבים
+  // לשקף את שניהם, אחרת מסנן "תחזוקה" בלוג מציג 0 בזמן שיש תחזוקה בפועל.
+  const countStatus = (op) =>
+    db.prepare(
+      `SELECT COUNT(*) AS n FROM status_history
+       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND status ${op} 'maintenance'`
     ).get(siteId, from, to).n;
 
   const secondsBetween = (a, b) =>
@@ -935,10 +1008,13 @@ function getActivityLog(siteId, { from, to, limit = 300 }) {
   return {
     entries,
     truncated: entries.length >= limit,
+    // הקטגוריות זרות זו לזו (לא נספר אירוע פעמיים):
+    //   status      = שינויי מצב שאינם תחזוקה
+    //   maintenance = חלונות ידניים + מצב תחזוקה מה-PLC
     counts: {
       operations: countIn("operations", "occurred_at"),
-      status: countIn("status_history", "started_at"),
-      maintenance: countIn("maintenance_windows", "started_at"),
+      status: countStatus("!="),
+      maintenance: countIn("maintenance_windows", "started_at") + countStatus("="),
     },
   };
 }

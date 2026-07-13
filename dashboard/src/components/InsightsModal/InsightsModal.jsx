@@ -1,7 +1,7 @@
 // components/InsightsModal/InsightsModal.jsx — מסך "עוד מידע":
 // חמישה מסכי משנה (סקירה · פעילות · כרטיסים · אמינות · לוג), מעל בורר תקופה משותף.
 import { useEffect, useState } from "react";
-import { STATUS_COLORS } from "../../utils/constants";
+import { STATUS_COLORS, DIRECTION_COLORS } from "../../utils/constants";
 import { useSiteInsights } from "../../hooks/useSiteInsights";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
 import MetricCard from "../MetricCard/MetricCard";
@@ -11,8 +11,11 @@ import ActivityLog from "../ActivityLog/ActivityLog";
 import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
 
-const ENTRY_COLOR = STATUS_COLORS.operating.dot;   // כחול — כניסות
-const EXIT_COLOR = STATUS_COLORS.maintenance.dot;  // צהוב — יציאות
+const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
+const EXIT_COLOR = DIRECTION_COLORS.exit;     // סגול — יציאות (לא צהוב! זה הצבע של תחזוקה)
+
+// צבע סדרת ה"פעולות" בגרפי הפעילות — כאן מדובר בפעילות כוללת, לא בכיוון תנועה.
+const ACTIVITY_COLOR = STATUS_COLORS.operating.dot;
 
 // שניות → טקסט קריא ("1 דק' 18 שנ'" / "45 שניות")
 function fmtSeconds(s) {
@@ -122,7 +125,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <p className="insights-sub">באילו שעות החניון עמוס — מסייע לתכנון כוח אדם ותחזוקה</p>
                   <BarChart
                     bars={data.activity.byHour.map((h) => ({ label: String(h.hour), value: h.operations }))}
-                    color={ENTRY_COLOR}
+                    color={ACTIVITY_COLOR}
                     highlight={data.activity.busiestHour?.operations}
                     unit="פעולות"
                     everyLabel={3}
@@ -140,7 +143,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <p className="insights-sub">אילו ימים עמוסים יותר</p>
                   <BarChart
                     bars={data.activity.byWeekday.map((w) => ({ label: w.label, value: w.operations }))}
-                    color={ENTRY_COLOR}
+                    color={ACTIVITY_COLOR}
                     unit="פעולות"
                   />
                 </section>
@@ -245,6 +248,69 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   </div>
                   {data.downtime.incidents === 0 && (
                     <p className="insights-note insights-good">✓ לא נרשמו השבתות בתקופה זו</p>
+                  )}
+                </section>
+
+                <section className="insights-card">
+                  <h3>תחזוקה</h3>
+                  <p className="insights-sub">
+                    זמן תחזוקה הוא <strong>מתוכנן</strong> — הוא נמדד בנפרד מהשבתות, ותקלות
+                    שקרו במהלכו אינן נספרות באחוז הכשל
+                  </p>
+                  <div className="insights-kpis">
+                    <MetricCard
+                      label="כניסות לתחזוקה"
+                      value={String(data.maintenance.plcEntries)}
+                      hint="פעמים שהאתר עבר למצב תחזוקה"
+                    />
+                    <MetricCard
+                      label="סך זמן בתחזוקה"
+                      value={fmtHours(data.maintenance.totalHours)}
+                      hint="סך הזמן שהאתר היה בתחזוקה"
+                    />
+                    <MetricCard
+                      label="התחזוקה הארוכה"
+                      value={fmtHours(data.maintenance.longestHours)}
+                      hint="חלון התחזוקה הארוך ביותר"
+                    />
+                    <MetricCard
+                      label="חלונות ידניים"
+                      value={String(data.maintenance.manualWindows)}
+                      hint="תחזוקה שהופעלה מהדשבורד (השאר דווחו מהבקר)"
+                    />
+                  </div>
+
+                  {data.maintenance.recentWindows.length > 0 && (
+                    <table className="insights-table">
+                      <thead>
+                        <tr>
+                          <th>מי הפעיל</th>
+                          <th>מתי</th>
+                          <th>משך מתוכנן</th>
+                          <th>סיבה</th>
+                          <th>סטטוס</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.maintenance.recentWindows.map((w, i) => (
+                          <tr key={i}>
+                            <td className="card-num">{w.setBy}</td>
+                            <td className="muted">
+                              {new Date(w.startedAt).toLocaleString("he-IL", {
+                                day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+                              })}
+                            </td>
+                            <td>{w.durationHours} שע'</td>
+                            <td className="muted">{w.reason || "—"}</td>
+                            <td>{w.cancelled ? "בוטל" : "הופעל"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {data.maintenance.plcEntries === 0 && data.maintenance.manualWindows === 0 && (
+                    <p className="insights-note">לא נרשמה תחזוקה בתקופה זו</p>
                   )}
                 </section>
               </>

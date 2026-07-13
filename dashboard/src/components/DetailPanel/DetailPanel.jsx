@@ -236,7 +236,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
               {/* 4. גרף מגמה */}
               <section className="analytics-section">
                 <h3>מגמת פעילות</h3>
-                <p className="analytics-sub">פעולות ותקלות לאורך התקופה</p>
+                <p className="analytics-sub">פעולות, תקלות ותחזוקה לאורך התקופה</p>
                 <Sparkline points={analytics.chart} />
               </section>
 
