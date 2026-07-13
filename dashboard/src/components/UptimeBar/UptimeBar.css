@@ -1,0 +1,146 @@
+/* UptimeBar.css — זמינות האתר */
+
+.uptime {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uptime-head h3 {
+  color: var(--text-primary);
+  font-size: 1em;
+}
+
+/* טקסטי הסבר — ממשק, לא מידע להעתקה */
+.uptime-sub,
+.uptime-row-explain,
+.uptime-row-detail,
+.uptime-hero-text,
+.uptime-total {
+  user-select: none;
+}
+
+.uptime-sub {
+  color: var(--text-muted);
+  font-size: 0.78em;
+  margin-top: 2px;
+}
+
+.uptime-empty {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 10px 0;
+}
+
+/* המספר הראשי */
+.uptime-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.uptime-percent {
+  color: var(--accent);
+  font-size: 2.1em;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.uptime-hero-text {
+  color: var(--text-secondary);
+  font-size: 0.8em;
+}
+
+.uptime-hero-trend {
+  margin-top: 6px;
+}
+
+/* השורה הצבעונית */
+.uptime-bar {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.uptime-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/* פירוט */
+.uptime-rows {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.uptime-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.uptime-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.uptime-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.uptime-row-label {
+  color: var(--text-primary);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.uptime-row-explain {
+  color: var(--text-muted);
+  font-size: 0.72em;
+  line-height: 1.35;
+}
+
+.uptime-row-detail {
+  color: var(--text-muted);
+  font-size: 0.7em;
+  margin-top: 2px;
+}
+
+.uptime-row-nums {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.uptime-row-nums strong {
+  color: var(--text-primary);
+  font-size: 0.88em;
+}
+
+.uptime-row-nums span {
+  color: var(--text-muted);
+  font-size: 0.7em;
+}
+
+.uptime-total {
+  color: var(--text-muted);
+  font-size: 0.72em;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}

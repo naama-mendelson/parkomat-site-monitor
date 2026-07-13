@@ -1,0 +1,20 @@
+{
+  "name": "parkomat-master",
+  "version": "1.0.0",
+  "description": "Master — צד השרת של Parkomat: קולט טלמטריה מהאתרים ב-MQTT ומגיש REST API + SSE",
+  "main": "master.js",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env master.js",
+    "add-site": "node tools/add-test-site.js",
+    "inspect-db": "node tools/inspect-db.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "mqtt": "^5.15.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

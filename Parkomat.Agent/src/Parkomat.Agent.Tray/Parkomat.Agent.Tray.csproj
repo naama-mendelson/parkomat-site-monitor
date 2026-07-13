@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Parkomat.Agent.Core\Parkomat.Agent.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.9" />
+		<!-- לבדיקת חיבור על-פי דרישה מתוך ה-Tray: PLC (Modbus/TCP) ו-HiveMQ (MQTT+TLS) -->
+		<PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+		<PackageReference Include="NModbus" Version="3.0.83" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Update="Assets\logo-color.ico">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="Assets\logo-gray.ico">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	</ItemGroup>
+
+</Project>

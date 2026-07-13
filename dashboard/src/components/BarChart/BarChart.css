@@ -1,0 +1,41 @@
+/* BarChart.css — גרף עמודות */
+
+.bc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bc-svg {
+  width: 100%;
+  height: 110px;
+  display: block;
+}
+
+/* קריטי: ה-SVG תמיד LTR (x=0 הוא הקצה השמאלי), אבל הדף RTL — ובלי הכפייה הזו
+   ה-grid היה מסדר את התוויות מימין לשמאל, כלומר במראה הפוכה מהעמודות.
+   התוצאה: העמודה של "ראשון" הייתה מתיישרת מתחת לתווית "שבת". */
+.bc-labels {
+  display: grid;
+  direction: ltr;
+  text-align: center;
+  user-select: none;   /* תוויות ציר — לא טקסט להעתקה */
+}
+
+.bc-labels span {
+  color: var(--text-muted);
+  font-size: 0.66em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bc-labels span.is-hidden {
+  visibility: hidden;
+}
+
+.bc-empty {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  padding: 24px 0;
+  text-align: center;
+}

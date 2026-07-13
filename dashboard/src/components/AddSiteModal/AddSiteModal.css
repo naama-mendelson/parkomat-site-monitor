@@ -1,0 +1,122 @@
+/* AddSiteModal.css — מודל רישום אתר, ממורכז */
+
+.addsite-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 16px;
+}
+
+.addsite-modal {
+  width: 440px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 24px;
+  animation: addsitePop 0.15s ease-out;
+}
+
+@keyframes addsitePop {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.addsite-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.addsite-header h2 {
+  color: var(--text-primary);
+  font-size: 1.25em;
+}
+
+.addsite-close {
+  background: none;
+  color: var(--text-muted);
+  font-size: 1.2em;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.addsite-close:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.addsite-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.addsite-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.addsite-field > span {
+  color: var(--text-primary);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.addsite-field .req {
+  color: #f87171;
+}
+
+.addsite-field input {
+  padding: 8px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.95em;
+}
+
+.addsite-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.addsite-hint {
+  color: var(--text-muted);
+  font-size: 0.78em;
+  line-height: 1.4;
+}
+
+.addsite-error {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid #ef4444;
+  color: #f87171;
+  font-size: 0.85em;
+}
+
+.addsite-actions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* כפתור משני (ביטול) — משלים ל-btn-primary/btn-danger שב-DetailPanel */
+.btn-ghost {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--border-color);
+}

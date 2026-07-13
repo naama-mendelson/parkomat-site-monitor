@@ -1,0 +1,86 @@
+/* styles/global.css — reset וסגנונות בסיסיים */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  direction: rtl;
+}
+
+body {
+  font-family: "Segoe UI", "Assistant", Arial, sans-serif;
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-weight: 600;
+}
+
+/* בחירת טקסט — בלי ההגדרה הזו ברירת המחדל של הדפדפן במצב כהה מציירת
+   מלבן אפור דהוי מאחורי הטקסט, שנראה כמו "מסגרת תקועה" ולא כמו בחירה. */
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+input, select {
+  font-family: inherit;
+  font-size: inherit;
+  direction: rtl;
+}
+
+/* ===== פריסת אפליקציה ===== */
+.app {
+  min-height: 100vh;
+}
+
+.app-main {
+  padding: 20px 24px 40px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.app-loading,
+.app-error {
+  text-align: center;
+  padding: 48px;
+  font-size: 1.05rem;
+  color: var(--text-secondary);
+}
+
+.app-error {
+  color: #f87171;
+}
+
+/* ===== scrollbar מותאם ===== */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}

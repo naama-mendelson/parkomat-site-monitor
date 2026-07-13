@@ -1,0 +1,30 @@
+/* components/SiteGrid/SiteGrid.css — רשת כרטיסים בצפיפות משתנה */
+
+.site-grid {
+  display: grid;
+  gap: 14px;
+}
+
+/* normal — עד 20 אתרים: כרטיסים רחבים */
+.grid-normal {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+/* compact — מעל 20 אתרים */
+.grid-compact {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 11px;
+}
+
+/* mini — מעל 50 אתרים: הרבה עמודות צרות */
+.grid-mini {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 9px;
+}
+
+.grid-empty {
+  text-align: center;
+  padding: 48px;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+}

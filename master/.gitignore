@@ -1,0 +1,12 @@
+node_modules/
+
+# מסד הנתונים ונגזרותיו — נוצרים בהרצה (db.js טוען את schema.sql)
+sitemonitor.db
+sitemonitor.db-shm
+sitemonitor.db-wal
+
+# גיבויים שנוצרים ע"י tools/backup-db.js
+backups/
+
+# סודות: פרטי HiveMQ
+.env

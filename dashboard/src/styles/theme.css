@@ -1,0 +1,48 @@
+/* styles/theme.css — dark/light mode באמצעות CSS variables + מיתוג Parkomat */
+
+/* ===== מותג Parkomat ===== */
+/* כחול המותג #1B3A8C משמש לרקע ה-Header, ל-accent ולכפתורים הראשיים */
+:root {
+  --brand: #1b3a8c;            /* כחול המותג */
+  --brand-strong: #16306f;     /* גוון כהה יותר (hover/רקע header) */
+  --brand-light: #3b6fe0;      /* גוון בהיר (accent על רקע כהה) */
+  --brand-on: #ffffff;         /* טקסט על רקע המותג */
+}
+
+/* ברירת מחדל: כהה */
+:root,
+[data-theme="dark"] {
+  --bg-primary: #0e1525;
+  --bg-secondary: #131c30;
+  --bg-card: #182238;
+  --bg-hover: #1f2c48;
+  --border-color: #243456;
+  --text-primary: #eef2f8;
+  --text-secondary: #aab4c5;
+  --text-muted: #6b7894;
+  --accent: var(--brand-light);
+  --accent-soft: #5b86ec;
+  --header-bg: var(--brand-strong);
+  --shadow: rgba(0, 0, 0, 0.45);
+}
+
+/* בהיר */
+[data-theme="light"] {
+  --bg-primary: #eef1f6;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #f3f6fc;
+  --border-color: #d8dee9;
+  --text-primary: #14213d;
+  --text-secondary: #4a5670;
+  --text-muted: #8a94a8;
+  --accent: var(--brand);
+  --accent-soft: #2c52b5;
+  --header-bg: var(--brand);
+  --shadow: rgba(27, 58, 140, 0.12);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}

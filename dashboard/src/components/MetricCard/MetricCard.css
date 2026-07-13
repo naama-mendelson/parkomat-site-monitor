@@ -1,0 +1,54 @@
+/* MetricCard.css — כרטיס מדד */
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  min-width: 0;   /* מאפשר לטקסט להתקצר בתוך grid צר */
+}
+
+/* המדד הראשי מודגש דרך *צבע המספר* בלבד.
+   מסגרת כחולה נראתה כמו טבעת פוקוס תקועה, ולא כמו הדגשה מכוונת. */
+
+/* כרטיס שתופס שורה שלמה ברשת (כשאין לו זוג) */
+.metric-card.is-wide {
+  grid-column: 1 / -1;
+}
+
+/* התווית וההסבר הם רכיבי ממשק, לא מידע — סימונם בטעות יצר "מלבן תקוע".
+   המספר עצמו (.metric-value) נשאר ניתן לבחירה והעתקה. */
+.metric-label,
+.metric-hint {
+  user-select: none;
+}
+
+.metric-label {
+  color: var(--text-secondary);
+  font-size: 0.78em;
+  font-weight: 600;
+}
+
+.metric-value {
+  color: var(--text-primary);
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.metric-card.is-accent .metric-value {
+  color: var(--accent);
+}
+
+.metric-hint {
+  color: var(--text-muted);
+  font-size: 0.72em;
+  line-height: 1.35;
+}
+
+.metric-trend {
+  margin-top: 4px;
+}

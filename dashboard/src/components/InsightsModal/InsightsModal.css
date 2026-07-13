@@ -1,0 +1,201 @@
+/* InsightsModal.css — מסך "עוד מידע" */
+
+.insights-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+  padding: 20px;
+}
+
+.insights-modal {
+  width: 980px;
+  max-width: 100%;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 22px 24px 26px;
+  box-shadow: 0 18px 60px var(--shadow);
+  animation: insightsIn 0.2s ease-out;
+}
+
+@keyframes insightsIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* כותרת */
+.insights-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.insights-header h2 {
+  color: var(--text-primary);
+  font-size: 1.4em;
+}
+
+.insights-code {
+  color: var(--text-muted);
+  font-size: 0.82em;
+}
+
+.insights-close {
+  background: none;
+  color: var(--text-muted);
+  font-size: 1.3em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.insights-close:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+/* אזור הניווט — בורר תקופה מעל בורר המסך, דביק בראש הגלילה */
+.insights-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 3;
+}
+
+/* גוף */
+.insights-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: insightsIn 0.22s ease-out;
+}
+
+.insights-body.is-refreshing {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.insights-state {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 50px 0;
+  font-size: 0.95em;
+}
+
+.insights-error { color: #f87171; }
+
+/* רשת מדדים — מסתגלת לרוחב */
+.insights-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* כרטיס סקציה */
+.insights-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+.insights-card h3 {
+  color: var(--text-primary);
+  font-size: 1.02em;
+}
+
+.insights-sub {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  margin-top: -6px;
+  line-height: 1.4;
+  user-select: none;   /* טקסט הסבר — ממשק, לא מידע */
+}
+
+.insights-note {
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  line-height: 1.5;
+}
+
+.insights-note strong { color: var(--text-primary); }
+
+.insights-good { color: #4ade80; }
+
+/* טבלת הכרטיסים */
+.insights-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.insights-table th {
+  text-align: start;
+  color: var(--text-muted);
+  font-size: 0.86em;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.insights-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.insights-table tbody tr:last-child td { border-bottom: 0; }
+
+.insights-table tbody tr:hover { background: var(--bg-hover); }
+
+.insights-table .rank {
+  color: var(--text-muted);
+  width: 28px;
+}
+
+.insights-table .card-num {
+  color: var(--text-primary);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.insights-table .muted {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.insights-table .pill {
+  display: inline-block;
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.88em;
+  text-align: center;
+}
+
+/* מסכים צרים */
+@media (max-width: 640px) {
+  .insights-modal { padding: 16px; }
+  .insights-table { font-size: 0.78em; }
+}

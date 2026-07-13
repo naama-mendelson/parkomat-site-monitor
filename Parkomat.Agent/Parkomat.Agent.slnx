@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Parkomat.Agent.Core/Parkomat.Agent.Core.csproj" />
+    <Project Path="src/Parkomat.Agent.Service/Parkomat.Agent.Service.csproj" />
+    <Project Path="src/Parkomat.Agent.Tray/Parkomat.Agent.Tray.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Parkomat.Agent.Service.Tests/Parkomat.Agent.Service.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,69 @@
+# ==========================================================
+# Parkomat — .gitignore שורשי
+# חל על כל הפרויקט. לכל תת-תיקייה יש .gitignore משלה בנוסף.
+# ==========================================================
+
+# ===== 🔴 סודות — לעולם לא לעלות =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.json
+appsettings.Production.json
+appsettings.Local.json
+
+# ===== 🔴 מסדי נתונים ונתוני שדה =====
+# sitemonitor.db מכיל טלמטריה אמיתית של אתרים. נוצר לבד מ-schema.sql.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+backups/
+
+# ===== תלויות (מותקנות מ-package.json) =====
+node_modules/
+
+# ===== תוצרי build =====
+dist/
+dist-ssr/
+build/
+.ssr-out/
+
+# .NET
+[Bb]in/
+[Oo]bj/
+publish/
+installer-output/
+
+# ===== סביבות פיתוח =====
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.user
+*.suo
+*.ntvs*
+*.njsproj
+*.sw?
+
+# ===== לוגים =====
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== מערכת הפעלה =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== זמניים =====
+*.tmp
+*.local
+*.bak
