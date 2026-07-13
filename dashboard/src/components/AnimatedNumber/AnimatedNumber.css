@@ -1,0 +1,21 @@
+/* AnimatedNumber.css */
+
+.anum {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  /* ספרות ברוחב אחיד — בלעדיו המספר "רוקד" בזמן הספירה */
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.anum-value {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.anum-suffix {
+  font-size: 0.55em;
+  font-weight: 700;
+  opacity: 0.75;
+}

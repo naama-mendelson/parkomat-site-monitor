@@ -7,7 +7,11 @@ const { getAllSites, findSiteByCode, insertSite, getRecentOperations, getFiltere
         getSystemSummary, getSystemMonthlyBreakdown,
         getSiteUptime, getLastFaultAt, getLastOperation,
         getUptimeBreakdown, getCycleDelta, getPeriodBreakdown,
-        getSiteInsights, getActivityLog } = require("../db/queries");
+        getSiteInsights, getActivityLog,
+        getSupervisorStats, getExecutiveStats, getExecutiveStatsFiltered,
+        getRecentErrors, getActiveMaintenances,
+        ensureAdminCode, verifyAdminCode, setAdminCode,
+        updateSite, deleteSite } = require("../db/queries");
 const bus = require("../bus");
 
 const app = express();
@@ -18,6 +22,119 @@ const PORT = 4000;
 // כל לקוח SSE מוסיף מאזין ל-bus המשותף. ברירת המחדל (10) מייצרת אזהרה
 // כשיש הרבה מסכי בקרה פתוחים במקביל; מרימים את הסף (הניקוי נעשה ב-req.close).
 bus.setMaxListeners(50);
+
+// זריעת קוד המנהל בהרצה הראשונה (ברירת מחדל: admin123)
+ensureAdminCode();
+
+/**
+ * שער הניהול. נאכף *בשרת* — הסתרה ב-UI בלבד לא הייתה שווה כלום,
+ * כי כל אחד יכול לקרוא ל-API ישירות.
+ *
+ * ⚠️ זו איננה מערכת הרשאות אמיתית: הקוד משותף לכולם, עובר בכל בקשה,
+ * ואין ממנו זהות משתמש. הוא מונע טעויות, לא תוקף. ראה README.
+ */
+function requireAdmin(req, res, next) {
+  const code = req.get("x-admin-code") || req.body?.adminCode;
+  if (!verifyAdminCode(code)) {
+    return res.status(401).json({ error: "קוד מנהל שגוי" });
+  }
+  next();
+}
+
+// POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
+app.post("/api/admin/verify", (req, res) => {
+  try {
+    if (!verifyAdminCode(req.body?.code)) {
+      return res.status(401).json({ error: "קוד מנהל שגוי" });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[api] שגיאה ב-admin/verify:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// POST /api/admin/code — שינוי קוד המנהל
+app.post("/api/admin/code", (req, res) => {
+  try {
+    const { currentCode, newCode } = req.body || {};
+
+    if (!verifyAdminCode(currentCode)) {
+      return res.status(401).json({ error: "הקוד הנוכחי שגוי" });
+    }
+    if (typeof newCode !== "string" || newCode.trim().length < 4) {
+      return res.status(400).json({ error: "הקוד החדש חייב להכיל לפחות 4 תווים" });
+    }
+
+    setAdminCode(newCode.trim());
+    console.log("[api] קוד המנהל שונה");
+    res.json({ ok: true, message: "הקוד עודכן" });
+  } catch (err) {
+    console.error("[api] שגיאה ב-admin/code:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// PATCH /api/sites/:code — עדכון שם ו/או קוד האתר
+app.patch("/api/sites/:code", requireAdmin, (req, res) => {
+  try {
+    const { site_name, code: newCode } = req.body || {};
+
+    if (newCode !== undefined) {
+      if (typeof newCode !== "string" || !SITE_CODE_PATTERN.test(newCode.trim())) {
+        return res.status(400).json({
+          error: "קוד אתר לא תקין — 1 עד 64 תווים מהסוג A-Z a-z 0-9 _ - בלבד",
+        });
+      }
+    }
+
+    const name = typeof site_name === "string" ? site_name.trim() : undefined;
+    if (site_name !== undefined && !name) {
+      return res.status(400).json({ error: "שם האתר לא יכול להיות ריק" });
+    }
+
+    const result = updateSite(req.params.code, {
+      newCode: newCode?.trim(),
+      siteName: name,
+    });
+
+    if (!result.ok) {
+      if (result.reason === "not_found") {
+        return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
+      }
+      if (result.reason === "code_taken") {
+        return res.status(409).json({ error: "כבר קיים אתר עם הקוד החדש" });
+      }
+    }
+
+    bus.emit("siteUpdate", { type: "registered", code: result.site.code });
+    console.log(`[api] אתר עודכן: ${req.params.code} → ${result.site.code} (${result.site.site_name})`);
+    res.json({ ok: true, site: result.site });
+  } catch (err) {
+    console.error("[api] שגיאה ב-PATCH site:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// DELETE /api/sites/:code — מחיקת אתר וכל ההיסטוריה שלו
+app.delete("/api/sites/:code", requireAdmin, (req, res) => {
+  try {
+    const result = deleteSite(req.params.code);
+    if (!result.ok) {
+      return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
+    }
+
+    bus.emit("siteUpdate", { type: "registered", code: req.params.code });
+    console.log(
+      `[api] אתר נמחק: ${result.deleted.code} (${result.deleted.name}) — ` +
+      `${result.deleted.operations} פעולות, ${result.deleted.statusHistory} שינויי מצב`
+    );
+    res.json({ ok: true, deleted: result.deleted });
+  } catch (err) {
+    console.error("[api] שגיאה ב-DELETE site:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
 
 // הדשבורד רץ במקור אחר (Vite על 5173), ולכן הדפדפן חוסם את הבקשות אליו
 // בלי כותרות CORS. ברירת המחדל היא הפיתוח המקומי; בייצור מגדירים DASHBOARD_ORIGIN.
@@ -78,7 +195,7 @@ app.get("/api/sites", (req, res) => {
 // POST /api/sites — רישום אתר חדש (קוד + שם)
 // הרישום הוא השער לקליטה: ה-dispatcher דוחה הודעות מאתר שאינו רשום,
 // כך שרק אחרי הרישום כאן מתחיל המידע מהאתר להישמר.
-app.post("/api/sites", (req, res) => {
+app.post("/api/sites", requireAdmin, (req, res) => {
   try {
     const { code, site_name, plc_type, plc_ip, site_ip } = req.body;
 
@@ -439,6 +556,208 @@ app.get("/api/sites/:code/insights", (req, res) => {
     });
   } catch (err) {
     console.error("[api] שגיאה ב-GET insights:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// ===== ממשקי הניהול =====
+
+// GET /api/stats/supervisor?period=week|month|year — נתונים תפעוליים למנהל בקרה
+app.get("/api/stats/supervisor", (req, res) => {
+  try {
+    const p = resolvePeriod(req.query.period);
+    const { sites, summary } = getSupervisorStats(p.range);
+
+    res.json({
+      period: p.period,
+      label: p.label,
+      range: p.range,
+      sites,
+      summary,
+      recentErrors: getRecentErrors({ limit: 10 }),
+      activeMaintenances: getActiveMaintenances(),
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET supervisor:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// ===== טווח מותאם אישית =====
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+                   "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+
+/**
+ * מפרש טווח מהבקשה. אם נשלחו from/to → טווח מותאם; אחרת נופל חזרה
+ * ל-period (תאימות אחורה מלאה עם הקוד הקיים).
+ * מחזיר null אם הטווח לא תקין — מי שקורא מחזיר 400.
+ */
+function resolveRange(query) {
+  if (!query.from || !query.to) return resolvePeriod(query.period);
+
+  // תאריכים מגיעים כ-YYYY-MM-DD (input type="date"). מפרשים בשעון מקומי,
+  // ו-to כולל את היום כולו (עד סופו).
+  const [fy, fm, fd] = String(query.from).split("-").map(Number);
+  const [ty, tm, td] = String(query.to).split("-").map(Number);
+  if (!fy || !fm || !fd || !ty || !tm || !td) return null;
+
+  const from = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
+  let to = new Date(ty, tm - 1, td, 23, 59, 59, 999);
+
+  if (!(from < to)) return null;
+
+  // לא סופרים אל תוך העתיד
+  const now = new Date();
+  if (to > now) to = now;
+
+  const days = Math.max(1, Math.round((to - from) / DAY_MS));
+
+  // רזולוציה: מה שנבחר, אחרת נבחרת אוטומטית לפי אורך הטווח
+  const allowed = ["day", "week", "month"];
+  const granularity = allowed.includes(query.granularity)
+    ? query.granularity
+    : days <= 31 ? "day" : days <= 180 ? "week" : "month";
+
+  const fmt = (d) => `${d.getDate()} ב${HE_MONTHS[d.getMonth()]}`;
+  const label =
+    from.getFullYear() === to.getFullYear()
+      ? `${fmt(from)} – ${fmt(to)} ${to.getFullYear()}`
+      : `${fmt(from)} ${from.getFullYear()} – ${fmt(to)} ${to.getFullYear()}`;
+
+  // תקופת ההשוואה: טווח באותו אורך שקדם לו
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(from.getTime() - (to - from));
+
+  return {
+    period: "custom",
+    label,
+    daysCount: days,
+    comparisonLabel: `לעומת ${days} הימים שקדמו`,
+    granularity,
+    range: { from: from.toISOString(), to: to.toISOString() },
+    prev: { from: prevFrom.toISOString(), to: prevTo.toISOString() },
+  };
+}
+
+// פירוק רשימה מופרדת בפסיקים לערכים נקיים
+const listOf = (v) =>
+  typeof v === "string" && v.trim()
+    ? v.split(",").map((x) => x.trim()).filter(Boolean)
+    : [];
+
+// GET /api/stats/executive
+//   ?period=week|month|year                      (כמו קודם)
+//   או ?from=YYYY-MM-DD&to=YYYY-MM-DD            (טווח מותאם)
+//   &sites=A1,B2  &statuses=error,ready  &minFailureRate=5
+//   &groupBy=site|status|time  &granularity=day|week|month
+app.get("/api/stats/executive", (req, res) => {
+  try {
+    const p = resolveRange(req.query);
+    if (!p) {
+      return res.status(400).json({ error: "טווח תאריכים לא תקין" });
+    }
+
+    const siteCodes = listOf(req.query.sites);
+    const statuses = listOf(req.query.statuses);
+    const minFailureRate = Number(req.query.minFailureRate) || 0;
+    const groupBy = ["site", "status", "time"].includes(req.query.groupBy)
+      ? req.query.groupBy : "site";
+
+    const filters = {
+      siteCodes, statuses, minFailureRate,
+      groupBy, granularity: p.granularity,
+    };
+
+    const current = getExecutiveStatsFiltered({ ...p.range, ...filters });
+
+    // ההשוואה מוחלת על אותם פילטרים בדיוק, אחרת המגמה חסרת משמעות
+    const prev = getExecutiveStatsFiltered({ ...p.prev, ...filters });
+
+    const hasComparison =
+      prev.kpis.totalOperations > 0 || prev.kpis.totalErrors > 0 || prev.kpis.avgAvailability > 0;
+
+    const trendOf = (cur, old) => ({
+      current: cur,
+      previous: old,
+      changePercent: hasComparison ? percentChange(cur, old) : null,
+    });
+
+    res.json({
+      period: p.period,
+      label: p.label,
+      daysCount: p.daysCount ?? null,
+      comparisonLabel: p.comparisonLabel,
+      hasComparison,
+      granularity: p.granularity,
+      groupBy,
+      range: p.range,
+      filters: { sites: siteCodes, statuses, minFailureRate },
+      kpis: current.kpis,
+      sitesByStatus: current.sitesByStatus,
+      topPerformers: current.topPerformers,
+      worstPerformers: current.worstPerformers,
+      chart: current.chart,
+      heatmap: current.heatmap,
+      groups: current.groups,
+      rawRows: current.rawRows,
+      allSites: current.allSites,
+      filteredSitesCount: current.filteredSitesCount,
+      totalSitesInSystem: current.totalSitesInSystem,
+      trend: {
+        operations: trendOf(current.kpis.totalOperations, prev.kpis.totalOperations),
+        errors: trendOf(current.kpis.totalErrors, prev.kpis.totalErrors),
+        availability: trendOf(current.kpis.avgAvailability, prev.kpis.avgAvailability),
+        failureRate: trendOf(current.kpis.avgFailureRate, prev.kpis.avgFailureRate),
+      },
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET executive:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// גרסה קודמת של הנתיב — נשמרת כדי לא לשבור צרכנים קיימים
+app.get("/api/stats/executive-legacy", (req, res) => {
+  try {
+    const p = resolvePeriod(req.query.period);
+    const range = { ...p.range, granularity: p.granularity };
+
+    const current = getExecutiveStats(range);
+
+    // מגמה מול התקופה הקודמת המקבילה
+    const prev = getExecutiveStats({ ...p.prev, granularity: p.granularity });
+    const hasComparison =
+      prev.kpis.totalOperations > 0 || prev.kpis.totalErrors > 0 || prev.kpis.avgAvailability > 0;
+
+    const trendOf = (cur, old) => ({
+      current: cur,
+      previous: old,
+      changePercent: hasComparison ? percentChange(cur, old) : null,
+    });
+
+    res.json({
+      period: p.period,
+      label: p.label,
+      comparisonLabel: p.comparisonLabel,
+      hasComparison,
+      range: p.range,
+      kpis: current.kpis,
+      sitesByStatus: current.sitesByStatus,
+      topPerformers: current.topPerformers,
+      worstPerformers: current.worstPerformers,
+      chart: current.chart,
+      heatmap: current.heatmap,
+      trend: {
+        operations: trendOf(current.kpis.totalOperations, prev.kpis.totalOperations),
+        errors: trendOf(current.kpis.totalErrors, prev.kpis.totalErrors),
+        availability: trendOf(current.kpis.avgAvailability, prev.kpis.avgAvailability),
+        failureRate: trendOf(current.kpis.avgFailureRate, prev.kpis.avgFailureRate),
+      },
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET executive:", err.message);
     res.status(500).json({ error: "שגיאת שרת" });
   }
 });

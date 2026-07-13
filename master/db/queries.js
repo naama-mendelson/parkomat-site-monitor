@@ -1019,6 +1019,604 @@ function getActivityLog(siteId, { from, to, limit = 300 }) {
   };
 }
 
+// ==========================================================
+// ===== אגרגציה מערכתית (מנהל בקרה / מנהל כללי) =====
+// ==========================================================
+
+/**
+ * גבולות הדליים לתקופה — [{ label, from, to }].
+ * נחוץ כדי לחשב מדד *לכל דלי* (למשל זמינות ליום), מה ש-getPeriodBreakdown
+ * לא מספק (הוא מחזיר ספירות בלבד).
+ */
+function getBucketRanges({ from, to, granularity }) {
+  const byMonth = granularity === "month";
+  const byWeek = granularity === "week";
+
+  const keyOf = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    if (byMonth) return `${y}-${m}`;
+    // שבוע: מזוהה לפי תאריך תחילת השבוע (ראשון), כדי ששני ימים באותו
+    // שבוע ייפלו לאותו מפתח.
+    return `${y}-${m}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  const ranges = [];
+  const lastMs = Date.parse(to);
+  const cursor = new Date(from);
+  cursor.setHours(0, 0, 0, 0);
+  if (byMonth) cursor.setDate(1);
+  if (byWeek) cursor.setDate(cursor.getDate() - cursor.getDay());   // אחורה עד יום ראשון
+
+  const MAX = byMonth ? 36 : byWeek ? 120 : 400;
+
+  while (ranges.length < MAX) {
+    const start = new Date(cursor);
+    const next = new Date(cursor);
+    if (byMonth) next.setMonth(next.getMonth() + 1);
+    else if (byWeek) next.setDate(next.getDate() + 7);
+    else next.setDate(next.getDate() + 1);
+
+    // הדלי לא נמשך אל מעבר לקצה התקופה
+    const end = next.getTime() > lastMs ? new Date(to) : next;
+    const clippedStart = start.getTime() < Date.parse(from) ? new Date(from) : start;
+
+    const label = byMonth
+      ? start.toLocaleDateString("he-IL", { month: "short" })
+      : byWeek
+        ? `${start.getDate()}.${start.getMonth() + 1}`
+        : `${start.getDate()}.${start.getMonth() + 1}`;
+
+    ranges.push({
+      key: keyOf(start),
+      label,
+      from: clippedStart.toISOString(),
+      to: end.toISOString(),
+    });
+
+    // עוצרים כשהדלי הבא כבר מעבר לקצה
+    if (next.getTime() >= lastMs) break;
+    cursor.setTime(next.getTime());
+  }
+
+  return ranges;
+}
+
+/**
+ * ספירת כניסות/יציאות עבור *קבוצת* אתרים בטווח — שאילתה אחת לכל דלי,
+ * ולא אחת לכל אתר לכל דלי (שהיה מכפיל את מספר השאילתות במספר האתרים).
+ */
+function getDirectionCounts(siteIds, { from, to }) {
+  if (!siteIds || siteIds.length === 0) return { entries: 0, exits: 0 };
+
+  const holes = siteIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT entry_exit, COUNT(*) AS n FROM operations
+       WHERE site_id IN (${holes})
+         AND occurred_at >= ? AND occurred_at < ?
+         AND is_anomaly = 0 AND start_end = 'end'
+       GROUP BY entry_exit`
+    )
+    .all(...siteIds, from, to);
+
+  let entries = 0, exits = 0;
+  for (const r of rows) {
+    if (r.entry_exit === "entry") entries = r.n;
+    else if (r.entry_exit === "exit") exits = r.n;
+  }
+  return { entries, exits };
+}
+
+// כמה פעולות בוצעו מאז התקלה האחרונה (מדד "כמה זמן האתר יציב")
+function getOperationsSinceLastError(siteId) {
+  const lastError = getLastFaultAt(siteId);
+  if (!lastError) {
+    // מעולם לא הייתה תקלה — סופרים את כל הפעולות
+    return db.prepare(
+      "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND start_end = 'end'"
+    ).get(siteId).n;
+  }
+  return db.prepare(
+    `SELECT COUNT(*) AS n FROM operations
+     WHERE site_id = ? AND is_anomaly = 0 AND start_end = 'end' AND occurred_at > ?`
+  ).get(siteId, lastError).n;
+}
+
+/**
+ * שורת נתונים מלאה לכל אתר בתקופה — הבסיס גם למנהל הבקרה וגם למנהל הכללי.
+ * מרכיב מהפונקציות הקיימות (getSiteStats / getUptimeBreakdown) ולא משכפל לוגיקה.
+ */
+function getSupervisorStats({ from, to }) {
+  const sites = getAllSites();
+
+  const rows = sites.map((site) => {
+    const stats = getSiteStats(site.id, { from, to });
+    const uptime = getUptimeBreakdown(site.id, { from, to });
+    const activeMaint = getActiveMaintenance(site.id);
+
+    // המצב האפקטיבי: תחזוקה ידנית פעילה גוברת על מה שה-PLC דיווח
+    const status = activeMaint || site.status === "maintenance" ? "maintenance" : site.status;
+
+    return {
+      code: site.code,
+      name: site.site_name,
+      status,
+      operations: stats.operations,
+      errors: stats.errors,
+      failureRate: stats.failureRate,
+      availability: uptime.availabilityPercent,
+      hasUptimeData: uptime.totalHours > 0,
+      maintenanceHours: uptime.maintenanceHours,
+      downtimeHours: uptime.errorHours,
+      lastError: getLastFaultAt(site.id),
+      operationsSinceLastError: getOperationsSinceLastError(site.id),
+      cycleTotal: site.cycle_total,
+      // לא ניתן לחישוב: המונה אינו נשמר לכל פעולה (ראה getCycleDelta)
+      cycleDelta: null,
+      inManualMaintenance: Boolean(activeMaint),
+    };
+  });
+
+  // שתי שאלות שונות לגמרי, ואסור לערבב ביניהן:
+  //   sitesInError      — כמה אתרים *מושבתים ברגע זה* (מצב נוכחי, כמו בתחזוקה/ללא תקשורת)
+  //   sitesWithErrors   — בכמה אתרים *הייתה* תקלה כלשהי בתקופה הנבחרת (מצטבר)
+  // אתר שנפל והתאושש נספר ב-sitesWithErrors אבל לא ב-sitesInError.
+  const summary = {
+    totalSites: rows.length,
+    sitesInError: rows.filter((r) => r.status === "error").length,
+    sitesWithErrors: rows.filter((r) => r.errors > 0).length,
+    sitesInMaintenance: rows.filter((r) => r.status === "maintenance").length,
+    sitesOffline: rows.filter((r) => r.status === "no_comm").length,
+  };
+
+  return { sites: rows, summary };
+}
+
+// התקלות האחרונות בכל המערכת (חוצה אתרים)
+function getRecentErrors({ limit = 10 } = {}) {
+  return db
+    .prepare(
+      `SELECT s.code AS siteCode, s.site_name AS siteName,
+              h.started_at AS startedAt, h.ended_at AS endedAt
+       FROM status_history h
+       JOIN sites s ON h.site_id = s.id
+       WHERE h.status = 'error'
+       ORDER BY h.started_at DESC
+       LIMIT ?`
+    )
+    .all(limit)
+    .map((r) => {
+      const end = r.endedAt ? Date.parse(r.endedAt) : Date.now();
+      return {
+        ...r,
+        ongoing: !r.endedAt,
+        durationMinutes: Math.max(0, Math.round((end - Date.parse(r.startedAt)) / 60000)),
+      };
+    });
+}
+
+// כל חלונות התחזוקה הידניים שפעילים כרגע
+function getActiveMaintenances() {
+  const now = new Date().toISOString();
+  return db
+    .prepare(
+      `SELECT s.code AS siteCode, s.site_name AS siteName,
+              m.set_by_name AS setBy, m.reason, m.started_at AS startedAt,
+              m.expires_at AS expiresAt
+       FROM maintenance_windows m
+       JOIN sites s ON m.site_id = s.id
+       WHERE m.cancelled_at IS NULL AND m.expires_at > ?
+       ORDER BY m.expires_at ASC`
+    )
+    .all(now);
+}
+
+// דירוג אתרים: הכי זמינים / הכי בעייתיים. מקבל את שורות ה-supervisor כדי
+// לא לחשב הכל פעמיים.
+function getTopPerformers(rows, limit = 5) {
+  return rows
+    .filter((r) => r.hasUptimeData)
+    .sort((a, b) => b.availability - a.availability || b.operations - a.operations)
+    .slice(0, limit)
+    .map((r) => ({
+      code: r.code, name: r.name,
+      availability: r.availability, operations: r.operations,
+    }));
+}
+
+function getWorstPerformers(rows, limit = 5) {
+  return rows
+    .filter((r) => r.errors > 0)
+    .sort((a, b) => b.failureRate - a.failureRate || b.errors - a.errors)
+    .slice(0, limit)
+    .map((r) => ({
+      code: r.code, name: r.name,
+      failureRate: r.failureRate, errors: r.errors,
+    }));
+}
+
+/**
+ * מפת חום: שורה לכל אתר, תא לכל דלי (יום/חודש) — עוצמת הפעילות.
+ * משתמש ב-getPeriodBreakdown הקיים לכל אתר.
+ */
+function getSystemHeatmap({ from, to, granularity }) {
+  const sites = getAllSites();
+  const labels = getBucketRanges({ from, to, granularity }).map((b) => b.label);
+
+  const rows = sites.map((site) => ({
+    siteCode: site.code,
+    siteName: site.site_name,
+    values: getPeriodBreakdown(site.id, { from, to, granularity }).map((p) => p.operations),
+  }));
+
+  const max = Math.max(0, ...rows.flatMap((r) => r.values));
+  return { labels, rows, max };
+}
+
+/**
+ * תמונה עסקית כוללת של כל המערכת.
+ * rows מגיע מ-getSupervisorStats כדי לא לחשב את אותם מדדים פעמיים.
+ */
+function getExecutiveStats({ from, to, granularity }) {
+  const { sites: rows } = getSupervisorStats({ from, to });
+
+  const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0);
+  const totalOperations = sum("operations");
+  const totalErrors = sum("errors");
+
+  // ממוצע זמינות — רק על אתרים שיש עליהם נתוני מצב, אחרת אתר חדש
+  // שמעולם לא דיווח היה גורר את הממוצע ל-0 ומעוות את התמונה.
+  const withData = rows.filter((r) => r.hasUptimeData);
+  const avgAvailability = withData.length
+    ? Math.round((withData.reduce((s, r) => s + r.availability, 0) / withData.length) * 100) / 100
+    : 0;
+
+  const sitesByStatus = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
+  for (const r of rows) {
+    if (sitesByStatus[r.status] !== undefined) sitesByStatus[r.status]++;
+  }
+
+  const kpis = {
+    totalSites: rows.length,
+    activeSites: sitesByStatus.ready + sitesByStatus.operating,
+    totalOperations,
+    totalErrors,
+    // אחוז כשל מערכתי = סך התקלות ÷ סך הפעולות (ולא ממוצע של אחוזים,
+    // שהיה נותן משקל זהה לאתר עם 2 פעולות ולאתר עם 2000)
+    avgFailureRate: totalOperations > 0
+      ? Math.round((totalErrors / totalOperations) * 10000) / 100
+      : 0,
+    avgAvailability,
+    totalMaintenanceHours: Math.round(sum("maintenanceHours") * 100) / 100,
+    totalDowntimeHours: Math.round(sum("downtimeHours") * 100) / 100,
+  };
+
+  // ===== גרף לאורך זמן =====
+  const buckets = getBucketRanges({ from, to, granularity });
+  const allSites = getAllSites();
+
+  const chart = buckets.map((b) => {
+    let ops = 0, errs = 0, availSum = 0, availCount = 0;
+
+    for (const site of allSites) {
+      const st = getSiteStats(site.id, { from: b.from, to: b.to });
+      ops += st.operations;
+      errs += st.errors;
+
+      const up = getUptimeBreakdown(site.id, { from: b.from, to: b.to });
+      if (up.totalHours > 0) {
+        availSum += up.availabilityPercent;
+        availCount++;
+      }
+    }
+
+    return {
+      label: b.label,
+      operations: ops,
+      errors: errs,
+      availability: availCount ? Math.round((availSum / availCount) * 100) / 100 : null,
+    };
+  });
+
+  return {
+    kpis,
+    sitesByStatus,
+    topPerformers: getTopPerformers(rows),
+    worstPerformers: getWorstPerformers(rows),
+    chart,
+    heatmap: getSystemHeatmap({ from, to, granularity }),
+  };
+}
+
+/**
+ * גרסה מסוננת ומפולחת של התמונה העסקית — הבסיס לכלי הניתוח של המנהל הכללי.
+ *
+ * siteCodes      — רשימת קודי אתרים. ריק/undefined = כל האתרים.
+ * statuses       — סינון לפי מצב נוכחי. ריק = כל המצבים.
+ * minFailureRate — רק אתרים שאחוז הכשל שלהם מעל הסף.
+ * groupBy        — 'site' | 'status' | 'time'
+ * granularity    — 'day' | 'week' | 'month' (רזולוציית הגרף)
+ *
+ * הסינון מוחל *לפני* חישוב ה-KPIs, כך שכל המספרים במסך עקביים עם מה שנבחר.
+ */
+function getExecutiveStatsFiltered({
+  from, to, siteCodes, statuses, minFailureRate = 0,
+  groupBy = "site", granularity = "day",
+}) {
+  const { sites: allRows } = getSupervisorStats({ from, to });
+  const totalSitesInSystem = allRows.length;
+
+  // --- סינון ---
+  const codeSet = siteCodes?.length ? new Set(siteCodes) : null;
+  const statusSet = statuses?.length ? new Set(statuses) : null;
+
+  const rows = allRows.filter((r) => {
+    if (codeSet && !codeSet.has(r.code)) return false;
+    if (statusSet && !statusSet.has(r.status)) return false;
+    if (minFailureRate > 0 && r.failureRate < minFailureRate) return false;
+    return true;
+  });
+
+  const idOf = new Map(getAllSites().map((s) => [s.code, s.id]));
+  const selectedIds = rows.map((r) => idOf.get(r.code)).filter((x) => x !== undefined);
+
+  // --- KPIs (על המסונן בלבד) ---
+  const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0);
+  const totalOperations = sum("operations");
+  const totalErrors = sum("errors");
+
+  const withData = rows.filter((r) => r.hasUptimeData);
+  const avgAvailability = withData.length
+    ? Math.round((withData.reduce((s, r) => s + r.availability, 0) / withData.length) * 100) / 100
+    : 0;
+
+  const sitesByStatus = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
+  for (const r of rows) if (sitesByStatus[r.status] !== undefined) sitesByStatus[r.status]++;
+
+  // סך הכניסות/היציאות בכל הטווח (לאריחי הסיכום מתחת לגרף)
+  const totals = getDirectionCounts(selectedIds, { from, to });
+
+  const kpis = {
+    totalSites: rows.length,
+    activeSites: sitesByStatus.ready + sitesByStatus.operating,
+    totalOperations,
+    totalEntries: totals.entries,
+    totalExits: totals.exits,
+    totalErrors,
+    // משוקלל (סך תקלות ÷ סך פעולות), ולא ממוצע של אחוזים — אחרת אתר עם
+    // 2 פעולות מקבל אותו משקל כמו אתר עם 2000.
+    avgFailureRate: totalOperations > 0
+      ? Math.round((totalErrors / totalOperations) * 10000) / 100
+      : 0,
+    avgAvailability,
+    totalMaintenanceHours: Math.round(sum("maintenanceHours") * 100) / 100,
+    totalDowntimeHours: Math.round(sum("downtimeHours") * 100) / 100,
+  };
+
+  // --- סדרת הזמן (משמשת גם לגרף וגם ל-groupBy=time) ---
+  const buckets = getBucketRanges({ from, to, granularity });
+
+  const chart = buckets.map((b) => {
+    let ops = 0, errs = 0, maint = 0, availSum = 0, availCount = 0;
+
+    for (const id of selectedIds) {
+      const st = getSiteStats(id, { from: b.from, to: b.to });
+      ops += st.operations;
+      errs += st.errors;
+
+      const up = getUptimeBreakdown(id, { from: b.from, to: b.to });
+      maint += up.maintenanceHours;
+      if (up.totalHours > 0) {
+        availSum += up.availabilityPercent;
+        availCount++;
+      }
+    }
+
+    // פילוח כיוון התנועה — שאילתה אחת לכל הדלי (לא אחת לכל אתר)
+    const { entries, exits } = getDirectionCounts(selectedIds, { from: b.from, to: b.to });
+
+    return {
+      label: b.label,
+      operations: ops,
+      entries,
+      exits,
+      errors: errs,
+      maintenanceHours: Math.round(maint * 100) / 100,
+      availability: availCount ? Math.round((availSum / availCount) * 100) / 100 : 0,
+      failureRate: ops > 0 ? Math.round((errs / ops) * 10000) / 100 : 0,
+    };
+  });
+
+  // --- מפת חום (שורה לאתר, תא לדלי) ---
+  const heatRows = rows.map((r) => {
+    const id = idOf.get(r.code);
+    return {
+      siteCode: r.code,
+      siteName: r.name,
+      values: buckets.map((b) => getSiteStats(id, { from: b.from, to: b.to }).operations),
+    };
+  });
+  const heatmap = {
+    labels: buckets.map((b) => b.label),
+    rows: heatRows,
+    max: Math.max(0, ...heatRows.flatMap((r) => r.values)),
+  };
+
+  // --- פילוח (groupBy) ---
+  let groups;
+  if (groupBy === "status") {
+    const byStatus = new Map();
+    for (const r of rows) {
+      const g = byStatus.get(r.status) || {
+        key: r.status, label: r.status,
+        sites: 0, operations: 0, errors: 0,
+        maintenanceHours: 0, availSum: 0, availCount: 0,
+      };
+      g.sites++;
+      g.operations += r.operations;
+      g.errors += r.errors;
+      g.maintenanceHours += r.maintenanceHours || 0;
+      if (r.hasUptimeData) { g.availSum += r.availability; g.availCount++; }
+      byStatus.set(r.status, g);
+    }
+    groups = [...byStatus.values()].map((g) => ({
+      key: g.key,
+      label: g.label,
+      sites: g.sites,
+      operations: g.operations,
+      errors: g.errors,
+      maintenanceHours: Math.round(g.maintenanceHours * 100) / 100,
+      availability: g.availCount ? Math.round((g.availSum / g.availCount) * 100) / 100 : 0,
+      failureRate: g.operations > 0 ? Math.round((g.errors / g.operations) * 10000) / 100 : 0,
+    }));
+  } else if (groupBy === "time") {
+    groups = chart.map((c) => ({
+      key: c.label, label: c.label,
+      sites: rows.length,
+      operations: c.operations,
+      errors: c.errors,
+      maintenanceHours: c.maintenanceHours,
+      availability: c.availability,
+      failureRate: c.failureRate,
+    }));
+  } else {
+    groups = rows.map((r) => ({
+      key: r.code,
+      label: r.name,
+      sites: 1,
+      operations: r.operations,
+      errors: r.errors,
+      maintenanceHours: r.maintenanceHours || 0,
+      availability: r.hasUptimeData ? r.availability : 0,
+      failureRate: r.failureRate,
+    }));
+  }
+
+  // --- שורות גולמיות לייצוא CSV ---
+  const rawRows = rows.map((r) => ({
+    "קוד אתר": r.code,
+    "שם האתר": r.name,
+    "מצב": r.status,
+    "פעולות": r.operations,
+    "תקלות": r.errors,
+    "אחוז כשל": r.failureRate,
+    "זמינות": r.hasUptimeData ? r.availability : "",
+    "שעות תחזוקה": r.maintenanceHours || 0,
+    "שעות השבתה": r.downtimeHours || 0,
+    "מונה מחזורים": r.cycleTotal,
+    "פעולות מאז התקלה": r.operationsSinceLastError,
+  }));
+
+  return {
+    kpis,
+    sitesByStatus,
+    topPerformers: getTopPerformers(rows),
+    worstPerformers: getWorstPerformers(rows),
+    chart,
+    heatmap,
+    groups,
+    rawRows,
+    filteredSitesCount: rows.length,
+    totalSitesInSystem,
+    // רשימת כל האתרים במערכת — כדי שה-UI יוכל לבנות את בורר האתרים
+    allSites: allRows.map((r) => ({ code: r.code, name: r.name, status: r.status })),
+  };
+}
+
+// ==========================================================
+// ===== ניהול: קוד מנהל + עריכת/מחיקת אתרים =====
+// ==========================================================
+
+const crypto = require("crypto");
+
+const ADMIN_KEY = "admin_code_hash";
+const DEFAULT_ADMIN_CODE = "admin123";
+
+// הקוד נשמר כ-hash ולא כטקסט גלוי, כדי שמי שמציץ במסד לא יקרא אותו ישירות.
+// שימו לב: זו *לא* מערכת הרשאות אמיתית — ראה README.
+function hashCode(code) {
+  return crypto.createHash("sha256").update(String(code), "utf8").digest("hex");
+}
+
+function getSetting(key) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  return row ? row.value : null;
+}
+
+function setSetting(key, value) {
+  db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(key, value, new Date().toISOString());
+}
+
+// נזרע בהרצה הראשונה בלבד — שינוי הקוד לא נדרס בהפעלה מחדש
+function ensureAdminCode() {
+  if (!getSetting(ADMIN_KEY)) {
+    setSetting(ADMIN_KEY, hashCode(DEFAULT_ADMIN_CODE));
+  }
+}
+
+function verifyAdminCode(code) {
+  if (!code) return false;
+  const stored = getSetting(ADMIN_KEY);
+  if (!stored) return false;
+
+  // השוואה בזמן קבוע — מונעת דליפת מידע דרך זמן התגובה
+  const a = Buffer.from(hashCode(code), "hex");
+  const b = Buffer.from(stored, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function setAdminCode(newCode) {
+  setSetting(ADMIN_KEY, hashCode(newCode));
+}
+
+/**
+ * עדכון אתר: שם ו/או קוד.
+ * שינוי הקוד הוא פעולה עדינה — הוא ה-{code} בנתיב ה-MQTT, ולכן משנה
+ * *לאיזה אתר* משויכות ההודעות הנכנסות. ההיסטוריה הקיימת עוברת איתו (site_id
+ * לא משתנה), אבל הסוכן בשטח חייב להתעדכן גם הוא, אחרת הודעותיו יידחו.
+ */
+function updateSite(currentCode, { newCode, siteName }) {
+  const site = findSiteByCode(currentCode);
+  if (!site) return { ok: false, reason: "not_found" };
+
+  if (newCode && newCode !== currentCode && findSiteByCode(newCode)) {
+    return { ok: false, reason: "code_taken" };
+  }
+
+  const fields = [];
+  const params = [];
+  if (newCode && newCode !== currentCode) { fields.push("code = ?"); params.push(newCode); }
+  if (siteName) { fields.push("site_name = ?"); params.push(siteName); }
+
+  if (fields.length === 0) return { ok: true, site };
+
+  params.push(site.id);
+  db.prepare(`UPDATE sites SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+
+  return { ok: true, site: findSiteByCode(newCode || currentCode) };
+}
+
+/**
+ * מחיקת אתר. ה-cascade שבסכמה מוחק גם את כל ההיסטוריה שלו
+ * (operations, status_history, maintenance_windows, monthly_summary).
+ */
+function deleteSite(code) {
+  const site = findSiteByCode(code);
+  if (!site) return { ok: false, reason: "not_found" };
+
+  const counts = {
+    operations: db.prepare("SELECT COUNT(*) n FROM operations WHERE site_id = ?").get(site.id).n,
+    statusHistory: db.prepare("SELECT COUNT(*) n FROM status_history WHERE site_id = ?").get(site.id).n,
+  };
+
+  db.prepare("DELETE FROM sites WHERE id = ?").run(site.id);
+  return { ok: true, deleted: { code: site.code, name: site.site_name, ...counts } };
+}
+
 // ===== תחזוקת נתונים (summary / cleanup / backup) =====
 
 // האם קיים סיכום חודשי לאתר+חודש
@@ -1092,6 +1690,18 @@ module.exports = {
   getPeriodBreakdown,
   getSiteInsights,
   getActivityLog,
+  getBucketRanges,
+  getSupervisorStats,
+  getExecutiveStats,
+  getExecutiveStatsFiltered,
+  ensureAdminCode,
+  verifyAdminCode,
+  setAdminCode,
+  updateSite,
+  deleteSite,
+  getRecentErrors,
+  getActiveMaintenances,
+  getSystemHeatmap,
   wasInMaintenance,
   generateMonthlySummary,
   getSystemSummary,

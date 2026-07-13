@@ -1,0 +1,203 @@
+/* SiteMultiSelect.css */
+
+.sms {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sms-block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sms-title {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.sms-title strong { color: var(--accent); }
+
+/* --- בורר האתרים --- */
+.sms-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.sms-trigger:hover { background: var(--bg-hover); }
+
+.sms-count {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.sms-caret {
+  transition: transform 0.18s;
+  font-size: 0.7rem;
+}
+
+.sms-caret.is-open { transform: rotate(180deg); }
+
+.sms-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-start: 0;
+  z-index: 20;
+  width: 280px;
+  max-width: 80vw;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 34px var(--shadow);
+  animation: smsIn 0.15s ease-out;
+}
+
+@keyframes smsIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sms-search {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.sms-search:focus { outline: none; border-color: var(--accent); }
+
+.sms-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.sms-actions button {
+  flex: 1;
+  padding: 5px;
+  border-radius: 7px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.sms-actions button:hover { color: var(--text-primary); }
+
+.sms-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sms-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.sms-list label:hover { background: var(--bg-hover); }
+
+.sms-list i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sms-name {
+  flex: 1;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sms-name.is-dim { opacity: 0.45; }
+
+.sms-code {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.sms-none {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 12px;
+}
+
+/* --- מצבים --- */
+.sms-statuses {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.sms-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  font-weight: 600;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.sms-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sms-status:hover { color: var(--text-primary); }
+
+.sms-status.is-active {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+/* --- סליידר --- */
+.sms-range {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sms-summary {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.sms-summary strong { color: var(--accent); }

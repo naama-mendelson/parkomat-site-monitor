@@ -1,7 +1,7 @@
 // components/InsightsModal/InsightsModal.jsx — מסך "עוד מידע":
 // חמישה מסכי משנה (סקירה · פעילות · כרטיסים · אמינות · לוג), מעל בורר תקופה משותף.
 import { useEffect, useState } from "react";
-import { STATUS_COLORS, DIRECTION_COLORS } from "../../utils/constants";
+import { DIRECTION_COLORS, METRIC_COLORS } from "../../utils/constants";
 import { useSiteInsights } from "../../hooks/useSiteInsights";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
 import MetricCard from "../MetricCard/MetricCard";
@@ -10,12 +10,14 @@ import DonutChart from "../DonutChart/DonutChart";
 import ActivityLog from "../ActivityLog/ActivityLog";
 import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
+import Logo from "../Logo/Logo";
 
 const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
-const EXIT_COLOR = DIRECTION_COLORS.exit;     // סגול — יציאות (לא צהוב! זה הצבע של תחזוקה)
+const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יציאות
 
-// צבע סדרת ה"פעולות" בגרפי הפעילות — כאן מדובר בפעילות כוללת, לא בכיוון תנועה.
-const ACTIVITY_COLOR = STATUS_COLORS.operating.dot;
+// סדרת "הפעולות" בגרפי הפעילות — פעילות כוללת ולא כיוון תנועה, ולכן
+// היא נושאת את צבע מדד הפעולות המשותף (כחול המותג).
+const ACTIVITY_COLOR = METRIC_COLORS.operations;
 
 // שניות → טקסט קריא ("1 דק' 18 שנ'" / "45 שניות")
 function fmtSeconds(s) {
@@ -62,6 +64,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
 
         {/* ===== כותרת ===== */}
         <header className="insights-header">
+          <Logo size={30} />
           <div>
             <h2>{site.site_name}</h2>
             <span className="insights-code">קוד אתר: {site.code}</span>

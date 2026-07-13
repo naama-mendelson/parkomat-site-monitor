@@ -1,0 +1,377 @@
+/* SupervisorView.css — מנהל בקרה: צפוף במידע, שימושי, נקי */
+
+.sv {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: viewIn 0.35s ease-out;
+}
+
+.sv-period {
+  max-width: 420px;
+}
+
+.sv-skeleton {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 60px;
+}
+
+/* ===== סרגל סיכום ===== */
+.sv-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.sv-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-inline-start: 3px solid var(--c);
+  box-shadow: 0 3px 12px var(--shadow);
+
+  opacity: 0;
+  animation: svIn 0.45s ease-out forwards;
+}
+
+@keyframes svIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sv-card-value {
+  color: var(--c);
+  font-size: 1.9rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.sv-card-label {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+/* הרמז שאומר *על מה* המספר מדבר — מצב נוכחי או מצטבר בתקופה */
+.sv-card-hint {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  user-select: none;
+}
+
+/* ===== בקרות ===== */
+.sv-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sv-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 9px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.sv-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sv-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  user-select: none;
+}
+
+.sv-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.sv-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sv-chip:hover:not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sv-chip.is-active {
+  border-color: var(--c, var(--accent));
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* ===== לוחות ===== */
+.sv-panel {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 3px 12px var(--shadow);
+}
+
+.sv-panel-head {
+  margin-bottom: 12px;
+}
+
+.sv-panel-head h3 {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.sv-panel-head p {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  margin-top: 2px;
+  user-select: none;
+}
+
+/* ===== טבלה ===== */
+.sv-tablewrap {
+  overflow-x: auto;
+}
+
+.sv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 900px;
+}
+
+.sv-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: start;
+  padding: 10px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.sv-table th:hover { color: var(--text-primary); }
+.sv-table th.is-sorted { color: var(--accent); }
+.sv-table th.num { text-align: end; }
+
+.sv-sort {
+  margin-inline-start: 4px;
+  font-size: 0.7em;
+  opacity: 0.6;
+}
+
+.sv-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sv-table td.num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-table td.mono {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-table td.name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.sv-table tbody tr {
+  cursor: pointer;
+  /* פס דק בצבע המצב — רמז ויזואלי בלי לצבוע את כל השורה */
+  box-shadow: inset 3px 0 0 0 var(--row);
+  transition: background 0.13s;
+}
+
+.sv-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.sv-table tbody tr:last-child td { border-bottom: 0; }
+
+.sv-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.sv-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sv-none,
+.sv-none-inline {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 26px;
+  font-size: 0.85rem;
+}
+
+.sv-good {
+  color: #4ade80;
+  font-size: 0.85rem;
+  padding: 14px 0;
+}
+
+/* ===== החלק התחתון ===== */
+.sv-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .sv-bottom { grid-template-columns: 1fr; }
+}
+
+/* תקלות */
+.sv-errors,
+.sv-maint {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.sv-errors li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(239, 68, 68, 0.07);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+
+  opacity: 0;
+  animation: svIn 0.4s ease-out forwards;
+}
+
+.sv-err-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.sv-err-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.sv-err-site {
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sv-err-time {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.sv-err-dur {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sv-err-dur.is-ongoing {
+  color: #f87171;
+}
+
+/* תחזוקות */
+.sv-maint li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(234, 179, 8, 0.07);
+  border: 1px solid rgba(234, 179, 8, 0.24);
+}
+
+.sv-maint-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.sv-maint-site {
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sv-maint-meta,
+.sv-maint-reason {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.sv-maint-cancel {
+  padding: 6px 14px;
+  border-radius: 7px;
+  background: #c1121f;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sv-maint-cancel:hover:not(:disabled) { background: #a00d18; }
+.sv-maint-cancel:disabled { opacity: 0.55; cursor: not-allowed; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sv, .sv-card, .sv-errors li { animation: none; opacity: 1; }
+}

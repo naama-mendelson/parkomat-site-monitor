@@ -1,38 +1,53 @@
-// components/Header/Header.jsx — Header עליון: לוגו מותג, פילטרים, חיפוש, dark/light
+// components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
+import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import "./Header.css";
 
 function Header({
   sites,
-  activeFilter,
+  role,
+  onRoleChange,
+  activeFilters,
   onFilterChange,
   searchQuery,
   onSearchChange,
   darkMode,
   onToggleDarkMode,
-  onAddSite,
+  onAdmin,
 }) {
+  // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
+  // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
+  const isOperator = role === "operator";
+
+  // ניהול האתרים (הוספה/עריכה/מחיקה) פתוח רק למנהל בקרה ומנהל כללי.
+  // הבקר מנטר בלבד. השרת אוכף את זה גם הוא — הסתרה ב-UI אינה אבטחה.
+  const canManage = role === "supervisor" || role === "executive";
+
   return (
     <header className="app-header">
       <div className="header-top">
-        {/* לוגו מותג Parkomat — טקסט מעוצב על רקע כחול (#1B3A8C), ללא אימוג'י */}
+        {/* לוגו המותג — מקור האמת לצבעי המערכת (ראה theme.css) */}
         <div className="header-logo">
-          <span className="logo-mark">Parkomat</span>
-          <span className="logo-subtitle">SiteMonitor</span>
+          <img src="/parkomat-logo.png" alt="Parkomat" className="logo-img" />
+          <div className="logo-text">
+            <span className="logo-mark">Parkomat</span>
+            <span className="logo-subtitle">SiteMonitor</span>
+          </div>
         </div>
 
-        {/* פעולות: חיפוש + הוספת אתר + מצב כהה/בהיר */}
+        <RoleSwitcher role={role} onChange={onRoleChange} />
+
         <div className="header-actions">
-          <SearchBar value={searchQuery} onChange={onSearchChange} />
-          <button
-            className="add-site-btn"
-            onClick={onAddSite}
-            title="הוסף אתר חדש"
-          >
-            <span className="add-site-plus">+</span>
-            הוסף אתר
-          </button>
+          {isOperator && <SearchBar value={searchQuery} onChange={onSearchChange} />}
+
+          {canManage && (
+            <button className="add-site-btn" onClick={onAdmin} title="ניהול אתרים">
+              <span className="add-site-plus">⚙</span>
+              ניהול אתרים
+            </button>
+          )}
+
           <button
             className="theme-toggle"
             onClick={onToggleDarkMode}
@@ -44,12 +59,14 @@ function Header({
         </div>
       </div>
 
-      {/* מוני סטטוס כפילטרים */}
-      <StatusFilters
-        sites={sites}
-        activeFilter={activeFilter}
-        onFilterChange={onFilterChange}
-      />
+      {/* מוני סטטוס כפילטרים — רק בתצוגת הבקר */}
+      {isOperator && (
+        <StatusFilters
+          sites={sites}
+          activeFilters={activeFilters}
+          onFilterChange={onFilterChange}
+        />
+      )}
     </header>
   );
 }

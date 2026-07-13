@@ -1,12 +1,17 @@
 /* styles/theme.css — dark/light mode באמצעות CSS variables + מיתוג Parkomat */
 
-/* ===== מותג Parkomat ===== */
-/* כחול המותג #1B3A8C משמש לרקע ה-Header, ל-accent ולכפתורים הראשיים */
+/* ===== מותג Parkomat =====
+   הצבעים נדגמו ישירות מהלוגו (parkomatLogo/logo-color.ico):
+   #0e4194 — הכחול הדומיננטי  |  #94c11e — הליים המשלים.
+   כל שאר המערכת נגזרת מהם, כך שהממשק והלוגו מדברים באותה שפה. */
 :root {
-  --brand: #1b3a8c;            /* כחול המותג */
-  --brand-strong: #16306f;     /* גוון כהה יותר (hover/רקע header) */
-  --brand-light: #3b6fe0;      /* גוון בהיר (accent על רקע כהה) */
+  --brand: #0e4194;            /* כחול המותג — מהלוגו */
+  --brand-strong: #0a3272;     /* גוון כהה (רקע header / hover) */
+  --brand-light: #3d78d8;      /* גוון בהיר (accent על רקע כהה) */
   --brand-on: #ffffff;         /* טקסט על רקע המותג */
+
+  --brand-lime: #94c11e;       /* הליים מהלוגו — הדגשה משנית */
+  --brand-lime-strong: #7ba518;
 }
 
 /* ברירת מחדל: כהה */

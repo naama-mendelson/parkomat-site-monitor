@@ -1,5 +1,5 @@
 // components/Sparkline/Sparkline.jsx — גרף מגמה קטן ב-SVG טהור (בלי ספריות)
-import { STATUS_COLORS } from "../../utils/constants";
+import { METRIC_COLORS } from "../../utils/constants";
 import "./Sparkline.css";
 
 const W = 300;          // רוחב לוגי (ה-SVG נמתח לרוחב הפאנל)
@@ -7,9 +7,9 @@ const H = 70;
 const LABEL_H = 14;     // מקום לתוויות הציר
 const CHART_H = H - LABEL_H;
 
-const OPS_COLOR = STATUS_COLORS.operating.dot;      // כחול — פעולות
-const ERR_COLOR = STATUS_COLORS.error.dot;          // אדום — תקלות
-const MNT_COLOR = STATUS_COLORS.maintenance.dot;    // צהוב — תחזוקה
+const OPS_COLOR = METRIC_COLORS.operations;     // כחול המותג — פעולות
+const ERR_COLOR = METRIC_COLORS.errors;         // אדום — תקלות
+const MNT_COLOR = METRIC_COLORS.maintenance;    // ענבר — תחזוקה
 
 // עד 4 תוויות על הציר, כדי לא לצפף
 function labelIndexes(n) {

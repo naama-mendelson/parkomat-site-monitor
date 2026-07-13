@@ -1,0 +1,48 @@
+/* RoleSwitcher.css — בורר תפקיד ב-Header */
+
+.rs {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  user-select: none;
+}
+
+.rs-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--brand-on);
+  opacity: 0.72;
+  font-size: 0.84rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.18s, opacity 0.18s, transform 0.18s;
+}
+
+.rs-tab:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 1;
+}
+
+.rs-tab.is-active {
+  background: var(--brand-on);
+  color: var(--brand);
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.rs-icon {
+  flex-shrink: 0;
+}
+
+/* מסך צר — רק אייקונים */
+@media (max-width: 760px) {
+  .rs-label { display: none; }
+  .rs-tab { padding: 8px 10px; }
+}

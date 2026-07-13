@@ -1,0 +1,135 @@
+/* OperationsChart.css */
+
+.oc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* המקרא מיושר לימין, כמו בעיצוב המקור */
+.oc-legend {
+  display: flex;
+  justify-content: flex-start;
+  gap: 16px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.oc-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.oc-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* אותה מסגרת כמו בגרף המגמה — שני הגרפים נראים כמו בני משפחה אחת */
+.oc-plot {
+  position: relative;
+  direction: ltr;   /* ה-SVG הוא LTR — גם מיקום ה-tooltip */
+  padding: 8px 6px 2px;
+  border-radius: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+}
+
+.oc-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* רשת עדינה, אופקית בלבד */
+.oc-grid {
+  stroke: var(--border-color);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.oc-ytick {
+  fill: var(--text-muted);
+  font-size: 10px;
+  text-anchor: end;
+  user-select: none;
+}
+
+.oc-xtick {
+  fill: var(--text-muted);
+  font-size: 10px;
+  text-anchor: middle;
+  user-select: none;
+}
+
+/* העמודות צומחות מלמטה */
+.oc-bar {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: ocGrow 0.65s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  transition: opacity 0.14s;
+}
+
+.oc-plot:hover .oc-bar { opacity: 0.82; }
+.oc-plot g:hover .oc-bar { opacity: 1; }
+
+@keyframes ocGrow {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+/* tooltip */
+.oc-tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  direction: rtl;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 10px 28px var(--shadow);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.oc-tip strong {
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.oc-tip span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.oc-tip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.oc-tip b { color: var(--text-primary); }
+
+.oc-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 46px 0;
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-bar { animation: none; }
+}

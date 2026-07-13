@@ -1,0 +1,51 @@
+/* DateRangePicker.css — קומפקטי */
+
+.drp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drp-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.drp-field > span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.drp-field select,
+.drp-field input[type="date"] {
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-family: inherit;
+  cursor: pointer;
+  color-scheme: dark light;   /* לוח השנה של הדפדפן מתאים לערכת הנושא */
+}
+
+.drp-field select:focus,
+.drp-field input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.drp-field select:hover,
+.drp-field input[type="date"]:hover {
+  border-color: var(--accent);
+}
+
+.drp-summary {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  user-select: none;
+}

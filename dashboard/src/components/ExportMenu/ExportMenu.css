@@ -1,0 +1,102 @@
+/* ExportMenu.css */
+
+.em {
+  position: relative;
+}
+
+.em-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.em-trigger:hover {
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+}
+
+.em-caret {
+  font-size: 0.7rem;
+  transition: transform 0.18s;
+}
+
+.em-caret.is-open { transform: rotate(180deg); }
+
+.em-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 20;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 34px var(--shadow);
+  animation: emIn 0.15s ease-out;
+}
+
+@keyframes emIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.em-panel button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: transparent;
+  text-align: start;
+  transition: background 0.13s;
+}
+
+.em-panel button:hover { background: var(--bg-hover); }
+
+.em-panel button strong {
+  color: var(--text-primary);
+  font-size: 0.84rem;
+}
+
+.em-panel button span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.em-note {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  padding: 6px 11px 2px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 4px;
+}
+
+.em-toast {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 25;
+  padding: 8px 13px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px var(--shadow);
+  animation: emIn 0.2s ease-out;
+}

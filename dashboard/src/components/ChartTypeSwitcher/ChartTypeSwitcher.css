@@ -1,0 +1,32 @@
+/* ChartTypeSwitcher.css */
+
+.cts {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  user-select: none;
+}
+
+.cts-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.cts-btn:hover:not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.cts-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}

@@ -1,0 +1,211 @@
+/* FilterBar.css — סרגל דביק, קומפקטי, בצבעי המותג */
+
+.fb {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 12px;
+
+  /* משטח מזוגג — נשאר קריא כשתוכן נגלל מתחתיו */
+  background: color-mix(in srgb, var(--bg-secondary) 90%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 3px 14px var(--shadow);
+}
+
+/* הכל בשורה אחת */
+.fb-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* סמל המותג — עוגן ויזואלי שקט בקצה הסרגל */
+.fb-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  padding: 2px;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.fb-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  flex-shrink: 0;
+}
+
+/* ===== שדות select ===== */
+.fb-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fb-field > span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.fb-field select {
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.fb-field select:hover,
+.fb-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ===== כפתור סינון האתרים ===== */
+.fb-filter-btn {
+  padding: 5px 11px;
+  border-radius: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.fb-filter-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.fb-filter-btn.is-open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.fb-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;   /* נצמד לקצה */
+}
+
+/* ===== סינון האתרים (מתקפל) ===== */
+.fb-sites {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  animation: fbIn 0.18s ease-out;
+}
+
+@keyframes fbIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== שורת מצב ===== */
+.fb-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 7px;
+  border-top: 1px solid var(--border-color);
+}
+
+.fb-summary {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.fb-summary strong { color: var(--text-primary); }
+
+.fb-loading {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.fb-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.fb-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px 3px 9px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.fb-chip button {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.6rem;
+}
+
+.fb-chip button:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+/* תצוגה שמורה — בליים של הלוגו, כדי להבדיל אותה מפילטר פעיל */
+.fb-chip--saved { border-color: var(--brand-lime); }
+
+.fb-chip-apply {
+  width: auto !important;
+  border-radius: 9px !important;
+  padding: 0 3px;
+  color: var(--brand-lime) !important;
+  font-size: 0.7rem !important;
+  font-weight: 700;
+}
+
+.fb-save,
+.fb-reset {
+  padding: 4px 9px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.fb-save:hover,
+.fb-reset:hover {
+  border-style: solid;
+  color: var(--text-primary);
+}
+
+.fb-reset { border-color: #ef4444; color: #f87171; }
+
+@media (max-width: 760px) {
+  .fb-sep { display: none; }
+  .fb-right { margin-inline-start: 0; width: 100%; }
+}

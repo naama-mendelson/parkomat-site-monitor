@@ -7,6 +7,20 @@
   flex-wrap: wrap;
 }
 
+/* הטבעת "מסתובבת פנימה" בכניסה */
+.donut svg {
+  animation: donutIn 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes donutIn {
+  from { transform: rotate(-70deg) scale(0.86); opacity: 0; }
+  to   { transform: rotate(0) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .donut svg { animation: none; }
+}
+
 .donut-total {
   fill: var(--text-primary);
   font-size: 22px;

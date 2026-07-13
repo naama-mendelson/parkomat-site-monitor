@@ -33,9 +33,8 @@
 /* כותרת */
 .insights-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
+  align-items: center;
+  gap: 12px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-color);
 }
@@ -51,6 +50,7 @@
 }
 
 .insights-close {
+  margin-inline-start: auto;
   background: none;
   color: var(--text-muted);
   font-size: 1.3em;

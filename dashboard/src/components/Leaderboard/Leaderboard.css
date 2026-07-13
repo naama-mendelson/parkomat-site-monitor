@@ -1,0 +1,124 @@
+/* Leaderboard.css — טבלת מובילים */
+
+.lb {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+.lb-head h3 {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.lb-head p {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  margin-top: 2px;
+  user-select: none;
+}
+
+.lb-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lb-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+
+  opacity: 0;
+  animation: lbIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes lbIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.lb-rank {
+  width: 24px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.lb-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lb-name {
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lb-value {
+  font-size: 0.92rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* הפס — נמתח בכניסה */
+.lb-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.lb-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transform-origin: right center;   /* RTL — הפס גדל מימין */
+  animation: lbGrow 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes lbGrow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+.lb-secondary {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.lb-empty {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+  padding: 20px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-item, .lb-fill { animation: none; opacity: 1; transform: none; }
+}

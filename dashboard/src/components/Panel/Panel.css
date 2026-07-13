@@ -1,0 +1,186 @@
+/* Panel.css — חלונית bento + פרישה למסך מלא */
+
+.pn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: 13px;
+
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 2px 12px var(--shadow);
+  overflow: hidden;
+}
+
+/* פס עליון דק בצבע החלונית — נותן לכל אחת זהות משלה בלי לצעוק */
+.pn::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--pn-accent, var(--accent)),
+    color-mix(in srgb, var(--pn-accent, var(--accent)) 25%, transparent)
+  );
+}
+
+/* כל החלונית היא אזור לחיצה — הסמן צריך להגיד את זה */
+.pn--grid.is-clickable { cursor: pointer; }
+
+/* פקדים בתוך החלונית שומרים על הסמן שלהם */
+.pn--grid.is-clickable button,
+.pn--grid.is-clickable a,
+.pn--grid.is-clickable input,
+.pn--grid.is-clickable select { cursor: pointer; }
+
+/* הרמז שמחליף את ה-X בחלונית הפרושה */
+.pn-hint {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ===== ברשת ===== */
+.pn--grid {
+  grid-column: span var(--pn-span);
+  opacity: 0;
+
+  /* both = backwards + forwards, ושניהם נחוצים:
+     backwards — החלונית נשארת שקופה עד שמגיע תורה בכניסה המדורגת.
+     forwards  — היא *נשארת* גלויה בסוף. בלעדיו היא חוזרת ל-opacity: 0
+                 של הכלל הזה ופשוט נעלמת אחרי שהיא נכנסת. */
+  animation: pnIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.pn--grid.is-tall {
+  grid-row: span 2;
+}
+
+.pn--grid:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--pn-accent, var(--accent)) 45%, var(--border-color));
+  box-shadow: 0 10px 28px var(--shadow);
+}
+
+@keyframes pnIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== כותרת ===== */
+.pn-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pn-title h2 {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.pn-title p {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-top: 2px;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.pn-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.pn-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+
+.pn-btn:hover {
+  background: var(--bg-hover);
+  color: var(--pn-accent, var(--accent));
+  transform: scale(1.06);
+}
+
+.pn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ===== פרושה על כל המסך ===== */
+.pn-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(6px);
+  animation: pnFade 0.2s ease-out;
+}
+
+@keyframes pnFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.pn--full {
+  width: 100%;
+  max-width: 1500px;
+  height: 100%;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 28px 32px;
+  border-radius: 20px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+
+  animation: pnZoom 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes pnZoom {
+  from { opacity: 0; transform: scale(0.95) translateY(16px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.pn--full .pn-head { position: sticky; top: 0; z-index: 2; }
+.pn--full .pn-title h2 { font-size: 1.3rem; }
+.pn--full .pn-title p { font-size: 0.85rem; }
+
+/* התוכן מתפרש וממלא את המסך */
+.pn--full .pn-body { gap: 22px; }
+
+@media (max-width: 900px) {
+  /* במסך צר כל חלונית תופסת שורה מלאה — bento לא עובד בצר */
+  .pn--grid { grid-column: 1 / -1; }
+  .pn--grid.is-tall { grid-row: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pn--grid, .pn--full, .pn-overlay { animation: none; opacity: 1; }
+  .pn--grid:hover { transform: none; }
+}

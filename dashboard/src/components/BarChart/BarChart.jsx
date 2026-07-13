@@ -46,6 +46,7 @@ function BarChart({ bars, color, highlight, unit = "", everyLabel = 1 }) {
           return (
             <rect
               key={i}
+              className="bc-bar"
               x={x}
               y={CHART_H - h}
               width={barW}
@@ -53,6 +54,8 @@ function BarChart({ bars, color, highlight, unit = "", everyLabel = 1 }) {
               rx="1.5"
               fill={color}
               opacity={isPeak ? 1 : 0.62}
+              /* stagger — כל עמודה "צומחת" מעט אחרי קודמתה */
+              style={{ animationDelay: `${i * 35}ms` }}
             >
               <title>{`${b.label}: ${b.value} ${unit}`}</title>
             </rect>

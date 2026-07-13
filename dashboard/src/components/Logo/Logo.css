@@ -1,0 +1,31 @@
+/* Logo.css — הלוגו בכל גודל, תמיד באותו סגנון */
+
+.lg {
+  border-radius: 7px;
+  padding: 3px;
+  background: #fff;
+  object-fit: contain;
+  flex-shrink: 0;
+  box-shadow: 0 1px 4px var(--shadow);
+}
+
+/* בזמן טעינה — נשימה עדינה במקום סתם ריבועים אפורים */
+.lg--pulse {
+  animation: lgPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes lgPulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.96); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
+
+/* סימן מים — רקע דהוי לחלוניות ריקות */
+.lg--ghost {
+  background: #fff;
+  opacity: 0.28;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg--pulse { animation: none; opacity: 1; }
+}

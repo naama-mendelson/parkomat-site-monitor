@@ -1,0 +1,102 @@
+/* KpiCard.css — כרטיס KPI יוקרתי */
+
+/* כרטיס נקי: משטח אחיד, מסגרת דקה, צל רך.
+   ההדגשה מגיעה מ*צבע המספר* ומפס עדין, ולא מ-gradient על כל הכרטיס. */
+.kpi {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 13px;
+  min-height: 108px;
+  border-radius: 11px;
+  overflow: hidden;
+
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 2px 10px var(--shadow);
+
+  /* כניסה מדורגת (stagger) — ה-delay מוזרק מה-JSX */
+  opacity: 0;
+  animation: kpiIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* פס דק בצבע המדד — רמז שקט במקום הילה */
+.kpi::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: var(--kpi-accent);
+}
+
+@keyframes kpiIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.kpi:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--kpi-accent) 45%, var(--border-color));
+  box-shadow: 0 6px 20px var(--shadow);
+}
+
+/* בסגנון הנקי אין הילה — הפס הצדדי (::before) מספיק */
+.kpi-glow { display: none; }
+
+.kpi-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.kpi-label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.kpi-value {
+  color: var(--text-primary);
+  font-size: 1.6rem;
+  line-height: 1.05;
+  margin: 2px 0;
+}
+
+/* המספר עצמו נצבע בגוון ה-KPI */
+.kpi-value .anum-value {
+  color: var(--kpi-accent);
+}
+
+.kpi-hint {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.kpi-trend {
+  margin-top: 6px;
+}
+
+.kpi-visual {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* מסכים צרים — המספר קטן יותר, הוויזואל יורד לשורה */
+@media (max-width: 640px) {
+  .kpi { min-height: 0; padding: 16px; }
+  .kpi-value { font-size: 2rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi { animation: none; opacity: 1; }
+  .kpi:hover { transform: none; }
+}

@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 
 -- ============================================================
+-- טבלת settings — הגדרות מערכת (key/value)
+-- כרגע: קוד המנהל לניהול אתרים. נשמר כ-hash, לא כטקסט גלוי.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- ============================================================
 -- טבלת status_history — היסטוריית מצבים (כל שינוי state)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS status_history (

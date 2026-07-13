@@ -1,0 +1,117 @@
+/* Heatmap.css — מפת חום */
+
+.hm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-x: auto;
+}
+
+.hm-grid {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+  min-width: 420px;
+}
+
+.hm-corner {
+  /* פינה ריקה מעל תוויות השורות */
+}
+
+.hm-collabel,
+.hm-rowlabel {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  user-select: none;
+}
+
+.hm-collabel {
+  text-align: center;
+  padding-bottom: 4px;
+  white-space: nowrap;
+}
+
+.hm-rowlabel {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding-inline-end: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hm-cell {
+  position: relative;
+  height: 30px;
+  border-radius: 5px;
+  cursor: default;
+
+  /* כניסה מדורגת — ה-delay מחושב ב-JSX ויוצר גל */
+  opacity: 0;
+  animation: hmIn 0.45s ease-out forwards;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+@keyframes hmIn {
+  from { transform: scale(0.75); }
+  to   { transform: scale(1); }
+}
+
+.hm-cell.is-hover {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 2px var(--text-primary);
+  z-index: 3;
+}
+
+.hm-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 22px var(--shadow);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.hm-tip strong {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+/* מקרא */
+.hm-scale {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.hm-scale i {
+  width: 18px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.hm-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 34px 0;
+  font-size: 0.88rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-cell { animation: none; opacity: 1; }
+}

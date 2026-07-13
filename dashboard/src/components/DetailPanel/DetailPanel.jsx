@@ -331,7 +331,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                       </span>
                       <span
                         className="log-duration"
-                        style={item.is_anomaly ? { color: "#f87171" } : undefined}
+                        style={item.is_anomaly ? { color: STATUS_COLORS.error.text } : undefined}
                       >
                         {phase}{item.is_anomaly ? " · אנומליה" : ""}
                       </span>

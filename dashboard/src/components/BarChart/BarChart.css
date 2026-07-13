@@ -12,6 +12,24 @@
   display: block;
 }
 
+/* העמודות "צומחות" מלמטה בכניסה.
+   transform-box: fill-box נדרש כדי ש-transform-origin יתייחס לתיבת ה-rect
+   ולא ל-viewBox של ה-SVG כולו (אחרת העמודות נמתחות מהמקום הלא נכון). */
+.bc-bar {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: bcGrow 0.75s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@keyframes bcGrow {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bc-bar { animation: none; }
+}
+
 /* קריטי: ה-SVG תמיד LTR (x=0 הוא הקצה השמאלי), אבל הדף RTL — ובלי הכפייה הזו
    ה-grid היה מסדר את התוויות מימין לשמאל, כלומר במראה הפוכה מהעמודות.
    התוצאה: העמודה של "ראשון" הייתה מתיישרת מתחת לתווית "שבת". */

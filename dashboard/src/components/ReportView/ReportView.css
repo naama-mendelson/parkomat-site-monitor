@@ -1,0 +1,263 @@
+/* ReportView.css — תצוגת דוח + עיצוב הדפסה */
+
+.rv {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  padding: 20px;
+}
+
+.rv-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 900px;
+  margin: 0 auto 16px;
+}
+
+.rv-print,
+.rv-close {
+  padding: 9px 18px;
+  border-radius: 9px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.rv-print {
+  background: var(--accent);
+  color: #fff;
+}
+
+.rv-print:hover { background: var(--accent-soft); }
+
+.rv-close {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.rv-close:hover { color: var(--text-primary); }
+
+/* ===== דף הדוח ===== */
+.rv-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 34px 38px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px var(--shadow);
+}
+
+.rv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding-bottom: 18px;
+  border-bottom: 2px solid var(--accent);
+}
+
+.rv-brandbox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* הלוגו בדוח — מודפס גם הוא (print-color-adjust שומר על הצבעים) */
+.rv-logo {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.rv-brand {
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.rv-header h1 {
+  color: var(--text-primary);
+  font-size: 1.7rem;
+  font-weight: 800;
+  margin-top: 3px;
+}
+
+.rv-meta p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.rv-meta strong { color: var(--text-muted); font-weight: 600; }
+
+.rv-section {
+  margin-top: 26px;
+}
+
+.rv-section h2 {
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* טבלת KPI */
+.rv-kpis {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.rv-kpis th {
+  text-align: start;
+  padding: 9px 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  width: 25%;
+}
+
+.rv-kpis td {
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-kpis tr { border-bottom: 1px solid var(--border-color); }
+
+/* טבלת האתרים */
+.rv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.rv-table th {
+  text-align: start;
+  padding: 7px 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rv-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.rv-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.rv-footer {
+  margin-top: 30px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+/* ==========================================================
+   הדפסה — הכל לבן/שחור, בלי כפתורים, עם מעברי עמוד נכונים
+   ========================================================== */
+@media print {
+  /* קריטי: גם ב-dark mode ההדפסה חייבת לצאת על נייר לבן.
+     דורסים את משתני הנושא בתוך ההדפסה בלבד. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    --bg-primary: #fff;
+    --bg-secondary: #fff;
+    --bg-card: #fff;
+    --bg-hover: #f2f2f2;
+    --border-color: #bbb;
+    --text-primary: #000;
+    --text-secondary: #222;
+    --text-muted: #555;
+    --shadow: transparent;
+  }
+
+  body { background: #fff !important; }
+
+  /* מסתירים את כל האפליקציה — מדפיסים רק את הדוח */
+  .app-header,
+  .app-main,
+  .no-print {
+    display: none !important;
+  }
+
+  .rv {
+    position: static;
+    padding: 0;
+    background: #fff;
+    overflow: visible;
+  }
+
+  .rv-page {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: #fff;
+  }
+
+  .rv-header {
+    border-bottom: 2px solid #000;
+  }
+
+  /* כל סקציה מתחילה בעמוד חדש, ולא נחתכת באמצע */
+  .rv-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .rv-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* שורות טבלה לא נחתכות באמצע */
+  .rv-table tr,
+  .rv-kpis tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .rv-table thead {
+    display: table-header-group;   /* הכותרת חוזרת בכל עמוד */
+  }
+
+  /* הגרף לא נחתך */
+  .lc, .lc-svg {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* אנימציות מיותרות בהדפסה — הגרף חייב להיות מצויר במלואו */
+  .lc-line, .lc-area, .lc-dot, .lc-bar, .lc-valuelabel {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  @page {
+    margin: 15mm;
+  }
+}

@@ -1,0 +1,269 @@
+/* DisplayOptions.css — תפריט אופציות התצוגה */
+
+.do {
+  position: relative;
+}
+
+.do-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.do-trigger:hover { background: var(--bg-hover); }
+
+/* כשהתפריט פתוח — הכפתור נראה \"לחוץ\", כדי שברור מאיפה החלון יצא */
+.do-trigger.is-open {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.do-caret {
+  font-size: 0.7rem;
+  transition: transform 0.18s;
+}
+
+.do-caret.is-open { transform: rotate(180deg); }
+
+/* ===== החלון ===== */
+.do-panel {
+  position: absolute;
+  top: calc(100% + 7px);
+  inset-inline-end: 0;
+  z-index: 20;
+  width: 268px;
+  max-width: 88vw;
+
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 13px;
+  border-radius: 13px;
+
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 16px 40px var(--shadow);
+  animation: doIn 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes doIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* קו מפריד בין הקטעים — מה שהיה חסר, והפך את הכל למקשה אחת */
+.do-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.do-group + .do-group {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.do-title {
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.do-hint {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  user-select: none;
+}
+
+/* ===== מדדים — כל אחד עם נקודת הצבע שלו מהגרף ===== */
+.do-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.do-metric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.do-metric:hover:not(:disabled) { color: var(--text-primary); }
+
+/* נבחר — הגבול והטקסט בצבע *של המדד עצמו*, כך שהקשר לגרף מיידי */
+.do-metric.is-on {
+  color: var(--text-primary);
+  border-color: var(--m);
+  background: color-mix(in srgb, var(--m) 12%, transparent);
+}
+
+.do-metric:disabled { cursor: not-allowed; opacity: 0.75; }
+
+.do-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--m);
+  flex-shrink: 0;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+
+.do-metric.is-on .do-swatch { opacity: 1; }
+
+/* ===== שדה: תווית + פקד ===== */
+.do-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.do-label {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.do-select {
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.do-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.do-row {
+  display: flex;
+  gap: 4px;
+}
+
+.do-pill {
+  min-width: 32px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  font-weight: 700;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.do-pill:hover:not(.is-active) { color: var(--text-primary); }
+
+.do-pill.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ===== מתגים ===== */
+.do-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+
+/* ה-checkbox האמיתי מוסתר אבל נשאר נגיש למקלדת */
+.do-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.do-track {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: background 0.18s, border-color 0.18s;
+}
+
+.do-knob {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s;
+}
+
+.do-switch input:checked + .do-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.do-switch input:checked + .do-track .do-knob {
+  background: #fff;
+  /* הממשק RTL — הידית זזה שמאלה, ולכן ערך שלילי */
+  transform: translateX(-13px);
+}
+
+.do-switch input:focus-visible + .do-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.do-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.do-switch-text small {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 500;
+}
+
+.do-close-hint {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-align: center;
+  padding-top: 2px;
+  border-top: 1px solid var(--border-color);
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .do-panel { animation: none; }
+  .do-knob { transition: none; }
+}
