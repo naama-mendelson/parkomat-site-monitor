@@ -196,6 +196,13 @@ function LineChart({
                       className="lc-area"
                       style={{ animationDelay: `${si * 90 + 260}ms` }}
                     />
+                    {/* אין כאן vectorEffect="non-scaling-stroke", ובכוונה.
+                        הוא היה כאן קודם, והוא מתנגש עם pathLength: כשהוא מופעל,
+                        הדפדפן מפרש stroke-dasharray: 1 כ*פיקסל אחד* במקום כאורך
+                        הנתיב המלא — והקו נחתך לפני הנקודה האחרונה. זה לא נראה
+                        כמו באג באנימציה אלא כמו נתון חסר בגרף.
+                        בלעדיו עובי הקו מתכווץ/מתרחב קלות עם גודל ה-SVG — מחיר
+                        זניח לעומת גרף שמציג את כל הנקודות. */}
                     <path
                       d={linePath}
                       fill="none"
@@ -206,7 +213,6 @@ function LineChart({
                       className="lc-line"
                       pathLength="1"                 /* מאפשר לצייר את הקו בלי לדעת את אורכו */
                       style={{ animationDelay: `${si * 90}ms` }}
-                      vectorEffect="non-scaling-stroke"
                     />
                   </>
                 )}

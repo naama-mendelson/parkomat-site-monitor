@@ -2,11 +2,45 @@
 
 const BASE = "/api";
 
+// ==========================================================
+// איחוד בקשות זהות שנמצאות באוויר (in-flight dedupe)
+// ==========================================================
+// אם שתי קומפוננטות מבקשות את אותו URL באותו רגע, אין שום סיבה לשלוח שתי
+// בקשות — הן יקבלו את אותה תשובה בדיוק. במקום זה חולקים את אותו Promise.
+//
+// זה קורה יותר ממה שנדמה: React ב-StrictMode (מצב פיתוח) מריץ כל effect
+// *פעמיים* בכוונה, ולכן כל שליפה נורית פעמיים. בלי האיחוד הזה, מספר
+// הבקשות בפאנל הרשת של הדפדפן כפול מהאמת.
+//
+// הרשומה נמחקת ברגע שהבקשה נגמרה (גם בכשל), כדי שהתוצאה לא "תיתקע"
+// במטמון — זה dedupe, לא cache.
+const inFlight = new Map();
+
+function getJSON(url, errorMessage) {
+  const existing = inFlight.get(url);
+  if (existing) return existing;
+
+  const promise = fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(errorMessage);
+      return res.json();
+    })
+    .finally(() => {
+      inFlight.delete(url);
+    });
+
+  inFlight.set(url, promise);
+  return promise;
+}
+
+// חשוף לבדיקות בלבד — כמה בקשות נמצאות כרגע באוויר
+export function _inFlightCount() {
+  return inFlight.size;
+}
+
 // שליפת כל האתרים
-export async function fetchSites() {
-  const res = await fetch(`${BASE}/sites`);
-  if (!res.ok) throw new Error("שגיאה בטעינת אתרים");
-  return res.json();
+export function fetchSites() {
+  return getJSON(`${BASE}/sites`, "שגיאה בטעינת אתרים");
 }
 
 // ===== ניהול (admin) =====
@@ -106,24 +140,18 @@ export async function registerSite(payload) {
 }
 
 // שליפת אתר בודד + operations אחרונות
-export async function fetchSiteDetail(code) {
-  const res = await fetch(`${BASE}/sites/${code}`);
-  if (!res.ok) throw new Error(`אתר ${code} לא נמצא`);
-  return res.json();
+export function fetchSiteDetail(code) {
+  return getJSON(`${BASE}/sites/${code}`, `אתר ${code} לא נמצא`);
 }
 
 // שליפת אנליטיקה לפי תקופה — period: week | month | year
-export async function fetchSiteAnalytics(code, period) {
-  const res = await fetch(`${BASE}/sites/${code}/analytics?period=${period}`);
-  if (!res.ok) throw new Error("שגיאה בטעינת נתונים");
-  return res.json();
+export function fetchSiteAnalytics(code, period) {
+  return getJSON(`${BASE}/sites/${code}/analytics?period=${period}`, "שגיאה בטעינת נתונים");
 }
 
 // שליפת סטטיסטיקה מעמיקה ("עוד מידע") — period: week | month | year
-export async function fetchSiteInsights(code, period) {
-  const res = await fetch(`${BASE}/sites/${code}/insights?period=${period}`);
-  if (!res.ok) throw new Error("שגיאה בטעינת נתונים מורחבים");
-  return res.json();
+export function fetchSiteInsights(code, period) {
+  return getJSON(`${BASE}/sites/${code}/insights?period=${period}`, "שגיאה בטעינת נתונים מורחבים");
 }
 
 // ===== ממשקי הניהול =====
@@ -133,7 +161,7 @@ export async function fetchSiteInsights(code, period) {
  * params יכול להכיל: period | from+to | sites[] | statuses[] | minFailureRate |
  *                    groupBy | granularity
  */
-export async function fetchExecutiveStats(params = {}) {
+export function fetchExecutiveStats(params = {}) {
   const q = new URLSearchParams();
 
   if (params.from && params.to) {
@@ -149,33 +177,22 @@ export async function fetchExecutiveStats(params = {}) {
   if (params.groupBy) q.set("groupBy", params.groupBy);
   if (params.granularity) q.set("granularity", params.granularity);
 
-  const res = await fetch(`${BASE}/stats/executive?${q.toString()}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.error || "שגיאה בטעינת נתוני ההנהלה");
-  }
-  return res.json();
+  return getJSON(`${BASE}/stats/executive?${q.toString()}`, "שגיאה בטעינת נתוני ההנהלה");
 }
 
 // נתונים תפעוליים לכל האתרים (מנהל בקרה)
-export async function fetchSupervisorStats(period) {
-  const res = await fetch(`${BASE}/stats/supervisor?period=${period}`);
-  if (!res.ok) throw new Error("שגיאה בטעינת הנתונים התפעוליים");
-  return res.json();
+export function fetchSupervisorStats(period) {
+  return getJSON(`${BASE}/stats/supervisor?period=${period}`, "שגיאה בטעינת הנתונים התפעוליים");
 }
 
 // שליפת סטטיסטיקות אתר
-export async function fetchSiteStats(code) {
-  const res = await fetch(`${BASE}/sites/${code}/stats`);
-  if (!res.ok) throw new Error("שגיאה בטעינת סטטיסטיקות");
-  return res.json();
+export function fetchSiteStats(code) {
+  return getJSON(`${BASE}/sites/${code}/stats`, "שגיאה בטעינת סטטיסטיקות");
 }
 
 // בדיקת תחזוקה פעילה
-export async function fetchMaintenance(code) {
-  const res = await fetch(`${BASE}/sites/${code}/maintenance`);
-  if (!res.ok) throw new Error("שגיאה בבדיקת תחזוקה");
-  return res.json();
+export function fetchMaintenance(code) {
+  return getJSON(`${BASE}/sites/${code}/maintenance`, "שגיאה בבדיקת תחזוקה");
 }
 
 // הפעלת תחזוקה

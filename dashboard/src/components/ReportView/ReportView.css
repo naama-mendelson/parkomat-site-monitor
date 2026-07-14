@@ -175,27 +175,63 @@
    הדפסה — הכל לבן/שחור, בלי כפתורים, עם מעברי עמוד נכונים
    ========================================================== */
 @media print {
-  /* קריטי: גם ב-dark mode ההדפסה חייבת לצאת על נייר לבן.
-     דורסים את משתני הנושא בתוך ההדפסה בלבד. */
+  /* ==========================================================
+     גם ב-dark mode ההדפסה חייבת לצאת על נייר לבן.
+     ==========================================================
+     ה-!important כאן אינו עצלות — הוא הכרחי. theme.css נטען *אחרי*
+     הקובץ הזה בבאנדל, ומגדיר את אותם משתנים על אותו סלקטור בדיוק
+     (:root[data-theme="dark"]). בספציפיות זהה, מי שמופיע אחרון מנצח —
+     ולכן הערכה הכהה גברה גם בהדפסה, והדוח יצא על רקע כמעט-שחור עם טקסט
+     בהיר. בדיקה בדפדפן אמיתי תפסה את זה; בעין זה נראה תקין.
+
+     !important מנתק את התוצאה מסדר הטעינה של הקבצים. */
   :root,
   :root[data-theme="dark"],
   :root[data-theme="light"] {
-    --bg-primary: #fff;
-    --bg-secondary: #fff;
-    --bg-card: #fff;
-    --bg-hover: #f2f2f2;
-    --border-color: #bbb;
-    --text-primary: #000;
-    --text-secondary: #222;
-    --text-muted: #555;
-    --shadow: transparent;
+    --bg-primary: #fff !important;
+    --bg-secondary: #fff !important;
+    --bg-card: #fff !important;
+    --bg-hover: #f2f2f2 !important;
+    --bg-tooltip: #fff !important;
+    --border-color: #bbb !important;
+    --text-primary: #000 !important;
+    --text-secondary: #222 !important;
+    --text-muted: #555 !important;
+    --shadow: transparent !important;
+    --accent: #0e4194 !important;          /* כחול המותג — קריא על לבן */
+    --accent-soft: #0e4194 !important;
   }
 
-  body { background: #fff !important; }
+  /* אין אנימציות ואין מעברים בהדפסה.
+     ל-body יש transition על background ו-color (global.css), ולכן המעבר
+     לרקע הלבן מתרחש *בהדרגה* — והדפדפן עלול לצלם את העמוד באמצע המעבר,
+     על רקע כהה למחצה. גם אנימציות כניסה של גרפים עלולות להיתפס באמצע. */
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 
-  /* מסתירים את כל האפליקציה — מדפיסים רק את הדוח */
-  .app-header,
-  .app-main,
+  html,
+  body {
+    background: #fff !important;
+    background-color: #fff !important;
+    color: #000 !important;
+    /* הקומפוננטה נועלת את הגלילה (overflow: hidden) כל עוד הדוח פתוח.
+       בהדפסה זה עלול לחתוך את מה שמעבר לעמוד הראשון. */
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* ==========================================================
+     מסתירים את כל האפליקציה — מדפיסים רק את הדוח.
+     ==========================================================
+     #root ולא .app-main: הדוח יוצא עכשיו דרך פורטל אל <body>, כלומר הוא
+     *אח* של #root ולא צאצא שלו. קודם הוא היה בתוך .app-main, שהוסתר כאן —
+     ואב עם display:none מסתיר גם את הצאצאים. הדוח הסתיר את עצמו, וההדפסה
+     יצאה דף ריק. עכשיו מסתירים את כל האפליקציה בבת אחת, והדוח שורד. */
+  #root,
   .no-print {
     display: none !important;
   }
@@ -205,6 +241,11 @@
     padding: 0;
     background: #fff;
     overflow: visible;
+
+    /* בלי זה הדפדפן משמיט רקעי צבע בהדפסה: רקע כותרות הטבלה והמילוי
+       המדורג מתחת לקו בגרף היו נעלמים, והדוח היה יוצא חלקי. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .rv-page {
@@ -221,12 +262,31 @@
     border-bottom: 2px solid #000;
   }
 
-  /* כל סקציה מתחילה בעמוד חדש, ולא נחתכת באמצע */
+  /* ==========================================================
+     הדוח כולו בעמוד אחד.
+     ==========================================================
+     קודם היה כאן `break-before: page` על כל סקציה — כלומר המדדים, הגרף
+     והטבלה יצאו בשלושה עמודים נפרדים, כל אחד כמעט ריק. עכשיו הכול זורם
+     ברצף. אם יש הרבה אתרים והטבלה ארוכה מדי, היא תמשיך לעמוד הבא מעצמה —
+     אי אפשר לדחוס 200 שורות לעמוד אחד, ועדיף שתגלוש מאשר שתיחתך. */
   .rv-break {
-    break-before: page;
-    page-break-before: always;
+    break-before: auto;
+    page-break-before: auto;
   }
 
+  /* מהדקים את המרווחים כדי שהדוח ייכנס לעמוד אחד */
+  .rv-section { margin-top: 14px; }
+  .rv-section h2 { font-size: 0.95rem; margin-bottom: 7px; }
+  .rv-header { padding-bottom: 10px; }
+  .rv-header h1 { font-size: 1.4rem; }
+  .rv-kpis th, .rv-kpis td { padding: 5px 10px; }
+  .rv-table th, .rv-table td { padding: 5px 7px; }
+  .rv-footer { margin-top: 14px; padding-top: 8px; }
+
+  /* הגרף — נמוך יותר בהדפסה, כדי לפנות מקום לטבלה באותו עמוד */
+  .rv .lc-svg { max-height: 62mm; }
+
+  /* סקציה לא נחתכת באמצע (אבל כן מותר לה להתחיל היכן שהיא נגמרת) */
   .rv-section {
     break-inside: avoid;
     page-break-inside: avoid;

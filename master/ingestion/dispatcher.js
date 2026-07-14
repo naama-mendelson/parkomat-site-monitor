@@ -49,7 +49,7 @@ function validateOperation(data) {
   return null;
 }
 
-function handleMessage(topic, raw) {
+async function handleMessage(topic, raw) {
   try {
     // 1. שליפת קוד האתר וסוג ההודעה מה-topic
     const parts = topic.split("/");
@@ -75,7 +75,7 @@ function handleMessage(topic, raw) {
     }
 
     // 3. בדיקת רישום — אתר לא רשום נדחה
-    const site = findSiteByCode(siteCode);
+    const site = await findSiteByCode(siteCode);
     if (!site) {
       console.log(`[dispatcher] נדחתה הודעה מאתר לא רשום: code=${siteCode}`);
       return;
@@ -95,14 +95,17 @@ function handleMessage(topic, raw) {
         console.log(`[dispatcher] נדחתה הודעת state מאתר ${siteCode}: timestamp לא תקין (${data.timestamp})`);
         return;
       }
-      handleState(site, data);
+      // await חיוני: ה-handlers אסינכרוניים עכשיו, ובלעדיו כשל בכתיבה ל-DB
+      // היה הופך ל-unhandled rejection — ה-try/catch כאן לא היה תופס אותו,
+      // וההודעה הייתה נעלמת בשקט.
+      await handleState(site, data);
     } else if (kind === "operation") {
       const problem = validateOperation(data);
       if (problem) {
         console.log(`[dispatcher] נדחתה הודעת operation מאתר ${siteCode}: ${problem}`);
         return;
       }
-      handleOperation(site, data);
+      await handleOperation(site, data);
     } else {
       console.log(`[dispatcher] סוג הודעה לא מוכר (${kind}) מ-${topic}`);
     }

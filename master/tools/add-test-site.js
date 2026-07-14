@@ -14,11 +14,11 @@ const name = process.argv[3] || "אתר בדיקה ראשי";
 const kind = (process.argv[4] || "new").toLowerCase();
 const isNewSite = kind === "existing" ? 0 : 1;
 
-const existing = findSiteByCode(code);
+const existing = await findSiteByCode(code);
 if (existing) {
   console.log(`אתר ${code} כבר קיים:`, existing);
 } else {
-  insertSite(code, name, {}, isNewSite);
+  await insertSite(code, name, {}, isNewSite);
   const label = isNewSite ? "חדש (מונה מתחיל מ-0)" : "ותיק (מאמץ מונה מהבקר)";
   console.log(`אתר ${code} נרשם בהצלחה (${name}) — ${label}`);
 }

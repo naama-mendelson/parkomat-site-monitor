@@ -1,6 +1,7 @@
 // components/ReportView/ReportView.jsx — תצוגת דוח רשמית, מותאמת להדפסה/PDF
 import { useEffect } from "react";
-import { STATUS_LABELS, STATUS_COLORS } from "../../utils/constants";
+import { createPortal } from "react-dom";
+import { STATUS_COLORS } from "../../utils/constants";
 import LineChart from "../LineChart/LineChart";
 import "./ReportView.css";
 
@@ -29,7 +30,38 @@ function ReportView({ data, onClose }) {
 
   const k = data.kpis;
 
-  return (
+  // ==========================================================
+  // הסטטוס לא נכנס לדוח — וזה לא קיצור, זו נכונות.
+  // ==========================================================
+  // הדוח מתאר *תקופה* (למשל יולי 2026): פעולות, תקלות, זמינות — כולם נמדדו
+  // בתוכה. הסטטוס, לעומת זאת, הוא צילום רגע: מה מצב האתר בשנייה שבה הדוח
+  // הופק. אתר שהיה מושבת חצי מהחודש והתאושש לפני דקה היה מופיע בדוח כ"מוכן",
+  // ומי שיקרא את הדוח בעוד חודש יבין ממנו דבר שגוי לחלוטין.
+  //
+  // בייצוא ה-CSV הוא כן נשאר (שם זה dump גולמי), ולכן הוא מסונן כאן ולא בשרת.
+  //
+  // שני השמות מסוננים בכוונה: השרת שינה את המפתח מ-"מצב" ל-"מצב נוכחי", אבל
+  // הדוח לא אמור להיות תלוי בגרסת השרת שרצה מולו. שרת ישן לא יחזיר עמודה
+  // שגויה לדוח.
+  const STATUS_KEYS = new Set(["מצב", "מצב נוכחי"]);
+
+  const PERIOD_COLUMNS = (row) =>
+    Object.entries(row).filter(([key]) => !STATUS_KEYS.has(key));
+
+  const rows = data.rawRows || [];
+  const headers = rows.length ? PERIOD_COLUMNS(rows[0]).map(([key]) => key) : [];
+
+  // ==========================================================
+  // הדוח מרונדר ישירות אל <body> דרך פורטל — וזה מה שהופך אותו לניתן להדפסה
+  // ==========================================================
+  // הוא נמצא בעץ ה-React בתוך ExecutiveView, כלומר בתוך <main class="app-main">.
+  // ה-CSS של ההדפסה מסתיר את `.app-main` (כדי לא להדפיס את הדשבורד) — ואב עם
+  // display:none מסתיר את *כל* הצאצאים שלו. כלומר הדוח הסתיר את עצמו,
+  // וההדפסה יצאה דף ריק.
+  //
+  // הפורטל מוציא אותו מה-DOM של הדשבורד והופך אותו לילד ישיר של <body>,
+  // כך שהסתרת הדשבורד לא נוגעת בו. במיקום בעץ ה-React (props, state) לא השתנה כלום.
+  return createPortal(
     <div className="rv">
       {/* סרגל הפעולות — לא מודפס */}
       <div className="rv-bar no-print">
@@ -97,20 +129,18 @@ function ReportView({ data, onClose }) {
         {/* טבלת האתרים */}
         <section className="rv-section rv-break">
           <h2>פירוט לפי אתר</h2>
-          {data.rawRows.length === 0 ? (
+          {rows.length === 0 ? (
             <p className="rv-empty">אין נתונים בטווח הנבחר</p>
           ) : (
             <table className="rv-table">
               <thead>
-                <tr>{Object.keys(data.rawRows[0]).map((h) => <th key={h}>{h}</th>)}</tr>
+                <tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr>
               </thead>
               <tbody>
-                {data.rawRows.map((r, i) => (
+                {rows.map((r, i) => (
                   <tr key={i}>
-                    {Object.entries(r).map(([key, v]) => (
-                      <td key={key}>
-                        {key === "מצב" ? (STATUS_LABELS[v] || v) : String(v ?? "—")}
-                      </td>
+                    {PERIOD_COLUMNS(r).map(([key, v]) => (
+                      <td key={key}>{String(v ?? "—")}</td>
                     ))}
                   </tr>
                 ))}
@@ -123,7 +153,8 @@ function ReportView({ data, onClose }) {
           Parkomat SiteMonitor — דוח מנהל · {data.label}
         </footer>
       </article>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

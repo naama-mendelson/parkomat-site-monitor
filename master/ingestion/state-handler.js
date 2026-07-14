@@ -3,7 +3,7 @@
 const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt } = require("../db/queries");
 const bus = require("../bus");
 
-function handleState(site, data) {
+async function handleState(site, data) {
   const newStatus = data.state;
 
   let occurredAt;
@@ -16,7 +16,7 @@ function handleState(site, data) {
   // הגנת backfill: הודעה שקרתה לפני תחילת המצב הנוכחי הגיעה מאוחר (סדר הפוך /
   // redelivery). אסור לה לשכתב את הסטטוס — אחרת נוצרת שורת היסטוריה עם משך שלילי
   // ו-last_seen נדחף אחורה. no_comm תמיד עם זמן עכשווי, ולכן לעולם לא ייחסם כאן.
-  const openStartedAt = getOpenStatusStartedAt(site.id);
+  const openStartedAt = await getOpenStatusStartedAt(site.id);
   if (openStartedAt && occurredAt < openStartedAt) {
     console.log(`[state] אתר ${site.code}: הודעת state מאוחרת (${occurredAt} < ${openStartedAt}) — התעלמנו`);
     return;
@@ -28,12 +28,12 @@ function handleState(site, data) {
       console.log(`[state] אתר ${site.code}: no_comm (ללא שינוי, last_seen לא עודכן)`);
       return;
     }
-    updateLastSeenIfNewer(site.id, occurredAt);
+    await updateLastSeenIfNewer(site.id, occurredAt);
     console.log(`[state] אתר ${site.code}: ${newStatus} (ללא שינוי, עודכן last_seen)`);
     return;
   }
 
-  applyStateChange(site.id, newStatus, occurredAt);
+  await applyStateChange(site.id, newStatus, occurredAt);
   console.log(`[state] אתר ${site.code}: ${site.status} → ${newStatus} (שינוי נרשם)`);
 
   // שידור לכל מי שמאזין (SSE, ועוד בעתיד)

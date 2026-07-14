@@ -15,13 +15,13 @@ function getCutoffMonth() {
   return `${year}-${month}`;
 }
 
-function runCleanup() {
-  const sites = getAllSites();
+async function runCleanup() {
+  const sites = await getAllSites();
   if (sites.length === 0) return;
 
   const cutoffMonth = getCutoffMonth();
 
-  const oldMonths = getRawMonthsBefore(cutoffMonth);
+  const oldMonths = await getRawMonthsBefore(cutoffMonth);
 
   if (oldMonths.length === 0) {
     console.log(`[cleanup] אין נתונים ישנים מלפני ${cutoffMonth} — הכל נקי.`);
@@ -37,14 +37,14 @@ function runCleanup() {
 
     // ודא סיכום לפני מחיקה (הגנה — לא מוחקים בלי סיכום)
     for (const site of sites) {
-      if (!hasMonthlySummary(site.id, ym)) {
-        generateMonthlySummary(site.id, ym);
+      if (!await hasMonthlySummary(site.id, ym)) {
+        await generateMonthlySummary(site.id, ym);
         console.log(`[cleanup] ✅ סיכום נוצר לפני מחיקה: אתר ${site.code}, חודש ${ym}`);
       }
     }
 
     // מחיקת raw
-    const deleted = deleteRawInRange(monthStart, monthEnd);
+    const deleted = await deleteRawInRange(monthStart, monthEnd);
 
     console.log(`[cleanup] 🗑️ ${ym}: נמחקו ${deleted.operations} operations, ${deleted.statusHistory} status_history, ${deleted.maintenance} maintenance_windows`);
   }

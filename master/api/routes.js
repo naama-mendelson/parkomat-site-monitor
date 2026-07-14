@@ -1,7 +1,7 @@
 // api/routes.js — שרת ה-REST API של ה-Master (Express + SSE)
 
 const express = require("express");
-const { getAllSites, findSiteByCode, insertSite, getRecentOperations, getFilteredOperations,
+const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRecentOperations, getFilteredOperations,
         startMaintenance, getActiveMaintenance, cancelMaintenance, getSiteStats,
         getCurrentStatusSince, getStatusHistory, getMaintenanceHistory,
         getSystemSummary, getSystemMonthlyBreakdown,
@@ -12,19 +12,48 @@ const { getAllSites, findSiteByCode, insertSite, getRecentOperations, getFiltere
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
         updateSite, deleteSite } = require("../db/queries");
+const db = require("../db/db");
 const bus = require("../bus");
+const { cacheMiddleware } = require("./cache");
 
 const app = express();
 app.use(express.json());
 
 const PORT = 4000;
 
+// ============================================================
+// מדידת בקשות — כדי ש-N+1 לא יחזור בשקט
+// ============================================================
+// כל בקשה איטית נרשמת עם *מספר השאילתות* שהיא הריצה. זה המספר שמסגיר N+1:
+// אם הוא גדל כשמוסיפים אתרים, יש לולאה שמריצה שאילתה לכל אתר.
+// נרשם רק מעל הסף, כדי לא להציף את הלוג.
+const SLOW_MS = 500;
+
+app.use((req, res, next) => {
+  const before = db.getQueryStats();
+  const started = Date.now();
+
+  res.on("finish", () => {
+    const ms = Date.now() - started;
+    const queries = db.getQueryStats().queries - before.queries;
+    if (ms >= SLOW_MS) {
+      console.log(`[api] איטי: ${req.method} ${req.originalUrl} — ${ms}ms, ${queries} שאילתות`);
+    }
+  });
+
+  next();
+});
+
+// מטמון תגובות — הנתונים משתנים רק כשמגיעה הודעה, ואז המטמון מתרוקן.
+// חייב לבוא *לפני* המסלולים.
+app.use(cacheMiddleware);
+
 // כל לקוח SSE מוסיף מאזין ל-bus המשותף. ברירת המחדל (10) מייצרת אזהרה
 // כשיש הרבה מסכי בקרה פתוחים במקביל; מרימים את הסף (הניקוי נעשה ב-req.close).
 bus.setMaxListeners(50);
 
-// זריעת קוד המנהל בהרצה הראשונה (ברירת מחדל: admin123)
-ensureAdminCode();
+// זריעת קוד המנהל עברה ל-startApiServer(): היא נוגעת ב-DB, ו-DB עכשיו
+// אסינכרוני — ואי אפשר await ברמת המודול ב-CommonJS.
 
 /**
  * שער הניהול. נאכף *בשרת* — הסתרה ב-UI בלבד לא הייתה שווה כלום,
@@ -33,18 +62,18 @@ ensureAdminCode();
  * ⚠️ זו איננה מערכת הרשאות אמיתית: הקוד משותף לכולם, עובר בכל בקשה,
  * ואין ממנו זהות משתמש. הוא מונע טעויות, לא תוקף. ראה README.
  */
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   const code = req.get("x-admin-code") || req.body?.adminCode;
-  if (!verifyAdminCode(code)) {
+  if (!await verifyAdminCode(code)) {
     return res.status(401).json({ error: "קוד מנהל שגוי" });
   }
   next();
 }
 
 // POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
-app.post("/api/admin/verify", (req, res) => {
+app.post("/api/admin/verify", async (req, res) => {
   try {
-    if (!verifyAdminCode(req.body?.code)) {
+    if (!await verifyAdminCode(req.body?.code)) {
       return res.status(401).json({ error: "קוד מנהל שגוי" });
     }
     res.json({ ok: true });
@@ -55,18 +84,18 @@ app.post("/api/admin/verify", (req, res) => {
 });
 
 // POST /api/admin/code — שינוי קוד המנהל
-app.post("/api/admin/code", (req, res) => {
+app.post("/api/admin/code", async (req, res) => {
   try {
     const { currentCode, newCode } = req.body || {};
 
-    if (!verifyAdminCode(currentCode)) {
+    if (!await verifyAdminCode(currentCode)) {
       return res.status(401).json({ error: "הקוד הנוכחי שגוי" });
     }
     if (typeof newCode !== "string" || newCode.trim().length < 4) {
       return res.status(400).json({ error: "הקוד החדש חייב להכיל לפחות 4 תווים" });
     }
 
-    setAdminCode(newCode.trim());
+    await setAdminCode(newCode.trim());
     console.log("[api] קוד המנהל שונה");
     res.json({ ok: true, message: "הקוד עודכן" });
   } catch (err) {
@@ -76,7 +105,7 @@ app.post("/api/admin/code", (req, res) => {
 });
 
 // PATCH /api/sites/:code — עדכון שם ו/או קוד האתר
-app.patch("/api/sites/:code", requireAdmin, (req, res) => {
+app.patch("/api/sites/:code", requireAdmin, async (req, res) => {
   try {
     const { site_name, code: newCode } = req.body || {};
 
@@ -93,7 +122,7 @@ app.patch("/api/sites/:code", requireAdmin, (req, res) => {
       return res.status(400).json({ error: "שם האתר לא יכול להיות ריק" });
     }
 
-    const result = updateSite(req.params.code, {
+    const result = await updateSite(req.params.code, {
       newCode: newCode?.trim(),
       siteName: name,
     });
@@ -117,9 +146,9 @@ app.patch("/api/sites/:code", requireAdmin, (req, res) => {
 });
 
 // DELETE /api/sites/:code — מחיקת אתר וכל ההיסטוריה שלו
-app.delete("/api/sites/:code", requireAdmin, (req, res) => {
+app.delete("/api/sites/:code", requireAdmin, async (req, res) => {
   try {
-    const result = deleteSite(req.params.code);
+    const result = await deleteSite(req.params.code);
     if (!result.ok) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
@@ -157,8 +186,8 @@ app.use((req, res, next) => {
 const SITE_CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 // עוטף אתר: המצב הוא "maintenance" אם PLC שלח maintenance או שיש תחזוקה ידנית (OR)
-function applyMaintenanceStatus(site) {
-  const manualMaintenance = getActiveMaintenance(site.id);   // מקור 1: ידני (טבלת maintenance_windows)
+async function applyMaintenanceStatus(site) {
+  const manualMaintenance = await getActiveMaintenance(site.id);   // מקור 1: ידני (טבלת maintenance_windows)
   const plcMaintenance = site.status === "maintenance";       // מקור 2: PLC (כבר ב-sites.status)
 
   if (manualMaintenance || plcMaintenance) {
@@ -168,23 +197,16 @@ function applyMaintenanceStatus(site) {
 }
 
 // GET /api/sites — רשימת כל האתרים עם המצב הנוכחי + מדדים (אחוז כשל, פעולות, תקלות)
-app.get("/api/sites", (req, res) => {
+app.get("/api/sites", async (req, res) => {
   try {
     // אחוז כשל ופעולות מחושבים על 7 הימים האחרונים בלבד (שבועי)
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const sites = getAllSites().map(applyMaintenanceStatus).map((site) => {
-      const stats = getSiteStats(site.id, { from: weekAgo });
-      return {
-        ...site,
-        failureRate: stats.failureRate,
-        operations: stats.operations,
-        errors: stats.errors,
-        uptime: getSiteUptime(site.id, weekAgo),      // אחוז זמינות שבועי (null אם אין היסטוריה)
-        lastFaultAt: getLastFaultAt(site.id),         // מתי הייתה התקלה האחרונה
-        lastOperation: getLastOperation(site.id),     // לזיהוי כניסה/יציאה בזמן פעולה
-        statusSince: getCurrentStatusSince(site.id),  // מתי המצב הנוכחי התחיל
-      };
-    });
+
+    // היה כאן N+1: ~6 שאילתות *לכל אתר* (מדדים, זמינות, תקלה אחרונה, פעולה
+    // אחרונה, מצב נוכחי, תחזוקה). מול Postgres מרוחק זה סיבוב רשת לכל אחת.
+    // getAllSitesWithMetrics עושה את אותו הדבר במספר שאילתות קבוע.
+    const sites = await getAllSitesWithMetrics({ from: weekAgo });
+
     res.json(sites);
   } catch (err) {
     console.error("[api] שגיאה ב-GET /api/sites:", err.message);
@@ -195,7 +217,7 @@ app.get("/api/sites", (req, res) => {
 // POST /api/sites — רישום אתר חדש (קוד + שם)
 // הרישום הוא השער לקליטה: ה-dispatcher דוחה הודעות מאתר שאינו רשום,
 // כך שרק אחרי הרישום כאן מתחיל המידע מהאתר להישמר.
-app.post("/api/sites", requireAdmin, (req, res) => {
+app.post("/api/sites", requireAdmin, async (req, res) => {
   try {
     const { code, site_name, plc_type, plc_ip, site_ip } = req.body;
 
@@ -210,7 +232,7 @@ app.post("/api/sites", requireAdmin, (req, res) => {
       return res.status(400).json({ error: "חסר שם אתר (site_name)" });
     }
 
-    if (findSiteByCode(code)) {
+    if (await findSiteByCode(code)) {
       return res.status(409).json({ error: "אתר עם קוד זה כבר רשום", code });
     }
 
@@ -218,12 +240,12 @@ app.post("/api/sites", requireAdmin, (req, res) => {
     const optional = (value) =>
       typeof value === "string" && value.trim() ? value.trim() : null;
 
-    insertSite(code, name, {
+    await insertSite(code, name, {
       plcType: optional(plc_type),
       plcIp: optional(plc_ip),
       siteIp: optional(site_ip),
     });
-    const site = findSiteByCode(code);
+    const site = await findSiteByCode(code);
 
     // מודיעים ללקוחות ה-SSE שנוסף אתר, כדי שירעננו את הרשימה בלי המתנה
     // להודעת ה-MQTT הראשונה (שעשויה לאחר דקות, עד שהאתר ידווח).
@@ -243,31 +265,33 @@ app.post("/api/sites", requireAdmin, (req, res) => {
 });
 
 // GET /api/sites/:code — פרטי אתר בודד + operations אחרונות
-app.get("/api/sites/:code", (req, res) => {
+app.get("/api/sites/:code", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
 
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const stats = getSiteStats(site.id, { from: weekAgo });
+    const stats = await getSiteStats(site.id, { from: weekAgo });
 
-    const operations = getRecentOperations(site.id);
-    const statusSince = getCurrentStatusSince(site.id);            // מתי המצב הנוכחי התחיל
-    const statusHistory = getStatusHistory(site.id);              // לוג 10 שינויי המצב האחרונים
-    const maintenanceHistory = getMaintenanceHistory(site.id);   // חלונות תחזוקה (מי הפעיל, משך)
+    const operations = await getRecentOperations(site.id);
+    const statusSince = await getCurrentStatusSince(site.id);            // מתי המצב הנוכחי התחיל
+    const statusHistory = await getStatusHistory(site.id);              // לוג 10 שינויי המצב האחרונים
+    const maintenanceHistory = await getMaintenanceHistory(site.id);   // חלונות תחזוקה (מי הפעיל, משך)
     res.json({
       site: {
-        ...applyMaintenanceStatus(site),
+        // await חיוני: פריסה (spread) של Promise נותנת אובייקט ריק — בלי
+        // שגיאה. כל פרטי האתר היו נעלמים בשקט מהתגובה.
+        ...(await applyMaintenanceStatus(site)),
         statusSince,
         failureRate: stats.failureRate,
         operations: stats.operations,
         errors: stats.errors,
-        uptime: getSiteUptime(site.id, weekAgo),
-        lastFaultAt: getLastFaultAt(site.id),
-        lastOperation: getLastOperation(site.id),
+        uptime: await getSiteUptime(site.id, weekAgo),
+        lastFaultAt: await getLastFaultAt(site.id),
+        lastOperation: await getLastOperation(site.id),
       },
       operations,
       statusHistory,
@@ -280,11 +304,11 @@ app.get("/api/sites/:code", (req, res) => {
 });
 
 // GET /api/events — operations מסוננות (site_code, from, to, limit)
-app.get("/api/events", (req, res) => {
+app.get("/api/events", async (req, res) => {
   try {
     const { site_code, from, to, limit } = req.query;
 
-    const operations = getFilteredOperations({
+    const operations = await getFilteredOperations({
       siteCode: site_code,
       from: from,
       to: to,
@@ -299,15 +323,15 @@ app.get("/api/events", (req, res) => {
 });
 
 // GET /api/sites/:code/stats — מדדים: אחוז כשל, errors, operations
-app.get("/api/sites/:code/stats", (req, res) => {
+app.get("/api/sites/:code/stats", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
     const { from, to } = req.query;
-    const stats = getSiteStats(site.id, { from: from || null, to: to || null });
+    const stats = await getSiteStats(site.id, { from: from || null, to: to || null });
 
     res.json({ code: site.code, ...stats });
   } catch (err) {
@@ -317,9 +341,9 @@ app.get("/api/sites/:code/stats", (req, res) => {
 });
 
 // POST /api/sites/:code/maintenance — הפעלת תחזוקה על אתר
-app.post("/api/sites/:code/maintenance", (req, res) => {
+app.post("/api/sites/:code/maintenance", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
@@ -333,7 +357,7 @@ app.post("/api/sites/:code/maintenance", (req, res) => {
       return res.status(400).json({ error: "משך לא תקין (duration_hours) — חייב מספר חיובי" });
     }
 
-    const result = startMaintenance(site.id, name, duration_hours, reason || null);
+    const result = await startMaintenance(site.id, name, duration_hours, reason || null);
     res.json({
       ok: true,
       message: `תחזוקה הופעלה על אתר ${site.code}`,
@@ -346,14 +370,14 @@ app.post("/api/sites/:code/maintenance", (req, res) => {
 });
 
 // DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה
-app.delete("/api/sites/:code/maintenance", (req, res) => {
+app.delete("/api/sites/:code/maintenance", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
-    const result = cancelMaintenance(site.id);
+    const result = await cancelMaintenance(site.id);
     if (result.changes === 0) {
       return res.status(404).json({ error: "אין תחזוקה פעילה לביטול" });
     }
@@ -366,14 +390,14 @@ app.delete("/api/sites/:code/maintenance", (req, res) => {
 });
 
 // GET /api/sites/:code/maintenance — בדיקת תחזוקה פעילה
-app.get("/api/sites/:code/maintenance", (req, res) => {
+app.get("/api/sites/:code/maintenance", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
-    const active = getActiveMaintenance(site.id);
+    const active = await getActiveMaintenance(site.id);
     res.json({
       code: site.code,
       inMaintenance: !!active,
@@ -386,11 +410,11 @@ app.get("/api/sites/:code/maintenance", (req, res) => {
 });
 
 // GET /api/stats/system — סיכום מערכתי (כל האתרים) עבור המנהל הכללי
-app.get("/api/stats/system", (req, res) => {
+app.get("/api/stats/system", async (req, res) => {
   try {
     const { month, year, from, to } = req.query;
 
-    const summary = getSystemSummary({
+    const summary = await getSystemSummary({
       yearMonth: month || null,
       year: year || null,
       from: from || null,
@@ -405,11 +429,11 @@ app.get("/api/stats/system", (req, res) => {
 });
 
 // GET /api/stats/system/monthly — פירוט חודשי (לגרף מגמות)
-app.get("/api/stats/system/monthly", (req, res) => {
+app.get("/api/stats/system/monthly", async (req, res) => {
   try {
     const { year, from, to } = req.query;
 
-    const breakdown = getSystemMonthlyBreakdown({
+    const breakdown = await getSystemMonthlyBreakdown({
       year: year || null,
       from: from || null,
       to: to || null,
@@ -481,21 +505,21 @@ function percentChange(current, previous) {
 }
 
 // GET /api/sites/:code/analytics?period=week|month|year
-app.get("/api/sites/:code/analytics", (req, res) => {
+app.get("/api/sites/:code/analytics", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
     const p = resolvePeriod(req.query.period);
 
-    const stats = getSiteStats(site.id, p.range);
-    const uptime = getUptimeBreakdown(site.id, p.range);
-    const chart = getPeriodBreakdown(site.id, { ...p.range, granularity: p.granularity });
+    const stats = await getSiteStats(site.id, p.range);
+    const uptime = await getUptimeBreakdown(site.id, p.range);
+    const chart = await getPeriodBreakdown(site.id, { ...p.range, granularity: p.granularity });
 
-    const prevStats = getSiteStats(site.id, p.prev);
-    const prevUptime = getUptimeBreakdown(site.id, p.prev);
+    const prevStats = await getSiteStats(site.id, p.prev);
+    const prevUptime = await getUptimeBreakdown(site.id, p.prev);
 
     // האם בכלל היו נתונים בתקופה הקודמת? בלי זה אין משמעות לחץ מגמה.
     const hasComparison =
@@ -536,16 +560,16 @@ app.get("/api/sites/:code/analytics", (req, res) => {
 });
 
 // GET /api/sites/:code/insights?period=week|month|year — סטטיסטיקה מעמיקה ("עוד מידע")
-app.get("/api/sites/:code/insights", (req, res) => {
+app.get("/api/sites/:code/insights", async (req, res) => {
   try {
-    const site = findSiteByCode(req.params.code);
+    const site = await findSiteByCode(req.params.code);
     if (!site) {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
     const p = resolvePeriod(req.query.period);
-    const insights = getSiteInsights(site.id, p.range);
-    const log = getActivityLog(site.id, { ...p.range, limit: 300 });
+    const insights = await getSiteInsights(site.id, p.range);
+    const log = await getActivityLog(site.id, { ...p.range, limit: 300 });
 
     res.json({
       period: p.period,
@@ -563,10 +587,10 @@ app.get("/api/sites/:code/insights", (req, res) => {
 // ===== ממשקי הניהול =====
 
 // GET /api/stats/supervisor?period=week|month|year — נתונים תפעוליים למנהל בקרה
-app.get("/api/stats/supervisor", (req, res) => {
+app.get("/api/stats/supervisor", async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
-    const { sites, summary } = getSupervisorStats(p.range);
+    const { sites, summary } = await getSupervisorStats(p.range);
 
     res.json({
       period: p.period,
@@ -574,8 +598,8 @@ app.get("/api/stats/supervisor", (req, res) => {
       range: p.range,
       sites,
       summary,
-      recentErrors: getRecentErrors({ limit: 10 }),
-      activeMaintenances: getActiveMaintenances(),
+      recentErrors: await getRecentErrors({ limit: 10 }),
+      activeMaintenances: await getActiveMaintenances(),
     });
   } catch (err) {
     console.error("[api] שגיאה ב-GET supervisor:", err.message);
@@ -652,7 +676,7 @@ const listOf = (v) =>
 //   או ?from=YYYY-MM-DD&to=YYYY-MM-DD            (טווח מותאם)
 //   &sites=A1,B2  &statuses=error,ready  &minFailureRate=5
 //   &groupBy=site|status|time  &granularity=day|week|month
-app.get("/api/stats/executive", (req, res) => {
+app.get("/api/stats/executive", async (req, res) => {
   try {
     const p = resolveRange(req.query);
     if (!p) {
@@ -670,10 +694,10 @@ app.get("/api/stats/executive", (req, res) => {
       groupBy, granularity: p.granularity,
     };
 
-    const current = getExecutiveStatsFiltered({ ...p.range, ...filters });
+    const current = await getExecutiveStatsFiltered({ ...p.range, ...filters });
 
     // ההשוואה מוחלת על אותם פילטרים בדיוק, אחרת המגמה חסרת משמעות
-    const prev = getExecutiveStatsFiltered({ ...p.prev, ...filters });
+    const prev = await getExecutiveStatsFiltered({ ...p.prev, ...filters });
 
     const hasComparison =
       prev.kpis.totalOperations > 0 || prev.kpis.totalErrors > 0 || prev.kpis.avgAvailability > 0;
@@ -719,15 +743,15 @@ app.get("/api/stats/executive", (req, res) => {
 });
 
 // גרסה קודמת של הנתיב — נשמרת כדי לא לשבור צרכנים קיימים
-app.get("/api/stats/executive-legacy", (req, res) => {
+app.get("/api/stats/executive-legacy", async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
     const range = { ...p.range, granularity: p.granularity };
 
-    const current = getExecutiveStats(range);
+    const current = await getExecutiveStats(range);
 
     // מגמה מול התקופה הקודמת המקבילה
-    const prev = getExecutiveStats({ ...p.prev, granularity: p.granularity });
+    const prev = await getExecutiveStats({ ...p.prev, granularity: p.granularity });
     const hasComparison =
       prev.kpis.totalOperations > 0 || prev.kpis.totalErrors > 0 || prev.kpis.avgAvailability > 0;
 
@@ -763,7 +787,7 @@ app.get("/api/stats/executive-legacy", (req, res) => {
 });
 
 // GET /api/stream — SSE: עדכונים בזמן אמת
-app.get("/api/stream", (req, res) => {
+app.get("/api/stream", async (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -802,8 +826,13 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: "שגיאת שרת" });
 });
 
-// מפעיל את השרת — נקרא מ-master.js
-function startApiServer() {
+// מפעיל את השרת — נקרא מ-master.js.
+// אסינכרוני עכשיו: חייבים לוודא שהסכמה קיימת ושקוד המנהל נזרע *לפני*
+// שהשרת מתחיל לקבל בקשות, אחרת הבקשה הראשונה תיפול על טבלה שלא נוצרה.
+async function startApiServer() {
+  await db.init();
+  await ensureAdminCode();
+
   app.listen(PORT, () => {
     console.log(`api: REST server running on http://localhost:${PORT}`);
   });

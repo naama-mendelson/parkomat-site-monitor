@@ -6,7 +6,7 @@ const bus = require("../bus");
 
 const VALID_STATE = "operating";
 
-function handleOperation(site, data) {
+async function handleOperation(site, data) {
   const occurredAt = new Date(data.timestamp * 1000).toISOString();
   const receivedAt = new Date().toISOString();
 
@@ -14,7 +14,7 @@ function handleOperation(site, data) {
   const isValid = opState === VALID_STATE;
   const isAnomaly = isValid ? 0 : 1;
 
-  const saveResult = insertOperation(
+  const saveResult = await insertOperation(
     site.id,
     data.start_end,
     data.entry_exit,
@@ -31,10 +31,10 @@ function handleOperation(site, data) {
   }
 
   // פעולה שהתקבלה היא סימן חיים — מקדמים את last_seen (קדימה בלבד).
-  updateLastSeenIfNewer(site.id, occurredAt);
+  await updateLastSeenIfNewer(site.id, occurredAt);
 
   // הגנת backfill: הודעה שקרתה לפני תחילת המצב הנוכחי הגיעה מאוחר.
-  const openStartedAt = getOpenStatusStartedAt(site.id);
+  const openStartedAt = await getOpenStatusStartedAt(site.id);
   const isBackfill = openStartedAt && occurredAt < openStartedAt;
 
   // שדה ה-state בהודעת operation הוא *תמיד* "operating" (תג קבוע של הסוכן, ראה
@@ -49,7 +49,7 @@ function handleOperation(site, data) {
   // שהודעת ה-state=operating אבדה. זה תמיד תואם לכיוון הנכון (תחילת פעולה).
   const isStart = data.start_end === "start";
   if (isStart && data.state !== site.status && !isBackfill) {
-    applyStateChange(site.id, data.state, occurredAt);
+    await applyStateChange(site.id, data.state, occurredAt);
     console.log(`[operation] אתר ${site.code}: state סונכרן מ-start ${site.status} → ${data.state}`);
   }
 
@@ -58,7 +58,7 @@ function handleOperation(site, data) {
   // עדכון מונה הסייקלים — רק על end, לפי הערך מהבקר (מצטבר, מטפל ב-reset)
   let cycleResult = null;
   if (isEnd) {
-    cycleResult = applyCycleCounter(site.id, data.cycle_counter, occurredAt);
+    cycleResult = await applyCycleCounter(site.id, data.cycle_counter, occurredAt);
    if (cycleResult.mode === "reset") {
       console.warn(`[operation] 🔄 אתר ${site.code}: זוהה reset! הבקר ירד (${cycleResult.last} → ${cycleResult.current}). מונה מצטבר = ${cycleResult.total}`);
     } else if (cycleResult.mode === "first") {

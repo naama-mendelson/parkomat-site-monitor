@@ -13,15 +13,15 @@ function getLastMonth() {
   return `${year}-${month}`;
 }
 
-function runMonthlySummary() {
-  const sites = getAllSites();
+async function runMonthlySummary() {
+  const sites = await getAllSites();
   if (sites.length === 0) return;
 
   const lastMonth = getLastMonth();
 
   for (const site of sites) {
-    if (!hasMonthlySummary(site.id, lastMonth)) {
-      generateMonthlySummary(site.id, lastMonth);
+    if (!await hasMonthlySummary(site.id, lastMonth)) {
+      await generateMonthlySummary(site.id, lastMonth);
       console.log(`[summary] ✅ סיכום נוצר: אתר ${site.code}, חודש ${lastMonth}`);
     }
   }
