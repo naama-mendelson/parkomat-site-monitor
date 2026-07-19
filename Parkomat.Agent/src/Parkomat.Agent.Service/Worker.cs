@@ -35,9 +35,10 @@ public class Worker : BackgroundService
             config.Plc.ModeRegister, config.Plc.CardRegister, config.Plc.CycleRegister,
             config.PollIntervalMs);
         // כתובת ה-HiveMQ מגיעה לגשר של Mosquitto — נרשמת לאבחון, בלי הסיסמה.
+        // TLS אינו מוצג כערך: הוא תמיד פעיל ואין דרך לכבותו.
         _logger.LogInformation(
-            "HiveMQ (via Mosquitto bridge): {Host}:{Port} | TLS={Tls} | user='{User}' (password not logged)",
-            config.Mqtt.Host, config.Mqtt.Port, config.Mqtt.UseTls, config.Mqtt.Username);
+            "HiveMQ (via Mosquitto bridge): {Host}:{Port} | TLS=always | user='{User}' (password not logged)",
+            config.Mqtt.Host, config.Mqtt.Port, config.Mqtt.Username);
 
         // --- מוודאים שתעודת ה-CA נמצאת בנתיב ה-ASCII הקבוע (ProgramData) ---
         // מעתיקים אותה מתיקיית Mosquitto שבהתקנה אם צריך. כך Mosquitto (שרץ כתהליך
@@ -57,21 +58,20 @@ public class Worker : BackgroundService
         }
 
         // בדיקת בטיחות לתעודת ה-CA: bridge.conf מפנה ל-AgentPaths.CaCertFile.
-        // אם הקובץ לא קיים שם, ה-TLS של הגשר ל-HiveMQ ייכשל ושום הודעה לא תגיע —
-        // אז רושמים את זה במפורש כדי שהלוג יחשוף מיד בעיית נתיב-תעודה.
-        if (config.Mqtt.UseTls)
+        // TLS פעיל תמיד, ולכן התעודה היא דרישה — לא תלות מותנית.
+        // בלעדיה ה-TLS של הגשר ייכשל ושום הודעה לא תגיע לענן, ולכן זה
+        // Error ולא Warning: זו תקלה חוסמת, לא הערה.
+        if (File.Exists(AgentPaths.CaCertFile))
         {
-            if (File.Exists(AgentPaths.CaCertFile))
-            {
-                _logger.LogInformation("Using CA cert at {Path}", AgentPaths.CaCertFile);
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "CA cert NOT found at {Path} — HiveMQ bridge will fail TLS and no messages will reach the cloud. " +
-                    "Reinstall so the certificate is placed at this fixed location.",
-                    AgentPaths.CaCertFile);
-            }
+            _logger.LogInformation("Using CA cert at {Path}", AgentPaths.CaCertFile);
+        }
+        else
+        {
+            _logger.LogError(
+                "CA cert NOT found at {Path} — the HiveMQ bridge uses TLS (always) and will fail its " +
+                "handshake, so NO message will reach the cloud. Reinstall so the certificate is placed " +
+                "at this fixed location.",
+                AgentPaths.CaCertFile);
         }
 
         // --- יצירת שלושת הרכיבים ---
@@ -100,6 +100,10 @@ public class Worker : BackgroundService
         // האם היינו מחוברים ל-Broker בסבב הקודם. משמש לזהות "חזרנו להתחבר"
         // כדי לשדר מחדש את המצב הנוכחי (אחרת שינוי שקרה בזמן הנתק אובד).
         bool mqttWasConnected = mqtt.IsConnected;
+
+        // האם הגשר ל-HiveMQ היה מחובר בסבב הקודם. משמש לזהות "הגשר חזר"
+        // ולשדר מחדש את המצב הנוכחי — ראה ההסבר בשלב ג'.
+        bool bridgeWasConnected = mqtt.HiveMqBridgeConnected;
 
         // ה-MODE שנרשם לאחרונה ללוג. משמש כדי לרשום (ב-Information) *כל* שינוי MODE
         // ואת התרגום שלו — כך שבשדה רואים מה הבקר מחזיר ואם הערך בכלל ממופה ל-state.
@@ -240,14 +244,32 @@ public class Worker : BackgroundService
                 // מוודא חיבור — יתחבר מחדש אם התנתקנו (או אם Mosquitto רק עכשיו עלה).
                 await mqtt.EnsureConnectedAsync(stoppingToken);
 
-                // סנכרון מצב מאולץ בשני מקרים:
-                //  1. חזרנו להתחבר ל-Broker (אחרת שינוי בזמן הנתק היה אובד).
+                // סנכרון מצב מאולץ בשלושה מקרים:
+                //  1. חזרנו להתחבר ל-Broker המקומי (אחרת שינוי בזמן הנתק היה אובד).
                 //  2. ה-PLC התאושש מתקלה — לאחר שידור error צריך לשדר שוב את המצב האמיתי,
                 //     אחרת אם ה-MODE זהה למה שהיה לפני התקלה, ה-detector לא ישדר כלום
                 //     והשרת יישאר "תקוע" על error.
-                if ((!mqttWasConnected || plcJustRecovered) && currentState.HasValue)
+                //  3. **הגשר ל-HiveMQ חזר** — וזה קריטי מאז שהשרת מסמן no_comm
+                //     כשהגשר נופל.
+                //
+                //     בזמן נתק אינטרנט ה-Agent ממשיך לשדר ל-Mosquitto המקומי,
+                //     שמצבור את ההודעות ומזרים אותן כשהגשר חוזר — עם חותמי הזמן
+                //     *המקוריים*. אבל השרת כבר פתח מקטע no_comm, וההגנה מפני
+                //     הודעות מאוחרות (backfill) תדחה כל הודעת state ישנה ממנו.
+                //     בלי הסנכרון הזה האתר היה נשאר תקוע ב"אין תקשורת" עד
+                //     שינוי המצב האמיתי הבא — שעלול לא להגיע שעות.
+                //
+                //     שידור עם חותם זמן *טרי* סוגר את מקטע ה-no_comm ומחזיר את
+                //     המצב האמיתי. הפעולות (operation) לא נפגעות ממילא — הן
+                //     נשמרות בלי קשר להגנה הזו.
+                bool bridgeJustReconnected = mqtt.HiveMqBridgeConnected && !bridgeWasConnected;
+
+                if ((!mqttWasConnected || plcJustRecovered || bridgeJustReconnected)
+                    && currentState.HasValue)
                 {
-                    string reason = !mqttWasConnected ? "reconnected to broker" : "PLC recovered";
+                    string reason = !mqttWasConnected ? "reconnected to broker"
+                        : bridgeJustReconnected ? "HiveMQ bridge reconnected"
+                        : "PLC recovered";
                     _logger.LogInformation(
                         "Resyncing current state to broker ({Reason}) -> {State}.",
                         reason, currentState.Value);
@@ -258,8 +280,16 @@ public class Worker : BackgroundService
                     }, stoppingToken);
                 }
                 mqttWasConnected = true;
+                bridgeWasConnected = mqtt.HiveMqBridgeConnected;
 
                 // משדרים את מה שהמוח החליט (אם יש) — שינוי state.
+                //
+                // הסוכן משדר *רק על שינוי*, ובכוונה. אין כאן סימן חיים תקופתי:
+                // זיהוי הניתוק הוא תפקידו של פרוטוקול ה-MQTT (keepalive + LWT),
+                // בשתי השכבות — הסוכן מול Mosquitto, והגשר מול HiveMQ
+                // (ראה BridgeConfigWriter). הצפת הברוקר בהודעות "אני חי" כל 30
+                // שניות × מספר האתרים רק כדי לשחזר מידע שהפרוטוקול כבר נותן
+                // בחינם היא בזבוז, והיא גם מסתירה את הבעיה האמיתית במקום לתקן אותה.
                 if (result.State is not null)
                 {
                     _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);

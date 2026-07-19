@@ -304,3 +304,20 @@
 @media (prefers-reduced-motion: reduce) {
   .site-card.is-expanded { animation: none; }
 }
+
+/* ===== תג דרגת האתר (VIP / מורחב / בסיסי) — ליד שם האתר ===== */
+/* התג הוא inline-block ולכן זורם ליד השם: בשורת השם (h3 בלוק בתצוגה מורחבת /
+   flex-row בכרטיס רגיל), *מעל* שורת קוד האתר. לא משנים את display של השם — כך
+   קוד האתר נשאר בשורה נפרדת מתחת ולא נצמד לתג. */
+.tier-badge {
+  display: inline-block;
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.6;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  vertical-align: middle;
+  white-space: nowrap;
+}

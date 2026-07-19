@@ -93,21 +93,21 @@ public static class ConnectionTester
                 .WithClientId("parkomat-connection-tester")
                 .WithTimeout(TimeSpan.FromSeconds(HiveTimeoutSeconds));
 
-            if (mqtt.UseTls)
+            // TLS תמיד — הבדיקה חייבת לבדוק את אותו חיבור שהמערכת באמת עושה.
+            // אילו הייתה בודקת חיבור לא מוצפן, היא הייתה מדווחת "הצליח" על נתיב
+            // שאינו הנתיב האמיתי — והטכנאי היה עוזב את האתר בטוח שהכול תקין.
+            optionsBuilder = optionsBuilder.WithTlsOptions(o =>
             {
-                optionsBuilder = optionsBuilder.WithTlsOptions(o =>
-                {
-                    o.UseTls(true);
+                o.UseTls(true);
 
-                    // זו בדיקת אבחון (נגישות + פרטי-התחברות), לא גבול אבטחה.
-                    // הנתיב האמיתי מאמת את תעודת HiveMQ דרך cacert.pem של Mosquitto;
-                    // כאן אין לנו את שרשרת התעודות, אז לא נכשלים *רק* על אימות התעודה —
-                    // אחרת הבדיקה מציגה "נכשל" בזמן שהמערכת עובדת (false negative).
-                    // שאר הכשלים האמיתיים (host שגוי, סיסמה שגויה, אין רשת, סירוב חיבור)
-                    // עדיין נכשלים כרגיל: הם אינם קשורים לאימות התעודה.
-                    o.WithCertificateValidationHandler(_ => true);
-                });
-            }
+                // זו בדיקת אבחון (נגישות + פרטי-התחברות), לא גבול אבטחה.
+                // הנתיב האמיתי מאמת את תעודת HiveMQ דרך cacert.pem של Mosquitto;
+                // כאן אין לנו את שרשרת התעודות, אז לא נכשלים *רק* על אימות התעודה —
+                // אחרת הבדיקה מציגה "נכשל" בזמן שהמערכת עובדת (false negative).
+                // שאר הכשלים האמיתיים (host שגוי, סיסמה שגויה, אין רשת, סירוב חיבור)
+                // עדיין נכשלים כרגיל: הם אינם קשורים לאימות התעודה.
+                o.WithCertificateValidationHandler(_ => true);
+            });
 
             var options = optionsBuilder.Build();
 
@@ -119,7 +119,7 @@ public static class ConnectionTester
                 return new TestResult
                 {
                     Success = true,
-                    Message = $"החיבור ל-HiveMQ בכתובת {mqtt.Host}:{mqtt.Port} הצליח{(mqtt.UseTls ? " (TLS)" : "")}."
+                    Message = $"החיבור ל-HiveMQ בכתובת {mqtt.Host}:{mqtt.Port} הצליח (TLS)."
                 };
             }
 

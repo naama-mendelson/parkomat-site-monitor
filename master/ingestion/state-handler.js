@@ -1,6 +1,6 @@
 // ingestion/state-handler.js — מטפל בהודעת state: מעדכן מצב נוכחי + היסטוריה
 
-const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt } = require("../db/queries");
+const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance } = require("../db/queries");
 const bus = require("../bus");
 
 async function handleState(site, data) {
@@ -11,6 +11,24 @@ async function handleState(site, data) {
     occurredAt = new Date().toISOString();
   } else {
     occurredAt = new Date(data.timestamp * 1000).toISOString();
+  }
+
+  // ==========================================================
+  // מצב תחזוקה גובר על הכל — תקלה בזמן תחזוקה מושמטת לחלוטין
+  // ==========================================================
+  // אם האתר בתחזוקה — חלון ידני פעיל (מה-dashboard) *או* מצב תחזוקה שדווח
+  // מהבקר (site.status === 'maintenance') — הודעת error נזרקת כאן ולא ממשיכה:
+  // לא נרשמת ב-status_history, לא משנה את המצב (נשאר "תחזוקה"), ולא משודרת
+  // ב-SSE. כך התקלה לא נספרת (אין שורת error), לא נראית בכרטיס/בגרפים, ואין
+  // עליה התראה. זו החלטה מפורשת: "מצב תחזוקה גובר על הכלל".
+  // עדיין מעדכנים last_seen — האתר תקשר, ולכן הוא "נשמע".
+  if (newStatus === "error") {
+    const manualMaintenance = await getActiveMaintenance(site.id);
+    if (manualMaintenance || site.status === "maintenance") {
+      await updateLastSeenIfNewer(site.id, occurredAt);
+      console.log(`[state] אתר ${site.code}: תקלה בזמן תחזוקה — הושמטה (המצב נשאר תחזוקה)`);
+      return;
+    }
   }
 
   // הגנת backfill: הודעה שקרתה לפני תחילת המצב הנוכחי הגיעה מאוחר (סדר הפוך /

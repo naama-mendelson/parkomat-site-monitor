@@ -1,9 +1,9 @@
 # Master — צד השרת של Parkomat
 
-קולט טלמטריה מהאתרים דרך MQTT, שומר ב-SQLite, ומגיש REST API + SSE לדשבורד.
+קולט טלמטריה מהאתרים דרך MQTT, שומר ב-PostgreSQL (Supabase), ומגיש REST API + SSE לדשבורד.
 
 ```
-PLC → Agent → Mosquitto → (גשר TLS) → HiveMQ → [ Master ] → SQLite → API/SSE → דשבורד
+PLC → Agent → Mosquitto → (גשר TLS) → HiveMQ → [ Master ] → PostgreSQL → API/SSE → דשבורד
 ```
 
 ## התקנה והרצה
@@ -64,12 +64,16 @@ npm run add-site -- rothschild-01 "רחוב רוטשילד"
 
 ## החוזה מול הסוכן (קל לשבור בשוגג)
 
-- **נושאים:** `sites/{code}/state` ו-`sites/{code}/operation`.
+- **נושאים:** `sites/{code}/state`, `sites/{code}/operation`, `sites/{code}/bridge`.
 - **חותמי זמן הם unix-*שניות*,** לא מילישניות. הודעה עם זמן לפני 2020 נדחית.
 - **מצבים חוקיים:** `ready`, `operating`, `error`, `maintenance`, `no_comm`.
-- **`no_comm` מגיע מה-LWT** — ה-Broker משדר אותו *בשם* הסוכן כשהוא מתנתק, עם
-  `timestamp: 0`. לכן הוא **אינו מעדכן `last_seen`**: ניתוק אינו "צפייה". אם
-  יעדכן, אתר מת ייראה "נצפה זה עתה" וכלל 90 השניות של ה-PRD לא יתפוס אותו.
+- **`no_comm` מגיע מ-LWT — בשתי שכבות, ולא אחת.** אין watchdog ואין heartbeat בשרת;
+  "כלל 90 השניות" הוא **1.5 × keepalive של 60 שניות**, ומי שאוכף אותו הוא הברוקר.
+  1. *הסוכן מול Mosquitto המקומי* — JSON `{"timestamp":0,"state":"no_comm"}` על `state`.
+     מכסה: תהליך הסוכן קרס והמחשב חי.
+  2. *הגשר מול HiveMQ* — `"1"`/`"0"` על `bridge`. מכסה: **המחשב כולו מת** (נפילת חשמל) —
+     אז Mosquitto מת עם הסוכן ואין מי שישדר את שכבה 1.
+- **`no_comm` אינו מעדכן `last_seen`** — ניתוק אינו "צפייה". אחרת אתר מת נראה "נצפה זה עתה".
 - **`user` (מספר כרטיס) חייב להיות `""` ולא `null`** — הוא חלק ממפתח ה-dedup.
   אם בכל זאת מגיע `null`, ה-dispatcher מנרמל ל-`""` במקום לאבד את הפעולה.
 - **מפתח ה-dedup:** `(site_id, occurred_at, start_end, entry_exit, card_number)`.
@@ -92,14 +96,31 @@ npm run add-site -- rothschild-01 "רחוב רוטשילד"
 
 ## מסד הנתונים
 
-`sitemonitor.db` (SQLite, WAL). הסכמה ב-`db/schema.sql` נטענת בכל עלייה
-(`CREATE TABLE IF NOT EXISTS`), כך שהקובץ נוצר לבד בהרצה הראשונה.
+**PostgreSQL, מתארח ב-Supabase.** החיבור נקבע ב-`DATABASE_URL` (חובה — השרת לא עולה בלעדיו),
+ועובר דרך ה-**pooler** במצב טרנזקציה (פורט 6543). *לא* דרך `db.<ref>.supabase.co` — הוא IPv6
+בלבד ולא ייפתר.
 
-**עמודה חדשה לא נוצרת במסד קיים** דרך `CREATE TABLE IF NOT EXISTS`. לכן `db/db.js`
-מריץ `ALTER TABLE` idempotent (`addMissingColumns`) — כשמוסיפים עמודה ל-`schema.sql`,
-צריך להוסיף אותה גם שם.
+הסכמה ב-`db/schema.postgres.sql`, נטענת בכל עלייה (`CREATE TABLE IF NOT EXISTS`). היא רצה
+דרך חיבור **session** חד-פעמי (5432), כי ה-pooler הטרנזקציוני דוחה סקריפט DDL מרובה-פקודות.
+
+> `db/schema.sql` ו-`better-sqlite3` הם שרידים מתים מהתקופה שלפני ההגירה. אף אחד לא קורא אותם.
 
 תחזוקה יומית אוטומטית (מ-`master.js`): גיבוי → סיכום חודשי → ניקוי raw מעל שנה.
 
-כלים: `tools/inspect-db.js`, `tools/backup-db.js`, `tools/monthly-summary.js`,
-`tools/cleanup-old-data.js`.
+> ⚠️ `tools/backup-db.js` **אינו מגבה** — הוא מדפיס שהוא דילג. Supabase מגבה אוטומטית
+> **רק בתוכנית Pro ומעלה** (יומי, שמירה 7 ימים); בתוכנית החינמית **אין גיבוי כלל**.
+> `tools/inspect-db.js` עדיין קורא את קובץ ה-SQLite המת ולכן **מציג נתונים שגויים**.
+
+## מסד בדיקות
+
+פרויקט Supabase נפרד. הגדרות ב-`master/.env.test` (מוחרג מגיט; תבנית ב-`.env.test.example`).
+
+```sh
+npm run test:db:init     # סכמה + סימון המסד כמסד בדיקות
+npm run test:db:seed     # נתונים סינתטיים דטרמיניסטיים
+npm run test:db:reset    # ריקון
+```
+
+ההגנה היא **סימון חיובי בתוך המסד** (`settings['environment'] = 'test'`), לא רשימה שחורה של
+כתובות. סקריפט הרסני דורש לראות את הסימון ומסרב בלעדיו — ולפרודקשן אין סימון. ראה
+`db/test-guard.js`.

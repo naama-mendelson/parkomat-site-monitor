@@ -7,6 +7,7 @@
 .env
 .env.*
 !.env.example
+!.env.test.example
 *.pem
 *.key
 *.pfx
@@ -65,5 +66,7 @@ desktop.ini
 
 # ===== זמניים =====
 *.tmp
+*.tmp.*
 *.local
 *.bak
+*.pid

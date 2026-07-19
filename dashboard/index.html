@@ -7,6 +7,27 @@
     <meta name="theme-color" content="#0e4194" />
     <link rel="icon" type="image/png" href="/parkomat-logo.png" />
     <title>Parkomat · SiteMonitor</title>
+
+    <!--
+      מחיל את ערכת הנושא *לפני* הציור הראשון של הדף.
+      React מחיל אותה רק אחרי שהוא עולה, וזה מאוחר מדי: מי שבחרה מצב כהה
+      הייתה רואה הבזק לבן בכל טעינה. סקריפט חוסם (בלי defer) בתוך <head>
+      רץ לפני שהדפדפן מצייר משהו, ולכן אין הבהוב.
+
+      ברירת המחדל היא 'light' — היא גם ברירת המחדל של ה-CSS (:root),
+      כך שגם אם JS חסום לגמרי, המסך יוצא בהיר ולא שבור.
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("parkomat.theme");
+          document.documentElement.dataset.theme =
+            saved === "dark" || saved === "light" ? saved : "light";
+        } catch (e) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

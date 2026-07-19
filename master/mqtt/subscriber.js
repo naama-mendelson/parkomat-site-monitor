@@ -58,7 +58,22 @@ client.on("connect", (packet) => {
     if (err) console.error("subscriber: failed to subscribe to operation:", err.message);
   });
 
-  console.log("subscriber: listening to sites/+/state and sites/+/operation (QoS 1)");
+  // ==========================================================
+  // מצב הגשר — השכבה השנייה של זיהוי הניתוק
+  // ==========================================================
+  // ה-LWT של הסוכן (על sites/+/state) מכסה מקרה אחד: תהליך הסוכן נופל
+  // בזמן שהמחשב חי — Mosquitto המקומי רואה זאת ומפרסם no_comm.
+  //
+  // אבל כשהחשמל נופל באתר, Mosquitto מת יחד עם הסוכן ואין מי שיפרסם. מה
+  // שכן קורה: חיבור הגשר ל-HiveMQ נשבר, ו-HiveMQ — שאצלו רשום will של
+  // הגשר — מפרסם "0" ל-topic הזה אחרי 1.5 × keepalive (90 שניות).
+  //
+  // זה ה-topic שמסגיר אתר שנעלם לגמרי, וזה המקרה שהכי חשוב לתפוס בחניון.
+  client.subscribe("sites/+/bridge", { qos: 1 }, (err) => {
+    if (err) console.error("subscriber: failed to subscribe to bridge:", err.message);
+  });
+
+  console.log("subscriber: listening to sites/+/state, sites/+/operation, sites/+/bridge (QoS 1)");
 });
 
 // כל הודעה שמגיעה — משדרים אותה הלאה כאירוע "message"

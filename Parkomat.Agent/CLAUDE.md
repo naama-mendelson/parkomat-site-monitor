@@ -84,16 +84,51 @@ and the Tray (runs as the user) can read/write it:
 
 These are enforced by the server; changing them silently breaks ingestion:
 
-- **Topics:** `sites/{siteId}/state` and `sites/{siteId}/operation`.
-- **Timestamps are unix _seconds_, not milliseconds.**
+- **Topics:** `sites/{siteId}/state`, `sites/{siteId}/operation`, and `sites/{siteId}/bridge`
+  (the last one is published by **Mosquitto**, not by us — see "Disconnect detection" below).
+- **Timestamps are unix _seconds_, not milliseconds.** The server floors its own timestamps to
+  whole seconds to match; a mismatch here strands sites in `no_comm` permanently.
 - **`SiteState` JSON strings are exact and server-enforced:** `ready`, `operating`, `error`,
   `maintenance`, `no_comm` (see `SiteState.cs` `[JsonStringEnumMemberName]`). Do not rename.
 - **Operation messages must include a valid `state`** or the server rejects them.
 - **`user` (card number) must be `""`, never `null`** — it is part of the server's dedup key.
-- **LWT:** on disconnect the broker publishes `no_comm` to the state topic on the agent's behalf.
 - **The Service always connects to local Mosquitto (`localhost:1883`), never directly to
   HiveMQ.** The `MqttConfig` host/port/username/password feed the generated `bridge.conf`
   (`BridgeConfigWriter`) — they are *not* the client connection settings.
+
+## Disconnect detection — two LWT layers (do not collapse them)
+
+There is no heartbeat and no server-side watchdog. "90 seconds" is **1.5 × the 60s keepalive**,
+enforced by the brokers. Two layers, because one is not enough:
+
+1. **Agent → local Mosquitto.** Our LWT: JSON `{"timestamp":0,"state":"no_comm"}` on the state
+   topic. Covers: *the agent process crashed while the PC kept running.*
+2. **Mosquitto bridge → HiveMQ.** Mosquitto's own bridge notification, payload `"1"`/`"0"` on
+   `sites/{siteId}/bridge`. Covers: **the PC lost power.** In that case Mosquitto dies together
+   with the agent, so *nobody local is left to publish layer 1* — only HiveMQ, which holds the
+   bridge's will, can report it.
+
+Layer 2 is the failure that actually matters at a car park, and it was silently broken:
+`bridge.conf` had `notifications_local_only true`, so the notice stayed on a **powered-off PC**
+and the server showed the site as healthy indefinitely. `BridgeConfigWriter` now sets
+`notifications_local_only false` and an explicit `keepalive_interval 60`. Do not "tidy" these away.
+
+The payload is `"1"`/`"0"`, **not JSON** — which is exactly why it needs its own topic and cannot
+share `sites/{siteId}/state`, where the server contract demands JSON.
+
+On bridge reconnect the agent **republishes its current state with a fresh timestamp**
+(`Worker.cs`). Without that resync, messages queued during the outage carry old timestamps, the
+server's backfill guard rejects them, and the site stays `no_comm` after it has already recovered.
+
+## TLS is mandatory and cannot be switched off
+
+`MqttConfig` has **no `UseTls` field**, and the settings form has no checkbox — both were
+removed on purpose. The bridge carries the site's username and password to HiveMQ across the open
+internet; without TLS they travel in clear text. A checkbox there was not flexibility but a trap:
+one click by a technician in the field silently downgraded the whole site, and nothing failed
+loudly. `BridgeConfigWriter` always emits `bridge_tls_version tlsv1.2` + `bridge_cafile`.
+
+The CA certificate lives under `ProgramData` (no spaces in the path), not `Program Files`.
 - **MODE → state mapping lives only in `ModeTranslator`:** `0`=maintenance, `1`=ready,
   `2`/`3`=operating, `4`=init (ignored, no state), `5`=error. For operations, `2`=entry,
   `3`=exit.

@@ -7,7 +7,12 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env master.js",
     "add-site": "node tools/add-test-site.js",
-    "inspect-db": "node tools/inspect-db.js"
+    "inspect-db": "node tools/inspect-db.js",
+
+    "test:db:init": "node --env-file=.env.test tools/test-db/init.js",
+    "test:db:seed": "node --env-file=.env.test tools/test-db/seed.js",
+    "test:db:reset": "node --env-file=.env.test tools/test-db/reset.js",
+    "test:server": "node --env-file=.env.test master.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",

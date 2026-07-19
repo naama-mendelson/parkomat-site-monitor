@@ -40,7 +40,7 @@ public class MqttPublisher : IAsyncDisposable
     // מטפל בהודעות נכנסות: מעדכן את מצב הגשר ל-HiveMQ לפי ה-topic הייעודי.
     private Task OnMessageReceived(MqttApplicationMessageReceivedEventArgs e)
     {
-        if (e.ApplicationMessage.Topic == BridgeConfigWriter.BridgeStateTopic)
+        if (e.ApplicationMessage.Topic == BridgeConfigWriter.RemoteBridgeStateTopic(_siteCode))
         {
             string payload = e.ApplicationMessage.ConvertPayloadToString()?.Trim() ?? "";
             HiveMqBridgeConnected = payload == "1";
@@ -84,7 +84,7 @@ public class MqttPublisher : IAsyncDisposable
 
         // נרשמים ל-topic של מצב הגשר ל-HiveMQ (retained — נקבל את הערך הנוכחי מיד).
         var subscribe = new MqttClientSubscribeOptionsBuilder()
-            .WithTopicFilter(BridgeConfigWriter.BridgeStateTopic, MqttQualityOfServiceLevel.AtLeastOnce)
+            .WithTopicFilter(BridgeConfigWriter.RemoteBridgeStateTopic(_siteCode), MqttQualityOfServiceLevel.AtLeastOnce)
             .Build();
         await _client.SubscribeAsync(subscribe, ct);
     }

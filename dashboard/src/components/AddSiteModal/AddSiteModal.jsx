@@ -1,6 +1,7 @@
 // components/AddSiteModal/AddSiteModal.jsx — מודל רישום אתר חדש
 import { useState } from "react";
 import { registerSite } from "../../services/api";
+import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 import "./AddSiteModal.css";
 
 // קוד חוקי — חייב להתאים לכלל שה-Master אוכף. הקוד נכנס כמות שהוא לנתיב ה-MQTT
@@ -14,6 +15,7 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [plcType, setPlcType] = useState("");
   const [plcIp, setPlcIp] = useState("");
   const [siteIp, setSiteIp] = useState("");
+  const [tier, setTier] = useState("basic");
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -36,6 +38,7 @@ function AddSiteModal({ onClose, onSuccess }) {
       await registerSite({
         code: trimmedCode,
         site_name: trimmedName,
+        tier,
         plc_type: plcType.trim() || undefined,
         plc_ip: plcIp.trim() || undefined,
         site_ip: siteIp.trim() || undefined,
@@ -85,6 +88,15 @@ function AddSiteModal({ onClose, onSuccess }) {
               onChange={(e) => setSiteName(e.target.value)}
               placeholder="לדוגמה: חניון דיזנגוף סנטר"
             />
+          </label>
+
+          <label className="addsite-field">
+            <span>דרגת אתר <b className="req">*</b></span>
+            <select value={tier} onChange={(e) => setTier(e.target.value)}>
+              {TIER_OPTIONS.map((t) => (
+                <option key={t} value={t}>{TIER_LABELS[t]}</option>
+              ))}
+            </select>
           </label>
 
           <label className="addsite-field">

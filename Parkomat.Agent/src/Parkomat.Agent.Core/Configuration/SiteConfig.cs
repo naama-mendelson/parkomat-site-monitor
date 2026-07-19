@@ -38,12 +38,28 @@ public class PlcConfig
 }
 
 /// <summary>הגדרות החיבור ל-Broker.</summary>
+/// <summary>
+/// הגדרות ההתחברות ל-HiveMQ (מוזנות לגשר ה-Mosquitto, לא ללקוח עצמו).
+///
+/// ==========================================================
+/// אין כאן מתג TLS — וזה בכוונה.
+/// ==========================================================
+/// היה כאן שדה UseTls עם checkbox בטופס ההגדרות. זו הייתה טעות: הגשר
+/// מתחבר ל-HiveMQ בענן, דרך האינטרנט, ומעביר את **שם המשתמש והסיסמה**
+/// של האתר. חיבור בלי TLS פירושו לשדר אותם בטקסט גלוי.
+///
+/// מתג כזה אינו "גמישות" — הוא מלכודת: הוא נותן לטכנאי בשדה, בלחיצה
+/// אחת ובלי אזהרה, להוריד את ההצפנה של כל האתר. ואם הוא נשאר כבוי בטעות,
+/// שום דבר לא ייכשל בקול — ההודעות פשוט יזרמו לא מוצפנות.
+///
+/// TLS הוא עכשיו קבוע ולא ניתן לכיבוי (ראה BridgeConfigWriter).
+/// </summary>
 public class MqttConfig
 {
-    /// <summary>כתובת ה-Broker (למשל localhost עבור Mosquitto מקומי).</summary>
+    /// <summary>כתובת ה-Broker של HiveMQ.</summary>
     public string Host { get; set; } = "";
 
-    /// <summary>פורט. 1883 ל-Mosquitto מקומי (ללא הצפנה), 8883 ל-HiveMQ ישיר.</summary>
+    /// <summary>פורט. 8883 = MQTT over TLS (הפורט של HiveMQ בענן).</summary>
     public int Port { get; set; } = 8883;
 
     /// <summary>שם משתמש להתחברות ל-Broker.</summary>
@@ -51,7 +67,4 @@ public class MqttConfig
 
     /// <summary>סיסמה להתחברות ל-Broker.</summary>
     public string Password { get; set; } = "";
-
-
-
 }

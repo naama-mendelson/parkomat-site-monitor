@@ -22,7 +22,6 @@ public class SettingsForm : Form
     private readonly NumericUpDown _mqttPort = new();
     private readonly TextBox _mqttUser = new();
     private readonly TextBox _mqttPass = new();
-    private readonly CheckBox _mqttTls = new() { Text = "השתמש ב-TLS (חובה ל-HiveMQ בענן)", AutoSize = true };
 
     // מחזיק את הגדרות ה-PLC (כולל הכתובות) בזיכרון, נערך דרך חלונית הכתובות.
     private PlcConfig _plc = new();
@@ -128,9 +127,17 @@ public class SettingsForm : Form
         _mqttPass.UseSystemPasswordChar = true;   // מסתיר את הסיסמה
         AddRow(t, 3, "סיסמה:", _mqttPass);
 
-        // תיבת סימון ל-TLS — משפיעה על קובץ הגישור של Mosquitto.
+        // אין כאן מתג TLS — הוא תמיד פעיל, ובכוונה.
+        // המתג שהיה כאן איפשר לטכנאי בשדה להוריד בלחיצה אחת את ההצפנה של
+        // האתר כולו — כולל שם המשתמש והסיסמה שעוברים באינטרנט הפתוח — ושום
+        // דבר לא היה נכשל בקול. זו חיווי בלבד, לא בחירה.
         t.Controls.Add(new Label(), 0, 4);   // תא ריק ליישור
-        t.Controls.Add(_mqttTls, 1, 4);
+        t.Controls.Add(new Label
+        {
+            Text = "🔒 החיבור ל-HiveMQ מוצפן תמיד (TLS)",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(0x1B, 0x5E, 0x20)
+        }, 1, 4);
 
         g.Controls.Add(t);
         return g;
@@ -220,7 +227,6 @@ public class SettingsForm : Form
         _mqttPort.Value = c.Mqtt.Port;
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
-        _mqttTls.Checked = c.Mqtt.UseTls;
     }
 
     private async void OnSave()
@@ -254,8 +260,7 @@ public class SettingsForm : Form
                 Host = _mqttHost.Text.Trim(),
                 Port = (int)_mqttPort.Value,
                 Username = _mqttUser.Text.Trim(),
-                Password = _mqttPass.Text,
-                UseTls = _mqttTls.Checked
+                Password = _mqttPass.Text
             }
         };
 

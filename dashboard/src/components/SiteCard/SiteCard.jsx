@@ -1,7 +1,7 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { STATUS_LABELS, STATUS_COLORS } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, TIER_LABELS, TIER_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
 import "./SiteCard.css";
 
@@ -10,6 +10,21 @@ function failureRateColor(rate) {
   if (rate > 5) return STATUS_COLORS.error.dot;         // אדום
   if (rate > 0) return STATUS_COLORS.maintenance.dot;   // ענבר
   return STATUS_COLORS.ready.dot;                       // ירוק
+}
+
+// תג דרגת האתר (VIP / מורחב / בסיסי) — מוצג ליד שם האתר.
+function TierBadge({ tier }) {
+  const t = tier || "basic";
+  const c = TIER_COLORS[t] || TIER_COLORS.basic;
+  return (
+    <span
+      className="tier-badge"
+      style={{ background: c.bg, color: c.text, borderColor: c.border }}
+      title={`דרגה: ${TIER_LABELS[t]}`}
+    >
+      {TIER_LABELS[t]}
+    </span>
+  );
 }
 
 function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }) {
@@ -52,7 +67,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
       >
         <div className="exp-head">
           <div className="exp-title">
-            <h3 className="exp-name">{site.site_name}</h3>
+            <h3 className="exp-name">
+              {site.site_name}
+              <TierBadge tier={site.tier} />
+            </h3>
             <span className="exp-code">קוד אתר: {site.code}</span>
           </div>
           <span className="exp-status" style={{ background: colors.bg, color: colors.text }}>
@@ -86,12 +104,11 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
 
           <div className="exp-metric">
             <span className="exp-value exp-value--sm">
-              {site.last_seen ? timeAgo(site.last_seen) : "טרם דיווח"}
+              {(site.statusSince || site.last_seen)
+                ? timeAgo(site.statusSince || site.last_seen)
+                : "טרם דיווח"}
             </span>
-            <span className="exp-label">נראה לאחרונה</span>
-            <span className="exp-hint">
-              {site.statusSince ? `במצב זה ${timeAgo(site.statusSince)}` : ""}
-            </span>
+            <span className="exp-label">המצב השתנה ל{label}</span>
           </div>
         </div>
 
@@ -113,7 +130,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
       title={isNormal ? "לחצו להרחבה" : `${site.site_name} — ${label}`}
     >
       <div className="card-header">
-        <span className="card-name">{site.site_name}</span>
+        <span className="card-name">
+          {site.site_name}
+          {!isMini && <TierBadge tier={site.tier} />}
+        </span>
         {!isMini && <span className="card-code">#{site.code}</span>}
       </div>
 

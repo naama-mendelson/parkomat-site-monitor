@@ -14,24 +14,14 @@
   --brand-lime-strong: #7ba518;
 }
 
-/* ברירת מחדל: כהה */
+/* ==========================================================
+   ברירת המחדל היא **בהירה**.
+   ==========================================================
+   ה-:root החשוף (בלי data-theme) חייב להיות בהיר, כי הוא מה שתקף ברגע
+   שבין טעינת ה-CSS לבין הרגע שבו ה-JS מסמן את הנושא. קודם הוא היה כהה,
+   ולכן פתיחת הדף במצב בהיר הבהבה כהה לרגע.
+   הסקריפט ב-index.html מקדים גם אותו — ראה שם. */
 :root,
-[data-theme="dark"] {
-  --bg-primary: #0e1525;
-  --bg-secondary: #131c30;
-  --bg-card: #182238;
-  --bg-hover: #1f2c48;
-  --border-color: #243456;
-  --text-primary: #eef2f8;
-  --text-secondary: #aab4c5;
-  --text-muted: #6b7894;
-  --accent: var(--brand-light);
-  --accent-soft: #5b86ec;
-  --header-bg: var(--brand-strong);
-  --shadow: rgba(0, 0, 0, 0.45);
-}
-
-/* בהיר */
 [data-theme="light"] {
   --bg-primary: #eef1f6;
   --bg-secondary: #ffffff;
@@ -45,6 +35,21 @@
   --accent-soft: #2c52b5;
   --header-bg: var(--brand);
   --shadow: rgba(27, 58, 140, 0.12);
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0e1525;
+  --bg-secondary: #131c30;
+  --bg-card: #182238;
+  --bg-hover: #1f2c48;
+  --border-color: #243456;
+  --text-primary: #eef2f8;
+  --text-secondary: #aab4c5;
+  --text-muted: #6b7894;
+  --accent: var(--brand-light);
+  --accent-soft: #5b86ec;
+  --header-bg: var(--brand-strong);
+  --shadow: rgba(0, 0, 0, 0.45);
 }
 
 body {

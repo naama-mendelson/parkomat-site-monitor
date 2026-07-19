@@ -3,6 +3,7 @@
 const { findSiteByCode } = require("../db/queries");
 const { handleState } = require("./state-handler");
 const { handleOperation } = require("./operation-handler");
+const { handleBridgeState } = require("./bridge-handler");
 
 // המצבים החוקיים שהקצה רשאי לשלוח (no_comm נגזר LWT, לא נשלח)
 const VALID_STATES = ["ready", "operating", "error", "maintenance","no_comm"];
@@ -58,9 +59,23 @@ async function handleMessage(topic, raw) {
       return;
     }
     const siteCode = parts[1];
-    const kind = parts[2]; // "state" או "operation"
+    const kind = parts[2]; // "state" | "operation" | "bridge"
 
-    // 2. פענוח ה-JSON
+    // 2. הודעת מצב הגשר — מטופלת *לפני* ניתוח ה-JSON, ובכוונה.
+    //    זו הודעת notification של Mosquitto, וה-payload שלה הוא "1"/"0"
+    //    ולא JSON. אילו הייתה עוברת דרך JSON.parse היא הייתה נדחית
+    //    ("לא אובייקט") ומקרה נפילת החשמל היה נשאר בלי זיהוי.
+    if (kind === "bridge") {
+      const bridgeSite = await findSiteByCode(siteCode);
+      if (!bridgeSite) {
+        console.log(`[dispatcher] נדחתה הודעת גשר מאתר לא רשום: code=${siteCode}`);
+        return;
+      }
+      await handleBridgeState(bridgeSite, raw);
+      return;
+    }
+
+    // 3. פענוח ה-JSON
     let data;
     try {
       data = JSON.parse(raw);
@@ -74,7 +89,7 @@ async function handleMessage(topic, raw) {
       return;
     }
 
-    // 3. בדיקת רישום — אתר לא רשום נדחה
+    // 4. בדיקת רישום — אתר לא רשום נדחה
     const site = await findSiteByCode(siteCode);
     if (!site) {
       console.log(`[dispatcher] נדחתה הודעה מאתר לא רשום: code=${siteCode}`);

@@ -4,8 +4,8 @@
 חניה (כניסות/יציאות) מהבקר, ומציגה סטטיסטיקות ותקלות בדשבורד.
 
 ```
-PLC ──Modbus──► Agent ──MQTT──► Mosquitto ──TLS──► HiveMQ ──► Master ──► SQLite
-                                                                 │
+PLC ──Modbus──► Agent ──MQTT──► Mosquitto ──TLS──► HiveMQ ──► Master ──► PostgreSQL
+                                                                 │         (Supabase)
                                                           REST + SSE
                                                                  │
                                                             Dashboard
@@ -16,7 +16,7 @@ PLC ──Modbus──► Agent ──MQTT──► Mosquitto ──TLS──►
 | תיקייה | מה זה | טכנולוגיה |
 |---|---|---|
 | [`Parkomat.Agent/`](Parkomat.Agent) | רץ על מחשב **באתר**. קורא את ה-PLC ב-Modbus-TCP ומשדר את המצב ל-MQTT. | C# / .NET 10 (Windows Service + Tray) |
-| [`master/`](master) | **השרת**. קולט את הטלמטריה מ-HiveMQ, שומר ב-SQLite, ומגיש REST + SSE. | Node.js / Express / better-sqlite3 |
+| [`master/`](master) | **השרת**. קולט את הטלמטריה מ-HiveMQ, שומר ב-PostgreSQL, ומגיש REST + SSE. | Node.js / Express / pg (Supabase) |
 | [`dashboard/`](dashboard) | **הדשבורד**. ניטור חי, סטטיסטיקות, לוג פעילות. | React 19 / Vite |
 
 ## הרצה
@@ -68,10 +68,11 @@ cd master && npm run add-site -- 1234 "אילת 4"
 
 ## החוזה בין הרכיבים
 
-- **נושאי MQTT:** `sites/{code}/state` ו-`sites/{code}/operation`
+- **נושאי MQTT:** `sites/{code}/state` · `sites/{code}/operation` · `sites/{code}/bridge`
 - **חותמי זמן:** unix **שניות** (לא מילישניות)
 - **מצבים:** `ready` · `operating` · `error` · `maintenance` · `no_comm`
-- **`no_comm` מגיע מה-LWT** של הברוקר כשהסוכן מתנתק — ולכן הוא *לא* מעדכן `last_seen`
+- **`no_comm` מגיע מ-LWT בשתי שכבות** — הסוכן מול Mosquitto (קריסת תהליך), והגשר מול
+  HiveMQ (נפילת חשמל באתר). אין watchdog בשרת. הוא *לא* מעדכן `last_seen`
 - **מפתח dedup:** `(site_id, occurred_at, start_end, entry_exit, card_number)` —
   QoS 1 הוא at-least-once, כפילויות הן התנהגות תקינה
 
@@ -79,5 +80,9 @@ cd master && npm run add-site -- 1234 "אילת 4"
 
 ## אבטחה
 
-- הסודות (`master/.env`) ומסד הנתונים (`sitemonitor.db`) **מוחרגים מגיט**.
+- הסודות (`master/.env`, `master/.env.test`) **מוחרגים מגיט**. הריפו הזה **ציבורי**.
 - הרשאת ה-Master מול HiveMQ היא **האזנה בלבד** — הוא לעולם לא מפרסם.
+- **TLS מול HiveMQ הוא חובה ואי אפשר לכבות אותו.** היה בסוכן checkbox שאִפשר זאת; הוא הוסר.
+  הגשר מעביר שם משתמש וסיסמה דרך האינטרנט הפתוח — בלי TLS הם נוסעים בטקסט גלוי.
+- כל נתיבי הכתיבה ב-API מוגנים ב-`requireAdmin` (כותרת `x-admin-code`, נאכף **בשרת**).
+  זהו סוד משותף, לא אימות אמיתי — הוא זמני עד שיוטמע Supabase Auth.

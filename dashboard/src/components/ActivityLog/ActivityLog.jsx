@@ -19,6 +19,18 @@ function categoryOf(e) {
   return e.status === "maintenance" ? "maintenance" : "status";
 }
 
+// ==========================================================
+// 'בפעולה' מוצג רק במסנן "שינויי מצב"
+// ==========================================================
+// כל כניסת רכב מייצרת גם מעבר מצב ל'בפעולה' וגם הודעת פעולה. בציר הזמן המאוחד
+// ("הכל") זה הופיע פעמיים ברצף — "המצב השתנה ל: בפעולה" ומיד "כניסת רכב" — וזה
+// רעש שמטשטש את מה שבאמת קרה.
+//
+// אבל במסנן "שינויי מצב" זה לא רעש אלא התוכן עצמו: היסטוריית מצבים שחסר בה
+// המצב הנפוץ ביותר אינה היסטוריית מצבים. לכן השרת שולח את הכל, ואנחנו מסתירים
+// רק היכן שזה מפריע.
+const isOperatingState = (e) => e.kind === "status" && e.status === "operating";
+
 const FILTERS = [
   { key: "all", label: "הכל" },
   { key: "operation", label: "פעולות" },
@@ -122,10 +134,13 @@ function ActivityLog({ log }) {
 
   const entries = log?.entries || NO_ENTRIES;
 
-  const visible = useMemo(
-    () => (filter === "all" ? entries : entries.filter((e) => categoryOf(e) === filter)),
-    [entries, filter],
-  );
+  const visible = useMemo(() => {
+    // "שינויי מצב" — התצוגה המלאה. 'בפעולה' כלול.
+    if (filter === "status") return entries.filter((e) => categoryOf(e) === "status");
+    // "הכל" — ציר הזמן המאוחד. 'בפעולה' מוסתר, אחרת כל כניסת רכב כפולה.
+    if (filter === "all") return entries.filter((e) => !isOperatingState(e));
+    return entries.filter((e) => categoryOf(e) === filter);
+  }, [entries, filter]);
 
   // קיבוץ לימים, תוך שמירה על הסדר (מהחדש לישן)
   const days = useMemo(() => {
@@ -138,11 +153,14 @@ function ActivityLog({ log }) {
     return [...map.entries()];
   }, [visible]);
 
-  const counts = log?.counts || { operations: 0, status: 0, maintenance: 0 };
+  const counts = log?.counts || { operations: 0, status: 0, statusAll: 0, maintenance: 0 };
   const countFor = (key) => ({
+    // "הכל" סופר לפי מה שבאמת מוצג בו — כלומר בלי 'בפעולה' (counts.status).
     all: counts.operations + counts.status + counts.maintenance,
     operation: counts.operations,
-    status: counts.status,
+    // "שינויי מצב" סופר *כולל* 'בפעולה' (counts.statusAll), כדי שהמספר על הצ'יפ
+    // יתאים לכמות השורות שייפתחו. ה-?? מגן על שרת ישן שעדיין לא שולח statusAll.
+    status: counts.statusAll ?? counts.status,
     maintenance: counts.maintenance,
   }[key]);
 

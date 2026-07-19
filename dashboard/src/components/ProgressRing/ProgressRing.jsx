@@ -14,7 +14,13 @@ function ProgressRing({ percent, size = 120, stroke = 10, color, label }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const clamped = Math.max(0, Math.min(100, animated));
-  const dash = (clamped / 100) * c;
+
+  // strokeLinecap="round" מתארך כל קצה קשת ב-stroke/2, ולכן קשת של 98%
+  // "נסגרת" ונראית מלאה (הפער הזעיר מתמלא ע"י שני הכובעים). מקזזים את בליטת
+  // שני הכובעים (סה"כ stroke) מהאורך המצויר, כך שהאורך ה*נראה* (קשת+כובעים)
+  // תואם לאחוז האמיתי — ופער קטן שוב נראה. ב-100% אין פער, אז לא מקזזים.
+  const capOverhang = clamped >= 99.95 ? 0 : stroke;
+  const dash = Math.max(0, (clamped / 100) * c - capOverhang);
 
   return (
     <div className="ring" style={{ width: size, height: size }}>

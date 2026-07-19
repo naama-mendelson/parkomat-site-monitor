@@ -1,7 +1,7 @@
 // components/AdminPanel/AdminPanel.jsx — ניהול אתרים: הוספה, עריכה, מחיקה, שינוי קוד.
 // זמין רק למנהל בקרה ומנהל כללי, ומאחורי קוד מנהל שהשרת אוכף.
 import { useState } from "react";
-import { STATUS_COLORS, STATUS_LABELS } from "../../utils/constants";
+import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 import { updateSite, deleteSite, changeAdminCode, storeAdminCode } from "../../services/api";
 import { useAdmin } from "../../hooks/useAdmin";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
@@ -40,7 +40,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
 
   function startEdit(site) {
     setEditing(site.code);
-    setDraft({ name: site.site_name, code: site.code });
+    setDraft({ name: site.site_name, code: site.code, tier: site.tier || "basic" });
     setErr(null);
   }
 
@@ -56,7 +56,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
     setBusy(true);
     setErr(null);
     try {
-      await updateSite(originalCode, { site_name: name, code: newCode });
+      await updateSite(originalCode, { site_name: name, code: newCode, tier: draft.tier });
       setEditing(null);
       onChanged();
       flash(`האתר "${name}" עודכן`);
@@ -201,6 +201,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
                         <input value={draft.code}
                           onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
                       </label>
+                      <label>
+                        <span>דרגה</span>
+                        <select value={draft.tier}
+                          onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
+                          {TIER_OPTIONS.map((t) => (
+                            <option key={t} value={t}>{TIER_LABELS[t]}</option>
+                          ))}
+                        </select>
+                      </label>
                       <p className="adm-warn">
                         ⚠ שינוי הקוד משנה את נתיב ה-MQTT. הסוכן באתר חייב להתעדכן גם הוא,
                         אחרת הודעותיו יידחו.
@@ -210,7 +219,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
                     <div className="adm-info">
                       <span className="adm-name">{s.site_name}</span>
                       <span className="adm-meta">
-                        קוד: <b>{s.code}</b> · {STATUS_LABELS[s.status] || s.status}
+                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · {STATUS_LABELS[s.status] || s.status}
                       </span>
                     </div>
                   )}

@@ -34,6 +34,17 @@ export function applySiteUpdate(sites, msg) {
 
 function patchFor(site, msg) {
   if (msg.type === "state") {
+    // אתר בחלון תחזוקה ידני פעיל — התחזוקה גוברת על מה שה-PLC מדווח (כולל
+    // error/no_comm), בדיוק כמו בשרת (getAllSitesWithMetrics / applyMaintenanceStatus).
+    // תקלה בזמן תחזוקה מתוכננת אינה תקלה — היא כבר מוחרגת מאחוז הכשל
+    // (wasInMaintenance), ולכן גם הכרטיס נשאר "בתחזוקה" ולא מתהפך ל"מושבת".
+    // מעבר *אל* תחזוקה כן מתקבל; ריענון מלא (needsRefetch) יתקן כשהחלון יסתיים.
+    if (site.inMaintenance && msg.newStatus !== "maintenance") {
+      // ההודעה עדיין "צפייה" (חוץ מ-no_comm), ולכן מעדכנים last_seen בלבד —
+      // בלי לגעת בסטטוס או ב-statusSince, שנשארים על התחזוקה.
+      return msg.newStatus === "no_comm" ? null : { last_seen: msg.occurredAt };
+    }
+
     return {
       status: msg.newStatus,
       // המצב התחיל עכשיו — זה בדיוק מה שהשרת היה מחזיר ב-statusSince

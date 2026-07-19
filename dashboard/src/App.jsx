@@ -4,9 +4,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useSites } from "./hooks/useSites";
 import { useSSE } from "./hooks/useSSE";
 import { useSiteDetail } from "./hooks/useSiteDetail";
+import { useTheme } from "./hooks/useTheme";
 import Header from "./components/Header/Header";
 import DetailPanel from "./components/DetailPanel/DetailPanel";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
+import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
@@ -21,8 +23,10 @@ function App() {
   const [activeFilters, setActiveFilters] = useState([]);       // סינון לפי מצב (בקר) — בחירה מרובה
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
-  const [darkMode, setDarkMode] = useState(true);
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
+
+  // ערכת נושא: בהירה כברירת מחדל, והבחירה נזכרת בין ביקורים (ראה useTheme)
+  const { darkMode, toggle: toggleTheme } = useTheme();
 
   // שתי גרסאות נפרדות, ובכוונה:
   //   dataVersion   — אגרגציות של *כל* המערכת (מנהל בקרה / מנהל כללי)
@@ -34,7 +38,7 @@ function App() {
 
   // ===== Hooks =====
   const { sites, loading, error, reload, patch } = useSites();
-  const { detail, stats, maintenance, refresh: refreshDetail } = useSiteDetail(selectedCode);
+  const { detail, maintenance, refresh: refreshDetail } = useSiteDetail(selectedCode);
 
   const handleRefresh = useCallback(() => {
     reload();
@@ -60,10 +64,9 @@ function App() {
 
   useSSE(
     useCallback((data) => {
-      if (data.type === "state") {
-        if (data.newStatus === "error") alertError();
-        else if (data.newStatus === "no_comm") alertNoComm();
-      }
+      // ההתראות הקוליות *אינן* כאן בכוונה — הן נגזרות משינוי הסטטוס בפועל
+      // (ראה האפקט "צלילי התראה" למטה). הודעת SSE שאובדת בזמן נתק הייתה
+      // משתיקה את הצליל לגמרי; השוואת מצב לא תלויה בהודעה בודדת.
 
       // 1. עדכון מיידי מהודעה — בלי בקשת רשת
       patch(data);
@@ -96,21 +99,68 @@ function App() {
 
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
 
-  // ===== שחרור אודיו באינטראקציה הראשונה =====
+  // ==========================================================
+  // צלילי התראה — נגזרים משינוי הסטטוס, לא מהודעת SSE
+  // ==========================================================
+  // קודם הצליל התנגן ישירות מתוך handler ה-SSE. זה נשמע נכון אבל נשבר בשקט:
+  // אם חיבור ה-SSE נופל לרגע (אתחול שרת, נפילת רשת, טאב שנרדם), ההודעה
+  // שנשלחה באותו רגע **אובדת** — ל-SSE אין מסירה חוזרת. הכרטיס בכל זאת היה
+  // מתעדכן ל"מושבת" מאוחר יותר דרך שליפה מלאה, אבל הצליל כבר לא היה מתנגן.
+  //
+  // כאן משווים את הסטטוס הקודם לנוכחי בכל עדכון של הרשימה — לא משנה אם הוא
+  // הגיע מ-SSE או משליפה. כל מעבר ל"מושבת" משמיע צליל, בדיוק פעם אחת.
+  //
+  // בונוס: הסטטוס כאן הוא ה*אפקטיבי* (השרת כבר החיל "תחזוקה גוברת"), ולכן
+  // אתר בתחזוקה לעולם לא יגיע ל"מושבת" — ולא יצפצף. בלי תנאי מיוחד.
+  const prevStatuses = useRef(null);
+  useEffect(() => {
+    if (!sites || sites.length === 0) return;
+
+    const current = new Map(sites.map((s) => [s.code, s.status]));
+    const previous = prevStatuses.current;
+    prevStatuses.current = current;
+
+    // טעינה ראשונה: רק זוכרים. בלי זה כל רענון דף היה מצפצף על כל אתר שכבר מושבת.
+    if (!previous) return;
+
+    for (const [code, status] of current) {
+      const before = previous.get(code);
+      if (!before || before === status) continue;   // אתר חדש / בלי שינוי
+
+      if (status === "error") {
+        console.info(`[alert] אתר ${code}: ${before} → מושבת — צליל התראה`);
+        alertError();
+      } else if (status === "no_comm") {
+        alertNoComm();
+      }
+    }
+  }, [sites]);
+
+  // ===== שחרור/החייאת אודיו =====
+  // *לא* { once }: הדפדפן משעה מחדש את ה-AudioContext כשהטאב יורד לרקע, ואז
+  // צליל תקלה לא היה נשמע כשחוזרים. לכן מחיים אותו בכל אינטראקציה *וגם* כשהטאב
+  // חוזר להיות גלוי. unlockAudio זול ואידמפוטנטי — קריאה חוזרת לא מזיקה.
   useEffect(() => {
     const handler = () => unlockAudio();
-    window.addEventListener("pointerdown", handler, { once: true });
-    window.addEventListener("keydown", handler, { once: true });
+    handler();   // ניסיון מיידי (אם כבר הייתה אינטראקציה קודמת בטעינה)
+    window.addEventListener("pointerdown", handler);
+    window.addEventListener("keydown", handler);
+    document.addEventListener("visibilitychange", handler);
     return () => {
       window.removeEventListener("pointerdown", handler);
       window.removeEventListener("keydown", handler);
+      document.removeEventListener("visibilitychange", handler);
     };
   }, []);
 
-  // ===== Dark/Light =====
+  // בדיקה מהירה של צליל התקלה — להריץ בקונסול של הדפדפן: parkomatTestAlert()
+  // (מחייה את האודיו ומנגן את אותו צליל שמושמע כשאתר עובר למושבת).
   useEffect(() => {
-    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
-  }, [darkMode]);
+    window.parkomatTestAlert = () => { unlockAudio(); alertError(); };
+    return () => { delete window.parkomatTestAlert; };
+  }, []);
+
+  // הפעלת ערכת הנושא על ה-DOM עברה ל-useTheme, יחד עם שמירת ההעדפה.
 
   // ===== Handlers =====
   const handleSiteClick = useCallback((code) => setSelectedCode(code), []);
@@ -152,7 +202,7 @@ function App() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         darkMode={darkMode}
-        onToggleDarkMode={() => setDarkMode((d) => !d)}
+        onToggleDarkMode={toggleTheme}
         onAdmin={() => setAdminOpen(true)}
       />
 
@@ -162,7 +212,6 @@ function App() {
       {selectedCode && (
         <DetailPanel
           detail={detail}
-          stats={stats}
           maintenance={maintenance}
           onClose={() => setSelectedCode(null)}
           onRefresh={handleRefresh}
@@ -179,6 +228,9 @@ function App() {
           onChanged={handleAdminChanged}
         />
       )}
+
+      {/* עוזר ה-AI — קריאה בלבד, זמין מכל תצוגה */}
+      <ChatAssistant />
     </div>
   );
 }

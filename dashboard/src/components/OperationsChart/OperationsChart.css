@@ -6,27 +6,67 @@
   gap: 10px;
 }
 
-/* המקרא מיושר לימין, כמו בעיצוב המקור */
+/* המקרא הוא גם המתגים — לחיצה מוסיפה/מסירה סדרה מהגרף */
 .oc-legend {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-start;
-  gap: 16px;
+  gap: 6px;
   color: var(--text-muted);
   font-size: 0.74rem;
   font-weight: 600;
   user-select: none;
 }
 
-.oc-legend span {
-  display: flex;
+.oc-chip {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
 
-.oc-legend i {
+/* כבוי = דהוי ועם נקודה חלולה. ההבדל חייב להיקרא בלי צבע בלבד (נגישות). */
+.oc-chip i {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  opacity: 0.32;
+  transition: opacity 0.15s, box-shadow 0.15s;
+}
+
+.oc-chip.is-on {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.oc-chip.is-on i { opacity: 1; }
+
+.oc-chip:hover { border-color: var(--accent); }
+
+/* "שע'" ליד תחזוקה — תזכורת שהיא ביחידה אחרת ועל ציר אחר */
+.oc-chip em {
+  font-style: normal;
+  font-size: 0.62rem;
+  opacity: 0.7;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+
+.oc-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: 4px;
 }
 
 /* אותה מסגרת כמו בגרף המגמה — שני הגרפים נראים כמו בני משפחה אחת */
@@ -60,11 +100,35 @@
   user-select: none;
 }
 
+/* ציר הימין — שעות תחזוקה. סולם נפרד לגמרי מציר השמאל.
+   מיושר להתחלה (start) ולא לסוף, כי הוא יושב מימין לאזור הציור. */
+.oc-ytick--maint {
+  text-anchor: start;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
 .oc-xtick {
   fill: var(--text-muted);
   font-size: 10px;
   text-anchor: middle;
   user-select: none;
+}
+
+/* קו התחזוקה — מקווקו, כדי שלא ייקרא כעוד סדרת עמודות על ציר השמאל */
+.oc-maint-line {
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: ocFade 0.5s ease both;
+}
+
+.oc-maint-dot { animation: ocFade 0.5s ease both; }
+
+@keyframes ocFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* העמודות צומחות מלמטה */
@@ -131,5 +195,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .oc-bar { animation: none; }
+  .oc-bar, .oc-maint-line, .oc-maint-dot { animation: none; }
 }

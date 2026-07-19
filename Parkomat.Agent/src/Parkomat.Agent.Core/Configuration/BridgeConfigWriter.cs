@@ -13,11 +13,10 @@ namespace Parkomat.Agent.Core.Configuration;
 public static class BridgeConfigWriter
 {
     /// <summary>
-    /// ה-topic (מקומי בלבד) שאליו Mosquitto מפרסם את מצב חיבור הגשר ל-HiveMQ:
-    /// "1" = מחובר, "0" = מנותק (retained). ה-Agent נרשם אליו כדי לדעת אם
-    /// ההודעות באמת מגיעות ל-HiveMQ, ולא רק ל-Mosquitto המקומי.
+    /// ה-topic שאליו Mosquitto מפרסם את מצב הגשר **גם ל-HiveMQ**, כדי שהשרת
+    /// יידע שהאתר נותק. הפורמט: sites/{code}/bridge, עם "1"/"0".
     /// </summary>
-    public const string BridgeStateTopic = "parkomat/bridge/state";
+    public static string RemoteBridgeStateTopic(string siteCode) => $"sites/{siteCode}/bridge";
 
     /// <summary>
     /// מייצר את תוכן קובץ הגישור לפי ההגדרות, וכותב אותו לדיסק.
@@ -60,11 +59,37 @@ public static class BridgeConfigWriter
         sb.AppendLine($"topic sites/{siteCode}/# out 1");
         sb.AppendLine("max_queued_messages 0");
         sb.AppendLine("try_private false");
-        // מדווח על מצב חיבור הגשר ל-HiveMQ ל-topic מקומי (לא נשלח ל-HiveMQ עצמו),
-        // כדי שה-Agent ידע אם הקשר לענן באמת קיים.
+
+        // ==========================================================
+        // זיהוי ניתוק — שתי שכבות, ולא אחת
+        // ==========================================================
+        // ל-Agent יש LWT מול Mosquitto המקומי, והוא מכסה מקרה אחד: תהליך
+        // הסוכן נופל בזמן שהמחשב חי. Mosquitto רואה את הניתוק, מפרסם
+        // no_comm, והגשר מעביר אותו ל-HiveMQ. עובד.
+        //
+        // אבל **כשהחשמל נופל באתר, Mosquitto מת יחד עם הסוכן** — ואין מי
+        // שיפרסם את ה-LWT. קודם הגדרנו notifications_local_only true, כלומר
+        // הודעת מצב הגשר נשארה *מקומית* — על מחשב שכבוי. ל-HiveMQ לא הגיע
+        // דבר, והשרת המשיך להציג את האתר כ"מוכן" לנצח.
+        //
+        // זה בדיוק הכשל שהכי חשוב לתפוס בחניון, והוא היחיד שלא נתפס.
+        //
+        // התיקון: מפרסמים את מצב הגשר **גם ל-HiveMQ**. Mosquitto רושם על
+        // חיבור הגשר will מול הברוקר המרוחק, ולכן כשהגשר מת בפתאומיות
+        // (נפילת חשמל, ניתוק רשת) — **HiveMQ עצמו** מפרסם "0" ל-topic הזה,
+        // אחרי 1.5 × keepalive. עם keepalive של 60 שניות זה 90 שניות בדיוק.
+        //
+        // ההודעה היא "1"/"0" ולא JSON, ולכן היא הולכת ל-topic נפרד
+        // (sites/{code}/bridge) ולא ל-sites/{code}/state — שם השרת מצפה
+        // ל-JSON לפי החוזה. השרת מתרגם "0" ל-no_comm.
         sb.AppendLine("notifications true");
-        sb.AppendLine("notifications_local_only true");
-        sb.AppendLine($"notification_topic {BridgeStateTopic}");
+        sb.AppendLine("notifications_local_only false");
+        sb.AppendLine($"notification_topic {RemoteBridgeStateTopic(siteCode)}");
+
+        // keepalive מפורש ולא ברירת מחדל: הוא זה שקובע מתי HiveMQ מכריז על
+        // הגשר כמת (1.5 × keepalive = 90 שניות). לא משאירים את זה למקרה.
+        sb.AppendLine("keepalive_interval 60");
+
         sb.AppendLine("cleansession true");
         sb.AppendLine();
 
@@ -73,16 +98,20 @@ public static class BridgeConfigWriter
         sb.AppendLine($"remote_password {mqtt.Password}");
         sb.AppendLine();
 
-        // --- הצפנה ---
-        // רק אם ההגדרות דורשות TLS (HiveMQ בענן). ל-Broker מקומי לבדיקות —
-        // בלי TLS, כדי שלא ייכשל handshake מול פורט לא-מוצפן.
+        // ==========================================================
+        // --- הצפנה — תמיד. אין מתג, ואין דרך לכבות. ---
+        // ==========================================================
+        // הגשר הזה מתחבר ל-HiveMQ דרך האינטרנט הפתוח, ומעביר את שם המשתמש
+        // והסיסמה של האתר. בלי TLS הם עוברים בטקסט גלוי.
+        //
+        // קודם זה היה תלוי ב-checkbox בטופס ההגדרות. זו לא הייתה גמישות אלא
+        // מלכודת: לחיצה אחת של טכנאי בשדה הורידה את ההצפנה של האתר כולו,
+        // ושום דבר לא היה נכשל בקול — ההודעות פשוט היו זורמות לא מוצפנות.
+        //
         // התעודה נמצאת במיקום קבוע ומבוקר (ProgramData, בלי רווחים בנתיב),
         // ולא ב-Program Files — כדי שלא ניפול על אי-התאמה של Program Files (x86).
-        if (mqtt.UseTls)
-        {
-            sb.AppendLine("bridge_tls_version tlsv1.2");
-            sb.AppendLine($"bridge_cafile {AgentPaths.CaCertFile}");
-        }
+        sb.AppendLine("bridge_tls_version tlsv1.2");
+        sb.AppendLine($"bridge_cafile {AgentPaths.CaCertFile}");
 
         return sb.ToString();
     }

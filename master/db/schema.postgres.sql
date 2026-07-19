@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS sites (
   -- מטא-דאטה לתצוגה בלבד (לא משתתף בקליטה)
   plc_type       TEXT,
   plc_ip         TEXT,
-  site_ip        TEXT
+  site_ip        TEXT,
+
+  -- דרגת האתר (רמת שירות) — מוצגת על הכרטיס, נערכת בניהול. ברירת מחדל: basic.
+  tier           TEXT NOT NULL DEFAULT 'basic' CHECK (tier IN ('vip','extended','basic'))
 );
 
 -- ============================================================

@@ -78,6 +78,67 @@ async function parseError(res, fallback) {
   throw new Error(body?.error || fallback);
 }
 
+// ===== עוזר ה-AI — בהזרמה =====
+//
+// *לא* עובר דרך getJSON: זה POST, ואסור לו להשתתף בביטול-כפילויות (dedupe) של
+// קריאות ה-GET — שתי שאלות זהות הן שתי שאלות, לא אחת.
+//
+// השרת מחזיר NDJSON: שורת JSON לכל נתח.
+//   { t: "טקסט" }                    — נתח טקסט
+//   { done: true, toolsUsed: [...] } — סיום
+//   { error: "..." }                 — כשל *אחרי* שההזרמה כבר התחילה
+//
+// onToken נקרא לכל נתח, כדי שהתשובה תיכתב על המסך תוך כדי שהיא נוצרת.
+export async function askAssistant(messages, onToken) {
+  const res = await fetch(`${BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+
+  // כשל *לפני* ההזרמה (503/400/429) — עדיין JSON רגיל
+  if (!res.ok) await parseError(res, "העוזר לא זמין כרגע");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+
+  let buffer = "";
+  let text = "";
+  let toolsUsed = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // חותכים רק על \n שלם — נתח רשת יכול להיחתך באמצע שורה,
+    // ו-JSON.parse על חצי שורה זורק.
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (msg.error) throw new Error(msg.error);
+      if (msg.t) {
+        text += msg.t;
+        onToken?.(msg.t);
+      }
+      if (msg.done) toolsUsed = msg.toolsUsed || [];
+    }
+  }
+
+  return { text, toolsUsed };
+}
+
 // בדיקת קוד מנהל (לפתיחת מצב ניהול)
 export async function verifyAdminCode(code) {
   const res = await fetch(`${BASE}/admin/verify`, {
@@ -195,22 +256,23 @@ export function fetchMaintenance(code) {
   return getJSON(`${BASE}/sites/${code}/maintenance`, "שגיאה בבדיקת תחזוקה");
 }
 
-// הפעלת תחזוקה
+// הפעלת תחזוקה — פעולה חופשית, ללא קוד מנהל (השרת פתח את המסלול במכוון).
 export async function startMaintenance(code, name, durationHours, reason = "") {
   const res = await fetch(`${BASE}/sites/${code}/maintenance`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, duration_hours: durationHours, reason }),
   });
-  if (!res.ok) throw new Error("שגיאה בהפעלת תחזוקה");
+  if (!res.ok) return parseError(res, "שגיאה בהפעלת תחזוקה");
   return res.json();
 }
 
-// ביטול תחזוקה
+// ביטול תחזוקה — פעולה חופשית, ללא קוד מנהל
 export async function cancelMaintenance(code) {
   const res = await fetch(`${BASE}/sites/${code}/maintenance`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
   });
-  if (!res.ok) throw new Error("שגיאה בביטול תחזוקה");
+  if (!res.ok) return parseError(res, "שגיאה בביטול תחזוקה");
   return res.json();
 }

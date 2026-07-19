@@ -52,7 +52,26 @@ function DateRangePicker({ value, onChange, summary, days }) {
       });
       return;
     }
-    onChange({ preset: key, ...rangeOf(key), from: "", to: "" });
+    // ==========================================================
+    // הסדר כאן קריטי — וכאן היה הבאג
+    // ==========================================================
+    // קודם היה כתוב:  onChange({ preset: key, ...rangeOf(key), from: "", to: "" })
+    // כלומר rangeOf החזיר את הטווח, ומיד אחר כך `from: ""` ו-`to: ""` **דרסו אותו**.
+    // מה שנשאר היה preset בלבד, בלי טווח ובלי period — והצרכן נפל ל-|| "month".
+    //
+    // התוצאה: "היום", "הרבעון הנוכחי" ו"שנה שעברה" — שלוש האפשרויות היחידות
+    // שמחזירות from/to ולא period — כולן הציגו בשקט את **החודש הנוכחי**.
+    // הבורר הראה "היום" והנתונים היו של יולי. שום שגיאה, רק מספרים לא נכונים.
+    //
+    // עכשיו כל שדה נקבע במפורש, ואין דריסה: מי שמחזיר period מנקה את from/to,
+    // ומי שמחזיר from/to מנקה את period.
+    const r = rangeOf(key);
+    onChange({
+      preset: key,
+      period: r.period,          // undefined כשיש טווח מפורש
+      from: r.from || "",
+      to: r.to || "",
+    });
   }
 
   function setDate(field, val) {

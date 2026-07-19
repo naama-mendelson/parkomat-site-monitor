@@ -99,18 +99,22 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                 </div>
 
                 <section className="insights-card">
-                  <h3>כניסות מול יציאות</h3>
-                  <p className="insights-sub">חלוקת הפעולות לפי כיוון התנועה</p>
+                  <h3>חלוקת פעילות</h3>
+                  <p className="insights-sub">כניסות, יציאות, תקלות ותחזוקה בתקופה</p>
                   <DonutChart
-                    centerNote="פעולות"
+                    centerNote="אירועים"
                     slices={[
                       { label: "כניסות", value: data.totals.entries, color: ENTRY_COLOR },
                       { label: "יציאות", value: data.totals.exits, color: EXIT_COLOR },
+                      // תקלות/תחזוקה = אירועים שהתחילו בתקופה (אותה יחידה כמו
+                      // כניסות/יציאות, ועקבי עם "תקלות" בכרטיס ובגרף המגמה).
+                      { label: "תקלות", value: data.totals.errors, color: METRIC_COLORS.errors },
+                      { label: "תחזוקה", value: data.totals.maintenanceEvents, color: METRIC_COLORS.maintenance },
                     ]}
                   />
                   {data.totals.entries !== data.totals.exits && (
                     <p className="insights-note">
-                      הפרש של {Math.abs(data.totals.entries - data.totals.exits)} —
+                      הפרש של {Math.abs(data.totals.entries - data.totals.exits)} כניסות/יציאות —
                       {data.totals.entries > data.totals.exits
                         ? " יש רכבים שנכנסו וטרם יצאו"
                         : " יש יציאות של רכבים שנכנסו לפני התקופה"}

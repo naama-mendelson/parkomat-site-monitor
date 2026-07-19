@@ -40,8 +40,25 @@ const pool = new Pool({
   connectionString,
   // Supabase מחייב SSL. rejectUnauthorized: false — התעבורה עדיין מוצפנת.
   ssl: { rejectUnauthorized: false },
-  max: 10,
-  idleTimeoutMillis: 30_000,
+  // ============================================================
+  // גודל ה-pool — למה 20 ולא 10
+  // ============================================================
+  // כל endpoint של הפאנל עכשיו יורה את השאילתות שלו במקביל (Promise.all).
+  // אבל פתיחת פאנל יורה ~6 בקשות בו-זמנית (detail/stats/maintenance/analytics/
+  // insights/list) = ~50 שאילתות שמתחרות על החיבורים. עם max=10 אפילו שאילתה
+  // בודדת (maintenance) המתינה ~0.8ש' לחיבור פנוי, וכל בקשה שהייתה 0.3ש'
+  // לבדה תפחה ל-1.5ש'. ה-transaction pooler (פורט 6543) בנוי בדיוק לזה —
+  // הרבה חיבורים קצרים — ולכן הרחבה ל-20 מקטינה את ההמתנה בלי סיכון.
+  max: 20,
+  // ============================================================
+  // idleTimeoutMillis — חייב להיות *גדול* ממרווח ה-keepalive (20ש')
+  // ============================================================
+  // קודם היה 30ש': חיבור סרק נסגר אחרי 30ש', והפינג הגיע כשכבר לא נשאר אף
+  // חיבור. כך ה-pool ישב ריק וקר בין הפינגים, והבקשה הראשונה אחרי חוסר-פעילות
+  // שילמה ~2.4ש'. עם 120ש' ≫ 20ש', החיבורים שה-keepalive מחמם שורדים בין
+  // הפינגים ונשארים חמים ברצף. ראה ה-keepalive ב-master.js (מחמם כמה חיבורים
+  // במקביל, כל 20ש', כי Supabase מתקרר תוך ~30ש').
+  idleTimeoutMillis: 120_000,
   connectionTimeoutMillis: 15_000,
 });
 
@@ -214,6 +231,7 @@ function init() {
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS plc_ip      TEXT;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS site_ip     TEXT;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS is_new_site INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE sites ADD COLUMN IF NOT EXISTS tier        TEXT NOT NULL DEFAULT 'basic';
       `);
     } finally {
       await setup.end();

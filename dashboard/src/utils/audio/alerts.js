@@ -1,7 +1,7 @@
 // utils/audio/alerts.js — התראות קוליות (Web Audio API, ללא קבצים חיצוניים)
 
 let audioContext = null;
-let unlocked = false; // האם המשתמש כבר אִפשר אודיו (אינטראקציה ראשונה)
+export let audioUnlocked = false; // האם המשתמש כבר אִפשר אודיו (אינטראקציה ראשונה)
 
 // יצירת AudioContext עצלנית (נוצר רק בשימוש הראשון — דרישת דפדפן)
 function getContext() {
@@ -11,44 +11,53 @@ function getContext() {
   return audioContext;
 }
 
-// שחרור האודיו — חייב להיקרא מתוך אירוע אינטראקציה אמיתי (click/keydown).
-// דפדפנים מתחילים את ה-AudioContext במצב 'suspended' עד שיש מחווה של המשתמש;
-// בלי זה, ביפים שמופעלים מאירוע SSE לא יישמעו כלל.
+// שחרור/החייאת האודיו — נקרא מתוך אירוע אינטראקציה אמיתי (click/keydown) *וגם*
+// כשהטאב חוזר להיות גלוי. דפדפנים מתחילים את ה-AudioContext ב-'suspended' עד
+// מחווה, ו*ממשיכים להשעות אותו* כשהטאב ברקע — לכן זה חייב לרוץ שוב ושוב, לא
+// פעם אחת. בלי זה, ביפ שמופעל מאירוע SSE פשוט לא יישמע.
 export function unlockAudio() {
-  if (unlocked) return;
   try {
     const ctx = getContext();
-    if (ctx.state === "suspended") ctx.resume();
-    unlocked = true;
+    if (ctx.state === "suspended") ctx.resume();   // *תמיד* מנסים להחיות, לא רק פעם ראשונה
+    if (ctx.state === "running") audioUnlocked = true;
   } catch {
     // דפדפן לא תומך — מתעלמים בשקט
   }
 }
 
-// ביפ בודד — תדר, משך, ועוצמה (עם עטיפת gain למניעת "פצפוץ")
+// יצירת הצליל בפועל — נקרא רק כשה-context כבר 'running'.
+function playTone(ctx, frequency, durationMs, volume) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.type = "sine";
+  osc.frequency.value = frequency;
+
+  const now = ctx.currentTime;
+  const dur = durationMs / 1000;
+  // עליה/ירידה רכה של עוצמה כדי להימנע מקליק
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+  osc.start(now);
+  osc.stop(now + dur);
+}
+
+// ביפ בודד — תדר, משך, ועוצמה (עם עטיפת gain למניעת "פצפוץ").
+// אם ה-context מושעה, מנגנים *אחרי* שה-resume הושלם (הוא אסינכרוני) — אחרת
+// האוסילטור מתוזמן על context ישן שעדיין לא רץ, והצליל אובד.
 function beep(frequency, durationMs, volume = 0.3) {
   try {
     const ctx = getContext();
-    if (ctx.state === "suspended") ctx.resume(); // הגנה נוספת
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.type = "sine";
-    osc.frequency.value = frequency;
-
-    const now = ctx.currentTime;
-    const dur = durationMs / 1000;
-    // עליה/ירידה רכה של עוצמה כדי להימנע מקליק
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-
-    osc.start(now);
-    osc.stop(now + dur);
+    if (ctx.state === "suspended") {
+      ctx.resume().then(() => playTone(ctx, frequency, durationMs, volume)).catch(() => {});
+    } else {
+      playTone(ctx, frequency, durationMs, volume);
+    }
   } catch {
     // דפדפן חסם אודיו — שקט
   }

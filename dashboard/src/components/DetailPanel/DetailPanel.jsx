@@ -255,7 +255,9 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
           )}
         </div>
 
-        {/* תחזוקה */}
+        {/* תחזוקה — פעולה חופשית, לא מאחורי קוד מנהל. אפשר תמיד להכניס אתר
+            לתחזוקה או להוציא אותו, מכל מסך שפותח את הפאנל. (השרת אינו אוכף
+            requireAdmin על מסלולי התחזוקה — ראה ההערה שם.) */}
         <div className="detail-maintenance">
           <h3>תחזוקה</h3>
           {isInMaintenance ? (
