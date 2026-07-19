@@ -6,7 +6,59 @@
 const provider = require("./provider");
 const { buildSystemPrompt } = require("./prompt");
 const { TOOL_SCHEMAS, executeTool } = require("./tools");
-const { getAllSites } = require("../db/queries");
+const { getAllSites, getCardFaultCorrelation } = require("../db/queries");
+const { resolvePeriod } = require("../api/periods");
+
+// ==========================================================
+// Fast-path דטרמיניסטי: "אחרי איזה כרטיס האתר נכנס לתקלה"
+// ==========================================================
+// המודלים החינמיים (gpt-oss-120b, llama-3.3-70b) *לא* מנתבים לכלי הייעודי —
+// גם תיאור מחוזק וגם הוראת "MUST call" לא עזרו; הם נופלים ל-get_site או
+// מתחמקים. במקום לקוות, מזהים את הכוונה, האתר והתקופה מהטקסט, מריצים את הכלי
+// *ישירות* ומנסחים תשובה. עוקף לגמרי את ניתוב-הכלים של המודל. אם האתר לא זוהה
+// חד-משמעית — נופלים חזרה למודל (שיבקש הבהרה).
+const norm = (s) =>
+  String(s || "").trim().toLowerCase().replace(/["'׳״]/g, "").replace(/[-_]/g, " ").replace(/\s+/g, " ");
+
+function isCardFaultIntent(t) {
+  return /כרטיס|card/i.test(t) && /תקל|מושב|כשל|נתקע|נופל|קורס|error|fault/i.test(t);
+}
+
+function periodFromText(t) {
+  if (/החודש|חודש/.test(t)) return "month";
+  if (/השנה|שנה/.test(t)) return "year";
+  return "week";
+}
+
+// אתר יחיד שמופיע בטקסט (קוד או שם). חד-משמעי בלבד — אחרת null.
+function siteFromText(t, sites) {
+  const q = norm(t);
+  const hits = sites.filter((s) => {
+    const n = norm(s.site_name);
+    return (s.code && q.includes(norm(s.code))) || (n && q.includes(n));
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+async function answerCardFault(site, periodKey) {
+  const p = resolvePeriod(periodKey);
+  const r = await getCardFaultCorrelation(site.id, p.range);
+  const win = Math.round(r.windowSeconds / 60);
+
+  if (!r.topCards.length) {
+    return `באתר ${site.site_name} (${p.label}) לא נמצאה תקלה שקרתה בתוך ${win} דקות אחרי פעולת כרטיס. ` +
+           `סך התקלות בתקופה: ${r.totalErrors}.`;
+  }
+  const top = r.topCards[0];
+  const rest = r.topCards.slice(1, 4).map((c) => `כרטיס ${c.cardNumber} (${c.faultsAfter})`).join(", ");
+  let msg =
+    `באתר ${site.site_name} (${p.label}): הכרטיס שאחרי הפעולה שלו האתר הכי הרבה נכנס לתקלה הוא מספר ` +
+    `${top.cardNumber} — ${top.faultsAfter} פעמים.`;
+  if (rest) msg += ` אחריו: ${rest}.`;
+  msg += ` מתוך ${r.totalErrors} תקלות בתקופה, ${r.attributedErrors} קרו בתוך ${win} דקות אחרי פעולת כרטיס. ` +
+         `זהו מתאם, לא הוכחת סיבה.`;
+  return msg;
+}
 
 // גבול קשיח על סיבובי הכלים. מודל יכול להיכנס ללולאה שבה הוא קורא לאותו כלי
 // שוב ושוב — בלי הגבול הזה זו לולאה אינסופית שאוכלת מכסה ומחזיקה בקשת HTTP
@@ -42,6 +94,20 @@ async function runChat(messages, onToken) {
     sites = await getAllSites();
   } catch (err) {
     console.warn("[ai] לא הצלחתי לטעון את רשימת האתרים ל-prompt:", err.message);
+  }
+
+  const lastUser = [...history].reverse().find((m) => m.role === "user")?.content || "";
+
+  // Fast-path: שאלת כרטיס↔תקלה עם אתר שזוהה חד-משמעית — עונים ישירות מהכלי,
+  // בלי לתת למודל הזדמנות לנתב שגוי. (ראה ההסבר למעלה.)
+  if (isCardFaultIntent(lastUser)) {
+    const site = siteFromText(lastUser, sites);
+    if (site) {
+      const text = await answerCardFault(site, periodFromText(lastUser));
+      if (onToken) onToken(text);
+      return { text, toolsUsed: ["get_card_fault_correlation"], iterations: 0 };
+    }
+    // אתר לא זוהה חד-משמעית → נופלים למודל שיבקש הבהרה.
   }
 
   const convo = [{ role: "system", content: buildSystemPrompt(sites) }, ...history];

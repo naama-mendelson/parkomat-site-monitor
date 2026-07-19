@@ -18,6 +18,7 @@ const {
   findSiteByCode,
   getSiteStats,
   getSiteInsights,
+  getCardFaultCorrelation,
   getExecutiveStats,
   getSupervisorStats,
 } = require("../db/queries");
@@ -102,6 +103,25 @@ const TOOL_SCHEMAS = [
       description:
         "Deep analysis of one site over a period: entries/exits, busiest day and hour, parking durations, " +
         "downtime incidents (count, hours, longest), maintenance. Use for usage patterns or downtime detail.",
+      parameters: {
+        type: "object",
+        properties: { site: SITE_REF, period: PERIOD_ENUM },
+        required: ["site"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_card_fault_correlation",
+      description:
+        "For ONE site over a period: which card numbers were most often followed by the site entering error (fault) shortly after that card's operation. " +
+        "This is the ONLY tool that links CARD NUMBERS to faults. get_site, get_site_stats and get_site_analytics do NOT do this — do not use them for such questions. " +
+        "You MUST call THIS tool for Hebrew questions such as: " +
+        "'אחרי הפעולה של איזה מספר כרטיס נכנס האתר הכי הרבה לתקלה', 'איזה כרטיס גורם/קשור לתקלות', " +
+        "'אחרי איזה כרטיס האתר נתקע/מושבת', 'איזה מספר כרטיס הכי בעייתי'. " +
+        "Returns the top card numbers ranked by how many faults started within a short window (~10 minutes) right after that card operated. " +
+        "This is a correlation, not proof of cause.",
       parameters: {
         type: "object",
         properties: { site: SITE_REF, period: PERIOD_ENUM },
@@ -293,6 +313,26 @@ const EXECUTORS = {
         manualWindows: i.maintenance.manualWindows,
       },
       cards: { uniqueCards: i.cards.uniqueCards },
+    };
+  },
+
+  async get_card_fault_correlation({ site: ref, period }) {
+    const site = await resolveSite(ref);
+    if (site.error) return site;
+    const p = resolvePeriod(period);
+    const r = await getCardFaultCorrelation(site.id, p.range);
+    return {
+      code: site.code,
+      name: site.site_name,
+      period: p.label,
+      windowMinutes: Math.round(r.windowSeconds / 60),
+      totalErrors: r.totalErrors,
+      faultsLinkedToACard: r.attributedErrors,
+      // [{ cardNumber, faultsAfter }] — כמה פעמים האתר נכנס לתקלה בתוך החלון אחרי הפעולה של הכרטיס
+      topCards: r.topCards,
+      _note:
+        "faultsAfter = number of times the site entered error within the window right after that card operated. " +
+        "This is correlation, not proof the card caused the fault. Faults with no card operation in the window are counted in totalErrors but not attributed.",
     };
   },
 

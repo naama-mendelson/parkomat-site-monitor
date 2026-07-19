@@ -929,6 +929,65 @@ async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
   };
 }
 
+/**
+ * מתאם כרטיס↔תקלה: אחרי הפעולה של איזה מספר כרטיס האתר נכנס הכי הרבה פעמים
+ * לתקלה. לכל מקטע error בטווח מוצאים את פעולת-הכרטיס האחרונה שקדמה לו *בתוך
+ * חלון זמן*, ומייחסים לה את התקלה; מקבצים לפי כרטיס.
+ *
+ * החלון (windowSeconds) הכרחי: בלעדיו תקלה ששעות אחרי פעולה הייתה מיוחסת לה
+ * ומטעה. ברירת מחדל 600ש' (10 דק') — רחב מספיק לתפוס תקלה שנגרמה מהפעולה,
+ * צר מספיק כדי שהקשר יהיה משמעותי. זהו *מתאם*, לא הוכחת סיבתיות.
+ *
+ * מימוש בזיכרון (two-pointer) ולא SQL: חותמי הזמן הם TEXT (ISO), וחשבון
+ * חלונות עליהם ב-SQL דורש casting מסורבל; בזיכרון זה פשוט ומדויק.
+ */
+async function getCardFaultCorrelation(siteId, { from, to, windowSeconds = 600, limit = 10 }) {
+  const opsFrom = new Date(Date.parse(from) - windowSeconds * 1000).toISOString();
+
+  const [errors, ops] = await Promise.all([
+    db.prepare(
+      `SELECT started_at FROM status_history
+       WHERE site_id = ? AND status = 'error' AND started_at >= ? AND started_at < ?
+       ORDER BY started_at ASC`
+    ).all(siteId, from, to),
+
+    // card_number הוא TEXT עם ברירת מחדל '' (פעולה בלי כרטיס), ולכן <> '' ולא IS NOT NULL.
+    db.prepare(
+      `SELECT occurred_at, card_number FROM operations
+       WHERE site_id = ? AND card_number <> '' AND occurred_at >= ? AND occurred_at < ?
+       ORDER BY occurred_at ASC`
+    ).all(siteId, opsFrom, to),
+  ]);
+
+  // לכל תקלה (ממוינות עולה) — פעולת-הכרטיס האחרונה שקדמה לה בתוך החלון.
+  // j זז רק קדימה (התקלות עולות), ולכן O(n+m).
+  const counts = new Map();
+  let attributed = 0;
+  let j = 0;
+  for (const e of errors) {
+    const et = Date.parse(e.started_at);
+    const windowStart = et - windowSeconds * 1000;
+    while (j < ops.length && Date.parse(ops[j].occurred_at) <= et) j++;
+    const cand = j > 0 ? ops[j - 1] : null;
+    if (cand && cand.card_number && Date.parse(cand.occurred_at) >= windowStart) {
+      counts.set(cand.card_number, (counts.get(cand.card_number) || 0) + 1);
+      attributed++;
+    }
+  }
+
+  const topCards = [...counts.entries()]
+    .map(([cardNumber, faultsAfter]) => ({ cardNumber, faultsAfter }))
+    .sort((a, b) => b.faultsAfter - a.faultsAfter || (a.cardNumber < b.cardNumber ? -1 : 1))
+    .slice(0, limit);
+
+  return {
+    windowSeconds,
+    totalErrors: errors.length,       // כל התקלות בתקופה
+    attributedErrors: attributed,     // מתוכן — כמה הייתה לפניהן פעולת-כרטיס בחלון
+    topCards,                         // [{ cardNumber, faultsAfter }] — מהגבוה לנמוך
+  };
+}
+
 const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 /**
@@ -2418,6 +2477,7 @@ module.exports = {
   getCycleDelta,
   getPeriodBreakdown,
   getSiteAnalyticsData,
+  getCardFaultCorrelation,
   getSiteInsights,
   getActivityLog,
   getBucketRanges,
