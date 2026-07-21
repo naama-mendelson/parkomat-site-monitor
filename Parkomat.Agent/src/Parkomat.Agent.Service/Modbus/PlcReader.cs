@@ -80,22 +80,34 @@ public class PlcReader : IDisposable
     {
         EnsureConnected();
 
-        // ה-slave address של ה-PLC ב-Modbus. בדרך כלל 1 (נהפוך להגדרה בהמשך אם צריך).
-        const byte slaveId = 1;
-
-        // קוראים כל register בנפרד, לפי הכתובות מההגדרות.
-        ushort mode = ReadRegister(slaveId, _config.ModeRegister);
-        // מספר הכרטיס נקרא מרגיסטר בודד (16 ביט, עד 65535). אושר מול האתר
-        // שמספרי הכרטיס לא חורגים מהטווח הזה, ולכן אין צורך ברגיסטר שני.
-        ushort card = ReadRegister(slaveId, _config.CardRegister);
-        ushort cycle = ReadRegister(slaveId, _config.CycleRegister);
-
-        return new PlcReading
+        try
         {
-            Mode = mode,
-            CardNumber = card == 0 ? "" : card.ToString(),
-            CycleCounter = cycle
-        };
+            // ה-slave address של ה-PLC ב-Modbus. בדרך כלל 1 (נהפוך להגדרה בהמשך אם צריך).
+            const byte slaveId = 1;
+
+            // קוראים כל register בנפרד, לפי הכתובות מההגדרות.
+            ushort mode = ReadRegister(slaveId, _config.ModeRegister);
+            // מספר הכרטיס נקרא מרגיסטר בודד (16 ביט, עד 65535). אושר מול האתר
+            // שמספרי הכרטיס לא חורגים מהטווח הזה, ולכן אין צורך ברגיסטר שני.
+            ushort card = ReadRegister(slaveId, _config.CardRegister);
+            ushort cycle = ReadRegister(slaveId, _config.CycleRegister);
+
+            return new PlcReading
+            {
+                Mode = mode,
+                CardNumber = card == 0 ? "" : card.ToString(),
+                CycleCounter = cycle
+            };
+        }
+        catch
+        {
+            // קריאה נכשלה (timeout / socket half-open — ה-PLC מקבל TCP אך הפסיק
+            // לענות). במצב הזה _tcpClient.Connected עלול להישאר true, כך ש-
+            // EnsureConnected לא היה בונה את החיבור מחדש והכשל היה נמשך ללא סוף.
+            // סוגרים מפורשות כדי שהדגימה הבאה תפתח socket חדש ותוכל להתאושש.
+            Dispose();
+            throw;
+        }
     }
 
     // קורא input register בודד (פקודת Modbus FC 04) ומחזיר את הערך.

@@ -2,6 +2,7 @@
 using MQTTnet.Protocol;
 using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Core.Protocol;
+using Parkomat.Agent.Service.Logging;
 using System.Text.Json;
 
 namespace Parkomat.Agent.Service.Mqtt;
@@ -31,11 +32,16 @@ public class MqttPublisher : IAsyncDisposable
 
     public bool IsConnected => _client.IsConnected;
 
+    // נכתב על thread ה-callback של MQTTnet ונקרא על thread לולאת ה-Worker.
+    // volatile מבטיח שה-Worker לא יקרא ערך ישן (barrier) — בלעדיו reconnect של
+    // הגשר עלול "להתפספס" (אין resync → השרת נשאר ב-no_comm).
+    private volatile bool _hiveMqBridgeConnected;
+
     /// <summary>
     /// האם גשר ה-Mosquitto מחובר כרגע ל-HiveMQ (לפי הודעת ה-notification המקומית).
     /// false עד שמתקבל דיווח "1", וכן בכל ניתוק.
     /// </summary>
-    public bool HiveMqBridgeConnected { get; private set; }
+    public bool HiveMqBridgeConnected => _hiveMqBridgeConnected;
 
     // מטפל בהודעות נכנסות: מעדכן את מצב הגשר ל-HiveMQ לפי ה-topic הייעודי.
     private Task OnMessageReceived(MqttApplicationMessageReceivedEventArgs e)
@@ -43,7 +49,7 @@ public class MqttPublisher : IAsyncDisposable
         if (e.ApplicationMessage.Topic == BridgeConfigWriter.RemoteBridgeStateTopic(_siteCode))
         {
             string payload = e.ApplicationMessage.ConvertPayloadToString()?.Trim() ?? "";
-            HiveMqBridgeConnected = payload == "1";
+            _hiveMqBridgeConnected = payload == "1";
         }
         return Task.CompletedTask;
     }
@@ -59,7 +65,7 @@ public class MqttPublisher : IAsyncDisposable
     public async Task ConnectAsync(CancellationToken ct = default)
     {
         // בכל חיבור מחדש מאפסים את מצב הגשר עד שנקבל דיווח עדכני (retained).
-        HiveMqBridgeConnected = false;
+        _hiveMqBridgeConnected = false;
 
         // ה-payload של הצוואה — בדיוק כמו החוזה: { "timestamp": 0, "state": "no_comm" }
         var willMessage = new StateMessage
@@ -124,13 +130,36 @@ public class MqttPublisher : IAsyncDisposable
             .Build();
 
         await _client.PublishAsync(mqttMessage, ct);
+
+        // תופעת-לוואי בלבד, *אחרי* פרסום מוצלח: רישום ה-audit המקומי (מה נשלח).
+        // נבלע בשקט אם ייכשל — לא משנה לוגיקה, תזמון או אמינות של השידור עצמו.
+        SentAuditLog.Log(topic, json);
     }
 
     /// <summary>מתנתק בצורה מסודרת ומשחרר משאבים.</summary>
     public async ValueTask DisposeAsync()
     {
         if (_client.IsConnected)
-            await _client.DisconnectAsync();
+        {
+            // ניתוק "נקי" (DisconnectAsync) *זורק* את ה-LWT לפי תקן MQTT, כך שעל
+            // עצירה מסודרת (reboot / עדכון / שירות שנעצר) השרת לא היה מקבל no_comm
+            // והאתר היה נראה "פועל" עד שה-keepalive של הגשר יבחין. משדרים no_comm
+            // מפורשות לפני הניתוק — עקבי עם מסלול ה-Kill של ה-Tray, שכן מפעיל LWT.
+            // best-effort בלבד, עם timeout קצר, כדי לא לתקוע את הכיבוי.
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var down = new StateMessage
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),  // שניות שלמות, כמו החוזה
+                    State = SiteState.NoComm
+                };
+                await PublishStateAsync(down, cts.Token);
+            }
+            catch { /* עצירה — לא מפילים על כשל שידור הפרידה */ }
+
+            try { await _client.DisconnectAsync(); } catch { /* כנ"ל */ }
+        }
 
         _client.Dispose();
     }

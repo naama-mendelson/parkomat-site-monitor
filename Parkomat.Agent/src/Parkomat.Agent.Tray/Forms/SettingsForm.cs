@@ -40,7 +40,7 @@ public class SettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(440, 620);
+        ClientSize = new Size(520, 620);
 
         // פריסה אנכית: כל הקבוצות זו מתחת לזו.
         var layout = new TableLayoutPanel

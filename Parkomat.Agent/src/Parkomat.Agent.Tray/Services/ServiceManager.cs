@@ -35,7 +35,16 @@ public class ServiceManager
     private const string AgentProcName = "Parkomat.Agent.Service";
     private const string MosquittoProcName = "mosquitto";
 
-    private const int HeartbeatFreshSeconds = 10;
+    // חלון רעננות ה-heartbeat, מותאם לקצב הדגימה: max(10s, 3×poll). קבוע של 10s היה
+    // גורם לסמל להראות "אין קשר לבקר" ברגע שהדגימה איטית מ-10s (הטופס מתיר עד 600s),
+    // למרות שהסוכן קורא PLC מצוין. נקרא בכל בדיקה כי הקצב ניתן לשינוי בזמן ריצה.
+    private static int FreshnessWindowSeconds()
+    {
+        int pollMs;
+        try { pollMs = ConfigStore.Load().PollIntervalMs; }
+        catch { pollMs = 1000; }
+        return HeartbeatPolicy.FreshnessWindowSeconds(pollMs);
+    }
 
     // שורש ההתקנה = תיקיית ה-Tray מעלה אחת ({app}\tray -> {app}).
     private static string InstallRoot =>
@@ -72,7 +81,7 @@ public class ServiceManager
             if (!File.Exists(AgentPaths.HiveMqStatusFile))
                 return false;
 
-            string[] parts = File.ReadAllText(AgentPaths.HiveMqStatusFile)
+            string[] parts = ReadAllTextShared(AgentPaths.HiveMqStatusFile)
                 .Trim()
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
@@ -82,7 +91,7 @@ public class ServiceManager
                 return false;
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            return (now - ts) <= HeartbeatFreshSeconds;
+            return (now - ts) <= FreshnessWindowSeconds();
         }
         catch
         {
@@ -245,17 +254,29 @@ public class ServiceManager
             if (!File.Exists(AgentPaths.HeartbeatFile))
                 return false;
 
-            string text = File.ReadAllText(AgentPaths.HeartbeatFile).Trim();
+            string text = ReadAllTextShared(AgentPaths.HeartbeatFile).Trim();
             if (!long.TryParse(text, out long beatUnix))
                 return false;
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            return (now - beatUnix) <= HeartbeatFreshSeconds;
+            return (now - beatUnix) <= FreshnessWindowSeconds();
         }
         catch
         {
             return false;
         }
+    }
+
+    // קורא קובץ שה-Agent כותב במקביל, בלי להיכשל על "sharing violation": מתיר
+    // ל-writer להחליף/למחוק את הקובץ (FileShare.ReadWrite | Delete) בזמן הקריאה.
+    // בשילוב עם הכתיבה האטומית של ה-Agent — הקורא תמיד מקבל תוכן שלם.
+    private static string ReadAllTextShared(string path)
+    {
+        using var fs = new FileStream(
+            path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(fs);
+        return reader.ReadToEnd();
     }
 
     // ממתין עד ש-bridge.conf קיים ומכיל remote_username לא-ריק, או עד תום הזמן.

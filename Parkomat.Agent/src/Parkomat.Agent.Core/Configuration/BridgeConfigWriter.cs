@@ -34,8 +34,8 @@ public static class BridgeConfigWriter
         File.Move(tempFile, AgentPaths.BridgeConfigFile, overwrite: true);
     }
 
-    // בונה את הטקסט של קובץ הגישור.
-    private static string Build(SiteConfig config)
+    // בונה את הטקסט של קובץ הגישור. public כדי שניתן יהיה לבדוק את התוכן בלי לגעת בדיסק.
+    public static string Build(SiteConfig config)
     {
         string siteCode = config.SiteId;
         var mqtt = config.Mqtt;
@@ -54,6 +54,13 @@ public static class BridgeConfigWriter
 
         // --- הגדרת הגשר ל-HiveMQ ---
         sb.AppendLine("connection hivemq-bridge");
+        // זהות ה-clientId ל-HiveMQ מבוססת-אתר (bridge-{code}), *לא* לפי שם-המחשב.
+        // בלי remote_clientid, Mosquitto נופל ל-clientId שנגזר מ-hostname — ושני
+        // מחשבי-אתר שנוצרו מאותו image (אותו hostname) מציגים ל-HiveMQ אותו clientId,
+        // מפילים זה את זה בלולאה (MQTT מחייב clientId ייחודי), ושני אתרים לא-קשורים
+        // מהבהבים no_comm. local_clientid נותן זהות ייחודית גם מול הברוקר המקומי.
+        sb.AppendLine($"remote_clientid bridge-{siteCode}");
+        sb.AppendLine($"local_clientid bridge-{siteCode}");
         sb.AppendLine($"address {mqtt.Host}:{mqtt.Port}");
         // מעביר רק את הודעות האתר הזה, לפי קוד האתר.
         sb.AppendLine($"topic sites/{siteCode}/# out 1");

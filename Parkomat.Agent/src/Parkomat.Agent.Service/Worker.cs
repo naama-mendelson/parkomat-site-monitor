@@ -105,6 +105,26 @@ public class Worker : BackgroundService
         // ולשדר מחדש את המצב הנוכחי — ראה ההסבר בשלב ג'.
         bool bridgeWasConnected = mqtt.HiveMqBridgeConnected;
 
+        // "הודעת לידה" (birth message): בעליית ה-Agent — התקנה חדשה, reboot, או
+        // הפעלה-מחדש כדי להתאושש מ-no_comm — נשדר *פעם אחת* את המצב הנוכחי, בלי
+        // לחכות לשינוי MODE. בלי זה, אם בעלייה הכול מתחבר נקי (אין reconnect שמפעיל
+        // resync), האתר נשאר על מה שהשרת חשב (למשל no_comm שהשאיר סוכן שהתנתק) עד
+        // שינוי המצב האמיתי הבא בבקר — שעלול לא להגיע שעות.
+        bool birthMessageSent = false;
+
+        // המצב המתורגם האחרון שראינו (לא-null). משמש כ-fallback ל-resync כשה-MODE
+        // הנוכחי אינו ממופה (MODE 4 = init → null): כך אתר שהתאושש-לתוך-init, או
+        // שהשרת חושב עליו error/no_comm, לא נשאר תקוע עד המעבר הממופה הבא.
+        SiteState? lastKnownState = null;
+
+        // תור פעולות שטרם שודרו בהצלחה. פעולה (כניסה/יציאה) היא אירוע שאסור לאבד:
+        // ה-detector הוא edge-triggered ומקדם את מצבו מיד, ולכן אם השידור נכשל אין
+        // דרך "לזהות שוב" את המעבר. שומרים כאן כל פעולה *עם החותם המקורי שלה* עד
+        // שידור מוצלח; כשל → נשארת ותשודר בסבב הבא (אותו חותם ⇒ ה-dedup של השרת
+        // סופג כפילות QoS-1). הרצפה גבוהה מספיק לכל אורך נתק סביר של הברוקר המקומי.
+        var pendingOps = new List<OperationMessage>();
+        const int MaxPendingOps = 1000;
+
         // ה-MODE שנרשם לאחרונה ללוג. משמש כדי לרשום (ב-Information) *כל* שינוי MODE
         // ואת התרגום שלו — כך שבשדה רואים מה הבקר מחזיר ואם הערך בכלל ממופה ל-state.
         int? previousLoggedMode = null;
@@ -205,6 +225,24 @@ public class Worker : BackgroundService
             // המצב הנוכחי המתורגם — לשימוש בשידור-מחדש אחרי חיבור-מחדש.
             SiteState? currentState = ModeTranslator.FromMode(reading.Mode);
 
+            // זוכרים את המצב האחרון שכן ממופה — ה-fallback ל-resync ב-MODE לא-ממופה.
+            if (currentState.HasValue)
+                lastKnownState = currentState;
+
+            // לוכדים את הפעולות שהמוח זיהה *מיד* לתוך תור השידור — לפני כל ניסיון
+            // שידור (שעלול לזרוק). כך אף כניסה/יציאה לא אובדת גם אם הברוקר נופל כאן.
+            foreach (var op in result.Operations)
+            {
+                if (pendingOps.Count >= MaxPendingOps)
+                {
+                    _logger.LogError(
+                        "Pending-operations buffer full ({Max}) — dropping oldest. Broker unreachable too long?",
+                        MaxPendingOps);
+                    pendingOps.RemoveAt(0);
+                }
+                pendingOps.Add(op);
+            }
+
             // ===== אבחון: רושמים כל שינוי ב-MODE ואת התרגום שלו =====
             // זה הצעד הכי חשוב לאבחון בשדה: הוא חושף מה הבקר באמת מחזיר, והאם
             // הערך בכלל ממופה ל-state. אם לא — כאן נראה בדיוק למה שום state לא נשלח.
@@ -264,20 +302,32 @@ public class Worker : BackgroundService
                 //     נשמרות בלי קשר להגנה הזו.
                 bool bridgeJustReconnected = mqtt.HiveMqBridgeConnected && !bridgeWasConnected;
 
-                if ((!mqttWasConnected || plcJustRecovered || bridgeJustReconnected)
-                    && currentState.HasValue)
+                // ה-state ל-resync: המצב הנוכחי אם הוא ממופה, אחרת האחרון שידענו.
+                // כך MODE 4 (init) לא מונע resync — אתר שהתאושש-לתוך-init, או שהשרת
+                // חושב עליו error/no_comm, לא נשאר תקוע. אם עוד לא ראינו אף מצב ממופה
+                // (עלייה טרייה בתוך init) — resyncState עדיין null, וה-birth נדחה עד
+                // המצב הממופה הראשון (שם ממילא אין "אמת" קודמת לפרסם).
+                SiteState? resyncState = currentState ?? lastKnownState;
+
+                // המקרה הרביעי — הודעת הלידה — הוא בדיוק "הצג מיד את הנתונים הקיימים
+                // ואל תחכה לשינוי": בשידור המוצלח הראשון אחרי עלייה משדרים את המצב
+                // פעם אחת, גם אם דבר לא השתנה ואף חיבור לא נותק-והתחבר.
+                if ((!birthMessageSent || !mqttWasConnected || plcJustRecovered || bridgeJustReconnected)
+                    && resyncState.HasValue)
                 {
-                    string reason = !mqttWasConnected ? "reconnected to broker"
+                    string reason = !birthMessageSent ? "startup birth message"
+                        : !mqttWasConnected ? "reconnected to broker"
                         : bridgeJustReconnected ? "HiveMQ bridge reconnected"
                         : "PLC recovered";
                     _logger.LogInformation(
                         "Resyncing current state to broker ({Reason}) -> {State}.",
-                        reason, currentState.Value);
+                        reason, resyncState.Value);
                     await mqtt.PublishStateAsync(new StateMessage
                     {
                         Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                        State = currentState.Value
+                        State = resyncState.Value
                     }, stoppingToken);
+                    birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                 }
                 mqttWasConnected = true;
                 bridgeWasConnected = mqtt.HiveMqBridgeConnected;
@@ -297,9 +347,14 @@ public class Worker : BackgroundService
                     _logger.LogInformation("-> Published STATE: {State}", result.State.State);
                 }
 
-                foreach (var op in result.Operations)
+                // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
+                // זורקת, יוצאים ל-catch כשהיא עדיין ראש התור — כך היא (וכל מה שאחריה)
+                // תשודר שוב בסבב הבא, עם החותם המקורי. אין אובדן ואין קידום-לפני-שידור.
+                while (pendingOps.Count > 0)
                 {
+                    var op = pendingOps[0];
                     await mqtt.PublishOperationAsync(op, stoppingToken);
+                    pendingOps.RemoveAt(0);
                     _logger.LogInformation(
                         "-> Published OPERATION: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle}",
                         op.StartEnd, op.EntryExit, op.User, op.CycleCounter);
@@ -389,7 +444,7 @@ public class Worker : BackgroundService
         try
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            File.WriteAllText(AgentPaths.HeartbeatFile, now.ToString());
+            AtomicWriteAllText(AgentPaths.HeartbeatFile, now.ToString());
         }
         catch
         {
@@ -404,11 +459,22 @@ public class Worker : BackgroundService
         try
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            File.WriteAllText(AgentPaths.HiveMqStatusFile, $"{(connected ? 1 : 0)} {now}");
+            AtomicWriteAllText(AgentPaths.HiveMqStatusFile, $"{(connected ? 1 : 0)} {now}");
         }
         catch
         {
             // לא קריטי — מתעלמים.
         }
+    }
+
+    // כתיבה אטומית: כותבים לקובץ ‎.tmp‎ ואז מחליפים במהלך אחד (File.Move). כך
+    // ה-Tray, שקורא את הקבצים האלה במקביל, לעולם לא רואה קובץ חצי-כתוב (truncate
+    // באמצע כתיבה) — או הישן במלואו או החדש במלואו. בלי זה קריאה שנפלה על כתיבה
+    // הפכה את אייקון ה-Tray לאפור/"מכובה" לרגע למרות שהסוכן תקין.
+    private static void AtomicWriteAllText(string path, string content)
+    {
+        string tempFile = path + ".tmp";
+        File.WriteAllText(tempFile, content);
+        File.Move(tempFile, path, overwrite: true);
     }
 }

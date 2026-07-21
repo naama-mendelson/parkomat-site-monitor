@@ -34,11 +34,36 @@ public static class ConfigStore
         }
 
         string json = File.ReadAllText(AgentPaths.ConfigFile);
-        SiteConfig? config = JsonSerializer.Deserialize<SiteConfig>(json, Options);
+
+        SiteConfig? config;
+        try
+        {
+            config = JsonSerializer.Deserialize<SiteConfig>(json, Options);
+        }
+        catch (JsonException)
+        {
+            // קובץ פגום (קטוע בנפילת חשמל באמצע כתיבה, או עריכה ידנית שגויה):
+            // Deserialize זורק JsonException. בלי התפיסה הזו החריגה בורחת מ-Load,
+            // מ-Worker.ExecuteAsync ומפילה את ה-host ל-crash-loop — והאתר תקוע
+            // ב-no_comm לצמיתות. חוזרים לברירת מחדל כדי שהשירות ימשיך לתקשר.
+            config = null;
+        }
 
         // אם מסיבה כלשהי הקובץ ריק או פגום — מחזירים ברירת מחדל במקום לקרוס.
-        return config ?? new SiteConfig();
+        SiteConfig result = config ?? new SiteConfig();
+
+        // מהדקים את קצב הדגימה לטווח שפוי. קובץ *תקין-תחבירית* עם ערך שלילי
+        // עובר את הגנת ה-JsonException למעלה, ואז Task.Delay(שלילי) זורק ומחזיר
+        // את ה-crash-loop דרך הדלת האחורית. הידוק כאן סוגר גם את החור הזה.
+        result.PollIntervalMs = ClampPollIntervalMs(result.PollIntervalMs);
+        return result;
     }
+
+    /// <summary>
+    /// מהדק את קצב הדגימה לטווח שפוי: לא פחות מ-100ms (0/שלילי = crash-loop או
+    /// לולאה חמה) ולא יותר מ-60s. פונקציה טהורה — ניתנת לבדיקה בנפרד.
+    /// </summary>
+    public static int ClampPollIntervalMs(int ms) => Math.Clamp(ms, 100, 60000);
 
     /// <summary>
     /// שומר את ההגדרות לדיסק, בכתיבה בטוחה:

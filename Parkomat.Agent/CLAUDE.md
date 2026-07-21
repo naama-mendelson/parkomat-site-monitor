@@ -44,9 +44,16 @@ dotnet run --project src/Parkomat.Agent.Tray
 # Run tests
 dotnet test Parkomat.Agent.slnx
 
-# Publish — output paths MUST match what installer.iss expects (publish/service, publish/tray)
-dotnet publish src/Parkomat.Agent.Service -c Release -o publish/service
-dotnet publish src/Parkomat.Agent.Tray    -c Release -o publish/tray
+# Publish for deployment — output paths MUST match what installer.iss expects
+# (publish/service, publish/tray). MUST be SELF-CONTAINED: site PCs are not
+# guaranteed to have the .NET 10 Desktop runtime installed, and a framework-
+# dependent build simply won't start there — the Tray never appears and it looks
+# identical to "install failed". A self-contained build bundles the runtime
+# (installer ~64MB; a framework-dependent one is ~5MB — that size drop is the
+# red flag). Always publish with -r win-x64 --self-contained before compiling
+# the installer.
+dotnet publish src/Parkomat.Agent.Service -c Release -r win-x64 --self-contained true -o publish/service
+dotnet publish src/Parkomat.Agent.Tray    -c Release -r win-x64 --self-contained true -o publish/tray
 ```
 
 Installer: **Inno Setup** compiles `installer.iss` → `installer-output/ParkomatAgentSetup.exe`.
@@ -143,10 +150,18 @@ The CA certificate lives under `ProgramData` (no spaces in the path), not `Progr
 
 ## Deployment notes
 
-`installer.iss` (run as admin) registers **two** Windows services:
+`installer.iss` is a **per-user, no-admin** install (`PrivilegesRequired=lowest`, no UAC
+prompt). It does **not** register any Windows service and does **not** use `nssm`. Everything
+runs in the user's session:
 
-- **`ParkomatAgent`** — this app; `start= auto`, auto-restart on crash.
-- **`Mosquitto`** — installed via `nssm.exe`; depends on `ParkomatAgent` so `bridge.conf`
-  exists before it starts.
+- The install goes to `{localappdata}\Parkomat\Agent` (service + tray + bundled Mosquitto).
+- The **Tray** auto-starts per-user via an **`HKCU\...\Run`** registry value (not `HKLM`).
+- The Tray is the supervisor: it launches and watchdogs **both** the Agent process and
+  **Mosquitto** as ordinary child processes (no services). Runtime data still lives under
+  the shared `C:\ProgramData\Parkomat\Agent` path (a standard user may create/own it).
 
-The Tray app auto-starts per-user via an `HKLM\...\Run` registry value.
+> Nothing in install or runtime requires administrator rights. `PrepareToInstall` does make
+> best-effort `sc.exe stop/delete` calls to clean up an **older admin-era** install; without
+> admin those simply fail silently (no UAC, no error) and the install proceeds. Do not
+> reintroduce a service-based (`nssm` / `sc create`) install — it would bring back the admin
+> requirement this design deliberately removed.

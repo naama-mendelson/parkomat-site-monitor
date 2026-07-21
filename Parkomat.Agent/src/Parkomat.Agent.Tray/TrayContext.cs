@@ -26,7 +26,13 @@ public class TrayContext : ApplicationContext
 
     // watchdog: דואג שה-Agent ו-Mosquitto ימשיכו לרוץ (מפעיל מחדש אם מתו).
     private readonly System.Windows.Forms.Timer _watchdog;
-    private SynchronizationContext? _ui;   // לחזרה ל-thread של ה-UI מרקע
+
+    // בקרת-marshaling נסתרת: handle שלה נוצר על thread ה-UI (ראה בנאי), וכל
+    // BeginInvoke דרכה מנתב פעולה חזרה ל-thread הזה. מחליף לכידת
+    // SynchronizationContext.Current בבנאי — שרצה *לפני* ש-Application.Run
+    // מתקין את ה-WindowsFormsSynchronizationContext, ולכן הייתה מחזירה null,
+    // ו-PostToUi היה מריץ עדכוני UI על thread רקע (חריגות cross-thread).
+    private readonly Control _marshal = new();
     private volatile bool _userStopped;    // המשתמש כיבה ידנית → לא להפעיל מחדש
     private volatile bool _busy;           // מונע ריצות חופפות של פעולות תהליך
 
@@ -74,8 +80,10 @@ public class TrayContext : ApplicationContext
         // רענון המצב לפני שהתפריט נפתח, כדי שיציג נתונים עדכניים.
         menu.Opening += (s, e) => RefreshState();
 
-        // שומרים הפניה ל-thread של ה-UI כדי לחזור אליו מפעולות רקע.
-        _ui = SynchronizationContext.Current;
+        // יוצרים את ה-handle של בקרת ה-marshaling *עכשיו*, על thread ה-UI (הבנאי
+        // רץ על ה-thread שקורא ל-Application.Run). גישה ל-.Handle כופה יצירה גם בלי
+        // חלון גלוי; מכאן אפשר לנתב פעולות רקע חזרה ל-UI דרך BeginInvoke.
+        _ = _marshal.Handle;
 
         // מפעילים את ה-Agent ו-Mosquitto מיד (ברקע, שלא לתקוע את ה-UI בעליית ה-Tray).
         KickEnsureRunning();
@@ -201,11 +209,12 @@ public class TrayContext : ApplicationContext
             });
     }
 
-    // מריץ פעולה על thread ה-UI (מרקע), אם קיים; אחרת ישירות.
+    // מריץ פעולה על thread ה-UI (מרקע). אם אנחנו כבר על thread ה-UI — ישירות;
+    // אחרת מנתב דרך ה-handle של בקרת ה-marshaling.
     private void PostToUi(Action action)
     {
-        if (_ui != null)
-            _ui.Post(_ => action(), null);
+        if (_marshal.IsHandleCreated && _marshal.InvokeRequired)
+            _marshal.BeginInvoke(action);
         else
             action();
     }
@@ -219,6 +228,7 @@ public class TrayContext : ApplicationContext
         // מסתירים את האייקון לפני יציאה, אחרת הוא נשאר "תקוע" ליד השעון.
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _marshal.Dispose();
         Application.Exit();
     }
 }
