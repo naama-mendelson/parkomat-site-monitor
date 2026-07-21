@@ -22,19 +22,19 @@ public class SiteConfig
 public class PlcConfig
 {
     /// <summary>כתובת ה-IP של ה-PLC.</summary>
-    public string IpAddress { get; set; } = "127.0.0.1";
+    public string IpAddress { get; set; } = "192.168.1.3";
 
     /// <summary>פורט Modbus-TCP. ברירת המחדל התקנית היא 502.</summary>
     public int Port { get; set; } = 502;
 
     /// <summary>כתובת ה-register שממנה נקרא את ה-MODE.</summary>
-    public int ModeRegister { get; set; } = 0;
+    public int ModeRegister { get; set; } = 290;
 
     /// <summary>כתובת ה-register שממנה נקרא את מספר הכרטיס.</summary>
-    public int CardRegister { get; set; } = 1;
+    public int CardRegister { get; set; } = 291;
 
     /// <summary>כתובת ה-register שממנה נקרא את ה-cycle counter.</summary>
-    public int CycleRegister { get; set; } = 2;
+    public int CycleRegister { get; set; } = 292;
 }
 
 /// <summary>הגדרות החיבור ל-Broker.</summary>
@@ -57,14 +57,18 @@ public class PlcConfig
 public class MqttConfig
 {
     /// <summary>כתובת ה-Broker של HiveMQ.</summary>
-    public string Host { get; set; } = "";
+    public string Host { get; set; } = "af3d50e1ce154ed1af570331a0df4ff7.s1.eu.hivemq.cloud";
 
     /// <summary>פורט. 8883 = MQTT over TLS (הפורט של HiveMQ בענן).</summary>
     public int Port { get; set; } = 8883;
 
     /// <summary>שם משתמש להתחברות ל-Broker.</summary>
-    public string Username { get; set; } = "";
+    public string Username { get; set; } = "agent-1234";
 
-    /// <summary>סיסמה להתחברות ל-Broker.</summary>
+    /// <summary>
+    /// סיסמה להתחברות ל-Broker. נשמרת *ריקה* ב-git בכוונה — כדי שסוד לא ייכנס
+    /// להיסטוריית המאגר. הסיסמה האמיתית מוזנת בקובץ הזה לפני build לפריסה, או
+    /// ע"י הטכנאי בחלון ההגדרות. (הבינארי המשוגר של 1.0.4 כבר מכיל אותה.)
+    /// </summary>
     public string Password { get; set; } = "";
 }
