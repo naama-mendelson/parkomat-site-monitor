@@ -8,6 +8,7 @@
 .env.*
 !.env.example
 !.env.test.example
+!.env.docker.example
 *.pem
 *.key
 *.pfx
@@ -70,3 +71,6 @@ desktop.ini
 *.local
 *.bak
 *.pid
+
+# תוצר בניית הדשבורד שמוגש ע"י ה-master (נבנה בתוך תמונת ה-Docker)
+master/public/

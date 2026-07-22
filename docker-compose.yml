@@ -1,0 +1,35 @@
+# ============================================================
+# Parkomat — הרצה בשרת
+# ============================================================
+# שירות אחד בלבד: Postgres (Supabase) ו-MQTT (HiveMQ) הם שירותים מנוהלים
+# חיצוניים, ולכן אין כאן קונטיינר DB או broker.
+#
+# ⚠️ אין להריץ יותר ממופע אחד (בלי replicas / scale). שתי סיבות:
+#   1. ה-Master מתחבר ל-HiveMQ עם MASTER_CLIENT_ID קבוע ו-clean:false, כדי
+#      שהברוקר ישמור הודעות בזמן שהוא למטה. שני מופעים עם אותו מזהה מנתקים
+#      זה את זה בלולאה — ואף אחד לא קולט.
+#   2. הקליטה מסודרת בתור FIFO *לכל אתר, בתוך התהליך*. עיבוד מקביל כבר
+#      השחית נתונים בעבר (מקטעי מצב כפולים, משכים שליליים).
+
+services:
+  parkomat:
+    build: .
+    image: parkomat:latest
+    container_name: parkomat
+    restart: unless-stopped
+
+    # שמאל = הפורט בשרת, ימין = בתוך הקונטיינר.
+    # מאחורי reverse proxy (nginx/Caddy) עדיף "127.0.0.1:4000:4000".
+    ports:
+      - "4000:4000"
+
+    # הסודות מגיעים מקובץ .env שיושב לצד ה-compose ואינו נכנס ל-git
+    # ולא לתמונה (ראה .dockerignore). ראה .env.docker.example.
+    env_file:
+      - .env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
