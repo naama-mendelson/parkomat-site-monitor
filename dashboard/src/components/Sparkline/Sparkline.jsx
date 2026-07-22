@@ -28,7 +28,9 @@ function Sparkline({ points }) {
   const totalErrs = sum("errors");
   const totalMnt = sum("maintenance");
 
-  if (totalOps === 0 && totalErrs === 0 && totalMnt === 0) {
+  // תחזוקה מתמשכת (בלי כניסה חדשה) לא נספרת ב-totalMnt, ולכן בודקים גם כיסוי.
+  const anyMaintenance = points.some((p) => p.maintenanceActive);
+  if (totalOps === 0 && totalErrs === 0 && totalMnt === 0 && !anyMaintenance) {
     return <p className="spark-empty">לא נרשמה פעילות בתקופה זו</p>;
   }
 
@@ -88,9 +90,8 @@ function Sparkline({ points }) {
           </rect>
         ))}
 
-        {/* תקלות (אדום) ותחזוקה (צהוב) — צרות, מלפנים, בגובה מינימלי כדי
-            שאירוע בודד מול עשרות פעולות עדיין ייראה. משוכות מעט לצדדים
-            כדי שלא יסתירו זו את זו כשקרו באותו יום. */}
+        {/* תקלות (אדום) — עמודה צרה מלפנים, בגובה מינימלי כדי שתקלה בודדת
+            מול עשרות פעולות עדיין תיראה. משוכה מעט שמאלה ממרכז העמודה. */}
         {points.map((p, i) =>
           p.errors > 0 ? (
             <rect
@@ -107,21 +108,21 @@ function Sparkline({ points }) {
           ) : null,
         )}
 
-        {points.map((p, i) =>
-          p.maintenance > 0 ? (
-            <rect
-              key={`m${i}`}
-              x={cx(i) + 0.6}
-              y={CHART_H - barH(p.maintenance)}
-              width={thinW}
-              height={barH(p.maintenance)}
-              fill={MNT_COLOR}
-              rx="0.8"
-            >
-              <title>{`${p.label}: ${p.maintenance} כניסות לתחזוקה`}</title>
+        {/* תחזוקה (ענבר) — עמודה דקה מוזחת ימינה, בגובה = חלק היום שהיה
+            בתחזוקה. יום שכולו תחזוקה = עמודה דקה מלאה; כך רואים תחזוקה גם
+            בימים בלי פעולות, בלי עמודה עבה. */}
+        {points.map((p, i) => {
+          const frac = p.maintenanceFraction || 0;
+          if (frac <= 0) return null;
+          const h = Math.max(MIN_H, frac * CHART_H);
+          return (
+            <rect key={`m${i}`} x={cx(i) + 0.6} y={CHART_H - h} width={thinW} height={h}
+                  fill={MNT_COLOR} rx="0.8">
+              <title>{`${p.label}: בתחזוקה ${p.maintenanceHours || 0} שע'`}</title>
             </rect>
-          ) : null,
-        )}
+          );
+        })}
+
       </svg>
 
       {/* left (ולא insetInlineStart): ה-SVG הוא LTR, ו-insetInlineStart ב-RTL

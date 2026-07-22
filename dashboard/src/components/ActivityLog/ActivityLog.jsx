@@ -119,8 +119,9 @@ function describe(e) {
   return {
     color: c.dot,
     icon: isPlcMaintenance ? "⚙" : "●",
-    // מבחינים בין תחזוקה שהבקר מדווח לבין חלון תחזוקה שהופעל ידנית מהדשבורד
-    title: isPlcMaintenance ? "האתר נכנס לתחזוקה" : `המצב השתנה ל: ${label}`,
+    // ניסוח אחיד לכל שינויי המצב, כולל תחזוקה: "המצב השתנה ל: בתחזוקה".
+    // ה-⚙ ו-"דווח מהבקר" מבחינים אותו מחלון תחזוקה ידני (kind='maintenance').
+    title: `המצב השתנה ל: ${label}`,
     details: isPlcMaintenance
       ? `דווח מהבקר · ${e.endedAt ? `נמשך ${dur}` : "עדיין בתחזוקה"}`
       : e.endedAt ? `נמשך ${dur}` : "המצב הנוכחי",
@@ -135,8 +136,10 @@ function ActivityLog({ log }) {
   const entries = log?.entries || NO_ENTRIES;
 
   const visible = useMemo(() => {
-    // "שינויי מצב" — התצוגה המלאה. 'בפעולה' כלול.
-    if (filter === "status") return entries.filter((e) => categoryOf(e) === "status");
+    // "שינויי מצב" — כל שינויי המצב של האתר: 'בפעולה' כלול, *וגם* מעבר
+    // ל'בתחזוקה' שדווח מהבקר (הוא שינוי מצב לכל דבר). אותו אירוע מופיע גם
+    // במסנן "תחזוקה" — שתי עדשות על אותו אירוע, לא ספירה כפולה בטעות.
+    if (filter === "status") return entries.filter((e) => e.kind === "status");
     // "הכל" — ציר הזמן המאוחד. 'בפעולה' מוסתר, אחרת כל כניסת רכב כפולה.
     if (filter === "all") return entries.filter((e) => !isOperatingState(e));
     return entries.filter((e) => categoryOf(e) === filter);
@@ -212,6 +215,8 @@ function ActivityLog({ log }) {
                           <span className="alog-title" style={{ color: d.color }}>
                             {d.title}
                           </span>
+                          {/* שם האתר — מוצג רק בלוג המצרף (כל האתרים) */}
+                          {e.siteName && <span className="alog-site">{e.siteName}</span>}
                           <time className="alog-time">
                             {new Date(e.at).toLocaleTimeString("he-IL", {
                               hour: "2-digit", minute: "2-digit", second: "2-digit",

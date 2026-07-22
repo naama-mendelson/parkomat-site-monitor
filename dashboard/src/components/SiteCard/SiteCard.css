@@ -40,9 +40,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;          /* לוקח את המקום הפנוי ומתכווץ — כדי לא לגלוש על הקוד */
+  min-width: 0;     /* קריטי: מאפשר לילדים להתכווץ מתחת לרוחב התוכן (ל-ellipsis) */
+}
+
+/* שם האתר עצמו — הוא זה שמתקצר עם "...", כדי שתג הדרגה יישאר גלוי לצידו */
+.card-name-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .vip-badge {
@@ -54,6 +61,7 @@
   font-size: 0.78rem;
   color: var(--text-muted);
   white-space: nowrap;
+  flex-shrink: 0;   /* הקוד תמיד גלוי — לא נדחס ולא נחפף ע"י שם/תג ארוכים */
 }
 
 /* ===== תג מצב ===== */
@@ -73,6 +81,38 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* ===== פעולה נוכחית (מוצג רק כשהאתר "בפעולה"): כיוון + מספר כרטיס ===== */
+.card-op {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
+.card-op-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.card-op-card {
+  color: var(--text-secondary);
+  font-weight: 600;
+  background: var(--bg-hover);
+  padding: 1px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.card-op-card--none {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-style: italic;
 }
 
 /* ===== פרטים ===== */
@@ -320,4 +360,5 @@
   border: 1px solid currentColor;
   vertical-align: middle;
   white-space: nowrap;
+  flex-shrink: 0;   /* התג תמיד גלוי בכותרת — גם כשהשם ארוך ומתקצר */
 }

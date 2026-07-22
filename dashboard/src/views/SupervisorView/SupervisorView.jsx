@@ -7,6 +7,7 @@ import { useSupervisorStats } from "../../hooks/useSupervisorStats";
 import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
 import { fuzzyMatch, formatDate } from "../../utils/helpers";
+import { compareSitesByPriority } from "../../utils/sortSites";
 import "./SupervisorView.css";
 
 // עמודות הטבלה. numeric קובע יישור ומיון מספרי.
@@ -23,9 +24,11 @@ const COLUMNS = [
   { key: "operationsSinceLastError", label: "פעולות מהתקלה", numeric: true },
 ];
 
-function SupervisorView({ onSiteClick, dataVersion }) {
+function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
   const [period, setPeriod] = useState("week");
-  const [sortKey, setSortKey] = useState("errors");
+  // ברירת המחדל: מיון לפי דחיפות (מצב → דרגה → אחוז כשל) — כמו תצוגת הכרטיסים.
+  // לחיצה על כותרת עמודה עוברת למיון לפי אותה עמודה.
+  const [sortKey, setSortKey] = useState("priority");
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilters, setStatusFilters] = useState([]);   // בחירה מרובה — ריק = הכל
   const [query, setQuery] = useState("");
@@ -33,14 +36,29 @@ function SupervisorView({ onSiteClick, dataVersion }) {
 
   const { data, loading, error, refresh } = useSupervisorStats(period, dataVersion);
 
+  // מפה code → סטטוס *חי* מרשימת האתרים (מתעדכנת מיידית מ-SSE). משמשת להדבקת
+  // הסטטוס העדכני על שורות הטבלה — ראה למטה.
+  const liveStatus = useMemo(() => new Map(sites.map((s) => [s.code, s.status])), [sites]);
+
   const rows = useMemo(() => {
     if (!data) return [];
 
-    const filtered = data.sites.filter((s) => {
+    // "בפעולה" הוא מצב חולף שבמכוון אינו גורר שליפה-מחדש של הסטטיסטיקה היקרה
+    // (ראה needsRefetch). כדי שעמודת "מצב" תהיה עקבית עם תצוגת הבקר החיה,
+    // מדביקים כאן את הסטטוס העדכני מרשימת האתרים — בלי שום בקשת רשת נוספת.
+    const live = data.sites.map((s) => {
+      const cur = liveStatus.get(s.code);
+      return cur && cur !== s.status ? { ...s, status: cur } : s;
+    });
+
+    const filtered = live.filter((s) => {
       if (statusFilters.length > 0 && !statusFilters.includes(s.status)) return false;
       if (query && !fuzzyMatch(`${s.name} ${s.code}`, query)) return false;
       return true;
     });
+
+    // ברירת המחדל — סדר דחיפות משותף עם תצוגת הכרטיסים (מצב → דרגה → אחוז כשל).
+    if (sortKey === "priority") return [...filtered].sort(compareSitesByPriority);
 
     const dir = sortDir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
@@ -48,7 +66,7 @@ function SupervisorView({ onSiteClick, dataVersion }) {
       if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
       return String(av ?? "").localeCompare(String(bv ?? ""), "he") * dir;
     });
-  }, [data, statusFilters, query, sortKey, sortDir]);
+  }, [data, liveStatus, statusFilters, query, sortKey, sortDir]);
 
   function toggleSort(key) {
     if (key === sortKey) {
@@ -198,7 +216,7 @@ function SupervisorView({ onSiteClick, dataVersion }) {
                         {s.hasUptimeData ? `${s.availability}%` : "—"}
                       </td>
                       <td className="num">{s.maintenanceHours || 0}</td>
-                      <td className="num">{s.cycleTotal.toLocaleString()}</td>
+                      <td className="num">{s.cycleTotal != null ? s.cycleTotal.toLocaleString() : "—"}</td>
                       <td className="num">{s.operationsSinceLastError.toLocaleString()}</td>
                     </tr>
                   );

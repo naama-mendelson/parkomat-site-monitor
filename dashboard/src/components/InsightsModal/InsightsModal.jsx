@@ -2,7 +2,7 @@
 // חמישה מסכי משנה (סקירה · פעילות · כרטיסים · אמינות · לוג), מעל בורר תקופה משותף.
 import { useEffect, useState } from "react";
 import { DIRECTION_COLORS, METRIC_COLORS } from "../../utils/constants";
-import { useSiteInsights } from "../../hooks/useSiteInsights";
+import { useSiteInsights, useGlobalInsights } from "../../hooks/useSiteInsights";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
 import MetricCard from "../MetricCard/MetricCard";
 import BarChart from "../BarChart/BarChart";
@@ -35,9 +35,13 @@ function fmtHours(h) {
   return `${Math.round(h * 10) / 10} שעות`;
 }
 
-function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview" }) {
+function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false }) {
   const [section, setSection] = useState(initialSection);
-  const { data, loading, error } = useSiteInsights(site.code, period, { version });
+  // מפעילים רק את ההוק הרלוונטי (כלל ה-hooks: שניהם נקראים תמיד, אחד מושבת
+  // דרך enabled). מצב "כל האתרים" מצרף על כל המערכת ואינו תלוי ב-site.
+  const siteRes = useSiteInsights(site?.code, period, { version, enabled: !allSites });
+  const globalRes = useGlobalInsights(period, { version, enabled: allSites });
+  const { data, loading, error } = allSites ? globalRes : siteRes;
 
   // סגירה ב-Escape
   useEffect(() => {
@@ -66,8 +70,10 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
         <header className="insights-header">
           <Logo size={30} />
           <div>
-            <h2>{site.site_name}</h2>
-            <span className="insights-code">קוד אתר: {site.code}</span>
+            <h2>{allSites ? "כל האתרים" : site.site_name}</h2>
+            <span className="insights-code">
+              {allSites ? "מבט מצרף על כל המערכת" : `קוד אתר: ${site.code}`}
+            </span>
           </div>
           <button className="insights-close" onClick={onClose} aria-label="סגירה">✕</button>
         </header>
@@ -95,7 +101,6 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <MetricCard label="יציאות" value={data.totals.exits.toLocaleString()} hint="רכבים שיצאו מהחניון" />
                   <MetricCard label="כרטיסים ייחודיים" value={data.cards.uniqueCards.toLocaleString()} hint="כמה כרטיסים שונים השתמשו באתר" />
                   <MetricCard label="ימי פעילות" value={data.totals.activeDays.toLocaleString()} hint="ימים שבהם נרשמה פעולה" />
-                  <MetricCard label="אנומליות" value={data.totals.anomalies.toLocaleString()} hint="פעולות שנרשמו במצב לא תקין" />
                 </div>
 
                 <section className="insights-card">
@@ -291,6 +296,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                     <table className="insights-table">
                       <thead>
                         <tr>
+                          {allSites && <th>אתר</th>}
                           <th>מי הפעיל</th>
                           <th>מתי</th>
                           <th>משך מתוכנן</th>
@@ -301,6 +307,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                       <tbody>
                         {data.maintenance.recentWindows.map((w, i) => (
                           <tr key={i}>
+                            {allSites && <td>{w.siteName || "—"}</td>}
                             <td className="card-num">{w.setBy}</td>
                             <td className="muted">
                               {new Date(w.startedAt).toLocaleString("he-IL", {

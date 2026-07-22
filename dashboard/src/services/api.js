@@ -215,6 +215,11 @@ export function fetchSiteInsights(code, period) {
   return getJSON(`${BASE}/sites/${code}/insights?period=${period}`, "שגיאה בטעינת נתונים מורחבים");
 }
 
+// אותה סטטיסטיקה מעמיקה, אך מצרפת על *כל* האתרים (מנהל כללי → "כל האתרים")
+export function fetchGlobalInsights(period) {
+  return getJSON(`${BASE}/insights?period=${period}`, "שגיאה בטעינת נתוני כלל האתרים");
+}
+
 // ===== ממשקי הניהול =====
 
 /**

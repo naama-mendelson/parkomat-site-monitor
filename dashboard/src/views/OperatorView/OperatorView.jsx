@@ -2,6 +2,7 @@
 // הועבר מ-App.jsx ללא שינוי התנהגות; הסינון והחיפוש מגיעים מה-Header.
 import SiteGrid from "../../components/SiteGrid/SiteGrid";
 import { fuzzyMatch } from "../../utils/helpers";
+import { compareSitesByPriority } from "../../utils/sortSites";
 import "./OperatorView.css";
 
 function OperatorView({ sites, loading, error, activeFilters = [], searchQuery, onSiteClick }) {
@@ -15,9 +16,11 @@ function OperatorView({ sites, loading, error, activeFilters = [], searchQuery, 
     return true;
   });
 
+  const ordered = [...filtered].sort(compareSitesByPriority);
+
   return (
     <div className="operator-view">
-      <SiteGrid sites={filtered} onSiteClick={onSiteClick} />
+      <SiteGrid sites={ordered} onSiteClick={onSiteClick} />
     </div>
   );
 }

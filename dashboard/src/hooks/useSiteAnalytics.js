@@ -1,5 +1,5 @@
 // hooks/useSiteAnalytics.js — שליפת נתוני האנליטיקה של אתר לפי תקופה
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { fetchSiteAnalytics } from "../services/api";
 
 // code: קוד האתר | period: 'week' | 'month' | 'year'
@@ -9,11 +9,23 @@ export function useSiteAnalytics(code, period, version = 0) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const keyRef = useRef(null); // האתר+התקופה שאליהם שייך data הנוכחי
 
   useEffect(() => {
     if (!code) {
       setData(null);
+      keyRef.current = null;
       return;
+    }
+
+    // כשהאתר או התקופה משתנים — מנקים את data מיד. אחרת, אם השליפה החדשה
+    // נכשלת, הפאנל היה ממשיך להציג את מספרי התקופה *הקודמת* כאילו הם של החדשה.
+    // בעדכון SSE בלבד (אותם code+period, version עולה) שומרים על data הקיים,
+    // כדי שרענון רגעי שנכשל לא ירוקן את הפאנל.
+    const key = `${code}|${period}`;
+    if (keyRef.current !== key) {
+      keyRef.current = key;
+      setData(null);
     }
 
     let cancelled = false;

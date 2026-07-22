@@ -19,8 +19,13 @@ function ProgressRing({ percent, size = 120, stroke = 10, color, label }) {
   // "נסגרת" ונראית מלאה (הפער הזעיר מתמלא ע"י שני הכובעים). מקזזים את בליטת
   // שני הכובעים (סה"כ stroke) מהאורך המצויר, כך שהאורך ה*נראה* (קשת+כובעים)
   // תואם לאחוז האמיתי — ופער קטן שוב נראה. ב-100% אין פער, אז לא מקזזים.
-  const capOverhang = clamped >= 99.95 ? 0 : stroke;
-  const dash = Math.max(0, (clamped / 100) * c - capOverhang);
+  // הקיזוז רלוונטי רק כשהקשת ארוכה מהכובעים. עבור אחוז קטן (קשת קצרה מ-stroke)
+  // קיזוז מלא היה מאפס את הקשת לגמרי — טבעת ריקה למרות שבמרכז כתוב למשל "2.0%".
+  // מגבילים את הקיזוז לחצי אורך הקשת, כך שקשת קטנה עדיין נראית, בלי לפגוע בקיזוז
+  // המלא של האחוזים הגבוהים (שם חצי-הקשת גדול בהרבה מ-stroke).
+  const arcLen = (clamped / 100) * c;
+  const capOverhang = clamped >= 99.95 ? 0 : Math.min(stroke, arcLen * 0.5);
+  const dash = Math.max(0, arcLen - capOverhang);
 
   return (
     <div className="ring" style={{ width: size, height: size }}>

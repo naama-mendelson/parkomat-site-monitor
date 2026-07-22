@@ -166,6 +166,11 @@ function ChatAssistant() {
   // ניקוי — אחרת ה-interval שורד את פירוק הרכיב וממשיך לרנדר לתוך הריק
   useEffect(() => stopTicker, []);
 
+  // מסמן אם הרכיב עדיין מחובר. send() ממתין על זרם ולולאת חשיפה; אם הרכיב
+  // פורק באמצע, בלי הדגל הזה ה-setState שאחרי ה-await היה רץ על רכיב מפורק.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   // הבועה מופיעה רק פעם אחת אי־פעם, ורק אחרי שנייה וחצי — כדי לא לקפוץ על
   // המשתמש בזמן שהדשבורד עוד נטען.
   useEffect(() => {
@@ -232,11 +237,16 @@ function ChatAssistant() {
       // האחרון היה "קופץ" לתצוגה במקום להיכתב, וזה בדיוק מה שנשבר לעין.
       await new Promise((resolve) => {
         const check = () => {
-          if (revealLenRef.current >= targetRef.current.length) return resolve();
+          // יוצאים גם אם הרכיב פורק — אחרת הלולאה הרקורסיבית שורדת את ה-unmount.
+          if (!mountedRef.current || revealLenRef.current >= targetRef.current.length) {
+            return resolve();
+          }
           setTimeout(check, TICK_MS);
         };
         check();
       });
+
+      if (!mountedRef.current) return;
 
       // גם ההודעה השמורה מנוקה — היא נשלחת חזרה למודל כהיסטוריה, ומודל שרואה
       // את ה-Markdown של עצמו נוטה לחזור עליו.
@@ -245,6 +255,7 @@ function ChatAssistant() {
         { role: "assistant", content: stripMarkdown(answer), toolsUsed },
       ]);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err.message);
       // מסירים את השאלה שנכשלה כדי שאפשר יהיה לנסות שוב בלי כפילות בהיסטוריה
       setMessages((prev) => prev.slice(0, -1));
@@ -253,8 +264,11 @@ function ChatAssistant() {
       stopTicker();
       targetRef.current = "";
       revealLenRef.current = 0;
-      setBusy(false);
-      inputRef.current?.focus();
+      // עדכוני מצב רק אם הרכיב עדיין מחובר (ה-await שמעל עלול היה לחצות unmount).
+      if (mountedRef.current) {
+        setBusy(false);
+        inputRef.current?.focus();
+      }
     }
   }
 

@@ -66,6 +66,7 @@ function patchFor(site, msg) {
       lastOperation: {
         start_end: msg.startEnd,
         entry_exit: msg.entryExit,
+        card_number: msg.cardNumber,   // חסר קודם → הכרטיס לא הופיע בכרטיס בזמן הפעולה
         occurred_at: msg.occurredAt,
       },
     };

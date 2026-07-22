@@ -27,6 +27,9 @@ function ExportMenu({ data, onPrint }) {
 
   function doJSON() {
     setOpen(false);
+    // data עשוי להיות null בזמן טעינה/שגיאה — בלי המשמר הזה dereference של
+    // data.range היה זורק TypeError. מקביל לבדיקה ב-doCSV.
+    if (!data) return flash("אין נתונים לייצוא");
     exportJSON(data, reportFilename(data.range, "json"));
     flash("הנתונים המלאים יוצאו ל-JSON");
   }

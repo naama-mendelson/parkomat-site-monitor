@@ -27,8 +27,8 @@ function Heatmap({ data, color = "var(--accent)" }) {
       >
         {/* כותרת עמודות */}
         <span className="hm-corner" />
-        {labels.map((l) => (
-          <span key={l} className="hm-collabel">{l}</span>
+        {labels.map((l, i) => (
+          <span key={`${l}-${i}`} className="hm-collabel">{l}</span>
         ))}
 
         {/* שורות */}

@@ -1,7 +1,7 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { STATUS_LABELS, STATUS_COLORS, TIER_LABELS, TIER_COLORS } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
 import "./SiteCard.css";
 
@@ -27,7 +27,7 @@ function TierBadge({ tier }) {
   );
 }
 
-function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }) {
+function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail }) {
   const status = site.status;
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
   const label = STATUS_LABELS[status] || status;
@@ -35,6 +35,19 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
   const isNormal = density === "normal";
 
   const failureRate = site.failureRate ?? 0;
+
+  // כשהאתר *בפעולה* — הפעולה הנוכחית: כניסה/יציאה + מספר הכרטיס שביצע אותה.
+  const op = status === "operating" ? site.lastOperation : null;
+  const opView = op && op.entry_exit ? (
+    <div className="card-op">
+      <span className="card-op-dir" style={{ color: DIRECTION_COLORS[op.entry_exit] }}>
+        {op.entry_exit === "entry" ? "↓" : "↑"} {DIRECTION_LABELS[op.entry_exit] || op.entry_exit}
+      </span>
+      {op.card_number
+        ? <span className="card-op-card">כרטיס {op.card_number}</span>
+        : <span className="card-op-card card-op-card--none">ללא כרטיס</span>}
+    </div>
+  ) : null;
 
   const statusTag = (
     <span className="card-status" style={{ background: colors.bg, color: colors.text }}>
@@ -63,6 +76,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
     return (
       <div
         className="site-card is-expanded"
+        data-code={site.code}
+        onMouseEnter={() => onHover?.(site.code)}
         style={{ borderInlineStartColor: colors.dot, "--c": colors.dot }}
       >
         <div className="exp-head">
@@ -78,6 +93,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
             {label}
           </span>
         </div>
+
+        {opView}
 
         <div className="exp-metrics">
           <div className="exp-metric">
@@ -97,9 +114,11 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
           </div>
 
           <div className="exp-metric">
-            <span className="exp-value">{(site.cycle_total ?? 0).toLocaleString()}</span>
+            <span className="exp-value">
+              {site.plc_cycle_last != null ? site.plc_cycle_last.toLocaleString() : "—"}
+            </span>
             <span className="exp-label">מונה מחזורים</span>
-            <span className="exp-hint">מהבקר</span>
+            <span className="exp-hint">המונה המצטבר של המכונה</span>
           </div>
 
           <div className="exp-metric">
@@ -125,13 +144,15 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
   return (
     <div
       className={`site-card density-${density}`}
+      data-code={site.code}
       style={{ borderInlineStartColor: colors.dot }}
       onClick={() => onToggle(site.code)}
-      title={isNormal ? "לחצו להרחבה" : `${site.site_name} — ${label}`}
+      onMouseEnter={() => onHover?.(site.code)}
+      title={isNormal ? "רחפו להרחבה · לחצו לנעילה" : `${site.site_name} — ${label}`}
     >
       <div className="card-header">
         <span className="card-name">
-          {site.site_name}
+          <span className="card-name-text">{site.site_name}</span>
           {!isMini && <TierBadge tier={site.tier} />}
         </span>
         {!isMini && <span className="card-code">#{site.code}</span>}
@@ -142,6 +163,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onOpenDetail }
       ) : (
         statusTag
       )}
+
+      {!isMini && opView}
 
       {isNormal ? (
         details

@@ -20,6 +20,7 @@ import BarChart from "../../components/BarChart/BarChart";
 import Heatmap from "../../components/Heatmap/Heatmap";
 import Leaderboard from "../../components/Leaderboard/Leaderboard";
 import Logo from "../../components/Logo/Logo";
+import InsightsModal from "../../components/InsightsModal/InsightsModal";
 import "./ExecutiveView.css";
 
 // מפת צבעי המדדים משותפת (utils/constants) ולא מוגדרת כאן — כך אותו מדד
@@ -55,6 +56,8 @@ function ExecutiveView({ dataVersion }) {
   const [reportOpen, setReportOpen] = useState(false);
   const [opsMode, setOpsMode] = useState("standard");
   const [expanded, setExpanded] = useState(null);        // איזו חלונית פרושה
+  const [insightsOpen, setInsightsOpen] = useState(false);       // "כל האתרים — עוד מידע"
+  const [insightsPeriod, setInsightsPeriod] = useState("month"); // תקופת המצרף (שבוע/חודש/שנה)
 
   const query = useMemo(() => {
     const q = {
@@ -126,12 +129,14 @@ function ExecutiveView({ dataVersion }) {
   if (!data) return null;
 
   const { kpis, trend, sitesByStatus, comparisonLabel } = data;
+  // אופציונל-צ'יינינג: payload חלקי/מדורג (שרת ישן, טווח ריק) עלול להשמיט
+  // תת-אובייקט של trend או את sitesByStatus — בלי ההגנה הזו המסך היה קורס ללבן.
   const t = (key, higherIsBetter) => ({
-    changePercent: trend[key].changePercent, higherIsBetter, comparisonLabel,
+    changePercent: trend?.[key]?.changePercent ?? null, higherIsBetter, comparisonLabel,
   });
 
   const statusSlices = STATUSES
-    .filter((s) => sitesByStatus[s] > 0)
+    .filter((s) => (sitesByStatus?.[s] ?? 0) > 0)
     .map((s) => ({
       label: STATUS_LABELS[s], value: sitesByStatus[s], color: STATUS_COLORS[s].dot,
     }));
@@ -319,6 +324,15 @@ function ExecutiveView({ dataVersion }) {
           <h1>תמונת מצב מערכתית</h1>
           <p>לחצו על ⤢ בכל חלונית כדי לפרוש אותה על כל המסך</p>
         </div>
+        {/* אותה סטטיסטיקה מעמיקה של פאנל האתר — אך מצרפת על כל האתרים */}
+        <button
+          type="button"
+          className="ex-insights-btn"
+          onClick={() => setInsightsOpen(true)}
+        >
+          כל האתרים · עוד מידע
+          <span className="ex-insights-hint">סקירה · פעילות · כרטיסים · אמינות · לוג</span>
+        </button>
       </header>
 
       <FilterBar
@@ -387,6 +401,17 @@ function ExecutiveView({ dataVersion }) {
       )}
 
       {reportOpen && <ReportView data={data} onClose={() => setReportOpen(false)} />}
+
+      {/* "כל האתרים — עוד מידע": אותו InsightsModal, במצב מצרף כלל-מערכתי */}
+      {insightsOpen && (
+        <InsightsModal
+          allSites
+          period={insightsPeriod}
+          onPeriodChange={setInsightsPeriod}
+          version={dataVersion}
+          onClose={() => setInsightsOpen(false)}
+        />
+      )}
     </div>
   );
 }

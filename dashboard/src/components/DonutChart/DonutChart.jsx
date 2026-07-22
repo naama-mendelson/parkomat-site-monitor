@@ -35,9 +35,9 @@ function DonutChart({ slices, centerNote }) {
             cx={SIZE / 2} cy={SIZE / 2} r={R}
             fill="none" stroke="var(--bg-hover)" strokeWidth={STROKE}
           />
-          {arcs.map((a) => (
+          {arcs.map((a, i) => (
             <circle
-              key={a.label}
+              key={`${a.label}-${i}`}
               cx={SIZE / 2} cy={SIZE / 2} r={R}
               fill="none"
               stroke={a.color}
@@ -65,8 +65,8 @@ function DonutChart({ slices, centerNote }) {
       </svg>
 
       <ul className="donut-legend">
-        {slices.map((s) => (
-          <li key={s.label}>
+        {slices.map((s, i) => (
+          <li key={`${s.label}-${i}`}>
             <span className="donut-dot" style={{ background: s.color }} />
             <span className="donut-label">{s.label}</span>
             <strong>{s.value.toLocaleString()}</strong>

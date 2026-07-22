@@ -174,7 +174,9 @@ function App() {
   // ===== ניתוב לפי תפקיד =====
   function renderView() {
     if (role === "supervisor") {
-      return <SupervisorView onSiteClick={handleSiteClick} dataVersion={dataVersion} />;
+      // sites (רשימה חיה, מתעדכנת מ-SSE) — כדי שעמודת "מצב" בטבלה תהיה עקבית
+      // עם תצוגת הבקר גם למצב החולף "בפעולה", בלי שליפה-מחדש של הסטטיסטיקה.
+      return <SupervisorView onSiteClick={handleSiteClick} dataVersion={dataVersion} sites={sites} />;
     }
     if (role === "executive") {
       return <ExecutiveView dataVersion={dataVersion} />;
