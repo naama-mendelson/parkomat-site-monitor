@@ -33,41 +33,49 @@ async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, i
   }
 }
 
-// עדכן מונה סייקלים מצטבר (מטפל ב-first, delta, reset, ו-Backfill לפי זמן)
+// עדכן מונה סייקלים מצטבר (מטפל ב-first, delta, reset, ו-Backfill לפי זמן).
+//
+// כמו applyStateChange — זו סדרת read-modify-write, ולכן היא רצה בטרנזקציה עם
+// נעילת שורת האתר (FOR UPDATE). בלי הנעילה, שתי הודעות end באותה שנייה (או שני
+// שרתים) קוראות את אותו plc_cycle_last, שתיהן מחשבות delta, ואחד העדכונים
+// ל-cycle_total אובד או נספר פעמיים — מונה הבלאי מתקלקל. הנעילה מסדרת אותן
+// בזה אחר זה *ברמת ה-DB*, בעקביות עם ההקשחה של applyStateChange.
 async function applyCycleCounter(siteId, current, occurredAt) {
-  const site = await db
-    .prepare("SELECT cycle_total, plc_cycle_last, cycle_last_ts, is_new_site FROM sites WHERE id = ?")
-    .get(siteId);
+  return db.transaction(async () => {
+    const site = await db
+      .prepare("SELECT cycle_total, plc_cycle_last, cycle_last_ts, is_new_site FROM sites WHERE id = ? FOR UPDATE")
+      .get(siteId);
 
-  const last = site.plc_cycle_last;
-  const lastTs = site.cycle_last_ts;
-  let total = site.cycle_total;
-  let mode;
+    const last = site.plc_cycle_last;
+    const lastTs = site.cycle_last_ts;
+    let total = site.cycle_total;
+    let mode;
 
-  if (last === null) {
-    mode = "first";
-    // קריאה ראשונה מהבקר:
-    //  - אתר ותיק (is_new_site = 0): מאמצים את המונה ההיסטורי — cycle_total = הערך מהבקר.
-    //  - אתר חדש  (is_new_site = 1): cycle_total נשאר 0, והערך נשמר רק כבסיס ל-delta.
-    // בשני המקרים plc_cycle_last מתעדכן ל-current בהמשך, ומכאן סופרים delta כרגיל.
-    if (site.is_new_site === 0) {
-      total = current;
+    if (last === null) {
+      mode = "first";
+      // קריאה ראשונה מהבקר:
+      //  - אתר ותיק (is_new_site = 0): מאמצים את המונה ההיסטורי — cycle_total = הערך מהבקר.
+      //  - אתר חדש  (is_new_site = 1): cycle_total נשאר 0, והערך נשמר רק כבסיס ל-delta.
+      // בשני המקרים plc_cycle_last מתעדכן ל-current בהמשך, ומכאן סופרים delta כרגיל.
+      if (site.is_new_site === 0) {
+        total = current;
+      }
+    } else if (lastTs !== null && occurredAt < lastTs) {
+      mode = "backfill";
+      return { mode, total, last, current, ignored: true };
+    } else if (current >= last) {
+      total = total + (current - last);
+      mode = "normal";
+    } else {
+      total = total + current;
+      mode = "reset";
     }
-  } else if (lastTs !== null && occurredAt < lastTs) {
-    mode = "backfill";
-    return { mode, total, last, current, ignored: true };
-  } else if (current >= last) {
-    total = total + (current - last);
-    mode = "normal";
-  } else {
-    total = total + current;
-    mode = "reset";
-  }
 
-  await db.prepare("UPDATE sites SET cycle_total = ?, plc_cycle_last = ?, cycle_last_ts = ? WHERE id = ?")
-    .run(total, current, occurredAt, siteId);
+    await db.prepare("UPDATE sites SET cycle_total = ?, plc_cycle_last = ?, cycle_last_ts = ? WHERE id = ?")
+      .run(total, current, occurredAt, siteId);
 
-  return { mode, total, last, current };
+    return { mode, total, last, current };
+  });
 }
 
 // עדכון המצב הנוכחי + last_seen.
@@ -474,8 +482,13 @@ async function getSiteStats(siteId, { from = null, to = null } = {}) {
 
 async function generateMonthlySummary(siteId, yearMonth) {
   const [year, month] = yearMonth.split("-").map(Number);
-  const monthStart = new Date(Date.UTC(year, month - 1, 1)).toISOString();
-  const monthEnd = new Date(Date.UTC(year, month, 1)).toISOString();
+  // גבולות החודש בזמן *מקומי* (של השרת), לא UTC. הסיכום הזה נשמר לצמיתות
+  // ב-monthly_summary, וכל התצוגות החיות (periods.js, גרפים, heatmap) מחלקות
+  // לחודשים בזמן מקומי. אילו חושב כאן ב-UTC, פעולה ב-1 בחודש 00:30 (מקומי)
+  // הייתה נספרת בחודש הקודם בארכיון אך בחודש הנוכחי בתצוגה החיה — ואחרי
+  // ש-cleanup-old-data מוחק את השורות הגולמיות, אי-ההתאמה נשארת לתמיד.
+  const monthStart = new Date(year, month - 1, 1).toISOString();
+  const monthEnd = new Date(year, month, 1).toISOString();
 
   // --- פעולות ואנומליות ---
   const ops = await db.prepare(
@@ -588,9 +601,11 @@ async function getSystemSummary({ yearMonth = null, year = null, from = null, to
     whereClause = "WHERE year_month >= ? AND year_month <= ?";
     params.push(`${year}-01`, `${year}-12`);
   } else if (from || to) {
+    // year_month הוא "YYYY-MM". משווים תמיד לתחילית באותו פורמט — אחרת תאריך
+    // מלא כמו "2026-03-15" היה גדול לקסיקוגרפית מ-"2026-03" ומחריג בשקט את מרץ.
     whereClause = "WHERE 1=1";
-    if (from) { whereClause += " AND year_month >= ?"; params.push(from); }
-    if (to)   { whereClause += " AND year_month <= ?"; params.push(to); }
+    if (from) { whereClause += " AND year_month >= ?"; params.push(String(from).slice(0, 7)); }
+    if (to)   { whereClause += " AND year_month <= ?"; params.push(String(to).slice(0, 7)); }
   }
 
   const row = await db.prepare(`
@@ -640,9 +655,11 @@ async function getSystemMonthlyBreakdown({ year = null, from = null, to = null }
     whereClause = "WHERE year_month >= ? AND year_month <= ?";
     params.push(`${year}-01`, `${year}-12`);
   } else if (from || to) {
+    // year_month הוא "YYYY-MM". משווים תמיד לתחילית באותו פורמט — אחרת תאריך
+    // מלא כמו "2026-03-15" היה גדול לקסיקוגרפית מ-"2026-03" ומחריג בשקט את מרץ.
     whereClause = "WHERE 1=1";
-    if (from) { whereClause += " AND year_month >= ?"; params.push(from); }
-    if (to)   { whereClause += " AND year_month <= ?"; params.push(to); }
+    if (from) { whereClause += " AND year_month >= ?"; params.push(String(from).slice(0, 7)); }
+    if (to)   { whereClause += " AND year_month <= ?"; params.push(String(to).slice(0, 7)); }
   }
 
   return await db.prepare(`
@@ -795,7 +812,7 @@ function getCycleDelta(siteId, { from, to }) {
 // ל-maintenance — כבר מסוננות לטווח. מופרד מ-getPeriodBreakdown כדי ש*גם*
 // המסלול ששולף מה-DB *וגם* המסלול שמחשב מנתונים שכבר נטענו (getSiteAnalyticsData)
 // יפיקו בדיוק אותה סדרה. שינוי כאן משנה את שניהם — אין שתי הגדרות.
-function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }) {
+function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }, maintSegments = []) {
   const byMonth = granularity === "month";
 
   // מפתח הדלי נגזר בשעון ה*מקומי*, לא מקידומת ה-ISO (שהיא UTC). גבולות התקופה
@@ -820,6 +837,14 @@ function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }) 
   const errs = tally(errIso);
   const maints = tally(maintIso);
 
+  // מקטעי תחזוקה (start/end במילישניות) — כדי לסמן ימים שהאתר היה *בתוך*
+  // תחזוקה, גם כשלא הייתה כניסה חדשה באותו יום (תחזוקה שנמשכה מיום קודם).
+  // כך יום שכולו תחזוקה לא נראה "ריק" אלא מסומן כתחזוקה.
+  const maintSegs = maintSegments.map((s) => ({
+    start: Date.parse(s.started_at),
+    end: s.ended_at ? Date.parse(s.ended_at) : Infinity,
+  }));
+
   // סדרה רציפה: דלי לכל יום/חודש מ-from ועד to *כולל*.
   // הלולאה נעצרת לפי מפתח הדלי של to, ולא לפי הזמן — תנאי כמו `cursor < to`
   // היה מפיל את הדלי של היום הנוכחי (שעדיין לא הסתיים), ואיתו כל הפעולות
@@ -836,6 +861,21 @@ function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }) 
 
   while (points.length < MAX_POINTS) {
     const key = keyOfDate(cursor);
+    const bucketStart = cursor.getTime();
+    const nextCursor = new Date(cursor);
+    if (byMonth) nextCursor.setMonth(nextCursor.getMonth() + 1);
+    else nextCursor.setDate(nextCursor.getDate() + 1);
+    const bucketEnd = nextCursor.getTime();
+
+    // כמה מהדלי האתר היה בתחזוקה — חיתוך כל מקטע לגבולות הדלי. משמש לעמודת
+    // התחזוקה בגרף: יום שכולו תחזוקה = עמודה מלאה, גם בלי כניסה חדשה באותו יום.
+    let maintMs = 0;
+    for (const s of maintSegs) {
+      const os = Math.max(s.start, bucketStart);
+      const oe = Math.min(s.end, bucketEnd);
+      if (oe > os) maintMs += oe - os;
+    }
+
     points.push({
       label: byMonth
         ? cursor.toLocaleDateString("he-IL", { month: "short" })
@@ -843,12 +883,14 @@ function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }) 
       operations: ops.get(key) || 0,
       errors: errs.get(key) || 0,
       maintenance: maints.get(key) || 0,
+      maintenanceActive: maintMs > 0,
+      maintenanceHours: Math.round((maintMs / 3600000) * 10) / 10,
+      // חלק הדלי שהיה בתחזוקה (0..1) — גובה עמודת התחזוקה בגרף.
+      maintenanceFraction: Math.round((maintMs / (bucketEnd - bucketStart)) * 100) / 100,
     });
 
     if (key === lastKey) break;
-
-    if (byMonth) cursor.setMonth(cursor.getMonth() + 1);
-    else cursor.setDate(cursor.getDate() + 1);
+    cursor.setTime(bucketEnd);
   }
 
   return points;
@@ -917,6 +959,9 @@ async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
   const maintIso = segs
     .filter((s) => s.status === "maintenance" && inRange(s.started_at))
     .map((s) => s.started_at);
+  // *מקטעי* התחזוקה (לא רק כניסות) — כדי לסמן בגרף ימים שהאתר היה בתחזוקה
+  // מתמשכת, גם בלי כניסה חדשה באותו יום.
+  const maintSegments = segs.filter((s) => s.status === "maintenance");
 
   return {
     stats: statsFromData(data, siteId, range),
@@ -925,7 +970,7 @@ async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
     prevUptime: uptimeFromData(data, siteId, prev),
     chart: buildPeriodSeries(opsIso, errIso, maintIso, {
       from: range.from, to: range.to, granularity,
-    }),
+    }, maintSegments),
   };
 }
 
@@ -996,32 +1041,25 @@ const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "ח�
  * שולף פעם אחת את הפעולות ואת מקטעי המצב, ומחשב הכל ב-JS.
  * זול יותר מ-8 שאילתות נפרדות, ומאפשר חישובים (שיוך start↔end) שקשה לבטא ב-SQL.
  */
+// שולף תובנות לאתר בודד ומעביר לחישוב הטהור (computeInsights).
 async function getSiteInsights(siteId, { from, to }) {
   // ארבע השאילתות של המסך (פעולות, מקטעי error, מקטעי maintenance, חלונות
   // ידניים) בלתי-תלויות זו בזו — נשלפות במקביל, סיבוב רשת אחד במקום ארבעה.
-  // כל העיבוד למטה הוא ב-JS על הנתונים שכבר בזיכרון.
   const [ops, errorRows, maintRows, windows] = await Promise.all([
-    // --- כל הפעולות בטווח, כרונולוגית (צריך גם start וגם end לשיוך משכים) ---
     db.prepare(
-      `SELECT start_end, entry_exit, card_number, is_anomaly, occurred_at
+      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
        FROM operations
        WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at ASC, id ASC`
     ).all(siteId, from, to),
-
-    // --- מקטעי error בטווח (להשבתות) ---
     db.prepare(
-      `SELECT started_at, ended_at FROM status_history
+      `SELECT site_id, started_at, ended_at FROM status_history
        WHERE site_id = ? AND status = 'error' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
     ).all(siteId, to, from),
-
-    // --- מקטעי maintenance בטווח (מתוכננת, נמדדת בנפרד מהשבתות) ---
     db.prepare(
-      `SELECT started_at, ended_at FROM status_history
+      `SELECT site_id, started_at, ended_at FROM status_history
        WHERE site_id = ? AND status = 'maintenance' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
     ).all(siteId, to, from),
-
-    // --- חלונות תחזוקה ידניים שהופעלו מהדשבורד ---
     db.prepare(
       `SELECT set_by_name, reason, started_at, duration_hours, cancelled_at
        FROM maintenance_windows
@@ -1029,7 +1067,41 @@ async function getSiteInsights(siteId, { from, to }) {
        ORDER BY started_at DESC`
     ).all(siteId, from, to),
   ]);
+  return computeInsights({ ops, errorRows, maintRows, windows, from, to });
+}
 
+// אותה סטטיסטיקה מעמיקה, אך מצרפת על *כל* האתרים (מנהל כללי → "כל האתרים").
+// מספר השאילתות קבוע ואינו גדל עם מספר האתרים — עקבי עם מדיניות ה-N+1.
+// שיוך הכרטיסים והמשכים נעשה לפי site_id, כך שאותו מספר כרטיס בשני אתרים
+// נספר נכון ולא מתערבב.
+async function getGlobalInsights({ from, to }) {
+  const [ops, errorRows, maintRows, windows] = await Promise.all([
+    db.prepare(
+      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
+       FROM operations
+       WHERE occurred_at >= ? AND occurred_at < ?
+       ORDER BY occurred_at ASC, id ASC`
+    ).all(from, to),
+    db.prepare(
+      `SELECT site_id, started_at, ended_at FROM status_history
+       WHERE status = 'error' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
+    ).all(to, from),
+    db.prepare(
+      `SELECT site_id, started_at, ended_at FROM status_history
+       WHERE status = 'maintenance' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
+    ).all(to, from),
+    db.prepare(
+      `SELECT s.site_name, w.set_by_name, w.reason, w.started_at, w.duration_hours, w.cancelled_at
+       FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
+       WHERE w.started_at >= ? AND w.started_at < ?
+       ORDER BY w.started_at DESC`
+    ).all(from, to),
+  ]);
+  return computeInsights({ ops, errorRows, maintRows, windows, from, to });
+}
+
+// חישוב טהור — מקבל שורות שכבר נשלפו, ולכן משרת גם אתר בודד וגם מצרף כלל-אתרי.
+function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
   // ===== מונים בסיסיים =====
   let entries = 0, exits = 0, anomalies = 0, withCard = 0, withoutCard = 0;
 
@@ -1038,13 +1110,14 @@ async function getSiteInsights(siteId, { from, to }) {
   const byDay = new Map();     // "2026-07-12" → מספר פעולות
   const cards = new Map();     // מספר כרטיס → { total, entries, exits, lastAt }
 
-  // שיוך start↔end לחישוב משך פעולה. מפתח: כיוון+כרטיס.
+  // שיוך start↔end לחישוב משך פעולה. מפתח: אתר+כיוון+כרטיס (site_id חיוני
+  // למצב המצרף — בלעדיו כרטיס זהה בשני אתרים היה משתייך בטעות).
   const openStarts = new Map();
   const durations = [];
 
   for (const op of ops) {
     const when = new Date(op.occurred_at);
-    const key = `${op.entry_exit}|${op.card_number}`;
+    const key = `${op.site_id}|${op.entry_exit}|${op.card_number}`;
 
     if (op.start_end === "start") {
       openStarts.set(key, when.getTime());
@@ -1172,10 +1245,12 @@ async function getSiteInsights(siteId, { from, to }) {
   // תקלה שהתחילה בזמן/בגבול תחזוקה (בתוך מקטע maintenance מהבקר) אינה נספרת —
   // "תחזוקה גוברת", עקבי עם statsFromData ועם גרף המגמה. חלונות ידניים כבר
   // נחסמים בקליטה (state-handler); כאן בדיקת ה-PLC מכסה את המקרה ההיסטורי השכיח.
-  const inMaint = (ts) =>
-    maintRows.some((s) => s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts));
+  // חפיפה לתחזוקה *של אותו אתר* (site_id) — כדי שבמצב המצרף תקלה באתר א' לא
+  // תושתק בגלל תחזוקה באתר ב'. לאתר בודד זה זהה להתנהגות הקודמת (הכול אותו אתר).
+  const inMaint = (ts, siteId) =>
+    maintRows.some((s) => s.site_id === siteId && s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts));
   const errorsStarted = errorRows.filter(
-    (r) => r.started_at >= from && !inMaint(r.started_at)
+    (r) => r.started_at >= from && !inMaint(r.started_at, r.site_id)
   ).length;
   const maintenanceEvents =
     maintRows.filter((r) => r.started_at >= from).length + windows.length;
@@ -1229,6 +1304,7 @@ async function getSiteInsights(siteId, { from, to }) {
         startedAt: w.started_at,
         durationHours: w.duration_hours,
         cancelled: Boolean(w.cancelled_at),
+        siteName: w.site_name ?? null,   // מוצג רק במצב "כל האתרים"
       })),
     },
   };
@@ -1303,6 +1379,62 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       countStatus("="),
     ]);
 
+  return buildActivityLog({
+    ops, states, maint,
+    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus },
+    limit,
+  });
+}
+
+// אותו לוג פעילות, אך מאחד את *כל* האתרים (מנהל כללי → "כל האתרים"). כל שורה
+// נושאת את שם האתר להצגה. מספר השאילתות קבוע (עקבי עם מדיניות ה-N+1).
+async function getGlobalActivityLog({ from, to, limit = 300 }) {
+  const countAll = async (table, timeCol, extra = "") =>
+    (await db.prepare(
+      `SELECT COUNT(*) AS n FROM ${table} WHERE ${timeCol} >= ? AND ${timeCol} < ? ${extra}`
+    ).get(from, to)).n;
+
+  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus] =
+    await Promise.all([
+      db.prepare(
+        `SELECT o.site_id, s.site_name, o.start_end, o.entry_exit, o.card_number, o.is_anomaly, o.state, o.occurred_at
+         FROM operations o JOIN sites s ON o.site_id = s.id
+         WHERE o.occurred_at >= ? AND o.occurred_at < ?
+         ORDER BY o.occurred_at DESC LIMIT ?`
+      ).all(from, to, limit),
+
+      db.prepare(
+        `SELECT h.site_id, s.site_name, h.status, h.started_at, h.ended_at
+         FROM status_history h JOIN sites s ON h.site_id = s.id
+         WHERE h.started_at >= ? AND h.started_at < ?
+         ORDER BY h.started_at DESC LIMIT ?`
+      ).all(from, to, limit),
+
+      db.prepare(
+        `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at
+         FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
+         WHERE w.started_at >= ? AND w.started_at < ?
+         ORDER BY w.started_at DESC LIMIT ?`
+      ).all(from, to, limit),
+
+      countAll("operations", "occurred_at"),
+      countAll("status_history", "started_at", "AND status != 'maintenance' AND status != 'operating'"),
+      countAll("status_history", "started_at", "AND status != 'maintenance'"),
+      countAll("maintenance_windows", "started_at"),
+      countAll("status_history", "started_at", "AND status = 'maintenance'"),
+    ]);
+
+  return buildActivityLog({
+    ops, states, maint,
+    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus },
+    limit,
+  });
+}
+
+// בונה את ציר הזמן המאוחד מהשורות שנשלפו (טהור) — משרת אתר בודד ומצרף כלל-אתרי.
+function buildActivityLog({ ops, states, maint, counts, limit }) {
+  const { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus } = counts;
+
   const secondsBetween = (a, b) =>
     a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null;
 
@@ -1317,21 +1449,21 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
     return 4;   // תחזוקה
   };
 
-  // "תחזוקה גוברת" — תקלה שקרתה בזמן/בגבול תחזוקה לא מוצגת בלוג ולא נספרת
-  // בצ'יפים. מזהים תחזוקה ממקטעי ה-PLC (בתוך states) וחלונות ידניים (maint).
-  // (מהיום ה-ingestion זורק תקלות כאלה; זו הגנה על היסטוריה שכבר נרשמה.)
-  const maintSegs = states.filter((s) => s.status === "maintenance");
-  const inMaintenance = (ts) => {
-    for (const s of maintSegs) {
-      if (s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts)) return true;
-    }
-    for (const w of maint) {
-      const end = w.cancelled_at || w.expires_at;
-      if (w.started_at <= ts && end >= ts) return true;
-    }
-    return false;
+  // "תחזוקה גוברת" — תקלה שקרתה בזמן/בגבול תחזוקה לא מוצגת בלוג ולא נספרת.
+  // החפיפה נבדקת *לפי אתר* (site_id): מקטעי PLC (בתוך states) + חלונות ידניים
+  // (maint). באתר בודד site_id === undefined לכל השורות → דלי יחיד, זהה
+  // להתנהגות הקודמת; במצרף כל אתר נבדק מול התחזוקה שלו בלבד.
+  const maintBySite = new Map();
+  const pushMaint = (siteId, start, end) => {
+    if (!maintBySite.has(siteId)) maintBySite.set(siteId, []);
+    maintBySite.get(siteId).push({ start, end });
   };
-  const isMaintError = (s) => s.status === "error" && inMaintenance(s.started_at);
+  for (const s of states) if (s.status === "maintenance") pushMaint(s.site_id, s.started_at, s.ended_at);
+  for (const w of maint) pushMaint(w.site_id, w.started_at, w.cancelled_at || w.expires_at);
+  const inMaintenance = (ts, siteId) =>
+    (maintBySite.get(siteId) || []).some((m) => m.start <= ts && (m.end === null || m.end >= ts));
+
+  const isMaintError = (s) => s.status === "error" && inMaintenance(s.started_at, s.site_id);
   const visibleStates = states.filter((s) => !isMaintError(s));
   const hiddenErrors = states.length - visibleStates.length;
 
@@ -1344,6 +1476,7 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       card: o.card_number || null,
       isAnomaly: !!o.is_anomaly,
       state: o.state,
+      siteName: o.site_name ?? null,   // מוצג רק במצב "כל האתרים"
     })),
     ...visibleStates.map((s) => ({
       kind: "status",
@@ -1351,6 +1484,7 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       status: s.status,
       endedAt: s.ended_at,
       durationSeconds: secondsBetween(s.started_at, s.ended_at),
+      siteName: s.site_name ?? null,
     })),
     ...maint.map((m) => ({
       kind: "maintenance",
@@ -1361,6 +1495,7 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       durationHours: m.duration_hours,
       expiresAt: m.expires_at,
       cancelledAt: m.cancelled_at,
+      siteName: m.site_name ?? null,
     })),
   ]
     .sort((a, b) => {
@@ -1377,7 +1512,10 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       // מפחיתים את התקלות שהוסתרו (בזמן תחזוקה) כדי שהצ'יפ יתאים למספר השורות
       // שבאמת מוצגות. hiddenErrors נספר מתוך החלון המוגבל — מדויק למקרה השכיח.
       status: Math.max(0, cStatus - hiddenErrors),
-      statusAll: Math.max(0, cStatusAll - hiddenErrors),
+      // הצ'יפ "שינויי מצב" מציג את *כל* שינויי המצב — כולל מעבר ל'בתחזוקה'
+      // מהבקר (cMaintStatus) — ולכן המונה כולל אותם. (הצ'יפ "תחזוקה" סופר
+      // אותם שוב, במכוון — שתי עדשות על אותו אירוע.)
+      statusAll: Math.max(0, cStatusAll + cMaintStatus - hiddenErrors),
       maintenance: cMaintWindows + cMaintStatus,   // חלונות ידניים + מצב תחזוקה מה-PLC
     },
   };
@@ -1611,7 +1749,7 @@ async function getAllSitesGlobals(siteIds) {
 
     // הפעולה האחרונה
     db.prepare(
-      `SELECT DISTINCT ON (site_id) site_id, start_end, entry_exit, occurred_at
+      `SELECT DISTINCT ON (site_id) site_id, start_end, entry_exit, card_number, occurred_at
        FROM operations
        WHERE ${holes}
        ORDER BY site_id, occurred_at DESC, id DESC`
@@ -1656,7 +1794,8 @@ async function getAllSitesGlobals(siteIds) {
   }
   for (const r of lastOps) {
     at(r.site_id).lastOperation = {
-      start_end: r.start_end, entry_exit: r.entry_exit, occurred_at: r.occurred_at,
+      start_end: r.start_end, entry_exit: r.entry_exit,
+      card_number: r.card_number, occurred_at: r.occurred_at,
     };
   }
   for (const r of sinceError) {
@@ -1867,6 +2006,10 @@ async function getSupervisorStatsWithData({ from, to }) {
       code: site.code,
       name: site.site_name,
       status,
+      // דרגת האתר והפעולה האחרונה — לצורך מיון ברירת-המחדל בטבלת הבקרה
+      // (מצב → דרגה → אחוז כשל). כבר טעונים כאן, בלי שאילתה נוספת.
+      tier: site.tier,
+      lastOperation: g.lastOperation,
       operations: stats.operations,
       errors: stats.errors,
       failureRate: stats.failureRate,
@@ -1878,7 +2021,10 @@ async function getSupervisorStatsWithData({ from, to }) {
       downtimeHours: uptime.errorHours,
       lastError: g.lastFaultAt,
       operationsSinceLastError: g.operationsSinceLastError,
-      cycleTotal: site.cycle_total,
+      // "מונה מחזורים" = המונה הפיזי האמיתי של המכונה (הגולמי מהבקר), ולא
+      // cycle_total (שהוא "גידול מאז ההתקנה" ולכן ≤ מספר הפעולות באתר חדש —
+      // מבלבל). עקבי עם פאנל הפירוט (totalFromPLC) ועם כרטיס האתר.
+      cycleTotal: site.plc_cycle_last,
       // לא ניתן לחישוב: המונה אינו נשמר לכל פעולה (ראה getCycleDelta)
       cycleDelta: null,
       inManualMaintenance: Boolean(activeMaint),
@@ -2479,8 +2625,9 @@ module.exports = {
   getSiteAnalyticsData,
   getCardFaultCorrelation,
   getSiteInsights,
+  getGlobalInsights,
   getActivityLog,
-  getBucketRanges,
+  getGlobalActivityLog,
   getSupervisorStats,
   getExecutiveStats,
   getExecutiveStatsFiltered,
@@ -2492,7 +2639,6 @@ module.exports = {
   getRecentErrors,
   getActiveMaintenances,
   getSystemHeatmap,
-  wasInMaintenance,
   generateMonthlySummary,
   getSystemSummary,
   getSystemMonthlyBreakdown,

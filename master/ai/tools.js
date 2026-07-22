@@ -253,7 +253,7 @@ const EXECUTORS = {
         failureRatePercent: s.failureRate,
         availabilityPercent: s.uptime,      // null = אין נתונים (לא 0%)
         lastFaultAt: s.lastFaultAt,
-        cycleTotal: s.cycle_total,
+        cycleTotal: s.plc_cycle_last,   // המונה הפיזי האמיתי של המכונה (כמו בתצוגה)
       })),
     };
   },
@@ -267,7 +267,7 @@ const EXECUTORS = {
       status: site.status,
       lastSeen: site.last_seen,
       _lastSeenNote: LAST_SEEN_NOTE,
-      cycleTotal: site.cycle_total,
+      cycleTotal: site.plc_cycle_last,   // המונה הפיזי האמיתי של המכונה (כמו בתצוגה)
       isNewSite: site.is_new_site === 1,
       registeredAt: site.registered_at,
       plcType: site.plc_type,

@@ -1,6 +1,8 @@
 // api/routes.js — שרת ה-REST API של ה-Master (Express + SSE)
 
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
 const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRecentOperations, getFilteredOperations,
         startMaintenance, getActiveMaintenance, cancelMaintenance, getSiteStats,
         getCurrentStatusSince, getStatusHistory, getMaintenanceHistory,
@@ -8,6 +10,7 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getSiteUptime, getLastFaultAt, getLastOperation,
         getUptimeBreakdown, getCycleDelta, getPeriodBreakdown, getSiteAnalyticsData,
         getSiteInsights, getActivityLog,
+        getGlobalInsights, getGlobalActivityLog,
         getSupervisorStats, getExecutiveStats, getExecutiveStatsFiltered,
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
@@ -19,6 +22,12 @@ const { resolvePeriod } = require("./periods");
 const { runChat, isChatConfigured } = require("../ai/chat");
 
 const app = express();
+
+// סומכים רק על proxy מקומי (loopback) לצורך X-Forwarded-For. כך req.ip נכון
+// כשהדשבורד עובר דרך ה-proxy של Vite (localhost), ובו-זמנית לקוח חיצוני לא יכול
+// לזייף כתובת דרך הכותרת ולעקוף את מגביל-הקצב של הצ'אט. לא סומכים על proxy
+// שרירותי — הגדרה שמרנית ובטוחה כברירת מחדל.
+app.set("trust proxy", "loopback");
 
 // ניתן להגדרה כדי שאפשר יהיה להריץ מופע API לבדיקות על פורט אחר, בלי להתנגש
 // בשרת שרץ (ובלי להעלות Master שני — שני מופעים עם אותו MASTER_CLIENT_ID
@@ -626,6 +635,29 @@ app.get("/api/sites/:code/insights", cache(), async (req, res) => {
   }
 });
 
+// GET /api/insights?period=week|month|year — אותה סטטיסטיקה מעמיקה, אך *מצרפת
+// על כל האתרים* (מנהל כללי → "כל האתרים"). אין :code — זה המצרף הכלל-מערכתי.
+app.get("/api/insights", cache(), async (req, res) => {
+  try {
+    const p = resolvePeriod(req.query.period);
+    const [insights, log] = await Promise.all([
+      getGlobalInsights(p.range),
+      getGlobalActivityLog({ ...p.range, limit: 300 }),
+    ]);
+
+    res.json({
+      period: p.period,
+      label: p.label,
+      range: p.range,
+      ...insights,
+      log,
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET insights גלובלי:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
 // ==========================================================
 // ===== עוזר ה-AI =====
 // ==========================================================
@@ -956,6 +988,34 @@ app.get("/api/stream", async (req, res) => {
 
   console.log("api: SSE client connected");
 });
+
+// ============================================================
+// הגשת הדשבורד (פרודקשן / Docker)
+// ============================================================
+// בפיתוח Vite מגיש את הדשבורד ומעביר /api ל-proxy. בפרודקשן אין Vite, ולכן
+// אותו שרת מגיש גם את קבצי ה-build. זה לא רק נוחות: הדשבורד קורא ל-API
+// בנתיב *יחסי* ("/api"), ולכן הגשה מאותו origin עוקפת CORS לגמרי ומייתרת
+// הגדרת כתובת-שרת בלקוח.
+//
+// מופעל רק אם תיקיית ה-build קיימת — כך ריצה בפיתוח (בלי dist) לא משתנה.
+// DASHBOARD_DIST ניתן להגדרה כדי שה-Dockerfile יוכל להעתיק לאן שנוח לו.
+const DASHBOARD_DIST = process.env.DASHBOARD_DIST
+  || path.join(__dirname, "..", "public");
+
+if (fs.existsSync(DASHBOARD_DIST)) {
+  app.use(express.static(DASHBOARD_DIST));
+
+  // Fallback ל-SPA: כל נתיב GET שאינו /api מוחזר כ-index.html, כדי שרענון
+  // בכתובת פנימית לא יחזיר 404. *לא* משתמשים ב-app.get("*") — ב-Express 5
+  // התחביר הזה נשבר (path-to-regexp v8 דורש wildcard בעל שם); middleware
+  // רגיל עם בדיקת נתיב עובד בכל גרסה.
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(DASHBOARD_DIST, "index.html"));
+  });
+
+  console.log(`api: מגיש את הדשבורד מ-${DASHBOARD_DIST}`);
+}
 
 // מטפל שגיאות אחרון — חייב 4 פרמטרים ולהיות אחרי כל המסלולים.
 // בלעדיו, גוף JSON פגום (SyntaxError מ-body-parser) מחזיר עמוד HTML עם stack trace

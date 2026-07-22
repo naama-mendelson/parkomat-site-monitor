@@ -8,7 +8,11 @@ async function handleState(site, data) {
 
   let occurredAt;
   if (newStatus === "no_comm") {
-    occurredAt = new Date().toISOString();
+    // מעגלים לשנייה שלמה, בדיוק כמו ב-bridge-handler. הסוכן מסנכרן מחדש עם חותם
+    // בשניות שלמות; אם ה-no_comm נפתח באמצע שנייה (דיוק מילישניות) והסנכרון חוזר
+    // באותה שנייה, guard ה-backfill (occurredAt < started_at) היה דוחה את הסנכרון
+    // והאתר היה נתקע ב-no_comm אחרי שכבר התאושש. אותה מחלקת באג שתוקנה בגשר.
+    occurredAt = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
   } else {
     occurredAt = new Date(data.timestamp * 1000).toISOString();
   }

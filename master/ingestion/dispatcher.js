@@ -50,7 +50,42 @@ function validateOperation(data) {
   return null;
 }
 
+// המתנה קצרה בין ניסיונות חוזרים.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// כמה פעמים לנסות לכתוב ל-DB לפני שמוותרים. שגיאת DB חולפת (Supabase cold-start,
+// ECONNRESET על ה-pooler) אסור שתאבד הודעת ניטור — בפרט מעבר ל-error/no_comm, שהוא
+// בדיוק האירוע שהמערכת קיימת כדי לתפוס. ה-dispatch אידמפוטנטי (טרנזקציות חוזרות
+// לאחור על שגיאה, dedup דרך unique constraint, ומשמרות backfill/no-change), ולכן
+// ניסיון חוזר בטוח. תור ה-FIFO של האתר מוחזק במהלך ההמתנה — הסדר נשמר.
+const MAX_ATTEMPTS = 5;
+
 async function handleMessage(topic, raw) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await dispatch(topic, raw);
+      return;
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS) {
+        console.error(
+          `[dispatcher] אובדן הודעה מ-${topic} אחרי ${MAX_ATTEMPTS} ניסיונות:`,
+          err.message);
+        return;
+      }
+      // backoff מעריכי: 250ms, 500, 1000, 2000 (מוגבל ל-4s).
+      const backoffMs = Math.min(250 * 2 ** (attempt - 1), 4000);
+      console.warn(
+        `[dispatcher] ניסיון ${attempt}/${MAX_ATTEMPTS} נכשל מ-${topic}: ${err.message} — שוב בעוד ${backoffMs}ms`);
+      await sleep(backoffMs);
+    }
+  }
+}
+
+// מפענח ומנתב הודעה אחת. *אינו* בולע שגיאת DB — היא מתפשטת כדי ש-handleMessage
+// ינסה שוב. כשל ולידציה/רישום מסתיים ב-return רגיל (drop) ואינו גורם לניסיון חוזר.
+async function dispatch(topic, raw) {
   try {
     // 1. שליפת קוד האתר וסוג ההודעה מה-topic
     const parts = topic.split("/");
@@ -125,7 +160,9 @@ async function handleMessage(topic, raw) {
       console.log(`[dispatcher] סוג הודעה לא מוכר (${kind}) מ-${topic}`);
     }
   } catch (err) {
-    console.error(`[dispatcher] שגיאה בטיפול בהודעה מ-${topic}:`, err.message);
+    // לא בולעים כאן: שגיאת DB/תשתית מתפשטת ל-handleMessage שינסה שוב, ורק אחרי
+    // מיצוי הניסיונות תירשם כאובדן. (שגיאות ולידציה כבר יצאו ב-return למעלה.)
+    throw err;
   }
 }
 
