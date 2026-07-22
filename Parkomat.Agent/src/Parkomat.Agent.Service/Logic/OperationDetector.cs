@@ -9,13 +9,22 @@ namespace Parkomat.Agent.Service.Logic;
 /// </summary>
 public class OperationDetector
 {
+    // מקור הזמן לחותמות. מוזרק כדי שהזמן יגיע מ-AgentClock (מסונכרן NTP)
+    // ולא משעון המחשב הגולמי. ברירת המחדל היא השעון המקומי — כך הבדיקות
+    // וכל קורא שלא מספק שעון ממשיכים לעבוד בדיוק כמו קודם.
+    private readonly Func<long> _now;
+
+    public OperationDetector(Func<long>? now = null)
+        => _now = now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
     // ה-MODE מהקריאה הקודמת. null = עדיין לא ראינו אף קריאה (הרצה ראשונה).
     private int? _previousMode = null;
 
-    // מספר הכרטיס מהקריאה הקודמת. משמש לסגירת פעולה (end): בזמן שהמצב
-    // עובר מפעולה למצב אחר, ה-PLC כבר עשוי לאפס את רגיסטר הכרטיס ל-0,
-    // ולכן הכרטיס של הפעולה הוא זה שנקרא בקריאה הקודמת (כשהיא עדיין הייתה פעילה).
-    private string _previousCard = "";
+    // הכרטיס של הפעולה *הפתוחה* — נתפס בתחילתה, ומתעדכן לכל כרטיס לא-ריק לאורכה.
+    // חשוב לסגירה (end): במקצת הבקרים רגיסטר הכרטיס מתאפס ל-0 *לפני* שה-MODE יוצא
+    // ממצב הפעולה — קורה ביציאה (exit). שימוש בכרטיס מהקריאה הקודמת בלבד היה מאבד
+    // אותו, ו-exit/end היה יוצא בלי כרטיס למרות ש-exit/start כן נשא אותו.
+    private string _operationCard = "";
 
     /// <summary>
     /// מעבד קריאה אחת מה-PLC ומחזיר מה צריך לשדר.
@@ -26,7 +35,7 @@ public class OperationDetector
     public DetectionResult Process(int mode, string cardNumber, int cycleCounter)
     {
         var result = new DetectionResult();
-        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        long now = _now();
 
         // --- שלב 1: הודעת state (אם המצב המתורגם השתנה) ---
         SiteState? newState = ModeTranslator.FromMode(mode);
@@ -50,21 +59,24 @@ public class OperationDetector
         // (מעבר 2→3 עדיין מייצר שניים: end להכנסה + start ליציאה — כי ה-MODE שונה.)
         if (_previousMode.HasValue && mode != _previousMode.Value)
         {
-            // אם ה-MODE הקודם היה כניסה/יציאה — סוגרים אותו ב-end.
-            // הכרטיס נלקח מהקריאה הקודמת, כי בקריאה הנוכחית הוא כבר עלול להתאפס.
+            // אם ה-MODE הקודם היה כניסה/יציאה — סוגרים אותו ב-end, עם הכרטיס שנתפס
+            // *לאורך הפעולה* (לא רק מהקריאה הקודמת) — כדי שלא יאבד אם הרגיסטר התאפס
+            // לפני סוף הפעולה (מה שקורה ביציאה).
             if (IsOperationMode(_previousMode.Value))
             {
                 result.Operations.Add(BuildOperation(
                     startEnd: "end",
                     mode: _previousMode.Value,
                     now: now,
-                    cardNumber: _previousCard,
+                    cardNumber: _operationCard,
                     cycleCounter: cycleCounter));
             }
 
-            // אם ה-MODE החדש הוא כניסה/יציאה — פותחים אותו ב-start.
+            // אם ה-MODE החדש הוא כניסה/יציאה — פותחים אותו ב-start, ומתחילים לעקוב
+            // אחרי הכרטיס של הפעולה החדשה מהרגע הזה.
             if (IsOperationMode(mode))
             {
+                _operationCard = cardNumber;
                 result.Operations.Add(BuildOperation(
                     startEnd: "start",
                     mode: mode,
@@ -73,10 +85,15 @@ public class OperationDetector
                     cycleCounter: cycleCounter));
             }
         }
+        else if (IsOperationMode(mode) && !string.IsNullOrEmpty(cardNumber))
+        {
+            // ה-MODE מוחזק על מצב פעולה — זוכרים את הכרטיס הלא-ריק האחרון שנראה,
+            // כדי שיהיה זמין ל-end גם אם הרגיסטר יתאפס לפני שהפעולה תסתיים.
+            _operationCard = cardNumber;
+        }
 
-        // --- שלב 3: זוכרים את המצב הנוכחי לקראת הקריאה הבאה ---
+        // --- שלב 3: זוכרים את ה-MODE הנוכחי לקראת הקריאה הבאה ---
         _previousMode = mode;
-        _previousCard = cardNumber;
 
         return result;
     }

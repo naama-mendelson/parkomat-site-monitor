@@ -26,37 +26,82 @@ public static class ConfigStore
     {
         AgentPaths.EnsureBaseFolderExists();
 
+        // סימון איפוס מהמתקין (מונח בכל התקנה): מאפסים את ההגדרות לברירות המחדל
+        // אך *שומרים את ה-SiteId* — אחרת עדכון היה מוחק את זהות האתר (topics ריקים
+        // sites// שהשרת דוחה, ו-remote_clientid ריק שמתנגש בין אתרים משוכפלים).
+        ApplyResetMarkerIfPresent();
+
+        SiteConfig result;
         if (!File.Exists(AgentPaths.ConfigFile))
         {
-            var defaults = new SiteConfig();
-            Save(defaults);
-            return defaults;
+            result = new SiteConfig();
+            Save(result);
+        }
+        else
+        {
+            string json = File.ReadAllText(AgentPaths.ConfigFile);
+            SiteConfig? config;
+            try
+            {
+                config = JsonSerializer.Deserialize<SiteConfig>(json, Options);
+            }
+            catch (JsonException)
+            {
+                // קובץ פגום (קטוע בנפילת חשמל באמצע כתיבה, או עריכה ידנית שגויה):
+                // Deserialize זורק JsonException. בלי התפיסה הזו החריגה בורחת מ-Load,
+                // מ-Worker.ExecuteAsync ומפילה את ה-host ל-crash-loop. חוזרים לברירת
+                // מחדל כדי שהשירות ימשיך לתקשר.
+                config = null;
+            }
+            result = config ?? new SiteConfig();
         }
 
-        string json = File.ReadAllText(AgentPaths.ConfigFile);
+        // מהדקים את קצב הדגימה לטווח שפוי — **בכל מסלול, כולל first-run**. קובץ
+        // תקין-תחבירית עם ערך שלילי עובר את הגנת ה-JsonException, ואז Task.Delay
+        // (שלילי) זורק ומחזיר את ה-crash-loop דרך הדלת האחורית. ההידוק סוגר זאת.
+        result.PollIntervalMs = ClampPollIntervalMs(result.PollIntervalMs);
 
-        SiteConfig? config;
+        // אותו נימוק בדיוק, ולנקודה הזו יש עוקץ משלה: מרווח סנכרון גדול מ-~24.8
+        // ימים גורם ל-Task.Delay לזרוק ArgumentOutOfRangeException. הלולאה שמשתמשת
+        // בו היא משימת רקע מנותקת, ולכן החריגה הייתה הופכת ל-unobserved ו**משתיקה
+        // את סנכרון השעון לצמיתות בלי שום שורה בלוג** — כשל שקט לגמרי.
+        result.NtpSyncIntervalMinutes = ClampNtpSyncIntervalMinutes(result.NtpSyncIntervalMinutes);
+        return result;
+    }
+
+    // אם המתקין הניח דגל איפוס: כותב config עם ברירות המחדל אך שומר את ה-SiteId
+    // הקיים (אם יש), ומוחק את הדגל. כך "אילוץ ברירות מחדל בכל התקנה" מרענן את שאר
+    // ההגדרות בלי למחוק את זהות האתר. best-effort — כשל בו לא מפיל את הסוכן.
+    private static void ApplyResetMarkerIfPresent()
+    {
         try
         {
-            config = JsonSerializer.Deserialize<SiteConfig>(json, Options);
+            if (!File.Exists(AgentPaths.ResetToDefaultsFlag))
+                return;
+
+            // קוראים את ה-SiteId הישן (אם קובץ ה-config עדיין קיים ותקין).
+            string siteId = "";
+            if (File.Exists(AgentPaths.ConfigFile))
+            {
+                try
+                {
+                    SiteConfig? old = JsonSerializer.Deserialize<SiteConfig>(
+                        File.ReadAllText(AgentPaths.ConfigFile), Options);
+                    siteId = old?.SiteId ?? "";
+                }
+                catch { /* config פגום — מתחילים נקי */ }
+            }
+
+            // ברירות מחדל טריות (PLC/HiveMQ מברירת המחדל המהודרת), עם ה-SiteId שנשמר.
+            Save(new SiteConfig { SiteId = siteId });
+
+            // הדגל בוצע — מסירים כדי שלא נאפס שוב בעליות הבאות.
+            File.Delete(AgentPaths.ResetToDefaultsFlag);
         }
-        catch (JsonException)
+        catch
         {
-            // קובץ פגום (קטוע בנפילת חשמל באמצע כתיבה, או עריכה ידנית שגויה):
-            // Deserialize זורק JsonException. בלי התפיסה הזו החריגה בורחת מ-Load,
-            // מ-Worker.ExecuteAsync ומפילה את ה-host ל-crash-loop — והאתר תקוע
-            // ב-no_comm לצמיתות. חוזרים לברירת מחדל כדי שהשירות ימשיך לתקשר.
-            config = null;
+            // איפוס הוא nice-to-have; כשל בו לא ישבש את עליית הסוכן.
         }
-
-        // אם מסיבה כלשהי הקובץ ריק או פגום — מחזירים ברירת מחדל במקום לקרוס.
-        SiteConfig result = config ?? new SiteConfig();
-
-        // מהדקים את קצב הדגימה לטווח שפוי. קובץ *תקין-תחבירית* עם ערך שלילי
-        // עובר את הגנת ה-JsonException למעלה, ואז Task.Delay(שלילי) זורק ומחזיר
-        // את ה-crash-loop דרך הדלת האחורית. הידוק כאן סוגר גם את החור הזה.
-        result.PollIntervalMs = ClampPollIntervalMs(result.PollIntervalMs);
-        return result;
     }
 
     /// <summary>
@@ -64,6 +109,18 @@ public static class ConfigStore
     /// לולאה חמה) ולא יותר מ-60s. פונקציה טהורה — ניתנת לבדיקה בנפרד.
     /// </summary>
     public static int ClampPollIntervalMs(int ms) => Math.Clamp(ms, 100, 60000);
+
+    /// <summary>
+    /// מהדק את מרווח סנכרון ה-NTP לטווח שפוי: דקה אחת עד 24 שעות.
+    ///
+    /// הרצפה מגינה על שרתי ה-NTP הציבוריים — סנכרון כל שנייה הוא שימוש לרעה
+    /// (pool.ntp.org חוסם על כך), ומיותר לחלוטין: היסט לא משתנה בקצב כזה.
+    ///
+    /// התקרה היא 24 שעות, בהתאמה ל-AgentClock.MaxPersistedAge: מעבר לזה ההיסט
+    /// ממילא נחשב לא-אמין. היא גם מונעת את ה-ArgumentOutOfRangeException של
+    /// Task.Delay (מעל ~24.8 ימים), שהיה הורג את לולאת הסנכרון בשקט.
+    /// </summary>
+    public static int ClampNtpSyncIntervalMinutes(int minutes) => Math.Clamp(minutes, 1, 1440);
 
     /// <summary>
     /// שומר את ההגדרות לדיסק, בכתיבה בטוחה:

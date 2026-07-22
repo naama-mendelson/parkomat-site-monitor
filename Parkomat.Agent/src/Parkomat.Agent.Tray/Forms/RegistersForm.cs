@@ -78,10 +78,11 @@ public class RegistersForm : Form
         Controls.Add(scroll);
         Controls.Add(buttons);
 
-        // טוענים את הערכים הנוכחיים.
-        _modeReg.Value = current.ModeRegister;
-        _cardReg.Value = current.CardRegister;
-        _cycleReg.Value = current.CycleRegister;
+        // טוענים את הערכים הנוכחיים — מהודקים לטווח הפקד (0..65535) כדי ש-config
+        // חורג (עריכה ידנית) לא יקריס את החלונית ב-ArgumentOutOfRangeException.
+        _modeReg.Value = Math.Clamp(current.ModeRegister, (int)_modeReg.Minimum, (int)_modeReg.Maximum);
+        _cardReg.Value = Math.Clamp(current.CardRegister, (int)_cardReg.Minimum, (int)_cardReg.Maximum);
+        _cycleReg.Value = Math.Clamp(current.CycleRegister, (int)_cycleReg.Minimum, (int)_cycleReg.Maximum);
     }
 
     private void OnOk()

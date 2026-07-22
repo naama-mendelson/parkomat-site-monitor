@@ -107,6 +107,12 @@ public class ServiceManager
     /// </summary>
     public string? Start()
     {
+        // התנעה נקייה: קודם הורגים כל שארית (תהליך תקוע/זומבי שנשאר "רץ" בשם אך
+        // אינו מתפקד). בלי זה, StartAgent/StartMosquitto היו מדלגים על ההפעלה בגלל
+        // בדיקת IsRunning על שארית כזו — והשירות לא היה עולה אחרי "הפעל את השירות".
+        KillByName(MosquittoProcName);
+        KillByName(AgentProcName);
+
         string? error = StartAgent();
         if (error != null)
             return error;
@@ -125,6 +131,12 @@ public class ServiceManager
     {
         KillByName(MosquittoProcName);
         KillByName(AgentProcName);
+
+        // מוחקים את קבצי הסטטוס כדי שהמצב ישקף *מיד* "מכובה". אחרת ה-heartbeat
+        // שנכתב רגע לפני הכיבוי נשאר טרי, ו-GetState היה מראה "פועל" עוד ~10 שניות
+        // בסתירה לכפתור "הפעל את השירות". הסוכן כותב אותם מחדש בעלייתו.
+        try { File.Delete(AgentPaths.HeartbeatFile); } catch { /* best-effort */ }
+        try { File.Delete(AgentPaths.HiveMqStatusFile); } catch { /* best-effort */ }
         return null;
     }
 

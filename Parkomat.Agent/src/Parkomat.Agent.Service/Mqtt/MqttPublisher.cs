@@ -2,6 +2,7 @@
 using MQTTnet.Protocol;
 using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Core.Protocol;
+using Parkomat.Agent.Core.Time;
 using Parkomat.Agent.Service.Logging;
 using System.Text.Json;
 
@@ -18,10 +19,15 @@ public class MqttPublisher : IAsyncDisposable
     private readonly string _siteCode;
     private readonly IMqttClient _client;
 
-    public MqttPublisher(MqttConfig config, string siteCode)
+    // השעון המסונכרן (NTP). אופציונלי — בלעדיו נופלים לשעון המקומי, כך
+    // שקורא שלא מספק שעון מתנהג בדיוק כמו קודם.
+    private readonly AgentClock _clock;
+
+    public MqttPublisher(MqttConfig config, string siteCode, AgentClock? clock = null)
     {
         _config = config;
         _siteCode = siteCode;
+        _clock = clock ?? new AgentClock();
 
         var factory = new MqttClientFactory();
         _client = factory.CreateMqttClient();
@@ -36,6 +42,12 @@ public class MqttPublisher : IAsyncDisposable
     // volatile מבטיח שה-Worker לא יקרא ערך ישן (barrier) — בלעדיו reconnect של
     // הגשר עלול "להתפספס" (אין resync → השרת נשאר ב-no_comm).
     private volatile bool _hiveMqBridgeConnected;
+
+    // האם המנוי ל-topic מצב-הגשר הצליח. אם SubscribeAsync נכשל בעוד החיבור עלה,
+    // בלי הדגל הזה החיבור נחשב "תקין" אך *לא מנוי* לצמיתות — ומצב-הגשר לא יתעדכן
+    // לעולם (ה-Tray אפור, ו-bridgeJustReconnected לא ייורה). EnsureConnected בודק
+    // את הדגל ומנסה מנוי מחדש.
+    private bool _subscribed;
 
     /// <summary>
     /// האם גשר ה-Mosquitto מחובר כרגע ל-HiveMQ (לפי הודעת ה-notification המקומית).
@@ -64,8 +76,10 @@ public class MqttPublisher : IAsyncDisposable
     /// </summary>
     public async Task ConnectAsync(CancellationToken ct = default)
     {
-        // בכל חיבור מחדש מאפסים את מצב הגשר עד שנקבל דיווח עדכני (retained).
+        // בכל חיבור מחדש מאפסים את מצב הגשר עד שנקבל דיווח עדכני (retained),
+        // וכן את דגל המנוי (נרשמים מחדש בכל חיבור).
         _hiveMqBridgeConnected = false;
+        _subscribed = false;
 
         // ה-payload של הצוואה — בדיוק כמו החוזה: { "timestamp": 0, "state": "no_comm" }
         var willMessage = new StateMessage
@@ -89,10 +103,18 @@ public class MqttPublisher : IAsyncDisposable
         await _client.ConnectAsync(options, ct);
 
         // נרשמים ל-topic של מצב הגשר ל-HiveMQ (retained — נקבל את הערך הנוכחי מיד).
+        await SubscribeBridgeAsync(ct);
+    }
+
+    // מנוי ל-topic מצב-הגשר, ומסמן הצלחה בדגל. מופרד כדי ש-EnsureConnected יוכל
+    // לנסות מנוי מחדש אם הוא נכשל בעוד החיבור עצמו נשאר פתוח.
+    private async Task SubscribeBridgeAsync(CancellationToken ct)
+    {
         var subscribe = new MqttClientSubscribeOptionsBuilder()
             .WithTopicFilter(BridgeConfigWriter.RemoteBridgeStateTopic(_siteCode), MqttQualityOfServiceLevel.AtLeastOnce)
             .Build();
         await _client.SubscribeAsync(subscribe, ct);
+        _subscribed = true;
     }
 
     /// <summary>
@@ -103,10 +125,16 @@ public class MqttPublisher : IAsyncDisposable
     /// </summary>
     public async Task EnsureConnectedAsync(CancellationToken ct = default)
     {
-        if (_client.IsConnected)
+        if (!_client.IsConnected)
+        {
+            await ConnectAsync(ct);
             return;
+        }
 
-        await ConnectAsync(ct);
+        // מחוברים אך המנוי נכשל בחיבור קודם — מנסים להירשם שוב. אחרת מצב-הגשר
+        // לא יתעדכן לעולם, ה-Tray יישאר אפור, וה-resync של layer-2 לא ייורה.
+        if (!_subscribed)
+            await SubscribeBridgeAsync(ct);
     }
 
     /// <summary>משדר הודעת state ל-topic של המצב.</summary>
@@ -129,7 +157,25 @@ public class MqttPublisher : IAsyncDisposable
             .WithRetainFlag(false)   // לפי החוזה: retain=false בכל ההודעות
             .Build();
 
-        await _client.PublishAsync(mqttMessage, ct);
+        // timeout על ה-publish: socket half-open (הצד השני נעלם בלי RST) היה מקפיא
+        // את QoS-1 בהמתנה ל-PUBACK עד ה-keepalive הפנימי (~15s) — וכל לולאת ה-Worker
+        // (קריאת PLC, heartbeat) נתקעת. מנתקים על timeout כדי שהסבב הבא יתחבר מחדש.
+        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                await _client.PublishAsync(mqttMessage, cts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // ה-timeout *שלנו* נורה (ולא כיבוי המערכת): שוברים את ה-socket התקוע
+                // כדי שה-EnsureConnected הבא יבנה חיבור חדש; ההודעה תשודר שוב בסבב הבא.
+                try { await _client.DisconnectAsync(); } catch { }
+                _subscribed = false;
+                throw new TimeoutException($"MQTT publish to '{topic}' timed out (broker unresponsive).");
+            }
+        }
 
         // תופעת-לוואי בלבד, *אחרי* פרסום מוצלח: רישום ה-audit המקומי (מה נשלח).
         // נבלע בשקט אם ייכשל — לא משנה לוגיקה, תזמון או אמינות של השידור עצמו.
@@ -151,7 +197,7 @@ public class MqttPublisher : IAsyncDisposable
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 var down = new StateMessage
                 {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),  // שניות שלמות, כמו החוזה
+                    Timestamp = _clock.UnixNow(),  // שניות שלמות (חוזה), משעון מסונכרן NTP
                     State = SiteState.NoComm
                 };
                 await PublishStateAsync(down, cts.Token);

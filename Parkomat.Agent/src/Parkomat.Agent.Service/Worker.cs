@@ -1,5 +1,6 @@
 using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Core.Protocol;
+using Parkomat.Agent.Core.Time;
 using Parkomat.Agent.Service.Logic;
 using Parkomat.Agent.Service.Modbus;
 using Parkomat.Agent.Service.Mqtt;
@@ -74,10 +75,24 @@ public class Worker : BackgroundService
                 AgentPaths.CaCertFile);
         }
 
+        // --- שעון מסונכרן NTP ---
+        // חותמת הזמן של פעולה אומרת "מתי בדיוק זה קרה באתר", ולכן אסור שתהיה
+        // תלויה בשעון Windows של מחשב שאיש לא מתחזק. הסנכרון רץ *ברקע*: הלולאה
+        // הראשית לעולם לא ממתינה לרשת, ואתר בלי גישה ל-NTP ממשיך לעבוד בדיוק
+        // כמו קודם (היסט 0 = השעון המקומי).
+        var clock = new AgentClock();
+        // גשר על החלון שבין עליית הסוכן לסנכרון הראשון: אם יש היסט שמור ועדיין
+        // תקף (עד 24 שעות), מחילים אותו מיד. אחרת מתחילים בלי תיקון — תמיד
+        // ברירת המחדל הבטוחה.
+        if (clock.TryLoadPersisted())
+            _logger.LogInformation("Restored last known clock offset {Seconds:F3}s from disk (pending fresh NTP sync).",
+                clock.Offset.TotalSeconds);
+        _ = SyncClockLoopAsync(clock, config, stoppingToken);
+
         // --- יצירת שלושת הרכיבים ---
-        var detector = new OperationDetector();
+        var detector = new OperationDetector(clock.UnixNow);
         using var plc = new PlcReader(config.Plc);
-        await using var mqtt = new MqttPublisher(config.Mqtt, config.SiteId);
+        await using var mqtt = new MqttPublisher(config.Mqtt, config.SiteId, clock);
 
         // --- התחברות ל-Broker (כולל הגדרת ה-LWT) ---
         try
@@ -196,7 +211,7 @@ public class Worker : BackgroundService
 
                     var errorState = new StateMessage
                     {
-                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Timestamp = clock.UnixNow(),
                         State = SiteState.Error
                     };
 
@@ -302,30 +317,21 @@ public class Worker : BackgroundService
                 //     נשמרות בלי קשר להגנה הזו.
                 bool bridgeJustReconnected = mqtt.HiveMqBridgeConnected && !bridgeWasConnected;
 
-                // ה-state ל-resync: המצב הנוכחי אם הוא ממופה, אחרת האחרון שידענו.
-                // כך MODE 4 (init) לא מונע resync — אתר שהתאושש-לתוך-init, או שהשרת
-                // חושב עליו error/no_comm, לא נשאר תקוע. אם עוד לא ראינו אף מצב ממופה
-                // (עלייה טרייה בתוך init) — resyncState עדיין null, וה-birth נדחה עד
-                // המצב הממופה הראשון (שם ממילא אין "אמת" קודמת לפרסם).
-                SiteState? resyncState = currentState ?? lastKnownState;
+                // ההחלטה עצמה (מתי/מה לשדר מחדש, כולל ה-birth בעלייה) חיה ב-ResyncPolicy —
+                // פונקציה טהורה שמכוסה ב-unit tests. כאן רק מבצעים אותה.
+                ResyncDecision resync = ResyncPolicy.Decide(
+                    birthMessageSent, mqttWasConnected, plcJustRecovered,
+                    bridgeJustReconnected, currentState, lastKnownState);
 
-                // המקרה הרביעי — הודעת הלידה — הוא בדיוק "הצג מיד את הנתונים הקיימים
-                // ואל תחכה לשינוי": בשידור המוצלח הראשון אחרי עלייה משדרים את המצב
-                // פעם אחת, גם אם דבר לא השתנה ואף חיבור לא נותק-והתחבר.
-                if ((!birthMessageSent || !mqttWasConnected || plcJustRecovered || bridgeJustReconnected)
-                    && resyncState.HasValue)
+                if (resync.ShouldPublish)
                 {
-                    string reason = !birthMessageSent ? "startup birth message"
-                        : !mqttWasConnected ? "reconnected to broker"
-                        : bridgeJustReconnected ? "HiveMQ bridge reconnected"
-                        : "PLC recovered";
                     _logger.LogInformation(
                         "Resyncing current state to broker ({Reason}) -> {State}.",
-                        reason, resyncState.Value);
+                        resync.Reason, resync.State);
                     await mqtt.PublishStateAsync(new StateMessage
                     {
-                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                        State = resyncState.Value
+                        Timestamp = clock.UnixNow(),
+                        State = resync.State
                     }, stoppingToken);
                     birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                 }
@@ -439,6 +445,12 @@ public class Worker : BackgroundService
 
     // כותב את הזמן הנוכחי (יוניקס-שניות) לקובץ פעימת הלב.
     // עוטף ב-try כדי שכשל בכתיבה לא יפיל את השירות.
+    //
+    // ⚠️ כאן דווקא *לא* משתמשים בשעון ה-NTP המתוקן, ובכוונה: הקובץ הזה הוא
+    // מנגנון חיות מקומי בלבד, וה-Tray משווה אותו מול השעון המקומי *שלו*
+    // (ServiceManager). אם נכתוב כאן זמן מתוקן בזמן שהשעון המקומי סוטה, ההפרש
+    // ייראה ל-Tray כפעימה מהעתיד/עבר והסמל היה נשבר. הזמן המתוקן שייך רק למה
+    // שמשודר לענן.
     private void WriteHeartbeat()
     {
         try
@@ -476,5 +488,86 @@ public class Worker : BackgroundService
         string tempFile = path + ".tmp";
         File.WriteAllText(tempFile, content);
         File.Move(tempFile, path, overwrite: true);
+    }
+
+    // ==========================================================
+    // סנכרון השעון מול NTP
+    // ==========================================================
+    // רץ ברקע לאורך כל חיי הסוכן: מסנכרן מיד בעלייה, ואז מדי פרק זמן קבוע.
+    //
+    // שני כללים שלא מתפשרים עליהם:
+    //   1. **לעולם לא זורק ולא חוסם.** כישלון סנכרון (UDP/123 חסום, אין
+    //      אינטרנט, DNS נופל) פירושו "נשארים על השעון המקומי" — בדיוק
+    //      ההתנהגות שהייתה לפני התכונה הזו. חניון לא מפסיק לדווח בגלל NTP.
+    //   2. **לא נוגעים בשעון המערכת** — זה היה דורש הרשאות מנהל.
+    private async Task SyncClockLoopAsync(AgentClock clock, SiteConfig config, CancellationToken ct)
+    {
+        string server = (config.NtpServer ?? "").Trim();
+        if (server.Length == 0)
+        {
+            _logger.LogWarning(
+                "NTP sync is disabled (no server configured) — operation timestamps will use this PC's clock as-is.");
+            return;
+        }
+
+        // ההידוק נעשה כבר ב-ConfigStore.Load; חוזרים עליו כאן כי המתודה הזו חייבת
+        // להיות בטוחה גם אם מישהו יקרא לה עם config שלא עבר דרך Load.
+        TimeSpan interval = TimeSpan.FromMinutes(
+            ConfigStore.ClampNtpSyncIntervalMinutes(config.NtpSyncIntervalMinutes));
+
+        while (!ct.IsCancellationRequested)
+        {
+          try
+          {
+            TimeSpan? offset = await NtpClient.GetOffsetAsync(server, TimeSpan.FromSeconds(5), ct);
+
+            if (offset.HasValue)
+            {
+                clock.ApplyOffset(offset.Value);
+                clock.Persist();   // כדי שהעלייה הבאה לא תתחיל מאפס אם אין רשת
+                double seconds = offset.Value.TotalSeconds;
+
+                // סטייה של יותר משתי שניות אינה רעש מדידה — היא שעון שגוי
+                // באתר, ושווה שתהיה גלויה בלוג. הזמן המשודר כבר מתוקן.
+                if (Math.Abs(seconds) >= 2)
+                {
+                    _logger.LogWarning(
+                        "NTP: this PC's clock is off by {Seconds:F1}s (per {Server}). Published timestamps are corrected.",
+                        seconds, server);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "NTP synced with {Server}; clock offset {Seconds:F3}s.", server, seconds);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "NTP sync with {Server} failed (UDP/123 blocked or no internet). Falling back to {Fallback}.",
+                    server, clock.IsSynced ? "the last known offset" : "this PC's clock");
+            }
+
+            await Task.Delay(interval, ct);
+          }
+          catch (OperationCanceledException)
+          {
+              return;   // כיבוי מסודר
+          }
+          catch (Exception ex)
+          {
+              // ==========================================================
+              // הלולאה הזו אסור שתמות בשקט
+              // ==========================================================
+              // היא רצה כמשימת רקע מנותקת (fire-and-forget), ולכן חריגה שבורחת
+              // מכאן אינה מפילה את הסוכן ואינה מודפסת — היא פשוט הופכת ל-unobserved
+              // task exception, וסנכרון השעון נעצר לצמיתות **בלי שום סימן**. אתר
+              // היה ממשיך לדווח שנים עם שעון סוטה, ואיש לא היה יודע.
+              // לכן: רושמים, ממתינים קצת, וממשיכים.
+              _logger.LogError("NTP sync loop error: {Message}. Retrying in 1 minute.", ex.Message);
+              try { await Task.Delay(TimeSpan.FromMinutes(1), ct); }
+              catch (OperationCanceledException) { return; }
+          }
+        }
     }
 }

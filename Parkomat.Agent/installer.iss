@@ -3,7 +3,7 @@
 ; ה-Tray עולה אוטומטית בכניסת המשתמש, ומפעיל+משגיח על ה-Agent ועל Mosquitto כתהליכים.
 
 #define MyAppName "Parkomat Agent"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.14"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -53,6 +53,19 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "ParkomatAgentTray"; \
   ValueData: """{app}\tray\{#TrayExe}"""; Flags: uninsdeletevalue
 
+[InstallDelete]
+; מסירים קיצור-דרך ישן משולחן העבודה (מגרסאות קודמות) — עכשיו הוא בתפריט התחל.
+Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"
+
+[Icons]
+; קיצור דרך בתפריט התחל (רשימת האפליקציות, ליד 'הגדרות'/'תמונות') — כדי שאחרי
+; "יציאה" אפשר להחזיר את ה-Agent בלחיצה אחת (ה-Tray מפעיל שוב את השירות
+; ו-Mosquitto בעלייתו). {userprograms} ולא {commonprograms} — התקנה למשתמש,
+; בלי הרשאת מנהל.
+Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\tray\{#TrayExe}"; \
+  WorkingDir: "{app}\tray"; Comment: "הפעל את Parkomat Agent"; \
+  IconFilename: "{app}\tray\Assets\logo-color.ico"
+
 [Run]
 ; מפעילים את ה-Tray מיד בסוף ההתקנה — הוא ידאג להפעיל את השאר.
 Filename: "{app}\tray\{#TrayExe}"; \
@@ -100,6 +113,13 @@ begin
   ExecHidden(Sys + '\sc.exe', 'stop {#ServiceName}');
   ExecHidden(Sys + '\sc.exe', 'delete Mosquitto');
   ExecHidden(Sys + '\sc.exe', 'delete {#ServiceName}');
+
+  // אילוץ ברירות מחדל בכל התקנה — אך בלי למחוק את זהות האתר: מניחים דגל,
+  // וה-Agent בעלייתו מאפס את PLC/HiveMQ לברירות המחדל תוך *שמירת ה-SiteId*
+  // שהוזן (ראה ConfigStore.ApplyResetMarkerIfPresent). config.json *אינו* נמחק
+  // כאן — הסוכן צריך אותו כדי לקרוא את ה-SiteId הישן לפני האיפוס.
+  ForceDirectories(ExpandConstant('{commonappdata}\Parkomat\Agent'));
+  SaveStringToFile(ExpandConstant('{commonappdata}\Parkomat\Agent\reset-to-defaults.flag'), '', False);
 
   Result := '';   // ריק = ממשיכים בהתקנה
 end;

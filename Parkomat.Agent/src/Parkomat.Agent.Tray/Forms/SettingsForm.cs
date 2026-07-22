@@ -74,8 +74,10 @@ public class SettingsForm : Form
         var t = NewTable(2);
         AddRow(t, 0, "מזהה אתר:", _siteId);
 
+        // הטווח תואם ל-ConfigStore.ClampPollIntervalMs (100..60000). קודם הטופס
+        // התיר עד 600000 אבל ה-runtime חתך ל-60000 — ערך גבוה "נעלם" בשקט.
         _pollInterval.Minimum = 100;
-        _pollInterval.Maximum = 600000;
+        _pollInterval.Maximum = 60000;
         AddRow(t, 1, "קצב דגימה (מילישניות):", _pollInterval);
 
         g.Controls.Add(t);
@@ -215,16 +217,20 @@ public class SettingsForm : Form
         SiteConfig c = ConfigStore.Load();
 
         _siteId.Text = c.SiteId;
-        _pollInterval.Value = Math.Clamp(c.PollIntervalMs, 100, 600000);
+        // מהדקים כל ערך לטווח של הפקד לפני ההשמה: NumericUpDown.Value זורק
+        // ArgumentOutOfRangeException אם הערך מחוץ ל-[Minimum,Maximum]. config
+        // חורג (עריכה ידנית / סכמה ישנה) היה מקריס את חלון ההגדרות בבנאי — ואז
+        // אי אפשר לתקן את מה ששבור. ההידוק מונע את הקריסה.
+        _pollInterval.Value = Math.Clamp(c.PollIntervalMs, (int)_pollInterval.Minimum, (int)_pollInterval.Maximum);
 
         _plcIp.Text = c.Plc.IpAddress;
-        _plcPort.Value = c.Plc.Port;
+        _plcPort.Value = Math.Clamp(c.Plc.Port, (int)_plcPort.Minimum, (int)_plcPort.Maximum);
 
         // שומרים את כל ה-PLC (כולל הכתובות) בזיכרון לעריכה בחלונית.
         _plc = c.Plc;
 
         _mqttHost.Text = c.Mqtt.Host;
-        _mqttPort.Value = c.Mqtt.Port;
+        _mqttPort.Value = Math.Clamp(c.Mqtt.Port, (int)_mqttPort.Minimum, (int)_mqttPort.Maximum);
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
     }

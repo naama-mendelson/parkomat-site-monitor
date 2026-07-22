@@ -21,11 +21,25 @@ public static class AgentPaths
     public static string ConfigFile { get; } = Path.Combine(BaseFolder, "config.json");
 
     /// <summary>
+    /// סימון "אפס להגדרות ברירת מחדל" שהמתקין מניח בכל התקנה. ה-ConfigStore, בעליית
+    /// הסוכן, מאפס את ה-config לברירות המחדל אך **שומר את ה-SiteId** שהוזן — כדי
+    /// שעדכון לא ימחוק את זהות האתר (topics ריקים sites// + התנגשות clientId).
+    /// </summary>
+    public static string ResetToDefaultsFlag { get; } = Path.Combine(BaseFolder, "reset-to-defaults.flag");
+
+    /// <summary>
     /// נתיב לקובץ פעימת הלב: ...\Parkomat\Agent\heartbeat.
     /// השירות מעדכן אותו אחרי כל קריאה מוצלחת מה-PLC,
     /// וממשק המשתמש בודק אותו כדי לדעת אם ה-Agent באמת עובד.
     /// </summary>
     public static string HeartbeatFile { get; } = Path.Combine(BaseFolder, "heartbeat");
+
+    /// <summary>
+    /// ההיסט האחרון שנמדד מול שרת NTP, בפורמט "&lt;שניות&gt; &lt;נמדד-ב-unix&gt;".
+    /// נשמר כדי שסוכן שעולה בלי אינטרנט יתחיל מההיסט הידוע האחרון במקום מאפס.
+    /// חותם המדידה חיוני — היסט ישן מדי נפסל (ראה AgentClock.TryLoad).
+    /// </summary>
+    public static string ClockOffsetFile { get; } = Path.Combine(BaseFolder, "clock-offset");
 
     /// <summary>
     /// נתיב לקובץ סטטוס החיבור ל-HiveMQ: ...\Parkomat\Agent\hivemq-status.

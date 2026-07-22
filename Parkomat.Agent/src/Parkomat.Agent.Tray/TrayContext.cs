@@ -35,13 +35,14 @@ public class TrayContext : ApplicationContext
     private readonly Control _marshal = new();
     private volatile bool _userStopped;    // המשתמש כיבה ידנית → לא להפעיל מחדש
     private volatile bool _busy;           // מונע ריצות חופפות של פעולות תהליך
+    private volatile bool _exiting;        // יציאה בתהליך → לא להפעיל מחדש (מונע תהליכים יתומים)
 
     public TrayContext()
     {
         // --- טעינת האייקונים מתיקיית Assets ---
         string baseDir = AppContext.BaseDirectory;
-        _iconColor = new Icon(Path.Combine(baseDir, "Assets", "logo-color.ico"));
-        _iconGray = new Icon(Path.Combine(baseDir, "Assets", "logo-gray.ico"));
+        _iconColor = LoadIcon(Path.Combine(baseDir, "Assets", "logo-color.ico"));
+        _iconGray = LoadIcon(Path.Combine(baseDir, "Assets", "logo-gray.ico"));
 
         // --- בניית התפריט הימני ---
         var menu = new ContextMenuStrip();
@@ -106,15 +107,25 @@ public class TrayContext : ApplicationContext
         KickEnsureRunning();
     }
 
+    // טוען אייקון; בכשל (קובץ חסר/נעול — publish פגום או אנטי-וירוס) נופל לאייקון
+    // מערכת במקום להפיל את הבנאי ואת כל ה-Tray (שנראה כמו "התקנה נכשלה").
+    private static Icon LoadIcon(string path)
+    {
+        try { return new Icon(path); }
+        catch { return SystemIcons.Application; }
+    }
+
     // מריץ EnsureRunning ברקע, בלי לחפוף לריצה קודמת ובלי לתקוע את ה-UI.
     private void KickEnsureRunning()
     {
-        if (_busy)
+        if (_busy || _exiting || _userStopped)
             return;
         _busy = true;
         Task.Run(() =>
         {
-            try { _service.EnsureRunning(); }
+            // בדיקה שנייה בתוך המשימה: Exit/Stop עלול לקרות בין ה-Kick ל-Run, ואז
+            // הפעלה-מחדש כאן הייתה משאירה Agent/Mosquitto יתומים אחרי סגירת ה-Tray.
+            try { if (!_exiting && !_userStopped) _service.EnsureRunning(); }
             catch { /* watchdog — לא מפילים את ה-Tray */ }
             finally { _busy = false; }
         });
@@ -221,6 +232,10 @@ public class TrayContext : ApplicationContext
 
     private void OnExit()
     {
+        // מסמנים יציאה *ראשון* — כדי שמשימת EnsureRunning ברקע שכבר בדרך לא תפעיל
+        // מחדש את התהליכים אחרי ה-Stop ותשאיר אותם יתומים.
+        _exiting = true;
+
         // עוצרים את התהליכים לפני יציאה — אחרת ה-Agent ו-Mosquitto יישארו רצים ברקע.
         _watchdog.Stop();
         try { _service.Stop(); } catch { /* יציאה — לא מפילים */ }

@@ -157,6 +157,30 @@ public class OperationDetectorTests
     }
 
     [Fact]
+    public void LeavingExitMode_CardClearedMidOperation_EndStillCarriesCard()
+    {
+        // תרחיש היציאה שנשבר בשדה: הכרטיס מוצג ב-start, אך הרגיסטר מתאפס ל-"" בעודנו
+        // עדיין במצב יציאה (MODE 3) — קריאה אחת *לפני* החזרה ל-ready. עם הקוד הישן
+        // (_previousCard) ה-end יצא בלי כרטיס; עכשיו הוא נושא את הכרטיס שנתפס בתחילת
+        // הפעולה. זה בדיוק ה-exit/end בלי כרטיס שראינו בנתונים.
+        var detector = new OperationDetector();
+
+        detector.Process(mode: 1, cardNumber: "", cycleCounter: 0);                   // ready
+        DetectionResult startRes = detector.Process(mode: 3, cardNumber: "6", cycleCounter: 20);  // exit start, כרטיס 6
+        detector.Process(mode: 3, cardNumber: "", cycleCounter: 20);                  // עדיין יציאה, הכרטיס התאפס
+        DetectionResult endRes = detector.Process(mode: 1, cardNumber: "", cycleCounter: 21);     // ready → exit end
+
+        OperationMessage startOp = Assert.Single(startRes.Operations);
+        Assert.Equal("start", startOp.StartEnd);
+        Assert.Equal("6", startOp.User);
+
+        OperationMessage endOp = Assert.Single(endRes.Operations);
+        Assert.Equal("end", endOp.StartEnd);
+        Assert.Equal("exit", endOp.EntryExit);
+        Assert.Equal("6", endOp.User);   // ← התיקון: קודם היה "" (הכרטיס אבד ב-exit/end)
+    }
+
+    [Fact]
     public void EntryToExitTransition_EmitsEndOfEntryThenStartOfExit()
     {
         var detector = new OperationDetector();

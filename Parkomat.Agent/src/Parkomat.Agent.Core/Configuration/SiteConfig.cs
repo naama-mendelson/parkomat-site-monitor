@@ -16,6 +16,21 @@ public class SiteConfig
 
     /// <summary>כל כמה מילי-שניות לקרוא מה-PLC. ברירת מחדל: שנייה.</summary>
     public int PollIntervalMs { get; set; } = 1000;
+
+    /// <summary>
+    /// שרת ה-NTP שממנו נלקח הזמן לחותמות של הפעולות.
+    ///
+    /// חותמת הזמן של פעולה קובעת *מתי בדיוק היא קרתה באתר*, ולכן היא לא יכולה
+    /// להישען על שעון Windows של מחשב שאיש לא מתחזק. הסוכן שואל את השרת הזה
+    /// אחת לשעה, מחשב היסט, ומחיל אותו על מה שהוא משדר (ראה AgentClock).
+    ///
+    /// ריק = מכבה את הסנכרון וחוזר לשעון המקומי. באתר עם UDP/123 חסום אפשר
+    /// להזין כאן שרת NTP פנימי של הארגון.
+    /// </summary>
+    public string NtpServer { get; set; } = "pool.ntp.org";
+
+    /// <summary>כל כמה דקות לסנכרן מול שרת ה-NTP. 0 ומטה = ברירת המחדל (60).</summary>
+    public int NtpSyncIntervalMinutes { get; set; } = 60;
 }
 
 /// <summary>הגדרות החיבור והכתובות ב-PLC (Modbus-TCP).</summary>
@@ -63,7 +78,7 @@ public class MqttConfig
     public int Port { get; set; } = 8883;
 
     /// <summary>שם משתמש להתחברות ל-Broker.</summary>
-    public string Username { get; set; } = "agent-1234";
+    public string Username { get; set; } = "agent";
 
     /// <summary>
     /// סיסמה להתחברות ל-Broker. נשמרת *ריקה* ב-git בכוונה — כדי שסוד לא ייכנס

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 
 namespace Parkomat.Agent.Core.Configuration;
@@ -21,9 +22,23 @@ public static class BridgeConfigWriter
     /// <summary>
     /// מייצר את תוכן קובץ הגישור לפי ההגדרות, וכותב אותו לדיסק.
     /// </summary>
+    // תיקיית ה-persistence של Mosquitto — נגזרת מ-CommonApplicationData (בלי קידוד
+    // קשיח ל-C:), ונוצרת ב-Write() לפני ש-Mosquitto עולה, אחרת הוא נכשל בכתיבת ה-DB.
+    private static readonly string MosquittoPersistenceFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "Parkomat", "Mosquitto");
+
+    // מסיר תווי-בקרה (בפרט CR/LF) מערך שנכתב לשורת conf: תו שורה-חדשה בסיסמה/שם
+    // (הדבקה עם CRLF נגרר) היה שובר את הקובץ לשורה שנייה ש-Mosquitto מפרש כהוראה
+    // שגויה → הגשר לא עולה, והאתר חשוך לענן בלי שגיאה ברורה.
+    private static string Sanitize(string value) =>
+        new string((value ?? "").Where(c => !char.IsControl(c)).ToArray());
+
     public static void Write(SiteConfig config)
     {
         AgentPaths.EnsureBaseFolderExists();
+        AgentPaths.EnsureLogsFolderExists();                     // Mosquitto יכתוב לכאן את לוג האבחון
+        Directory.CreateDirectory(MosquittoPersistenceFolder);   // חייבת להתקיים לפני ש-Mosquitto עולה
 
         string content = Build(config);
 
@@ -37,7 +52,10 @@ public static class BridgeConfigWriter
     // בונה את הטקסט של קובץ הגישור. public כדי שניתן יהיה לבדוק את התוכן בלי לגעת בדיסק.
     public static string Build(SiteConfig config)
     {
-        string siteCode = config.SiteId;
+        // Trim ולא רק Sanitize: רווחים בקצוות היו נכנסים לנושאים ול-clientId
+        // ("sites/ 2439 /#", "bridge- 2439 ") ושוברים אותם בשקט. טכנאי שמדביק
+        // קוד אתר גורר רווח בקלות, ולכן זה לא מקרה קצה תיאורטי.
+        string siteCode = Sanitize(config.SiteId).Trim();
         var mqtt = config.Mqtt;
 
         var sb = new StringBuilder();
@@ -47,10 +65,45 @@ public static class BridgeConfigWriter
         sb.AppendLine("allow_anonymous true");
         sb.AppendLine();
 
+        // --- לוג לאבחון: ניסיונות חיבור הגשר, TLS handshake, ותוצאת האימות מול
+        //     HiveMQ. בלעדיו Mosquitto לא כותב דבר ואנחנו עיוורים לסיבת כשל הגשר.
+        //     הנתיב תחת ProgramData (בלי רווחים) כדי ש-Mosquitto יצליח לכתוב.
+        sb.AppendLine($"log_dest file {Path.Combine(AgentPaths.LogsFolder, "mosquitto.log")}");
+        sb.AppendLine("log_type all");
+        sb.AppendLine("connection_messages true");
+        sb.AppendLine("log_timestamp true");
+        sb.AppendLine();
+
         // --- שמירה לדיסק (עמידות לניתוקים) ---
         sb.AppendLine("persistence true");
-        sb.AppendLine(@"persistence_location C:\ProgramData\Parkomat\Mosquitto\");
+        sb.AppendLine($"persistence_location {MosquittoPersistenceFolder}{Path.DirectorySeparatorChar}");
         sb.AppendLine();
+
+        // ==========================================================
+        // בלי קוד אתר — אין גשר. בכוונה.
+        // ==========================================================
+        // מאז שיש שם-משתמש *ברירת מחדל* ל-HiveMQ, התקנה טרייה (SiteId ריק) הפיקה
+        // קובץ גשר "תקין למראה" שבו הקוד פשוט חסר:
+        //
+        //     remote_clientid bridge-        ← זהה בכל התקנה טרייה בעולם
+        //     topic sites//# out 1           ← נושא פגום
+        //     notification_topic sites//bridge
+        //
+        // והגשר באמת התחבר ל-HiveMQ ופרסם. שתי תוצאות, שתיהן רעות:
+        //   1. clientId משותף — MQTT מחייב ייחודיות, ולכן כל שתי התקנות טריות
+        //      מפילות זו את זו בלולאה מול HiveMQ (בדיוק הכשל שמתואר למטה).
+        //   2. פרסום לנושא `sites//state` — קוד אתר ריק, נתונים שאינם שייכים לאף אתר.
+        //
+        // לכן: אין SiteId → לא כותבים בלוק גשר כלל, וגם לא remote_username. זה גם
+        // מחזיר את המשמעות לשער ב-ServiceManager (BridgeConfigHasUsername), שמפסיק
+        // להפעיל את Mosquitto עד שהטכנאי יזין קוד אתר. הברוקר המקומי עדיין מוגדר,
+        // כך שברגע שהקוד יוזן הקובץ ייכתב מחדש והגשר יעלה.
+        if (siteCode.Length == 0)
+        {
+            sb.AppendLine("# לא הוגדר קוד אתר (SiteId) — הגשר ל-HiveMQ מושבת בכוונה.");
+            sb.AppendLine("# הזן קוד אתר בהגדרות הסוכן; הקובץ ייכתב מחדש והגשר יעלה אוטומטית.");
+            return sb.ToString();
+        }
 
         // --- הגדרת הגשר ל-HiveMQ ---
         sb.AppendLine("connection hivemq-bridge");
@@ -61,7 +114,11 @@ public static class BridgeConfigWriter
         // מהבהבים no_comm. local_clientid נותן זהות ייחודית גם מול הברוקר המקומי.
         sb.AppendLine($"remote_clientid bridge-{siteCode}");
         sb.AppendLine($"local_clientid bridge-{siteCode}");
-        sb.AppendLine($"address {mqtt.Host}:{mqtt.Port}");
+        sb.AppendLine($"address {Sanitize(mqtt.Host)}:{mqtt.Port}");
+        // HiveMQ Cloud דוחה חיבורי MQTT 3.1 (ברירת המחדל של גשר Mosquitto) — מכריחים
+        // 3.1.1, אחרת חיבור הגשר נדחה בשקט והאתר לעולם לא מתקשר לענן (hivemq-status
+        // לא נוצר). זה החסר הנפוץ ביותר בגישור Mosquitto ↔ HiveMQ Cloud.
+        sb.AppendLine("bridge_protocol_version mqttv311");
         // מעביר רק את הודעות האתר הזה, לפי קוד האתר.
         sb.AppendLine($"topic sites/{siteCode}/# out 1");
         sb.AppendLine("max_queued_messages 0");
@@ -101,8 +158,8 @@ public static class BridgeConfigWriter
         sb.AppendLine();
 
         // --- פרטי ההתחברות ל-HiveMQ (מתוך ההגדרות) ---
-        sb.AppendLine($"remote_username {mqtt.Username}");
-        sb.AppendLine($"remote_password {mqtt.Password}");
+        sb.AppendLine($"remote_username {Sanitize(mqtt.Username)}");
+        sb.AppendLine($"remote_password {Sanitize(mqtt.Password)}");
         sb.AppendLine();
 
         // ==========================================================

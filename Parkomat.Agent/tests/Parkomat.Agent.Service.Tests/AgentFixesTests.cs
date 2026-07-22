@@ -54,6 +54,75 @@ public class AgentFixesTests
         Assert.DoesNotContain("bridge-1002", a); // אין דליפה בין אתרים
     }
 
+    [Fact]
+    public void BridgeConfig_StripsControlCharsFromCredentials()
+    {
+        // סיסמה/שם עם CR/LF (הדבקה עם שורה חדשה) היו שוברים את bridge.conf לשורה
+        // נוספת ש-Mosquitto מפרש כהוראה שגויה → הגשר לא עולה. הסניטציה מסירה אותם.
+        var cfg = new SiteConfig
+        {
+            SiteId = "1234",
+            Mqtt = new MqttConfig { Host = "broker", Port = 8883, Username = "user", Password = "pass\r\nlistener 1", }
+        };
+
+        string conf = BridgeConfigWriter.Build(cfg);
+
+        Assert.Contains("remote_password passlistener 1", conf);  // ה-CRLF הוסר, נשאר בשורה אחת
+        Assert.DoesNotContain("\nlistener 1", conf);              // אין שורה מוזרקת
+    }
+
+    [Fact]
+    public void BridgeConfig_PersistenceLocationPresent()
+    {
+        string conf = BridgeConfigWriter.Build(new SiteConfig { SiteId = "1234", Mqtt = new MqttConfig() });
+        Assert.Contains("persistence_location ", conf);
+        Assert.Contains("Parkomat", conf);
+    }
+
+    // ===== התקנה טרייה: SiteId ריק — אסור שייווצר גשר ל-HiveMQ =====
+    //
+    // מאז שיש שם-משתמש ברירת מחדל, התקנה טרייה הפיקה גשר "תקין למראה" עם
+    // clientId `bridge-` (זהה בכל התקנה טרייה!) ונושא פגום `sites//state`, והוא
+    // באמת התחבר ופרסם ל-HiveMQ. שתי התקנות טריות היו מפילות זו את זו בלולאה.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BridgeConfig_NoSiteId_DoesNotCreateBridge(string siteId)
+    {
+        var cfg = new SiteConfig
+        {
+            SiteId = siteId,
+            Mqtt = new MqttConfig { Host = "broker.hivemq", Port = 8883, Username = "agent", Password = "secret" }
+        };
+
+        string conf = BridgeConfigWriter.Build(cfg);
+
+        Assert.DoesNotContain("connection hivemq-bridge", conf);   // אין גשר בכלל
+        Assert.DoesNotContain("remote_clientid", conf);            // אין clientId משותף
+        Assert.DoesNotContain("sites//", conf);                    // אין נושא פגום
+        Assert.DoesNotContain("secret", conf);                     // הסיסמה לא נכתבת לדיסק
+        // קריטי: בלי remote_username השער ב-ServiceManager לא יפעיל את Mosquitto.
+        Assert.DoesNotContain("remote_username", conf);
+        // הברוקר המקומי כן מוגדר — כדי שברגע שיוזן קוד אתר הכול יעלה.
+        Assert.Contains("listener 1883 localhost", conf);
+    }
+
+    [Fact]
+    public void BridgeConfig_WithSiteId_CreatesBridge()
+    {
+        // רגרסיה: ברגע שיש קוד אתר, הגשר חוזר להיכתב במלואו.
+        string conf = BridgeConfigWriter.Build(new SiteConfig
+        {
+            SiteId = "2439",
+            Mqtt = new MqttConfig { Host = "broker.hivemq", Port = 8883, Username = "agent", Password = "p" }
+        });
+
+        Assert.Contains("connection hivemq-bridge", conf);
+        Assert.Contains("remote_clientid bridge-2439", conf);
+        Assert.Contains("topic sites/2439/# out 1", conf);
+        Assert.Contains("remote_username agent", conf);
+    }
+
     // ===== Fix 5: חלון רעננות ה-heartbeat =====
 
     [Theory]

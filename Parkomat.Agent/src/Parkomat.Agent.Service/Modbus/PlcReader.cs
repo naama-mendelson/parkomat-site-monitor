@@ -85,12 +85,36 @@ public class PlcReader : IDisposable
             // ה-slave address של ה-PLC ב-Modbus. בדרך כלל 1 (נהפוך להגדרה בהמשך אם צריך).
             const byte slaveId = 1;
 
-            // קוראים כל register בנפרד, לפי הכתובות מההגדרות.
-            ushort mode = ReadRegister(slaveId, _config.ModeRegister);
-            // מספר הכרטיס נקרא מרגיסטר בודד (16 ביט, עד 65535). אושר מול האתר
-            // שמספרי הכרטיס לא חורגים מהטווח הזה, ולכן אין צורך ברגיסטר שני.
-            ushort card = ReadRegister(slaveId, _config.CardRegister);
-            ushort cycle = ReadRegister(slaveId, _config.CycleRegister);
+            int modeAddr = _config.ModeRegister;
+            int cardAddr = _config.CardRegister;
+            int cycleAddr = _config.CycleRegister;
+
+            // כתובת register מחוץ ל-[0,65535] הייתה נגללת בשקט ב-cast ל-ushort
+            // (70000→4464) → קריאה מרגיסטר שגוי עם נתונים "סבירים אך לא-נכונים".
+            // מכריזים על תקלה ברורה (תיכתב ללוג) במקום להטעות בשקט.
+            ValidateRegister(modeAddr, nameof(_config.ModeRegister));
+            ValidateRegister(cardAddr, nameof(_config.CardRegister));
+            ValidateRegister(cycleAddr, nameof(_config.CycleRegister));
+
+            ushort mode, card, cycle;
+
+            // אם שלוש הכתובות רצופות (ברירת המחדל 290/291/292) — קוראים ב-round-trip
+            // *אחד* ⇒ תצלום אטומי. אחרת ה-PLC עלול להתקדם בין קריאות נפרדות ולזווג
+            // MODE של רגע אחד עם card/cycle של רגע אחר (רשומת כניסה/יציאה שגויה).
+            // מספר הכרטיס הוא 16 ביט (עד 65535) — אושר מול האתר שלא חורג.
+            if (cardAddr == modeAddr + 1 && cycleAddr == modeAddr + 2)
+            {
+                ushort[] r = _master!.ReadInputRegisters(slaveId, (ushort)modeAddr, 3);
+                mode = r[0];
+                card = r[1];
+                cycle = r[2];
+            }
+            else
+            {
+                mode = ReadRegister(slaveId, modeAddr);
+                card = ReadRegister(slaveId, cardAddr);
+                cycle = ReadRegister(slaveId, cycleAddr);
+            }
 
             return new PlcReading
             {
@@ -108,6 +132,14 @@ public class PlcReader : IDisposable
             Dispose();
             throw;
         }
+    }
+
+    // מוודא שכתובת register בטווח החוקי של Modbus (0..65535) לפני ה-cast ל-ushort.
+    private static void ValidateRegister(int address, string name)
+    {
+        if (address < 0 || address > 65535)
+            throw new ArgumentOutOfRangeException(name, address,
+                "כתובת register חייבת להיות בטווח 0..65535.");
     }
 
     // קורא input register בודד (פקודת Modbus FC 04) ומחזיר את הערך.
