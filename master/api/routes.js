@@ -1033,7 +1033,12 @@ app.use((err, req, res, _next) => {
 // שהשרת מתחיל לקבל בקשות, אחרת הבקשה הראשונה תיפול על טבלה שלא נוצרה.
 async function startApiServer() {
   await db.init();
-  await ensureAdminCode();
+
+  // עטוף בניסיון חוזר כי זה נתיב *עלייה*: כשל כאן מתפשט ל-main() ב-master.js
+  // שמסיים ב-exit(1), ולכן ניתוק חולף אחד של ה-pooler היה משאיר את השרת למטה.
+  // בטוח לחזור עליו: הקריאה היא SELECT, והכתיבה (setSetting) היא upsert
+  // (ON CONFLICT DO UPDATE) — הרצה כפולה כותבת בדיוק את אותו ערך.
+  await db.retryTransient(ensureAdminCode, "זריעת קוד המנהל");
 
   app.listen(PORT, () => {
     console.log(`api: REST server running on http://localhost:${PORT}`);

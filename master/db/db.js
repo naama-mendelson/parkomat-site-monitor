@@ -68,6 +68,75 @@ pool.on("error", (err) => {
 });
 
 // ============================================================
+// שגיאות חולפות — וניסיון חוזר, אבל לא על הכול
+// ============================================================
+// ה-transaction pooler של Supabase מנתק חיבורים ביוזמתו: אחרי חוסר פעילות,
+// בזמן תחזוקה בצד שלהם, וסתם באמצע. התוצאה שנראתה בפועל היא ECONNRESET על
+// שאילתה שנשלחה על חיבור שהיה חי לפני רגע. זה לא באג אצלנו — זה אופי הסביבה.
+//
+// ה-Master נפל על זה בעלייה: main() ב-master.js מסתיים ב-process.exit(1), ולכן
+// ניתוק חולף אחד בשנייה הלא-נכונה השאיר את השרת למטה. מאחורי Docker עם
+// restart: unless-stopped זה מתקן את עצמו; על שרת always-on בלי מנהל תהליכים
+// הוא פשוט נשאר מכובה, ואיש לא שומע כלום.
+//
+// ⚠️ הניסיון החוזר כאן מכוון בכוונה רק למה שבטוח לחזור עליו. פירוט למטה
+// ב-runQuery: קריאות כן, כתיבות לא.
+const TRANSIENT_CODES = new Set([
+  // שכבת ה-socket
+  "ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
+  // מחלקת 08 של Postgres — כשלי חיבור
+  "08000", "08001", "08003", "08004", "08006",
+  // הברוקר/השרת סוגר או עדיין לא מוכן
+  "57P01", "57P02", "57P03", "53300",
+]);
+
+// חלק מכשלי החיבור של pg מגיעים בלי code — רק כהודעה. אלה הנוסחים שנצפו.
+const TRANSIENT_MESSAGES = [
+  "connection terminated",
+  "connection ended unexpectedly",
+  "client has encountered a connection error",
+  "timeout exceeded when trying to connect",
+  "server closed the connection unexpectedly",
+];
+
+function isTransient(err) {
+  if (!err) return false;
+  if (TRANSIENT_CODES.has(err.code)) return true;
+  const message = String(err.message || "").toLowerCase();
+  return TRANSIENT_MESSAGES.some((fragment) => message.includes(fragment));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// אותם מספרים כמו ב-ingestion/dispatcher.js (5 ניסיונות, 250ms מוכפל עד 4ש'),
+// כדי שלא יהיו שתי מדיניות backoff שונות באותו תהליך.
+const MAX_ATTEMPTS = 5;
+
+/**
+ * מריץ פעולה, וחוזר עליה ב-backoff מעריכי כל עוד הכשל הוא *חולף*.
+ * שגיאה שאינה חולפת (SQL שגוי, הפרת אילוץ) נזרקת מיד — אין טעם לנסות שוב,
+ * וניסיון חוזר עליה רק היה מסתיר תקלה אמיתית מאחורי חמש שורות לוג.
+ *
+ * חשוף כדי שקוראים שהפעולה שלהם אידמפוטנטית יוכלו לעטוף אותה (ראה
+ * ensureAdminCode ב-api/routes.js — upsert, ולכן בטוח לחזור עליו).
+ */
+async function retryTransient(operation, label) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+
+      const backoffMs = Math.min(250 * 2 ** (attempt - 1), 4000);
+      console.warn(
+        `db: ${label} נכשל בניתוק חולף (${err.code || err.message}) — ` +
+        `ניסיון ${attempt}/${MAX_ATTEMPTS}, שוב בעוד ${backoffMs}ms`);
+      await sleep(backoffMs);
+    }
+  }
+}
+
+// ============================================================
 // טרנזקציות
 // ============================================================
 // applyStateChange חייב להיות אטומי: סגירת המצב הקודם + פתיחת החדש + עדכון
@@ -153,7 +222,7 @@ function resetQueryStats() {
   counters.ms = 0;
 }
 
-async function runQuery(text, params) {
+async function runOnce(text, params) {
   const started = process.hrtime.bigint();
   try {
     return await executor().query(text, params);
@@ -163,19 +232,43 @@ async function runQuery(text, params) {
   }
 }
 
+// ============================================================
+// למה קריאות חוזרות וכתיבות לא
+// ============================================================
+// כשחיבור נופל באמצע שליחת שאילתה, אין שום דרך לדעת מהשגיאה אם השרת הספיק
+// לבצע אותה או לא. עבור SELECT זה לא משנה — אין תופעות לוואי, וניסיון חוזר
+// מחזיר את אותה תשובה. עבור INSERT זה משנה מאוד: ניסיון חוזר "בטוח למראה"
+// היה יוצר שורה שנייה ב-status_history, וזו בדיוק מחלקת השיבוש שהמערכת כבר
+// נכוותה בה (מקטעים כפולים, משכים שליליים, זמינות מורעלת).
+//
+// לכן כתיבה לא חוזרת *כאן*. היא לא נשארת בלי הגנה: מסלול הקליטה חוזר על
+// ההודעה **השלמה** ב-ingestion/dispatcher.js, ושם זה בטוח כי הפעולה כולה
+// אידמפוטנטית — טרנזקציות מתגלגלות לאחור, ה-dedup נשמר במפתח UNIQUE, ויש
+// שומרי backfill/ללא-שינוי. ניסיון חוזר על היחידה הנכונה, בשכבה הנכונה.
+//
+// גם בתוך טרנזקציה לא חוזרים: חיבור שנפל הרג את הטרנזקציה כולה, וניסיון חוזר
+// על שאילתה בודדת רק יתנגש ב-"current transaction is aborted". מי שחוזר על
+// טרנזקציה הוא מי שפתח אותה.
+async function runQuery(text, params, { retryable = false } = {}) {
+  if (!retryable || txStore.getStore()) {
+    return runOnce(text, params);
+  }
+  return retryTransient(() => runOnce(text, params), "שאילתת קריאה");
+}
+
 function prepare(sql) {
   const text = toPositional(sql);
 
   return {
     /** שורה אחת, או undefined אם אין (כמו .get של better-sqlite3) */
     async get(...params) {
-      const res = await runQuery(text, params);
+      const res = await runQuery(text, params, { retryable: true });
       return res.rows[0];
     },
 
     /** כל השורות */
     async all(...params) {
-      const res = await runQuery(text, params);
+      const res = await runQuery(text, params, { retryable: true });
       return res.rows;
     },
 
@@ -213,7 +306,17 @@ let initPromise = null;
 function init() {
   if (initPromise) return initPromise;
 
-  initPromise = (async () => {
+  // ============================================================
+  // האתחול חוזר על עצמו — כאן זה בטוח לחלוטין
+  // ============================================================
+  // כל ה-DDL כאן הוא CREATE TABLE IF NOT EXISTS ו-ADD COLUMN IF NOT EXISTS,
+  // כלומר אידמפוטנטי מעצם הגדרתו: הרצה שנייה אינה משנה דבר. לכן דווקא בשלב
+  // הזה מותר לחזור בלי כל הסתייגות — וזה גם השלב שהפיל את השרת בפועל, כי
+  // main() ב-master.js יוצא ב-exit(1) על כל שגיאה ממנו.
+  //
+  // שימו לב שכל ניסיון בונה Client חדש: אחרי ניתוק, ה-Client הקודם אינו
+  // שמיש (pg מסמן אותו ככזה), ולכן שימוש חוזר בו היה מבטיח כשל.
+  initPromise = retryTransient(async () => {
     const schema = fs.readFileSync(path.join(__dirname, "schema.postgres.sql"), "utf8");
 
     // ה-transaction pooler (6543) מנתק את החיבור כשמריצים סקריפט עם כמה
@@ -234,12 +337,18 @@ function init() {
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS tier        TEXT NOT NULL DEFAULT 'basic';
       `);
     } finally {
-      await setup.end();
+      // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
+      // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.
+      try { await setup.end(); } catch { /* כבר מנותק */ }
     }
 
     const { rows } = await pool.query("SELECT current_database() AS db");
     console.log(`db: ready — PostgreSQL (${rows[0].db})`);
-  })();
+  }, "אתחול הסכמה");
+
+  // כשל סופי לא "נועל" את האתחול: בלי האיפוס, כל קורא עתידי היה מקבל את אותו
+  // Promise דחוי לנצח ולא היה יכול לנסות שוב, גם אם ה-DB חזר מזמן.
+  initPromise.catch(() => { initPromise = null; });
 
   return initPromise;
 }
@@ -248,4 +357,8 @@ async function close() {
   await pool.end();
 }
 
-module.exports = { prepare, exec, transaction, init, close, pool, getQueryStats, resetQueryStats };
+module.exports = {
+  prepare, exec, transaction, init, close, pool, getQueryStats, resetQueryStats,
+  // חשופים לקוראים שרוצים לעטוף פעולה אידמפוטנטית משלהם בניסיון חוזר.
+  retryTransient, isTransient,
+};
