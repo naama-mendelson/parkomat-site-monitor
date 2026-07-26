@@ -15,14 +15,22 @@ async function insertSite(code, siteName, meta = {}, isNewSite = 1) {
     .run(code, siteName, now, plcType, plcIp, siteIp, isNewSite ? 1 : 0, tier);
 }
 
-async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, isAnomaly, occurredAt, receivedAt) {
+// שלושה זמנים, ולכל אחד תפקיד אחר — אל תמזגו אותם:
+//   occurred_at — זמן ה"אמת" של השרת. מיושר אם שעון האתר הקדים. ממנו נגזרים
+//                 סדר, זמינות, דליים וסטטיסטיקה.
+//   reported_at — מה שהסוכן אמר, בדיוק. **מפתח ה-dedup** (אינדקס ux_operations_dedup),
+//                 ולכן חייב להישאר מקורי: הוא מה שמזהה מסירה חוזרת של QoS-1.
+//   received_at — מתי השרת קלט בפועל. לאבחון בלבד.
+async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
+                               occurredAt, receivedAt, reportedAt = null) {
   try {
     const result = await db
       .prepare(
-        `INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly, occurred_at, received_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly, occurred_at, received_at, reported_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(siteId, startEnd, entryExit, cardNumber, state, isAnomaly, occurredAt, receivedAt);
+      .run(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
+           occurredAt, receivedAt, reportedAt ?? occurredAt);
     return { inserted: true, result };
   } catch (err) {
     // 23505 = unique_violation ב-Postgres (היה SQLITE_CONSTRAINT_UNIQUE)
@@ -40,41 +48,45 @@ async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, i
 // שרתים) קוראות את אותו plc_cycle_last, שתיהן מחשבות delta, ואחד העדכונים
 // ל-cycle_total אובד או נספר פעמיים — מונה הבלאי מתקלקל. הנעילה מסדרת אותן
 // בזה אחר זה *ברמת ה-DB*, בעקביות עם ההקשחה של applyStateChange.
+// ההחלטה עצמה חיה ב-db/cycle-rules.js — טהורה ונבדקת בנפרד. כאן רק מבצעים אותה
+// בתוך טרנזקציה עם נעילת שורת האתר.
+const { decideCycleUpdate, RESET_PLAUSIBLE_MAX } = require("./cycle-rules");
+
 async function applyCycleCounter(siteId, current, occurredAt) {
   return db.transaction(async () => {
     const site = await db
       .prepare("SELECT cycle_total, plc_cycle_last, cycle_last_ts, is_new_site FROM sites WHERE id = ? FOR UPDATE")
       .get(siteId);
 
-    const last = site.plc_cycle_last;
-    const lastTs = site.cycle_last_ts;
-    let total = site.cycle_total;
-    let mode;
+    const decision = decideCycleUpdate({
+      last: site.plc_cycle_last,
+      lastTs: site.cycle_last_ts,
+      total: site.cycle_total,
+      isNewSite: site.is_new_site,
+      current,
+      occurredAt,
+    });
 
-    if (last === null) {
-      mode = "first";
-      // קריאה ראשונה מהבקר:
-      //  - אתר ותיק (is_new_site = 0): מאמצים את המונה ההיסטורי — cycle_total = הערך מהבקר.
-      //  - אתר חדש  (is_new_site = 1): cycle_total נשאר 0, והערך נשמר רק כבסיס ל-delta.
-      // בשני המקרים plc_cycle_last מתעדכן ל-current בהמשך, ומכאן סופרים delta כרגיל.
-      if (site.is_new_site === 0) {
-        total = current;
-      }
-    } else if (lastTs !== null && occurredAt < lastTs) {
-      mode = "backfill";
-      return { mode, total, last, current, ignored: true };
-    } else if (current >= last) {
-      total = total + (current - last);
-      mode = "normal";
-    } else {
-      total = total + current;
-      mode = "reset";
+    if (!decision.write) {
+      return {
+        mode: decision.mode,
+        total: decision.total,
+        last: site.plc_cycle_last,
+        current,
+        ignored: true,
+      };
     }
 
     await db.prepare("UPDATE sites SET cycle_total = ?, plc_cycle_last = ?, cycle_last_ts = ? WHERE id = ?")
-      .run(total, current, occurredAt, siteId);
+      .run(decision.total, decision.nextLast, occurredAt, siteId);
 
-    return { mode, total, last, current };
+    return {
+      mode: decision.mode,
+      total: decision.total,
+      last: site.plc_cycle_last,
+      current,
+      ignoredAmount: decision.ignoredAmount,
+    };
   });
 }
 
@@ -952,11 +964,14 @@ async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
   // תקלות בזמן תחזוקה מוחרגות גם מגרף המגמה — "תחזוקה גוברת". כך הגרף עקבי
   // עם stats.errors (שגם הוא מחריג דרך wasInMaintenanceMem) ולא מציג תקלה
   // שאיננה נספרת. מהיום ה-ingestion ממילא לא רושם תקלות כאלה; זו הגנה על היסטוריה.
-  const errIso = segs
+  // אותו קיפול ריצוד כמו ב-statsFromData — אחרת הגרף היה מציג 107 תקלות
+  // בזמן שהמדד לצידו מציג אחת, ושני המספרים היו סותרים זה את זה.
+  const counted = collapseNoCommFlicker(segs);
+  const errIso = counted
     .filter((s) => s.status === "error" && inRange(s.started_at)
       && !wasInMaintenanceMem(data, siteId, s.started_at))
     .map((s) => s.started_at);
-  const maintIso = segs
+  const maintIso = counted
     .filter((s) => s.status === "maintenance" && inRange(s.started_at))
     .map((s) => s.started_at);
   // *מקטעי* התחזוקה (לא רק כניסות) — כדי לסמן בגרף ימים שהאתר היה בתחזוקה
@@ -1045,20 +1060,19 @@ const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "ח�
 async function getSiteInsights(siteId, { from, to }) {
   // ארבע השאילתות של המסך (פעולות, מקטעי error, מקטעי maintenance, חלונות
   // ידניים) בלתי-תלויות זו בזו — נשלפות במקביל, סיבוב רשת אחד במקום ארבעה.
-  const [ops, errorRows, maintRows, windows] = await Promise.all([
+  const [ops, segments, windows] = await Promise.all([
     db.prepare(
       `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
        FROM operations
        WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at ASC, id ASC`
     ).all(siteId, from, to),
+    // *כל* המצבים, לא רק error/maintenance — חייבים גם את מקטעי ה-no_comm כדי
+    // לזהות המשכיות (`X → no_comm → X`). ומיון כרונולוגי, כי הקיפול תלוי בסדר.
     db.prepare(
-      `SELECT site_id, started_at, ended_at FROM status_history
-       WHERE site_id = ? AND status = 'error' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
-    ).all(siteId, to, from),
-    db.prepare(
-      `SELECT site_id, started_at, ended_at FROM status_history
-       WHERE site_id = ? AND status = 'maintenance' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
+      `SELECT site_id, status, started_at, ended_at FROM status_history
+       WHERE site_id = ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)
+       ORDER BY started_at ASC`
     ).all(siteId, to, from),
     db.prepare(
       `SELECT set_by_name, reason, started_at, duration_hours, cancelled_at
@@ -1067,6 +1081,13 @@ async function getSiteInsights(siteId, { from, to }) {
        ORDER BY started_at DESC`
     ).all(siteId, from, to),
   ]);
+  // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
+  // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
+  // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
+  const counted = collapseSegmentsBySite(segments);
+  const errorRows = counted.filter((s) => s.status === "error");
+  const maintRows = counted.filter((s) => s.status === "maintenance");
+
   return computeInsights({ ops, errorRows, maintRows, windows, from, to });
 }
 
@@ -1075,20 +1096,20 @@ async function getSiteInsights(siteId, { from, to }) {
 // שיוך הכרטיסים והמשכים נעשה לפי site_id, כך שאותו מספר כרטיס בשני אתרים
 // נספר נכון ולא מתערבב.
 async function getGlobalInsights({ from, to }) {
-  const [ops, errorRows, maintRows, windows] = await Promise.all([
+  const [ops, segments, windows] = await Promise.all([
     db.prepare(
       `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
        FROM operations
        WHERE occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at ASC, id ASC`
     ).all(from, to),
+    // כל המצבים של כל האתרים. הקיפול חייב להיעשות **לכל אתר בנפרד** — ראה
+    // collapseSegmentsBySite; רשימה מעורבת הייתה מקפלת מקטעים של אתרים שונים
+    // זה לתוך זה.
     db.prepare(
-      `SELECT site_id, started_at, ended_at FROM status_history
-       WHERE status = 'error' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
-    ).all(to, from),
-    db.prepare(
-      `SELECT site_id, started_at, ended_at FROM status_history
-       WHERE status = 'maintenance' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
+      `SELECT site_id, status, started_at, ended_at FROM status_history
+       WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
+       ORDER BY site_id ASC, started_at ASC`
     ).all(to, from),
     db.prepare(
       `SELECT s.site_name, w.set_by_name, w.reason, w.started_at, w.duration_hours, w.cancelled_at
@@ -1097,6 +1118,13 @@ async function getGlobalInsights({ from, to }) {
        ORDER BY w.started_at DESC`
     ).all(from, to),
   ]);
+  // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
+  // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
+  // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
+  const counted = collapseSegmentsBySite(segments);
+  const errorRows = counted.filter((s) => s.status === "error");
+  const maintRows = counted.filter((s) => s.status === "maintenance");
+
   return computeInsights({ ops, errorRows, maintRows, windows, from, to });
 }
 
@@ -1618,6 +1646,66 @@ function wasInMaintenanceMem(data, siteId, ts) {
 }
 
 /** גרסת הזיכרון של getSiteStats — מחזירה את אותו אובייקט בדיוק. */
+/**
+ * מקפל ריצוד תקשורת: `X → no_comm → X` הוא אירוע **אחד** של X, לא שניים.
+ *
+ * ==========================================================
+ * למה
+ * ==========================================================
+ * `no_comm` פירושו "איבדנו ראייה על האתר", ולא "המצב הסתיים". אתר שהיה בתקלה,
+ * נותק לרגע, וחזר לתקלה — לא נכנס לתקלה *חדשה*; זו אותה תקלה שלא הפסיקה. אילו
+ * הוא באמת התאושש, היינו רואים ready/operating באמצע.
+ *
+ * בלי הקיפול, קו תקשורת מרצד מנפח את הספירה בלי גבול. נמדד בפועל: אתר אחד צבר
+ * 106 רצפי `maintenance → no_comm → maintenance` ביום אחד, עם נתק חציוני של
+ * **5 שניות** — כלומר תחזוקה אחת נספרה 107 פעם.
+ *
+ * ==========================================================
+ * מה הפונקציה *לא* עושה
+ * ==========================================================
+ * היא לא מוחקת ולא משנה שום שורה. מקטעי ה-no_comm נשמרים כמות שהם — הנתק אכן
+ * קרה וזה מידע אמיתי. רק **הספירה** מתעלמת מהחזרה למצב שכבר היינו בו. לכן גם
+ * הנתונים ההיסטוריים מיישרים את עצמם מיד, בלי מיגרציה ובלי סיכון.
+ *
+ * דורש רשימה **ממוינת כרונולוגית** של מקטעי אתר אחד.
+ */
+function collapseNoCommFlicker(segments) {
+  const out = [];
+  let lastObserved = null;   // המצב האחרון שאינו no_comm
+
+  for (const s of segments) {
+    // נתק נשמר תמיד — הוא לא "מאפס" את המצב שקדם לו, רק מסתיר אותו.
+    if (s.status === "no_comm") {
+      out.push(s);
+      continue;
+    }
+    // חזרה לאותו מצב בדיוק = המשך, לא אירוע חדש.
+    if (s.status === lastObserved) continue;
+
+    out.push(s);
+    lastObserved = s.status;
+  }
+  return out;
+}
+
+/**
+ * מחיל את קיפול-הריצוד על רשימה שעשויה לערבב כמה אתרים (המסלול המצרף).
+ * הקיפול הוא **לכל אתר בנפרד** — בלעדי זה מקטע של אתר א' היה "ממשיך" מקטע
+ * של אתר ב' ומבטל אותו מהספירה. מחזיר את השורות בסדר המקורי.
+ */
+function collapseSegmentsBySite(segments) {
+  const bySite = new Map();
+  for (const s of segments) {
+    if (!bySite.has(s.site_id)) bySite.set(s.site_id, []);
+    bySite.get(s.site_id).push(s);
+  }
+  const kept = new Set();
+  for (const segs of bySite.values()) {
+    for (const s of collapseNoCommFlicker(segs)) kept.add(s);
+  }
+  return segments.filter((s) => kept.has(s));
+}
+
 function statsFromData(data, siteId, { from, to }) {
   let operations = 0;
   for (const o of data.ops.get(siteId) || []) {
@@ -1627,7 +1715,10 @@ function statsFromData(data, siteId, { from, to }) {
 
   let errors = 0;
   let errorsInMaintenance = 0;
-  for (const s of data.segments.get(siteId) || []) {
+  // הקיפול רץ על *כל* המקטעים הטעונים ולא רק על אלה שבטווח, וזה חיוני: תקלה
+  // שהתחילה לפני ה-from, נותקה, וחזרה בתוך הטווח — היא המשך, ואסור שתיספר.
+  // בלי המקטע הקודם אי אפשר לדעת זאת.
+  for (const s of collapseNoCommFlicker(data.segments.get(siteId) || [])) {
     if (s.status !== "error") continue;
     if (!(s.started_at >= from && s.started_at < to)) continue;
     if (wasInMaintenanceMem(data, siteId, s.started_at)) errorsInMaintenance++;
@@ -2598,6 +2689,8 @@ module.exports = {
   insertSite,
   insertOperation,
   applyCycleCounter,
+  decideCycleUpdate,   // טהורה — נבדקת ישירות ב-tests/cycle-counter.test.js
+  RESET_PLAUSIBLE_MAX,
   updateSiteStatus,
   updateLastSeen,
   closeOpenStatus,

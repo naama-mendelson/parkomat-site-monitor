@@ -1,6 +1,7 @@
 using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Time;
+using Parkomat.Agent.Service.Diagnostics;
 using Parkomat.Agent.Service.Logic;
 using Parkomat.Agent.Service.Modbus;
 using Parkomat.Agent.Service.Mqtt;
@@ -88,6 +89,11 @@ public class Worker : BackgroundService
             _logger.LogInformation("Restored last known clock offset {Seconds:F3}s from disk (pending fresh NTP sync).",
                 clock.Offset.TotalSeconds);
         _ = SyncClockLoopAsync(clock, config, stoppingToken);
+
+        // דוח שעון חד-פעמי ללוג: מצב w32time + ההיסט שנמדד. fire-and-forget
+        // בכוונה — הוא מריץ פקודות חיצוניות (sc/w32tm) ואסור לו לעכב את הלולאה
+        // הראשית ולו בשנייה. בלעדיו שעון סוטה באתר נשאר בלתי-נראה לחלוטין.
+        _ = HostClockDiagnostics.ReportAsync(_logger, clock, config.NtpServer, stoppingToken);
 
         // --- יצירת שלושת הרכיבים ---
         var detector = new OperationDetector(clock.UnixNow);

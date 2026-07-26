@@ -20,6 +20,7 @@
 // שם החוזה מחייב JSON.
 
 const { applyStateChange } = require("../db/queries");
+const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
 
 /**
@@ -42,6 +43,16 @@ async function handleBridgeState(site, payload) {
   // ===== הגשר נפל =====
   if (site.status === "no_comm") {
     return;   // כבר מסומן — אין מה לעשות
+  }
+
+  // אותו שומר סדר כמו ב-state-handler: להודעת הגשר אין חותם זמן משלה, ולכן
+  // היא נחתמת ב"עכשיו" ותמיד נראית החדשה ביותר. הודעת "0" שהתעכבה בתור של
+  // HiveMQ (השרת היה למטה) הייתה מסמנת no_comm אתר שמדווח כרגע בשקידה.
+  // ראה lwt-order.js.
+  const order = shouldApplyNoComm(site.last_seen, Date.now());
+  if (!order.apply) {
+    console.warn(`[bridge] ⏮️ אתר ${site.code}: הודעת נתק נדחתה — ${order.reason}`);
+    return;
   }
 
   // ==========================================================

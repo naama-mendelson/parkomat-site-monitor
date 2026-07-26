@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS status_history (
 -- ============================================================
 -- טבלת operations — הודעות operation (כניסה/יציאה)
 -- ============================================================
+-- שלושה זמנים, ולכל אחד תפקיד. אל תמזגו אותם:
+--   occurred_at — זמן ה"אמת" של השרת. **מיושר** אם שעון האתר הקדים
+--                 (ingestion/plausibility.js). ממנו נגזרים סדר, זמינות ודליים.
+--   reported_at — מה שהסוכן שידר, בדיוק כפי ששידר. **מפתח ה-dedup.**
+--                 חייב להישאר מקורי: הוא מה שמזהה מסירה חוזרת של QoS-1.
+--                 יישור occurred_at תלוי ברגע הקליטה, ולכן הוא *לא* יכול
+--                 לשמש מפתח — מסירה חוזרת הייתה מקבלת ערך אחר ונכנסת כשורה שנייה.
+--   received_at — מתי השרת קלט בפועל. אבחון בלבד.
 CREATE TABLE IF NOT EXISTS operations (
   id          SERIAL PRIMARY KEY,
   site_id     INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -81,8 +89,14 @@ CREATE TABLE IF NOT EXISTS operations (
   is_anomaly  INTEGER NOT NULL DEFAULT 0,
   occurred_at TEXT NOT NULL,
   received_at TEXT NOT NULL,
-  UNIQUE (site_id, occurred_at, start_end, entry_exit, card_number)
+  reported_at TEXT
 );
+
+-- ⚠️ מפתח ה-dedup (ux_operations_dedup) **אינו** נוצר כאן, ובכוונה.
+-- הקובץ הזה רץ עם CREATE TABLE IF NOT EXISTS, ולכן על מסד קיים הוא no-op —
+-- העמודה reported_at נוספת רק אחר כך, בבלוק ה-ALTER שב-db.js init(). אינדקס
+-- שמוגדר כאן היה מתייחס לעמודה שעדיין לא קיימת, והאתחול היה נכשל כולו
+-- ("column reported_at does not exist"). לכן האינדקס נוצר שם, אחרי ה-ALTER.
 
 -- ============================================================
 -- אינדקסים — להאצת שאילתות לפי אתר וזמן

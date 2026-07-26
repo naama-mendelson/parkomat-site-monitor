@@ -960,6 +960,44 @@ app.get("/api/stats/executive-legacy", async (req, res) => {
   }
 });
 
+// ============================================================
+// GET /health — בדיקת חיות ל-Docker/מנהל התהליכים
+// ============================================================
+// *לא* תחת /api בכוונה: זו נקודת תשתית, לא חלק מה-API של הדשבורד. היא רשומה
+// כאן, לפני ה-static ולפני ה-SPA fallback, אחרת ה-fallback היה מגיש לה
+// index.html (הוא תופס כל GET שאינו /api) והבדיקה הייתה "מצליחה" תמיד.
+//
+// למה לא להסתפק ב-'/' כמו קודם: דף סטטי מוכיח רק ש-Express חי. Master שמגיש
+// דפים אבל מנותק מ-HiveMQ או שהסכמה שלו לא אותחלה **אינו** בריא — הוא בדיוק
+// התקלה השקטה שהמערכת קיימת כדי לתפוס.
+//
+// ומה שהיא כן נזהרת לא לעשות: לא נוגעת ב-DB. שאילתה בכל 30 שניות היא עלות
+// מתמשכת מול Supabase בלי תמורה — ה-keep-alive כבר מחזיק את ה-pool חם.
+// לכן היא קוראת רק מצב שנצבר בתהליך.
+const MQTT_UNHEALTHY_AFTER_SECONDS = 120;
+
+app.get("/health", (req, res) => {
+  const dbReady = db.isReady();
+  const mqttUp = typeof bus.isConnected === "function" ? bus.isConnected() : null;
+  const mqttDown = typeof bus.downForSeconds === "function" ? bus.downForSeconds() : 0;
+
+  // ניתוק MQTT רגעי הוא שגרה (reconnect עם backoff), ולכן הוא *לא* מכשיל את
+  // הבדיקה מיד — אחרת הסטטוס היה מרצד. ניתוק ממושך כן: אז השרת באמת לא קולט.
+  const mqttHealthy = mqttUp === null || mqttUp || mqttDown < MQTT_UNHEALTHY_AFTER_SECONDS;
+  const healthy = dbReady && mqttHealthy;
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? "ok" : "unhealthy",
+    uptimeSeconds: Math.round(process.uptime()),
+    db: dbReady ? "ready" : "not_ready",
+    mqtt: mqttUp === null ? "unknown" : mqttUp ? "connected" : `down_${mqttDown}s`,
+    sseClients: sseClients.size,
+  });
+});
+
+// חיבורי SSE פתוחים. נדרש לכיבוי מסודר — ראה ההערה ב-/api/stream.
+const sseClients = new Set();
+
 // GET /api/stream — SSE: עדכונים בזמן אמת
 app.get("/api/stream", async (req, res) => {
   res.writeHead(200, {
@@ -980,7 +1018,13 @@ app.get("/api/stream", async (req, res) => {
     res.write(": ping\n\n");
   }, 25000);
 
+  // נרשם כדי שכיבוי מסודר יוכל לסגור אותו. חיבור SSE נשאר פתוח לנצח מעצם
+  // טבעו, ולכן server.close() לבדו לא היה מסתיים לעולם — הוא ממתין לסגירת
+  // כל החיבורים. בלי הרישום הזה כל `docker stop` היה מסתיים ב-SIGKILL.
+  sseClients.add(res);
+
   req.on("close", () => {
+    sseClients.delete(res);
     bus.removeListener("siteUpdate", onSiteUpdate);
     clearInterval(pingInterval);
     console.log("api: SSE client disconnected");
@@ -1040,9 +1084,25 @@ async function startApiServer() {
   // (ON CONFLICT DO UPDATE) — הרצה כפולה כותבת בדיוק את אותו ערך.
   await db.retryTransient(ensureAdminCode, "זריעת קוד המנהל");
 
-  app.listen(PORT, () => {
+  // מחזירים את ה-server כדי שהכיבוי המסודר ב-master.js יוכל לסגור אותו.
+  // בלי ההחזרה אין שום דרך להפסיק לקבל בקשות חדשות, ו-SIGTERM היה מסתיים
+  // בקטיעה של בקשות באמצע.
+  return app.listen(PORT, () => {
     console.log(`api: REST server running on http://localhost:${PORT}`);
   });
 }
 
-module.exports = { startApiServer };
+/**
+ * סוגר את כל חיבורי ה-SSE הפתוחים. נקרא בכיבוי מסודר *לפני* server.close(),
+ * אחרת הסגירה ממתינה לנצח: חיבור SSE לעולם אינו נגמר מעצמו.
+ */
+function closeSseClients() {
+  const count = sseClients.size;
+  for (const res of sseClients) {
+    try { res.end(); } catch { /* הצד השני כבר נעלם */ }
+  }
+  sseClients.clear();
+  return count;
+}
+
+module.exports = { startApiServer, closeSseClients };

@@ -43,26 +43,49 @@ RUN apk add --no-cache tzdata
 
 WORKDIR /app
 
-# רק תלויות פרודקשן. better-sqlite3 הוא מודול native (דורש python + gcc)
-# ומשמש אך ורק כלי מיגרציה/בדיקה — לכן הוא ב-devDependencies ואינו מותקן
-# כאן. בזכות זה התמונה נשארת alpine נקייה, בלי שרשרת כלי-בנייה.
-COPY master/package*.json ./
+# ============================================================
+# למה alpine בטוח כאן — נבדק, לא הונח
+# ============================================================
+# alpine בנוי על musl, ולכן כל מודול native מחייב קומפילציה מחדש. בדקנו את
+# גרף ה-require של master.js: `pg` ו-`mqtt` הם JavaScript טהור (pg משתמש
+# ב-pg-native רק אם הוא מותקן, והוא אינו), ולכן אין כאן שום תלות native.
+#
+# היחיד שכן native הוא better-sqlite3 — והוא ב-devDependencies ומשמש רק שני
+# כלי מיגרציה/בדיקה שאינם על מסלול הריצה. --omit=dev מוציא אותו, ולכן אין
+# צורך ב-python/gcc והתמונה נשארת קטנה.
+#
+# --chown: הקבצים מועתקים כברירת מחדל בבעלות root, והתהליך רץ כ-node (למטה).
+# קריאה עובדת גם ככה, אבל בעלות מפורשת מונעת הפתעות אם משהו ירצה לכתוב.
+COPY --chown=node:node master/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY master/ ./
+COPY --chown=node:node master/ ./
 
 # הדשבורד מוגש מאותו origin כמו ה-API. זה לא רק חיסכון בקונטיינר: הלקוח
 # קורא ל-API בנתיב *יחסי* ("/api"), ולכן same-origin מייתר גם CORS וגם
 # הגדרת כתובת-שרת בלקוח. routes.js מגיש את התיקייה אם היא קיימת.
-COPY --from=dashboard /build/dist ./public
+COPY --from=dashboard --chown=node:node /build/dist ./public
 
 EXPOSE 4000
 
+# ============================================================
 # לא רץ כ-root
+# ============================================================
+# משתמש 'node' (uid 1000) כבר קיים בתמונת node הרשמית — זו הדרך המקובלת,
+# ואין צורך ליצור עוד אחד. מכאן והלאה כל פקודה רצה כמשתמש הזה.
 USER node
 
-# בדיקת חיות: מבקש את דף הדשבורד (סטטי — לא נוגע ב-DB ולא עולה כסף).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||4000)+'/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+# ============================================================
+# בדיקת חיות — /health, לא '/'
+# ============================================================
+# קודם היא ביקשה את '/' — כלומר בדקה רק שהשרת הסטטי עונה. Master שמגיש את
+# הדשבורד אבל מנותק מ-HiveMQ, או שהסכמה שלו לא אותחלה, היה נחשב "בריא".
+# /health בודק את המצב האמיתי (DB מוכן + MQTT מחובר) ואינו נוגע ב-DB, ולכן
+# הוא גם לא עולה כלום.
+#
+# start-period=40s ולא 20: העלייה כוללת אתחול סכמה מול Supabase והתחברות
+# ל-HiveMQ, ושניהם מעבר לרשת. סף קצר מדי היה מסמן unhealthy בזמן עלייה תקינה.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||4000)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 CMD ["node", "master.js"]

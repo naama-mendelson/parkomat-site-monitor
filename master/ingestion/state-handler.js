@@ -1,10 +1,25 @@
 // ingestion/state-handler.js — מטפל בהודעת state: מעדכן מצב נוכחי + היסטוריה
 
 const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance } = require("../db/queries");
+const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
 
 async function handleState(site, data) {
   const newStatus = data.state;
+
+  // ==========================================================
+  // צוואה מאוחרת אינה דורסת מצב טרי
+  // ==========================================================
+  // ל-no_comm אין חותם זמן משלה (הברוקר מפרסם אותה), ולכן היא נחתמת ב"עכשיו"
+  // — כלומר תמיד "החדשה ביותר", וכך צוואה שהתעכבה בתור עברה את שומר ה-backfill
+  // ודרסה מצב שהאתר דיווח לפני רגע. ראה lwt-order.js.
+  if (newStatus === "no_comm") {
+    const verdict = shouldApplyNoComm(site.last_seen, Date.now());
+    if (!verdict.apply) {
+      console.warn(`[state] ⏮️ אתר ${site.code}: no_comm נדחתה — ${verdict.reason}`);
+      return;
+    }
+  }
 
   let occurredAt;
   if (newStatus === "no_comm") {

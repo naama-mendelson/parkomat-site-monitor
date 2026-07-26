@@ -4,6 +4,8 @@ const { findSiteByCode } = require("../db/queries");
 const { handleState } = require("./state-handler");
 const { handleOperation } = require("./operation-handler");
 const { handleBridgeState } = require("./bridge-handler");
+const { classifyTimestamp } = require("./plausibility");
+const { isLikelyReplay } = require("./replay-window");
 
 // המצבים החוקיים שהקצה רשאי לשלוח (no_comm נגזר LWT, לא נשלח)
 const VALID_STATES = ["ready", "operating", "error", "maintenance","no_comm"];
@@ -135,6 +137,68 @@ async function dispatch(topic, raw) {
     if (!VALID_STATES.includes(data.state)) {
       console.log(`[dispatcher] נדחתה הודעה עם state לא חוקי '${data.state}' מאתר ${siteCode}`);
       return;
+    }
+
+    // ============================================================
+    // 4.5. סבירות חותם הזמן — דוחים את האבסורדי, מיישרים את הסחיף
+    // ============================================================
+    // הבדיקה הישנה (isValidTimestamp) חוסמת 1970 ו-58000, אבל לא חותם שנמצא
+    // שנה בעתיד — וזה בדיוק זה שמשתיק אתר לצמיתות. ראה plausibility.js.
+    //
+    // **החותם המקורי לעולם אינו אובד**: הוא נשמר ב-reported_timestamp, וממנו
+    // נבנה מפתח ה-dedup. data.timestamp מוחלף בזמן ה"אמת" (המיושר) שממנו
+    // נגזרים סדר וזמינות. בלי ההפרדה הזו, יישור היה משנה את מפתח ה-dedup
+    // בכל מסירה חוזרת — והופך תיקון-סחיפה למחולל-כפילויות.
+    //
+    // הודעת LWT של no_comm פטורה: היא נוצרת בברוקר עם timestamp=0 ואין לה זמן
+    // משלה — ה-state-handler גוזר לה את זמן הקליטה.
+    const exemptFromPlausibility = kind === "state" && data.state === "no_comm";
+
+    if (!exemptFromPlausibility) {
+      // יישור-לאחור מותר רק כשאיננו בתוך פריקת תור. בחלון הפריקה חותם ישן הוא
+      // כמעט תמיד אירוע אמיתי שמגיע באיחור, ולא שעון מפגר — ראה replay-window.js.
+      const now = Date.now();
+      const verdict = classifyTimestamp(
+        data.timestamp,
+        now,
+        site.registered_at ? Date.parse(site.registered_at) : null,
+        { allowPastClamp: !isLikelyReplay(now) }
+      );
+
+      if (verdict.action === "reject") {
+        console.warn(
+          `[dispatcher] ⛔ נדחתה הודעת ${kind} מאתר ${siteCode}: ${verdict.reason}. ` +
+          `בדוק את שעון המחשב באתר (סוללת RTC / סנכרון NTP).`);
+        return;
+      }
+
+      // המקור, לפני כל נגיעה — זהו מפתח ה-dedup.
+      data.reported_timestamp = data.timestamp;
+
+      if (verdict.action === "clamp") {
+        data.timestamp = verdict.effectiveSec;
+        // רושמים רק סטייה משמעותית. סחיפה של שנייה היא רעש עיגול (החוזה הוא
+        // שניות שלמות), ואתר כזה היה מייצר שורת אזהרה לכל הודעה — כלומר מציף
+        // את הלוג ב-200 אתרים ומסתיר בדיוק את מה שחשוב לראות.
+        if (verdict.warn) {
+          const direction = verdict.classification === "drift_future" ? "מקדים" : "מפגר";
+          console.warn(
+            `[dispatcher] ⏱️ אתר ${siteCode}: שעון ${direction} ב-${Math.abs(verdict.skewSeconds)}s — ` +
+            `החותם יושר לזמן השרת (${verdict.effectiveSec}). ` +
+            `ה-dedup ממשיך לפי החותם המקורי (${data.reported_timestamp}).`);
+        }
+      } else if (verdict.classification === "backfill") {
+        // חשוב שזה ייראה בלוג: כאן בחרנו **לא** לגעת בזמן, וזו ההתנהגות הנכונה
+        // ל-backfill. אם שורות כאלה מופיעות בשגרה (ולא אחרי נפילה), סימן שיש
+        // אתר עם שעון מפגר מאוד — והתקרה אינה מכסה אותו.
+        console.log(
+          `[dispatcher] ⏮️ אתר ${siteCode}: ${verdict.reason} ` +
+          `(occurred_at נשמר: ${data.timestamp}).`);
+      } else if (verdict.warn) {
+        console.warn(
+          `[dispatcher] ⚠️ אתר ${siteCode}: שעון סוטה ב-${Math.abs(verdict.skewSeconds)}s — ` +
+          `ההודעה נקלטה כמות שהיא.`);
+      }
     }
 
     // 5. ניתוב לפי סוג ההודעה

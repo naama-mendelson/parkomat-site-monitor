@@ -1,6 +1,7 @@
 // mqtt/subscriber.js — מתחבר ל-HiveMQ, מאזין, ומשדר כל הודעה כאירוע
 const mqtt = require("mqtt");
 const bus = require("../bus");
+const { markBrokerConnected } = require("../ingestion/replay-window");
 
 // פרטי החיבור (master — מאזין בלבד)
 const HOST = process.env.HIVEMQ_HOST;
@@ -61,7 +62,14 @@ const client = mqtt.connect(url, {
 });
 
 client.on("connect", (packet) => {
+  connected = true;
+  disconnectedSince = null;
   console.log("subscriber: connected!");
+
+  // פותח "חלון פריקה": מיד אחרי חיבור, כל מה שהצטבר בתור נמסר בבת אחת. בחלון
+  // הזה ה-dispatcher לא מיישר חותמי זמן מהעבר — שם הם backfill אמיתי ולא
+  // סחיפת שעון. ראה ingestion/replay-window.js.
+  markBrokerConnected();
 
   // sessionPresent=true פירושו שה-Broker שימר את המנוי מהחיבור הקודם.
   // נרשמים בכל מקרה — הרשמה חוזרת היא idempotent, ומגנה על מקרה שבו
@@ -106,6 +114,8 @@ client.on("reconnect", () => {
 });
 
 client.on("close", () => {
+  connected = false;
+  disconnectedSince = Date.now();
   console.log("subscriber: החיבור נסגר");
 });
 
@@ -113,5 +123,50 @@ client.on("error", (err) => {
   console.log("subscriber error:", err.message);
 });
 
-// חושפים את ה-bus כדי שחלקים אחרים יוכלו להאזין
+// ============================================================
+// מצב החיבור וכיבוי מסודר
+// ============================================================
+// שניהם נחשפים לצורכי תשתית בלבד, ואינם משנים את היגיון הקליטה:
+//   • isConnected/downForSeconds — /health צריך לדעת אם השרת באמת מאזין
+//     לאתרים, ולא רק אם התהליך חי. Master שמגיש דפים אבל מנותק מ-HiveMQ
+//     אינו "בריא" — הוא בדיוק התקלה השקטה שהמערכת הזו קיימת כדי לתפוס.
+//   • close — Docker שולח SIGTERM בעצירה. בלי ניתוק מסודר הברוקר רואה
+//     ניתוק פתאומי, ובלי end(false) הודעות QoS-1 שבאוויר נקטעות באמצע.
+let connected = false;
+let disconnectedSince = Date.now();
+
+function isConnected() {
+  return connected;
+}
+
+/** כמה שניות החיבור למטה, או 0 אם הוא למעלה. */
+function downForSeconds() {
+  return connected || disconnectedSince === null
+    ? 0
+    : Math.round((Date.now() - disconnectedSince) / 1000);
+}
+
+/**
+ * ניתוק מסודר. false = לא לכפות; נותנים ל-MQTT לסיים מסירות שבאוויר ולשלוח
+ * DISCONNECT תקני. הבטחה: תמיד נפתר, גם אם הברוקר לא עונה (timeout).
+ */
+function close(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    if (!client) return resolve();
+    const done = setTimeout(resolve, timeoutMs);
+    try {
+      client.end(false, {}, () => { clearTimeout(done); resolve(); });
+    } catch {
+      clearTimeout(done);
+      resolve();
+    }
+  });
+}
+
+// ה-bus נשאר ה-export הראשי (תאימות: `require("./mqtt/subscriber")` מחזיר אותו),
+// והתשתית נתלית עליו כמאפיינים כדי לא לשבור אף קורא קיים.
+bus.isConnected = isConnected;
+bus.downForSeconds = downForSeconds;
+bus.close = close;
+
 module.exports = bus;

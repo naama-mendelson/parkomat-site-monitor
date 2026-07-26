@@ -148,7 +148,28 @@ const txStore = new AsyncLocalStorage();
 // היעד לשאילתה: ה-client של הטרנזקציה אם אנחנו בתוכה, אחרת ה-pool
 const executor = () => txStore.getStore() || pool;
 
+// ============================================================
+// טרנזקציה מקננת — מצטרפת, ולא פותחת חדשה
+// ============================================================
+// בלי הבדיקה הזו, קריאה ל-transaction() *מתוך* טרנזקציה הייתה שולפת client
+// **שני** מה-pool ומריצה עליו BEGIN נפרד. שני ה-clients הם שני חיבורים נפרדים
+// מבחינת Postgres, ולכן:
+//
+//   הטרנזקציה החיצונית מחזיקה SELECT ... FOR UPDATE על שורת האתר,
+//   הפנימית מבקשת לנעול את *אותה* שורה — ומחכה לשחרור שלעולם לא יגיע,
+//   כי מי שמחזיק אותה מחכה לפנימית שתסתיים. deadlock מלא.
+//
+// זה נעשה רלוונטי ברגע שקליטת ה-operation הפכה לאטומית: handleOperation פותח
+// טרנזקציה, ובתוכה applyCycleCounter (וגם applyStateChange) פותחים משלהם.
+//
+// ההצטרפות היא הסמנטיקה הנכונה כאן, לא savepoint: רוצים הכול-או-כלום. אם שלב
+// פנימי נכשל, הטרנזקציה החיצונית מתגלגלת לאחור במלואה — בדיוק מה שנדרש כדי
+// שהפעולה והמונה לא ייצאו מסינכרון.
 async function transaction(fn) {
+  if (txStore.getStore()) {
+    return await fn();
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -303,6 +324,15 @@ async function exec(sql) {
 // שומרים את ה-Promise כדי שהאתחול ירוץ *פעם אחת* גם אם קראו לו פעמיים.
 let initPromise = null;
 
+// האם האתחול הושלם בהצלחה. נחשף ל-/health כדי שבדיקת החיות תדע להבדיל בין
+// "התהליך חי" ל"התהליך באמת מוכן לעבוד" — קונטיינר ששרת ה-HTTP שלו עלה אבל
+// הסכמה לא אותחלה הוא קונטיינר שבור, ו-Docker צריך לדעת זאת.
+let ready = false;
+
+function isReady() {
+  return ready;
+}
+
 function init() {
   if (initPromise) return initPromise;
 
@@ -336,6 +366,31 @@ function init() {
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS is_new_site INTEGER NOT NULL DEFAULT 1;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS tier        TEXT NOT NULL DEFAULT 'basic';
       `);
+
+      // ============================================================
+      // מפתח ה-dedup עובר מ-occurred_at ל-reported_at
+      // ============================================================
+      // occurred_at הוא מעכשיו זמן ה"אמת" של השרת, והוא **מיושר** כשהשעון
+      // באתר מקדים (ראה ingestion/plausibility.js). כלומר הוא תלוי ברגע
+      // הקליטה — ולכן הוא כבר לא יכול לשמש מפתח זיהוי: מסירה חוזרת של QoS-1
+      // הייתה מקבלת ערך אחר ונכנסת כשורה שנייה.
+      //
+      // reported_at הוא מה שהסוכן אמר, כפי שאמר. הוא אינו משתנה לעולם, ולכן
+      // מסירה חוזרת נופלת על אותו מפתח בדיוק ונחסמת.
+      //
+      // הסדר כאן אינו מקרי: קודם ממלאים, אחר כך יוצרים את האינדקס החדש, ורק
+      // בסוף מסירים את הישן — כך אין רגע אחד שבו הטבלה חשופה בלי הגנת dedup.
+      await setup.query(`
+        ALTER TABLE operations ADD COLUMN IF NOT EXISTS reported_at TEXT;
+
+        UPDATE operations SET reported_at = occurred_at WHERE reported_at IS NULL;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_operations_dedup
+          ON operations (site_id, reported_at, start_end, entry_exit, card_number);
+
+        ALTER TABLE operations
+          DROP CONSTRAINT IF EXISTS operations_site_id_occurred_at_start_end_entry_exit_card_nu_key;
+      `);
     } finally {
       // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
       // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.
@@ -343,6 +398,7 @@ function init() {
     }
 
     const { rows } = await pool.query("SELECT current_database() AS db");
+    ready = true;
     console.log(`db: ready — PostgreSQL (${rows[0].db})`);
   }, "אתחול הסכמה");
 
@@ -359,6 +415,7 @@ async function close() {
 
 module.exports = {
   prepare, exec, transaction, init, close, pool, getQueryStats, resetQueryStats,
+  isReady,
   // חשופים לקוראים שרוצים לעטוף פעולה אידמפוטנטית משלהם בניסיון חוזר.
   retryTransient, isTransient,
 };

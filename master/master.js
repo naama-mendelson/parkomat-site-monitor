@@ -3,7 +3,7 @@
 const bus = require("./bus");
 const db = require("./db/db");
 const { handleMessage } = require("./ingestion/dispatcher");
-const { startApiServer } = require("./api/routes");
+const { startApiServer, closeSseClients } = require("./api/routes");
 
 // תחזוקה יומית: גיבוי → סיכום → ניקוי (בודק כל 24 שעות)
 const { runBackup } = require("./tools/backup-db");
@@ -62,6 +62,69 @@ function enqueue(topic, task) {
   return next;
 }
 
+// ==========================================================
+// כיבוי מסודר — Docker שולח SIGTERM, לא SIGKILL
+// ==========================================================
+// `docker stop` (וכל `docker compose down`) שולח SIGTERM וממתין
+// stop_grace_period לפני שהוא הורג בכוח. ברירת המחדל של Node ל-SIGTERM היא
+// לצאת *מיד*, ולכן בלי המטפל הזה כל עצירה הייתה:
+//   • מנתקת את MQTT בפתאומיות, באמצע מסירת QoS-1 שבאוויר;
+//   • קוטעת בקשות HTTP וחיבורי SSE פתוחים;
+//   • משאירה את ה-pool של Postgres עם חיבורים תלויים עד שה-pooler יזרוק אותם.
+//
+// הסדר כאן אינו שרירותי — קודם מפסיקים להיכנס, ואחר כך מנקים:
+//   1. MQTT ראשון: מפסיק את זרם ההודעות הנכנס, כדי שלא ייכנסו עוד עבודות לתור.
+//   2. SSE: חיבור SSE לעולם אינו נגמר מעצמו, ולכן server.close() בלעדיו
+//      ממתין לנצח — וזה בדיוק מה שהופך "עצירה מסודרת" ל-SIGKILL.
+//   3. שרת ה-HTTP: מפסיק לקבל חדשות, מסיים את מה שבאוויר.
+//   4. ה-pool של ה-DB — אחרון, כי השלבים שלפניו עדיין עלולים לכתוב.
+//
+// ומעל הכול דדליין קשיח: אם משהו נתקע, יוצאים בכל מקרה. תהליך שנתקע בכיבוי
+// גרוע מתהליך שיצא מהר מדי — הוא זה שמקבל SIGKILL וגורר restart אינסופי.
+const SHUTDOWN_DEADLINE_MS = 12_000;
+let shuttingDown = false;
+let httpServer = null;
+
+async function shutdown(signal) {
+  if (shuttingDown) return;      // SIGTERM כפול לא מפעיל שני כיבויים
+  shuttingDown = true;
+  console.log(`master: ${signal} — כיבוי מסודר...`);
+
+  const deadline = setTimeout(() => {
+    console.error(`master: הכיבוי לא הושלם ב-${SHUTDOWN_DEADLINE_MS}ms — יוצאים בכל זאת.`);
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
+  deadline.unref();
+
+  try {
+    if (typeof bus.close === "function") {
+      await bus.close();
+      console.log("master: MQTT נסגר.");
+    }
+
+    const sse = closeSseClients();
+    if (sse > 0) console.log(`master: נסגרו ${sse} חיבורי SSE.`);
+
+    if (httpServer) {
+      await new Promise((resolve) => httpServer.close(resolve));
+      console.log("master: שרת ה-HTTP נסגר.");
+    }
+
+    await db.close();
+    console.log("master: ה-pool של ה-DB נסגר.");
+
+    clearTimeout(deadline);
+    console.log("master: כיבוי הושלם.");
+    process.exit(0);
+  } catch (err) {
+    console.error("master: שגיאה בכיבוי —", err.message);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 async function main() {
   // הסכמה חייבת להיות מוכנה *לפני* שמאזינים ל-MQTT — אחרת ההודעה הראשונה
   // תגיע לטבלה שעדיין לא נוצרה.
@@ -78,7 +141,7 @@ async function main() {
       }));
   });
 
-  await startApiServer();
+  httpServer = await startApiServer();
 
   console.log("master: started");
 
