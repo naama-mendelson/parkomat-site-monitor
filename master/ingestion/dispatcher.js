@@ -6,6 +6,7 @@ const { handleOperation } = require("./operation-handler");
 const { handleBridgeState } = require("./bridge-handler");
 const { classifyTimestamp } = require("./plausibility");
 const { isLikelyReplay } = require("./replay-window");
+const { recallClamp, rememberClamp } = require("./clamp-memo");
 
 // המצבים החוקיים שהקצה רשאי לשלוח (no_comm נגזר LWT, לא נשלח)
 const VALID_STATES = ["ready", "operating", "error", "maintenance","no_comm"];
@@ -175,7 +176,20 @@ async function dispatch(topic, raw) {
       // המקור, לפני כל נגיעה — זהו מפתח ה-dedup.
       data.reported_timestamp = data.timestamp;
 
-      if (verdict.action === "clamp") {
+      // ============================================================
+      // החלטת יישור אחת למעבר MODE אחד
+      // ============================================================
+      // state ו-operation של אותו מעבר נושאים את אותו חותם מדווח, אבל מעובדים
+      // בזו אחר זו — ולכן "עכשיו" שונה ביניהם. יישור עצמאי היה נותן לכל אחד
+      // שנייה אחרת, ומייצר בלוג סדר בלתי אפשרי ('מוכן' לפני 'הפעולה הסתיימה').
+      // לכן ההחלטה נזכרת לפי (אתר, חותם מדווח) — ראה clamp-memo.js.
+      const remembered = recallClamp(site.id, data.reported_timestamp, now);
+
+      if (remembered !== null) {
+        // ההודעה השנייה של אותו מעבר. מקבלת בדיוק את מה שקיבלה הראשונה,
+        // ובשקט — האזהרה כבר נרשמה עבור הראשונה.
+        data.timestamp = remembered;
+      } else if (verdict.action === "clamp") {
         data.timestamp = verdict.effectiveSec;
         // רושמים רק סטייה משמעותית. סחיפה של שנייה היא רעש עיגול (החוזה הוא
         // שניות שלמות), ואתר כזה היה מייצר שורת אזהרה לכל הודעה — כלומר מציף
@@ -198,6 +212,13 @@ async function dispatch(topic, raw) {
         console.warn(
           `[dispatcher] ⚠️ אתר ${siteCode}: שעון סוטה ב-${Math.abs(verdict.skewSeconds)}s — ` +
           `ההודעה נקלטה כמות שהיא.`);
+      }
+
+      // זוכרים את ההכרעה — גם כשלא יישרנו. אחרת ההודעה השנייה של אותו מעבר
+      // הייתה נשקלת מחדש מול "עכשיו" מאוחר יותר, ועלולה לחצות את הרצפה
+      // ולהיושר בעוד שהראשונה נשמרה כמות שהיא. גם זה היה מפריד ביניהן.
+      if (remembered === null) {
+        rememberClamp(site.id, data.reported_timestamp, data.timestamp, now);
       }
     }
 

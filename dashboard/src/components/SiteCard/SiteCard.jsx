@@ -1,8 +1,9 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { STATUS_LABELS, STATUS_COLORS, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
+import { stuckInfo } from "../../utils/stuck";
 import "./SiteCard.css";
 
 // צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
@@ -36,16 +37,41 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
   const failureRate = site.failureRate ?? 0;
 
-  // כשהאתר *בפעולה* — הפעולה הנוכחית: כניסה/יציאה + מספר הכרטיס שביצע אותה.
+  // ==========================================================
+  // כשהאתר "בפעולה" — מה בדיוק קורה בו
+  // ==========================================================
+  // הכיוון והכרטיס מוצגים **רק אם הפעולה באמת פתוחה** (start_end === "start").
+  // lastOperation הוא הפעולה האחרונה שנרשמה, לאו דווקא הנוכחית: אתר יכול להיות
+  // "בפעולה" בזמן שהפעולה האחרונה שלו הסתיימה לפני שעה, ואז הצגת הכיוון והכרטיס
+  // שלה כ"עכשיו" היא פשוט שקר. (נצפה בשטח: אתר במצב בפעולה שהציג כניסה+כרטיס
+  // מפעולה שהסתיימה שעה קודם.)
+  //
+  // ואם אין פעולה פתוחה — אומרים זאת במפורש במקום להשאיר את הכרטיס שותק. זה
+  // המצב של אתר שהסוכן עלה בו כשה-MODE כבר היה בכניסה/יציאה: המוח משדר פעולה
+  // רק על *שינוי* MODE, ולכן שום פעולה לא נרשמה. שתיקה שם נראית כמו נתון חסר;
+  // אמירה מפורשת היא רמז אבחוני (MODE תקוע / כתובת רגיסטר שגויה).
   const op = status === "operating" ? site.lastOperation : null;
-  const opView = op && op.entry_exit ? (
+  const openOp = op && op.start_end === "start" && op.entry_exit ? op : null;
+
+  const opView = status === "operating" ? (
     <div className="card-op">
-      <span className="card-op-dir" style={{ color: DIRECTION_COLORS[op.entry_exit] }}>
-        {op.entry_exit === "entry" ? "↓" : "↑"} {DIRECTION_LABELS[op.entry_exit] || op.entry_exit}
-      </span>
-      {op.card_number
-        ? <span className="card-op-card">כרטיס {op.card_number}</span>
-        : <span className="card-op-card card-op-card--none">ללא כרטיס</span>}
+      {openOp ? (
+        <>
+          <span className="card-op-dir" style={{ color: DIRECTION_COLORS[openOp.entry_exit] }}>
+            {openOp.entry_exit === "entry" ? "↓" : "↑"} {DIRECTION_LABELS[openOp.entry_exit] || openOp.entry_exit}
+          </span>
+          {openOp.card_number
+            ? <span className="card-op-card">כרטיס {openOp.card_number}</span>
+            : <span className="card-op-card card-op-card--none">ללא כרטיס</span>}
+        </>
+      ) : (
+        <span
+          className="card-op-card card-op-card--none"
+          title="הבקר מדווח 'בפעולה', אך לא הגיעה פעולה עם כיוון וכרטיס. מסוכן בגרסה ישנה שעלה באמצע פעולה, או מ-MODE תקוע בבקר."
+        >
+          לא דווחה פעולה
+        </span>
+      )}
     </div>
   ) : null;
 
@@ -55,6 +81,28 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       {label}
     </span>
   );
+
+  // ==========================================================
+  // "ייתכן תקוע" — תצוגה בלבד, אפס נגיעה בחשבון
+  // ==========================================================
+  // שער לא יכול להיות "בפעולה" שעות. עד עכשיו אתר כזה נראה תקין לגמרי בכרטיס,
+  // ואפילו קיבל 100% זמינות (מצב 'בפעולה' נספר כזמן תקין). התג הזה אומר
+  // "המספר לא סביר" — הוא **אינו** משנה אף מדד. ראה utils/stuck.js.
+  //
+  // אתר שקט במצב 'מוכן' אינו מסומן, בכוונה: מנוחה היא מצב תקין, וחניון יכול
+  // לא לדווח ימים.
+  const stuck = stuckInfo(site);
+
+  const stuckBadge = stuck ? (
+    <span
+      className="card-stuck"
+      style={{ background: STUCK_COLOR.bg, color: STUCK_COLOR.text, borderColor: STUCK_COLOR.border }}
+      title={stuck.title}
+    >
+      <span className="card-stuck-icon" aria-hidden="true">⚠</span>
+      {stuck.text}
+    </span>
+  ) : null;
 
   const details = (
     <div className="card-details">
@@ -75,7 +123,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   if (expanded) {
     return (
       <div
-        className="site-card is-expanded"
+        className={`site-card is-expanded${stuck ? " is-stuck" : ""}`}
         data-code={site.code}
         onMouseEnter={() => onHover?.(site.code)}
         style={{ borderInlineStartColor: colors.dot, "--c": colors.dot }}
@@ -88,10 +136,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             </h3>
             <span className="exp-code">קוד אתר: {site.code}</span>
           </div>
-          <span className="exp-status" style={{ background: colors.bg, color: colors.text }}>
-            <span className="status-dot" style={{ background: colors.dot }} />
-            {label}
-          </span>
+          <div className="exp-status-wrap">
+            <span className="exp-status" style={{ background: colors.bg, color: colors.text }}>
+              <span className="status-dot" style={{ background: colors.dot }} />
+              {label}
+            </span>
+            {stuckBadge}
+          </div>
         </div>
 
         {opView}
@@ -143,12 +194,15 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ===== רגיל =====
   return (
     <div
-      className={`site-card density-${density}`}
+      className={`site-card density-${density}${stuck ? " is-stuck" : ""}`}
       data-code={site.code}
       style={{ borderInlineStartColor: colors.dot }}
       onClick={() => onToggle(site.code)}
       onMouseEnter={() => onHover?.(site.code)}
-      title={isNormal ? "רחפו להרחבה · לחצו לנעילה" : `${site.site_name} — ${label}`}
+      // בצפיפות mini אין מקום לתג, ולכן ההסבר עובר ל-title — שם הוא כל מה שיש.
+      title={stuck ? stuck.title
+        : isNormal ? "רחפו להרחבה · לחצו לנעילה"
+        : `${site.site_name} — ${label}`}
     >
       <div className="card-header">
         <span className="card-name">
@@ -159,10 +213,18 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       </div>
 
       {isMini ? (
-        <span className="mini-dot" style={{ background: colors.dot }} title={label} />
+        // ב-mini הכרטיס הוא שם + נקודה. הנקודה שומרת על צבע המצב (אחרת המקרא
+        // נשבר) ומקבלת טבעת סגולה — סימן שנראה בלי לקרוא, גם ברשת של 50 אתרים.
+        <span
+          className={`mini-dot${stuck ? " mini-dot--stuck" : ""}`}
+          style={{ background: colors.dot, "--stuck": STUCK_COLOR.dot }}
+          title={stuck ? stuck.text : label}
+        />
       ) : (
         statusTag
       )}
+
+      {!isMini && stuckBadge}
 
       {!isMini && opView}
 
@@ -171,6 +233,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       ) : (
         <div className="card-hover-panel">
           {isMini && statusTag}
+          {isMini && stuckBadge}
           {details}
         </div>
       )}

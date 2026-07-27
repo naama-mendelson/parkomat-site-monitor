@@ -62,6 +62,25 @@ function enqueue(topic, task) {
   return next;
 }
 
+/**
+ * ממתין שכל מה שכבר נכנס לתורים ייכתב. נקרא בכיבוי, **אחרי** שה-MQTT נסגר
+ * (אחרת התורים ממשיכים להתמלא ואין לזה סוף).
+ *
+ * למה זה נחוץ: התורים חיים בזיכרון בלבד. יציאה לפני שהתרוקנו מוחקת הודעות
+ * שכבר אושרו ל-HiveMQ — כלומר שכבר נמחקו מהתור שלו. בלי הריקון הזה אפילו
+ * `docker compose down` תקין היה מאבד את מה שהיה באוויר.
+ *
+ * הלולאה חוזרת כי המתנה לתור אחד עלולה לאפשר לתור אחר להתקדם ולהיווצר מחדש.
+ * @returns כמה תורים נשארו לא-ריקים (0 = הכל נכתב)
+ */
+async function drainQueues(deadlineMs = 8000) {
+  const until = Date.now() + deadlineMs;
+  while (queues.size > 0 && Date.now() < until) {
+    await Promise.allSettled([...queues.values()]);
+  }
+  return queues.size;
+}
+
 // ==========================================================
 // כיבוי מסודר — Docker שולח SIGTERM, לא SIGKILL
 // ==========================================================
@@ -102,6 +121,15 @@ async function shutdown(signal) {
       console.log("master: MQTT נסגר.");
     }
 
+    // אחרי שהזרם הנכנס נעצר — מסיימים לכתוב את מה שכבר התקבל. חייב לקרות
+    // לפני db.close(), אחרת הכתיבות האחרונות ייפלו על pool סגור.
+    const stuck = await drainQueues();
+    if (stuck > 0) {
+      console.error(`master: ${stuck} תורי קליטה לא התרוקנו בזמן — ייתכן אובדן.`);
+    } else {
+      console.log("master: תורי הקליטה התרוקנו.");
+    }
+
     const sse = closeSseClients();
     if (sse > 0) console.log(`master: נסגרו ${sse} חיבורי SSE.`);
 
@@ -132,14 +160,17 @@ async function main() {
 
   require("./mqtt/subscriber");   // מתחבר רק אחרי שה-DB מוכן
 
-  bus.on("message", (topic, data) => {
+  // רישום המעבד — ולא bus.on("message"). ההבדל אינו סגנוני: המעבד מחזיר
+  // Promise, וה-subscriber מאשר את ההודעה ל-HiveMQ (PUBACK) רק כשהוא נפתר.
+  // מאזין רגיל הוא fire-and-forget, ואיתו ההודעה מאושרת ונמחקת מהתור של
+  // הברוקר עוד לפני שנכתבה — ואז קריסה מאבדת אותה. ראה mqtt/subscriber.js.
+  bus.setMessageProcessor((topic, data) =>
     // handleMessage מטפל בשגיאות בעצמו; ה-catch כאן הוא רשת ביטחון אחרונה
     // כדי שהודעה תקולה לא תפיל את התהליך.
     enqueue(topic, () =>
       handleMessage(topic, data).catch((err) => {
         console.error("[master] שגיאה בטיפול בהודעה:", err.message);
-      }));
-  });
+      })));
 
   httpServer = await startApiServer();
 

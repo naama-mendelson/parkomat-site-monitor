@@ -236,10 +236,23 @@ async function getCurrentStatusSince(siteId) {
 // (תקלה, תחזוקה, נתק, מוכן). ה-DB עדיין רושם את כל המצבים כולל operating —
 // הסינון כאן לא משפיע על status_history, על operating_hours, על sites.status,
 // או על חישובי זמינות/אחוז-כשל (אלה שולפים מ-status_history ישירות).
+//
+// הסינון מותנה: 'בפעולה' שאין לו פעולה תואמת **כן** מוצג. ראה ההסבר בגוף
+// הפונקציה — הסינון הגורף הסתיר תקלה אמיתית.
 async function getStatusHistory(siteId, limit = 10) {
   // שולפים יותר מ-limit, כי חלק מהשורות (תקלות בזמן תחזוקה) יסוננו החוצה.
+  //
+  // ⚠️ 'בפעולה' מסונן — אבל **רק כשיש פעולה שמסבירה אותו**. הסינון הגורף
+  // הקודם הסתיר גם מקטע 'בפעולה' יתום, כלומר כזה שנוצר מ-resync של הסוכן
+  // בלי שום פעולה. זה היה עיוור בדיוק לתקלה החשובה ביותר: אתר 1348 היה
+  // תקוע ב'בפעולה' 11 שעות, וזה לא הופיע בפאנל המצבים כלל — לא כשורה, ולא
+  // כמצב הנוכחי. אותו כלל בדיוק כמו בציר הזמן המאוחד.
   const rows = await db.prepare(
-    "SELECT status, started_at, ended_at FROM status_history WHERE site_id = ? AND status != 'operating' ORDER BY started_at DESC LIMIT ?"
+    `SELECT h.status, h.started_at, h.ended_at
+       FROM status_history h
+      WHERE h.site_id = ?
+        AND (h.status <> 'operating' OR ${noPairedStartSql("h")})
+      ORDER BY h.started_at DESC LIMIT ?`
   ).all(siteId, Math.max(limit * 4, 40));
 
   if (rows.length === 0) return rows;
@@ -1338,6 +1351,30 @@ function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
   };
 }
 
+// ============================================================
+// חלון ההצמדה בין הודעת state להודעת operation
+// ============================================================
+// הסוכן מפרסם את שתיהן באותו סבב דגימה, אבל לא באותה מילישנייה — בשטח נמדד
+// פער של עד שנייה-שתיים (אתר 2439: state ב-16:22:12, הפעולה ב-16:22:13).
+// 5 שניות מכסות את זה בנוחות ועדיין רחוק מלחבר בטעות שתי פעולות שונות.
+//
+// ⚠️ מקור אמת אחד. הערך הזה משמש גם לסימון entries (buildActivityLog) וגם
+// לספירת המונה בצ'יפ (SQL). אם השניים יסטו זה מזה, המספר על הצ'יפ יפסיק
+// להתאים למספר השורות שבאמת נפתחות — וזה בדיוק סוג התקלה שהלוג הזה אמור
+// לגלות, לא לייצר.
+const OP_PAIR_TOLERANCE_SECONDS = 5;
+
+// אותה הצמדה, בניסוח SQL. מחזיר תנאי שמתקיים כשלשורת status_history בשם
+// {h} *אין* פעולה שמסבירה אותה. משמש גם למונים וגם ל-getStatusHistory.
+const noPairedStartSql = (h) => `
+  NOT EXISTS (
+    SELECT 1 FROM operations o
+     WHERE o.site_id = ${h}.site_id
+       AND o.start_end = 'start'
+       AND abs(EXTRACT(EPOCH FROM (
+             o.occurred_at::timestamptz - ${h}.started_at::timestamptz
+           ))) <= ${OP_PAIR_TOLERANCE_SECONDS})`;
+
 /**
  * לוג פעילות מלא לתקופה — מאחד שלושה מקורות לציר זמן אחד:
  * פעולות (כניסה/יציאה), שינויי מצב, וחלונות תחזוקה ידניים.
@@ -1378,17 +1415,21 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
   //   status    = שינויי מצב שאינם תחזוקה ו*בלי* 'בפעולה' — המונה של "הכל".
   //   statusAll = אותו דבר, *כולל* 'בפעולה' — המונה של הצ'יפ "שינויי מצב".
   //   maintenance = חלונות ידניים + מצב תחזוקה מה-PLC.
-  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus] =
+  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
+         cOrphanOperating] =
     await Promise.all([
       db.prepare(
-        `SELECT start_end, entry_exit, card_number, is_anomaly, state, occurred_at
+        `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, state, occurred_at
          FROM operations
          WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
          ORDER BY occurred_at DESC LIMIT ?`
       ).all(siteId, from, to, limit),
 
       db.prepare(
-        `SELECT status, started_at, ended_at FROM status_history
+        // site_id נשלף גם באתר בודד: buildActivityLog מצמיד מצבים לפעולות
+        // *לפי אתר*, ואם צד אחד מחזיר site_id והשני לא — ההצמדה לא תתפוס אף
+        // פעם, וכל שינוי מצב ייראה יתום.
+        `SELECT site_id, status, started_at, ended_at FROM status_history
          WHERE site_id = ? AND started_at >= ? AND started_at < ?
          ORDER BY started_at DESC LIMIT ?`
       ).all(siteId, from, to, limit),
@@ -1405,11 +1446,21 @@ async function getActivityLog(siteId, { from, to, limit = 300 }) {
       countStatus("!="),
       countIn("maintenance_windows", "started_at"),
       countStatus("="),
+
+      // 'בפעולה' יתום — מקטע שאין לו פעולה שמסבירה אותו. הוא **כן** מוצג
+      // ב"הכל" (ראה buildActivityLog), ולכן הוא חייב להיספר שם. בלי זה הצ'יפ
+      // מראה 13 בזמן ש-14 שורות נפתחות, וזה בדיוק חוסר האמינות שהלוג אמור
+      // למנוע.
+      (async () => (await db.prepare(
+        `SELECT COUNT(*) AS n FROM status_history h
+          WHERE h.site_id = ? AND h.started_at >= ? AND h.started_at < ?
+            AND h.status = 'operating' AND ${noPairedStartSql("h")}`
+      ).get(siteId, from, to)).n)(),
     ]);
 
   return buildActivityLog({
     ops, states, maint,
-    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus },
+    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus, cOrphanOperating },
     limit,
   });
 }
@@ -1422,7 +1473,8 @@ async function getGlobalActivityLog({ from, to, limit = 300 }) {
       `SELECT COUNT(*) AS n FROM ${table} WHERE ${timeCol} >= ? AND ${timeCol} < ? ${extra}`
     ).get(from, to)).n;
 
-  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus] =
+  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
+         cOrphanOperating] =
     await Promise.all([
       db.prepare(
         `SELECT o.site_id, s.site_name, o.start_end, o.entry_exit, o.card_number, o.is_anomaly, o.state, o.occurred_at
@@ -1450,18 +1502,26 @@ async function getGlobalActivityLog({ from, to, limit = 300 }) {
       countAll("status_history", "started_at", "AND status != 'maintenance'"),
       countAll("maintenance_windows", "started_at"),
       countAll("status_history", "started_at", "AND status = 'maintenance'"),
+
+      // 'בפעולה' יתום — מוצג ב"הכל", ולכן נספר שם. ראה getActivityLog.
+      (async () => (await db.prepare(
+        `SELECT COUNT(*) AS n FROM status_history h
+          WHERE h.started_at >= ? AND h.started_at < ?
+            AND h.status = 'operating' AND ${noPairedStartSql("h")}`
+      ).get(from, to)).n)(),
     ]);
 
   return buildActivityLog({
     ops, states, maint,
-    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus },
+    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus, cOrphanOperating },
     limit,
   });
 }
 
 // בונה את ציר הזמן המאוחד מהשורות שנשלפו (טהור) — משרת אתר בודד ומצרף כלל-אתרי.
 function buildActivityLog({ ops, states, maint, counts, limit }) {
-  const { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus } = counts;
+  const { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
+          cOrphanOperating = 0 } = counts;
 
   const secondsBetween = (a, b) =>
     a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null;
@@ -1473,19 +1533,23 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
   // שניהם באותו סבב דגימה ועם אותה שנייה בדיוק. אין ביניהם סדר אמיתי בנתונים,
   // רק שאלה של קריאוּת.
   //
-  // הכלל: **הפעולה נסגרת, ורק אז האתר מוכן.** בלוג (מהחדש לישן) זה אומר
-  // ש"כניסת רכב הושלמה" מופיע *מעל* "המצב השתנה ל: מוכן", כך שקריאה מלמעלה
-  // למטה נשמעת כמו הסיפור עצמו. קודם הסדר היה הפוך ו-"מוכן" הופיע ראשון,
-  // מה שנקרא כאילו האתר הפך למוכן בזמן שהפעולה עוד רצה.
+  // הכלל: **הפעולה נסגרת, ורק אז האתר מוכן.** הרשימה היא מהחדש לישן, ולכן
+  // "מאוחר יותר" = גבוה יותר: "המצב השתנה ל: מוכן" מופיע *מעל* "יציאת רכב
+  // הושלמה", וקריאה מלמטה למעלה היא הכרונולוגיה האמיתית.
+  //
+  // ⚠️ אל תהפכו את זה. ניסיון קודם הציב את הסיום מעל המוכן, מתוך מחשבה על
+  // קריאה מלמעלה למטה — אבל ברשימה יורדת זה אומר שהמוכן קדם לסיום, כלומר
+  // שהאתר חזר להיות מוכן בזמן שהפעולה עוד פתוחה. סדר שלא יכול לקרות.
   //
   // הדירוג *עולה* עם המאוחרוּת הלוגית, והמיון מציב את הגבוה למעלה:
-  //   0 בפעולה  ‹  1 התחלה  ‹  2 מוכן/מושבת  ‹  3 סיום  ‹  4 תחזוקה
+  //   0 בפעולה  ‹  1 התחלה  ‹  2 סיום  ‹  3 מוכן/מושבת  ‹  4 תחזוקה
   //
-  // שימו לב שזה משפיע רק על צמד שחולק שנייה. מעבר 2→3 (סיום כניסה + תחילת
-  // יציאה) לא מושפע — שם הסיום ממילא היה מעל ההתחלה.
+  // ובכל זאת, זה רק מפל אחרון: ב"הכל" שורת המצב שיש לה פעולה תואמת מוסתרת
+  // ממילא (ActivityLog.jsx), כי מעבר MODE אחד אינו שני אירועים. הדירוג כאן
+  // נשאר נכון עבור מה שכן מוצג יחד — למשל מקטע 'בפעולה' יתום.
   const phaseRank = (e) => {
-    if (e.kind === "status") return e.status === "operating" ? 0 : 2;
-    if (e.kind === "operation") return e.startEnd === "start" ? 1 : 3;
+    if (e.kind === "status") return e.status === "operating" ? 0 : 3;
+    if (e.kind === "operation") return e.startEnd === "start" ? 1 : 2;
     return 4;   // תחזוקה — תמיד למעלה, היא עוטפת את השאר
   };
 
@@ -1507,6 +1571,51 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
   const visibleStates = states.filter((s) => !isMaintError(s));
   const hiddenErrors = states.length - visibleStates.length;
 
+  // ============================================================
+  // איזה שינוי מצב "מוסבר" על ידי פעולה — ולכן מיותר בציר המאוחד
+  // ============================================================
+  // מעבר MODE 1→2/3 מייצר גם state=operating וגם operation/start, באותה שנייה.
+  // שורת ה-'בפעולה' אינה מוסיפה דבר על "כניסת רכב התחילה" — אותו רגע, פחות
+  // מידע — ולכן היא מסומנת כמוסברת והדשבורד מסתיר אותה ב"הכל".
+  //
+  // 'מוכן' **אינו** ברשימה, למרות שגם הוא נוצר יחד עם operation/end. הוא נושא
+  // את משך ההמתנה עד הפעולה הבאה, וזו התקופה שבין הפעולות — מידע שאין לו שום
+  // מקור אחר בציר הזמן. הסתרתו השאירה פעולות צמודות כאילו האתר לא עמד ריק.
+  //
+  // תקלה, תחזוקה ונתק לעולם אינם נובעים ממעבר פעולה, ולכן לעולם אינם מוסברים.
+  //
+  // ============================================================
+  // ההצמדה משמשת לשני דברים שונים — אל תמזגו אותם
+  // ============================================================
+  // PAIRED_OP = איזו הודעת פעולה נושאת את **אותו רגע פיזי** כמו שינוי המצב.
+  //   כאן שני הכיוונים: MODE 1→2/3 מייצר operating + start, ו-MODE 2/3→1
+  //   מייצר end + ready. זה משמש ל**אימוץ חותם הזמן** (ראה למטה).
+  //
+  // REDUNDANT = ומאלה, מי גם **מיותר** בציר המאוחד. רק 'בפעולה': הוא אינו
+  //   מוסיף כלום מעל "כניסת רכב התחילה". 'מוכן' כן מוסיף — משך ההמתנה עד
+  //   הפעולה הבאה — ולכן הוא מוצג תמיד.
+  const PAIRED_OP = { operating: "start", ready: "end" };
+  const REDUNDANT = new Set(["operating"]);
+
+  // הצמדה לפי אתר: במצרף כלל-אתרי שתי רשומות מאתרים שונים באותה שנייה אינן
+  // מסבירות זו את זו. באתר בודד site_id === undefined לכל השורות → דלי יחיד.
+  const opsBySite = new Map();
+  for (const o of ops) {
+    if (!opsBySite.has(o.site_id)) opsBySite.set(o.site_id, []);
+    opsBySite.get(o.site_id).push(o);
+  }
+
+  /** הפעולה שנושאת את אותו רגע פיזי כמו שינוי המצב, או null. */
+  const pairedOpFor = (s) => {
+    const wants = PAIRED_OP[s.status];
+    if (!wants) return null;
+    const t = Date.parse(s.started_at);
+    return (opsBySite.get(s.site_id) || []).find(
+      (o) => o.start_end === wants &&
+             Math.abs(Date.parse(o.occurred_at) - t) <= OP_PAIR_TOLERANCE_SECONDS * 1000
+    ) || null;
+  };
+
   const entries = [
     ...ops.map((o) => ({
       kind: "operation",
@@ -1518,14 +1627,39 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
       state: o.state,
       siteName: o.site_name ?? null,   // מוצג רק במצב "כל האתרים"
     })),
-    ...visibleStates.map((s) => ({
-      kind: "status",
-      at: s.started_at,
-      status: s.status,
-      endedAt: s.ended_at,
-      durationSeconds: secondsBetween(s.started_at, s.ended_at),
-      siteName: s.site_name ?? null,
-    })),
+    ...visibleStates.map((s) => {
+      const paired = pairedOpFor(s);
+      return {
+        kind: "status",
+        // ============================================================
+        // אימוץ חותם הפעולה — התיקון שמנקה גם את ההיסטוריה
+        // ============================================================
+        // מעבר MODE אחד נרשם בשתי טבלאות, ובמשך תקופה הוא נרשם עם **שני
+        // חותמים שונים**: היישור בשרת חישב כל הודעה מול "עכשיו" שלה, והשתיים
+        // עובדו בזו אחר זו. התוצאה בשטח (19 זוגות): המצב 'מוכן' נרשם שנייה
+        // *לפני* "הפעולה הסתיימה" — כלומר האתר חזר להיות מוכן בזמן שהפעולה
+        // עוד פתוחה. סדר שלא יכול לקרות.
+        //
+        // הקליטה תוקנה (clamp-memo.js + FUTURE_CLAMP_MIN_SECONDS), אבל השורות
+        // שנכתבו כבר נשארות עם הפער. לכן שורת המצב מאמצת כאן את חותם הפעולה
+        // שהיא חולקת איתה רגע: אירוע אחד, זמן אחד. זה מיישר את כל ההיסטוריה
+        // מיד, בתצוגה, **בלי לשנות שורה אחת ב-DB** — הרישום הגולמי נשאר כפי
+        // שהוא, וההצגה מפסיקה להציג ממנו סדר בלתי אפשרי.
+        //
+        // durationSeconds מחושב מהמקטע הגולמי במכוון: הפער הוא שנייה-שתיים,
+        // זניח למשך, ואין סיבה להזיז גם אותו.
+        at: paired ? paired.occurred_at : s.started_at,
+        status: s.status,
+        endedAt: s.ended_at,
+        durationSeconds: secondsBetween(s.started_at, s.ended_at),
+        siteName: s.site_name ?? null,
+        // האם הפעולה גם הופכת את שורת המצב למיותרת (רק 'בפעולה'). מחושב **כאן
+        // ולא בדשבורד** בכוונה: זו הצטלבות בין שתי רשימות עם סבילות זמן, וכל
+        // צד שיחשב אותה בעצמו יסטה מהשני. הדשבורד רק קורא את הדגל, והמונה
+        // בצ'יפ נספר לפי אותה סבילות (ראה למטה).
+        explainedByOp: !!paired && REDUNDANT.has(s.status),
+      };
+    }),
     ...maint.map((m) => ({
       kind: "maintenance",
       at: m.started_at,
@@ -1551,7 +1685,10 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
       operations: cOperations,
       // מפחיתים את התקלות שהוסתרו (בזמן תחזוקה) כדי שהצ'יפ יתאים למספר השורות
       // שבאמת מוצגות. hiddenErrors נספר מתוך החלון המוגבל — מדויק למקרה השכיח.
+      // cStatus מחריג את *כל* מקטעי ה-'בפעולה', אבל היתומים שבהם כן מוצגים
+      // ב"הכל" — ולכן מוחזרים בנפרד ומתווספים למונה שם (ראה ActivityLog).
       status: Math.max(0, cStatus - hiddenErrors),
+      orphanOperating: cOrphanOperating,
       // הצ'יפ "שינויי מצב" מציג את *כל* שינויי המצב — כולל מעבר ל'בתחזוקה'
       // מהבקר (cMaintStatus) — ולכן המונה כולל אותם. (הצ'יפ "תחזוקה" סופר
       // אותם שוב, במכוון — שתי עדשות על אותו אירוע.)
@@ -2733,6 +2870,10 @@ module.exports = {
   getGlobalInsights,
   getActivityLog,
   getGlobalActivityLog,
+  // מיוצא לבדיקות: פונקציה טהורה שמחליטה מה מוצג, באיזה סדר, ומה נספר.
+  // זו ההחלטה שנשברה שלוש פעמים בתצוגה, ולכן היא נעולה בבדיקות.
+  buildActivityLog,
+  OP_PAIR_TOLERANCE_SECONDS,
   getSupervisorStats,
   getExecutiveStats,
   getExecutiveStatsFiltered,

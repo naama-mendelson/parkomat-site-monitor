@@ -1,6 +1,7 @@
 // components/DetailPanel/DetailPanel.jsx — פאנל פירוט אתר (נפתח בלחיצה על כרטיס)
 import { useState } from "react";
-import { STATUS_LABELS, STATUS_COLORS } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR } from "../../utils/constants";
+import { stuckInfo } from "../../utils/stuck";
 import { formatDate } from "../../utils/helpers";
 import { startMaintenance, cancelMaintenance } from "../../services/api";
 import { useSiteAnalytics } from "../../hooks/useSiteAnalytics";
@@ -68,6 +69,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
   const label = STATUS_LABELS[status] || status;
   const isInMaintenance = maintenance?.inMaintenance;
+  const stuck = stuckInfo(site);
 
   // לוג פעילות מאוחד — מהחדש לישן: שינויי מצב + תחזוקה ידנית + פעולות (כניסה/יציאה).
   // כל מקור עם שדה זמן שונה (started_at / occurred_at) → מנרמלים ל-`when` למיון אחיד.
@@ -132,6 +134,31 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
           <span className="status-dot" style={{ background: colors.dot }} />
           {label}
         </div>
+
+        {/* ==========================================================
+            "ייתכן תקוע" — תצוגה בלבד
+            ==========================================================
+            אותה הכרעה בדיוק כמו בכרטיס (utils/stuck.js), ולכן היא נלקחת משם
+            ולא מחושבת כאן מחדש: שני עותקים של הסף היו נפרדים ביום שבו מכווננים
+            אותו, והפאנל היה סותר את הכרטיס לאותו אתר.
+
+            כאן יש מקום להסבר המלא, ולכן הוא מוצג כטקסט ולא רק ב-title —
+            בפאנל המשתמשת מנסה *להבין* מה קרה, לא רק לסרוק. */}
+        {stuck && (
+          <div
+            className="detail-stuck"
+            style={{ background: STUCK_COLOR.bg, color: STUCK_COLOR.text, borderColor: STUCK_COLOR.border }}
+          >
+            <strong>⚠ {stuck.text}</strong>
+            <span className="detail-stuck-why">
+              לא התקבל עדכון {stuck.silentMinutes >= 60
+                ? `${Math.floor(stuck.silentMinutes / 60)} שעות`
+                : `${stuck.silentMinutes} דקות`}.
+              מצב פעיל אמור להימשך דקות — כדאי לבדוק את רגיסטר ה-MODE בבקר
+              ואת התקשורת באתר. המדדים בעמוד אינם מושפעים מהסימון הזה.
+            </span>
+          </div>
+        )}
 
         {/* מידע */}
         <div className="detail-info">

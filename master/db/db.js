@@ -88,6 +88,12 @@ const TRANSIENT_CODES = new Set([
   "08000", "08001", "08003", "08004", "08006",
   // הברוקר/השרת סוגר או עדיין לא מוכן
   "57P01", "57P02", "57P03", "53300",
+  // 57014 = query_canceled: פקודה שנקטעה ב-statement_timeout. כאן זה כמעט
+  // תמיד המתנה לנעילה שתפוגה — למשל DDL בעלייה שממתין לנעילה שמחזיק
+  // session תלוי מקריסה קודמת. זה מצב חולף מעצם הגדרתו, ובלעדיו העלייה
+  // נכשלה עם "canceling statement due to statement timeout" והשרת נשאר
+  // מכובה. בטוח לניסיון חוזר: רק קריאות ו-init חוזרים (ראה runQuery).
+  "57014",
 ]);
 
 // חלק מכשלי החיבור של pg מגיעים בלי code — רק כהודעה. אלה הנוסחים שנצפו.
@@ -171,6 +177,28 @@ async function transaction(fn) {
   }
 
   const client = await pool.connect();
+
+  // ============================================================
+  // ⚠️ המאזין הזה הוא מה שמפריד בין שגיאה לקריסה
+  // ============================================================
+  // client שנשלף מה-pool הוא EventEmitter. כשה-pooler של Supabase מנתק את
+  // החיבור באמצע טרנזקציה, pg פולט עליו אירוע 'error'. ב-Node, אירוע 'error'
+  // **בלי מאזין** אינו נבלע — הוא הופך לחריגה שמפילה את כל התהליך.
+  //
+  // זה הפיל את ה-Master שלוש פעמים ב-27/07, ובכל פעם גם השאיר sessions
+  // תלויים ב-Postgres שהחזיקו נעילה על operations וחסמו את העלייה מחדש שלו.
+  // בשילוב עם אישור-לפני-כתיבה (ראה mqtt/subscriber.js) כל קריסה כזו גם
+  // מחקה הודעות שכבר אושרו ל-HiveMQ.
+  //
+  // המאזין אינו "מטפל" בכשל — ה-await שנכשל ממילא זורק וה-catch למטה מגלגל
+  // לאחור. הוא רק מונע את הקריסה, וזוכר שהחיבור פגום כדי שלא יחזור ל-pool.
+  let socketError = null;
+  const onClientError = (err) => {
+    socketError = err;
+    console.error("db: החיבור נפל באמצע טרנזקציה —", err.message);
+  };
+  client.on("error", onClientError);
+
   try {
     await client.query("BEGIN");
     const result = await txStore.run(client, fn);
@@ -184,7 +212,10 @@ async function transaction(fn) {
     }
     throw err;
   } finally {
-    client.release();
+    client.removeListener("error", onClientError);
+    // release(err) הורס את החיבור במקום להחזירו ל-pool. חיבור שנשבר באמצע
+    // טרנזקציה עלול לחזור עם טרנזקציה פתוחה, והשואל הבא היה יורש אותה.
+    client.release(socketError || undefined);
   }
 }
 

@@ -104,10 +104,70 @@ client.on("connect", (packet) => {
   console.log("subscriber: listening to sites/+/state, sites/+/operation, sites/+/bridge (QoS 1)");
 });
 
-// כל הודעה שמגיעה — משדרים אותה הלאה כאירוע "message"
-client.on("message", (topic, message) => {
-  bus.emit("message", topic, message.toString());
-});
+// ============================================================
+// PUBACK רק אחרי שההודעה נכתבה — לא כשהיא מגיעה
+// ============================================================
+// זו נקודת האובדן האמיתית, והיא הייתה בלתי-נראית: QoS 1 מבטיח "לפחות פעם
+// אחת", אבל ההבטחה תקפה רק עד ה-PUBACK. ברגע שאישרנו, HiveMQ מוחק את ההודעה
+// מהתור — לתמיד.
+//
+// ברירת המחדל של MQTT.js היא לאשר **מיד עם ההגעה**: handleMessage המובנה קורא
+// ל-callback שלו בלי לעשות כלום, וה-PUBACK נשלח מיד אחריו
+// (node_modules/mqtt/build/lib/handlers/publish.js). מכאן ההודעה חיה רק בתור
+// שבזיכרון (enqueue ב-master.js). כלומר:
+//
+//     ההודעה מגיעה → אושרה ונמחקה מ-HiveMQ → ממתינה בזיכרון → התהליך נופל
+//     → ההודעה אבדה. אין אותה בשום מקום.
+//
+// זה מה שקרה ב-26-27/07: השרת היה למטה ~14 שעות, בבוקר HiveMQ שפך את כל התור
+// בבת אחת, השרת אישר את הכל תוך מילישניות, ואז קרס באמצע העיבוד. חמישה אתרים
+// נשארו עם פעולת start חסרה, ומקטעי 'בפעולה' נפתחו בלי הפעולה שמסבירה אותם.
+//
+// התיקון הוא בדיוק הוו שהספרייה מיועדת לו: דוחים את ה-callback עד שההודעה
+// נכתבה. מה שלא הספיק להיכתב — לא אושר, נשאר בתור אצל HiveMQ, ונמסר שוב
+// בחיבור הבא. מסירה חוזרת בטוחה: ה-dedup של הפעולות בנוי על reported_at
+// (שאינו משתנה), ו-applyStateChange מדלג על מצב זהה.
+//
+// תופעת לוואי רצויה: זה יוצר **backpressure**. הברוקר לא ירוץ קדימה מעבר
+// לקצב הכתיבה שלנו, ולכן גל פריקה של 14 שעות כבר לא נבלע לתוך הזיכרון בבת
+// אחת. הפינג של ה-keepalive רץ על טיימר נפרד ולא נחסם מזה.
+let processMessage = null;
+
+/**
+ * רושם את מעבד ההודעות. חייב להיקרא לפני שההודעה הראשונה מגיעה — master.js
+ * עושה זאת מיד אחרי ה-require, לפני שהחיבור נפתח.
+ * @param fn (topic, payload) => Promise — נפתר כשההודעה נכתבה במלואה.
+ */
+function setMessageProcessor(fn) {
+  processMessage = fn;
+}
+
+client.handleMessage = (packet, callback) => {
+  const topic = packet.topic;
+  const payload = packet.payload.toString();
+
+  // עדיין לא נרשם מעבד — לא מאשרים. ההודעה תישאר בתור ותימסר שוב, וזה עדיף
+  // על לאבד אותה בשקט בגלל תקלת סדר-אתחול.
+  if (typeof processMessage !== "function") {
+    console.error(`subscriber: אין מעבד הודעות רשום — ${topic} לא אושרה`);
+    return callback(new Error("no message processor registered"));
+  }
+
+  // בכוונה אין כאן bus.emit("message"): מסלול קליטה אחד בלבד. מסלול שני היה
+  // מעבד כל הודעה פעמיים — ומחוץ לחשבון האישור, כלומר בלי ההגנה שלמעלה.
+  Promise.resolve()
+    .then(() => processMessage(topic, payload))
+    .then(
+      () => callback(),
+      (err) => {
+        // כשל אפליקטיבי (לא קריסה): מאשרים בכל זאת, אחרת הודעה תקולה הייתה
+        // חוזרת בכל חיבור מחדש וחוסמת את התור אחריה. ההתנהגות כאן זהה למה
+        // שהיה קודם — נרשם ונזרק; מה שהשתנה הוא שקריסה כבר לא מאבדת הודעה.
+        console.error(`subscriber: עיבוד ${topic} נכשל — ${err.message}`);
+        callback();
+      }
+    );
+};
 
 client.on("reconnect", () => {
   console.log("subscriber: מתחבר מחדש...");
@@ -168,5 +228,6 @@ function close(timeoutMs = 4000) {
 bus.isConnected = isConnected;
 bus.downForSeconds = downForSeconds;
 bus.close = close;
+bus.setMessageProcessor = setMessageProcessor;
 
 module.exports = bus;

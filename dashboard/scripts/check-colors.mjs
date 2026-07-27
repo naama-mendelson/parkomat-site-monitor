@@ -9,7 +9,7 @@
 // יחד באותו גרף/מקרא. אותו אדום בתגית מצב ובגרף אחר הוא בסדר גמור.
 //
 //   npm run check:colors
-import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS } from "../src/utils/constants.js";
+import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS, STUCK_COLOR } from "../src/utils/constants.js";
 
 const MIN_DELTA_E = 25;   // מתחת לזה — שני הצבעים נקראים כאותו צבע במבט חטוף
 const MIN_CONTRAST = 3;   // מול רקע הכרטיס הכהה — אחרת הקו בגרף פשוט נעלם
@@ -50,9 +50,12 @@ const contrast = (a, b) => {
 const GROUPS = {
   "כיוון תנועה (גרף הפעולות)": DIRECTION_COLORS,
   "מדדים (גרף המגמה — אפשר לבחור כמה יחד)": METRIC_COLORS,
-  "מצבי אתר (דונאט + תגיות)": Object.fromEntries(
-    Object.entries(STATUS_COLORS).map(([k, v]) => [k, v.dot]),
-  ),
+  // תג "ייתכן תקוע" מוצג ליד תגית המצב על אותו כרטיס, ולכן הוא נבדק *בתוך*
+  // הקבוצה הזו: אם הוא ייראה כמו אחד המצבים, הוא ייקרא כמצב שישי.
+  "מצבי אתר (דונאט + תגיות)": {
+    ...Object.fromEntries(Object.entries(STATUS_COLORS).map(([k, v]) => [k, v.dot])),
+    stuck: STUCK_COLOR.dot,
+  },
 };
 
 let failures = 0;

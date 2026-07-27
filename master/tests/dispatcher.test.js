@@ -13,6 +13,7 @@ const QUERIES = require.resolve("../db/queries");
 const STATE_HANDLER = require.resolve("../ingestion/state-handler");
 const OPERATION_HANDLER = require.resolve("../ingestion/operation-handler");
 const BRIDGE_HANDLER = require.resolve("../ingestion/bridge-handler");
+const { resetClampMemo } = require("../ingestion/clamp-memo");
 
 const stub = (filename, exports) => {
   require.cache[filename] = {
@@ -36,6 +37,13 @@ function loadDispatcher(sites) {
 
   delete require.cache[DISPATCHER];
   const { handleMessage } = require(DISPATCHER);
+
+  // ⚠️ בידוד: זיכרון החלטות היישור (clamp-memo) הוא מצב ברמת המודול, והוא
+  // *לא* נמחק עם ה-require.cache של ה-dispatcher. בלי האיפוס, שתי בדיקות
+  // שמשתמשות באותו (אתר, חותם מדווח) — וזה קורה, כי כולן רצות באותה שנייה
+  // עם אותו SITE — היו נראות כאילו השנייה לא יושרה, בזמן שהיא רק קיבלה את
+  // ההחלטה שנזכרה מהראשונה. זו התנהגות נכונה בייצור ורעש בבדיקות.
+  resetClampMemo();
 
   // לוכדים את הלוג כדי לאמת שדחייה **נרשמת** ולא נעלמת בשקט.
   const original = { log: console.log, warn: console.warn, error: console.error };
