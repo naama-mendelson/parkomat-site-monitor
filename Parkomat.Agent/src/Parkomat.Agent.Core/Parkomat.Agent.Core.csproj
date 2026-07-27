@@ -1,9 +1,91 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <!--
+  ==========================================================
+  צריבת סיסמת ה-HiveMQ לבינארי — בלי שהיא תיכנס לגיט
+  ==========================================================
+  הסיסמה חייבת להיות בבינארי המשוגר, אחרת כל התקנה באתר דורשת הקלדה ידנית
+  של טכנאי. אבל המאגר הזה ציבורי, ולכן היא לא יכולה לשבת בקוד המקור.
+
+  הפתרון: הערך חי בקובץ אחד מוחרג-גיט, agent-defaults.password, וה-build
+  מייצר ממנו BuildDefaults.g.cs לתוך obj\ (שגם הוא מוחרג). קוד המקור המחויב
+  אינו מכיל את הסיסמה בשום צורה.
+
+  בלי הקובץ — ה-build מצליח וברירת המחדל היא "", כלומר בדיוק ההתנהגות של
+  clone טרי. חשוב שזה לא ייכשל: אחרת כל תורם, וכל הרצת בדיקות ב-CI, היו
+  נחסמים על סוד שאין להם.
+
+  למה מחרוזת verbatim (@"...") ולמה Escape:
+  - הסיסמה האמיתית מכילה '&'. ב-literal רגיל זה בסדר, אבל כל ניסיון לעטוף
+    את הערך ב-XML או להריץ אותו דרך item של MSBuild נשבר עליו ועל ';'.
+  - @"..." מצמצם את כל הבריחה לתו אחד — מרכאה כפולה, שמוכפלת.
+  - [MSBuild]::Escape מונע מ-';' בסיסמה לפצל את Lines לשתי שורות.
+  נבדק מול סיסמה עם & " ; $ @ % \ — עוברת שלמה.
+  -->
+  <PropertyGroup>
+    <_AgentDefaultsFile>$(MSBuildThisFileDirectory)..\..\agent-defaults.password</_AgentDefaultsFile>
+  </PropertyGroup>
+
+  <!--
+  שים לב ל-$(IntermediateOutputPath): הוא נקבע ב-Sdk.targets, כלומר *אחרי*
+  שגוף הפרויקט מוערך. אם מחשבים ממנו נתיב ב-PropertyGroup עליון הוא ריק,
+  והקובץ המיוצר נוחת בשורש הפרויקט — שם הוא גם נתפס ע"י הגלוב וגם עלול
+  להיכנס לגיט. לכן הנתיב נבנה כאן, בתוך ה-Target, שרץ אחרי ההערכה.
+  -->
+  <Target Name="GenerateBuildDefaults"
+          BeforeTargets="BeforeCompile;CoreCompile"
+          Inputs="$(MSBuildThisFileFullPath);$(_AgentDefaultsFile)"
+          Outputs="$(IntermediateOutputPath)BuildDefaults.g.cs">
+
+    <PropertyGroup>
+      <_BuildDefaultsGenerated>$(IntermediateOutputPath)BuildDefaults.g.cs</_BuildDefaultsGenerated>
+      <_RawMqttPassword Condition="Exists('$(_AgentDefaultsFile)')">$([System.IO.File]::ReadAllText('$(_AgentDefaultsFile)').Trim())</_RawMqttPassword>
+      <_RawMqttPassword Condition="!Exists('$(_AgentDefaultsFile)')"></_RawMqttPassword>
+      <_EscapedMqttPassword>$(_RawMqttPassword.Replace('"','""'))</_EscapedMqttPassword>
+    </PropertyGroup>
+
+    <Message Importance="normal"
+             Condition="Exists('$(_AgentDefaultsFile)')"
+             Text="BuildDefaults: סיסמת HiveMQ נצרבת מ-agent-defaults.password." />
+    <Message Importance="normal"
+             Condition="!Exists('$(_AgentDefaultsFile)')"
+             Text="BuildDefaults: אין agent-defaults.password — ברירת מחדל ריקה (תקין לפיתוח; לא לשיגור)." />
+
+    <ItemGroup>
+      <_BuildDefaultsLines Include="// &lt;auto-generated /&gt; נוצר ע&quot;י GenerateBuildDefaults. לא לערוך, לא לחייב לגיט." />
+      <_BuildDefaultsLines Include="namespace Parkomat.Agent.Core.Configuration%3B" />
+      <_BuildDefaultsLines Include="internal static class BuildDefaults" />
+      <_BuildDefaultsLines Include="{" />
+      <_BuildDefaultsLines Include="$([MSBuild]::Escape('    internal const string MqttPassword = @&quot;$(_EscapedMqttPassword)&quot;%3B'))" />
+      <_BuildDefaultsLines Include="}" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteLinesToFile File="$(_BuildDefaultsGenerated)"
+                      Lines="@(_BuildDefaultsLines)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+
+    <ItemGroup>
+      <Compile Include="$(_BuildDefaultsGenerated)" />
+      <FileWrites Include="$(_BuildDefaultsGenerated)" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+  הקובץ נוצר תחת obj\, שהגלוב של ה-SDK ממילא מחריג — ולכן אין include כפול
+  ואין CS0101. השארית היחידה שכן צריך לנקות היא קובץ שנוצר בשורש הפרויקט
+  ע"י גרסה מוקדמת של ה-Target הזה, לפני שהנתיב תוקן.
+  -->
+  <Target Name="CleanStrayBuildDefaults" BeforeTargets="GenerateBuildDefaults">
+    <Delete Files="$(MSBuildThisFileDirectory)BuildDefaults.g.cs"
+            Condition="Exists('$(MSBuildThisFileDirectory)BuildDefaults.g.cs')" />
+  </Target>
 
 </Project>

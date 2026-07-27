@@ -3,7 +3,7 @@
 ; ה-Tray עולה אוטומטית בכניסת המשתמש, ומפעיל+משגיח על ה-Agent ועל Mosquitto כתהליכים.
 
 #define MyAppName "Parkomat Agent"
-#define MyAppVersion "1.0.14"
+#define MyAppVersion "1.0.15"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -113,6 +113,40 @@ begin
   ExecHidden(Sys + '\sc.exe', 'stop {#ServiceName}');
   ExecHidden(Sys + '\sc.exe', 'delete Mosquitto');
   ExecHidden(Sys + '\sc.exe', 'delete {#ServiceName}');
+
+  // ==========================================================
+  // סנכרון שעון המחשב (w32time) — שכבה 1 של דיוק זמן האירועים
+  // ==========================================================
+  // חותם הזמן של כל פעולה נלקח משעון המחשב הזה (AgentClock). מחשב עם שעון סוטה
+  // רושם את כל הפעולות שלו בזמן שגוי, וזה מרעיל משכי מצבים, זמינות והארכיון
+  // החודשי. נמדד בשטח: אתר אחד מקדים ב-34 שניות, אחר מפגר ב-235.
+  //
+  // ⚠️ הפקודות האלה דורשות הרשאות מנהל, וההתקנה הזו היא PrivilegesRequired=lowest
+  // בכוונה (בלי UAC). לכן הן **best-effort בדיוק כמו פקודות ה-sc שמעליהן**: אם
+  // המתקין רץ כמשתמש רגיל הן נכשלות בשקט וההתקנה ממשיכה כרגיל. אם הוא הורץ
+  // כמנהל (או שהמשתמש הוא מנהל) — השעון יסונכרן.
+  //
+  // מה שקורה בפועל בכל מקרה: הסוכן מודד את ההיסט בעצמו ורושם אותו ללוג בעלייה
+  // (HostClockDiagnostics), כך שאתר עם שעון סוטה גלוי גם כשהסנכרון לא הוגדר.
+  //
+  // *לא* נלחמים בניהול הזמן של Windows: לא מחליפים את השירות, לא כותבים
+  // לרג'יסטרי ידנית, ולא מגדירים GPO. רק מוודאים שהשירות הסטנדרטי דולק ומצביע
+  // על שרת זמן.
+
+  // 1. שהשירות יעלה לבד בכל אתחול (ברירת המחדל היא demand, ואז הוא כבוי).
+  ExecHidden(Sys + '\sc.exe', 'config w32time start= auto');
+
+  // 2. להפעיל אותו עכשיו.
+  ExecHidden(Sys + '\net.exe', 'start w32time');
+
+  // 3. מקור זמן. time.windows.com הוא ברירת המחדל של Windows; pool.ntp.org
+  //    נוסף כגיבוי, ובאותו סדר שהסוכן משתמש בו (SiteConfig.NtpServer).
+  //    0x9 = client mode + SpecialInterval, הצירוף המומלץ למכונה שאינה בדומיין.
+  ExecHidden(Sys + '\w32tm.exe',
+    '/config /manualpeerlist:"time.windows.com,0x9 pool.ntp.org,0x9" /syncfromflags:manual /update');
+
+  // 4. סנכרון ראשון מיד, כדי שהפעולה הראשונה שתדווח תישא זמן נכון.
+  ExecHidden(Sys + '\w32tm.exe', '/resync /force');
 
   // אילוץ ברירות מחדל בכל התקנה — אך בלי למחוק את זהות האתר: מניחים דגל,
   // וה-Agent בעלייתו מאפס את PLC/HiveMQ לברירות המחדל תוך *שמירת ה-SiteId*

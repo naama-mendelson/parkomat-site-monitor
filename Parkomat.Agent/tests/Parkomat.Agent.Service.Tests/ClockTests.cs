@@ -63,9 +63,14 @@ public class ClockTests
     [Fact]
     public void OperationDetector_UsesInjectedClock_ForOperationTimestamps()
     {
-        // מחשב האתר מפגר בשעה. הפעולה חייבת להירשם בזמן ה-*אמיתי*.
+        // מחשב האתר מפגר בעשר דקות. הפעולה חייבת להירשם בזמן ה-*אמיתי*.
+        //
+        // בכוונה **לא** על גבול MaxPlausibleOffset: הטסט הזה בודק את ההזרקה
+        // לתוך ה-detector, לא את החסם. קודם עמד כאן בדיוק על שעה — הערך המרבי
+        // המותר — ולכן הורדה עתידית של התקרה הייתה מפילה אותו בהודעה מבלבלת
+        // על חותמות זמן, במקום על החסם ששונה. עשר דקות רחוקות מכל גבול.
         var clock = new AgentClock();
-        clock.ApplyOffset(TimeSpan.FromHours(1));
+        Assert.True(clock.ApplyOffset(TimeSpan.FromMinutes(10)));
 
         var detector = new OperationDetector(clock.UnixNow);
 
@@ -78,9 +83,9 @@ public class ClockTests
         long corrected = clock.UnixNow();
         Assert.InRange(stamped, corrected - 2, corrected + 2);
 
-        // ובפועל: שעה שלמה קדימה מהשעון המקומי הגולמי.
+        // ובפועל: עשר דקות קדימה מהשעון המקומי הגולמי.
         long raw = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        Assert.InRange(stamped - raw, 3598, 3602);
+        Assert.InRange(stamped - raw, 598, 602);
     }
 
     [Fact]
@@ -176,6 +181,88 @@ public class ClockTests
     {
         var clock = new AgentClock();
         Assert.False(clock.TryLoadPersisted(Path.Combine(Path.GetTempPath(), $"nope-{Guid.NewGuid():N}")));
+    }
+
+    // ==========================================================
+    // החסם על גודל ההיסט — מסלול הדחייה
+    // ==========================================================
+    // למה זה קיים בכלל: השרת מסווג כל חותם לפני קליטה. חותם יותר מ-5 דקות
+    // בעתיד נדחה, וחותם לפני רישום האתר נדחה. לכן היסט מופרך אחד — משרת NTP
+    // שבור, מתשובה מזויפת, או מגלישת עידן — אינו "זמן קצת לא מדויק" אלא
+    // **אובדן מלא של האתר**: כל הודעה נדחית, ואין תקלה ואין no_comm. האתר
+    // פשוט שקט. ברירת המחדל הבטוחה חייבת להיות "בלי תיקון".
+
+    [Theory]
+    [InlineData(0)]                     // אפס — טריוויאלי אבל חוקי
+    [InlineData(34)]                    // סטייה אמיתית שנמדדה בשדה
+    [InlineData(-235)]                  // וגם לכיוון השני
+    [InlineData(3600)]                  // בדיוק על הגבול — כלול
+    [InlineData(-3600)]
+    public void PlausibleOffset_IsAccepted(int seconds)
+    {
+        var offset = TimeSpan.FromSeconds(seconds);
+        Assert.True(AgentClock.IsPlausibleOffset(offset));
+
+        var clock = new AgentClock();
+        Assert.True(clock.ApplyOffset(offset));
+        Assert.Equal(offset, clock.Offset);
+    }
+
+    [Theory]
+    [InlineData(3601)]                  // שנייה אחת מעל הגבול
+    [InlineData(-3601)]
+    [InlineData(18000)]                 // 5 שעות — שעון שאיבד אזור זמן
+    [InlineData(-86400)]                // יממה
+    public void ImplausibleOffset_IsRejected_AndNothingChanges(int seconds)
+    {
+        var clock = new AgentClock();
+        Assert.False(AgentClock.IsPlausibleOffset(TimeSpan.FromSeconds(seconds)));
+
+        Assert.False(clock.ApplyOffset(TimeSpan.FromSeconds(seconds)));
+
+        // הלב של הבדיקה: **לא נגעו בכלום**. נשארים על השעון המקומי.
+        Assert.Equal(TimeSpan.Zero, clock.Offset);
+        Assert.False(clock.IsSynced);
+        Assert.Null(clock.LastSyncUtc);
+
+        long local = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Assert.InRange(clock.UnixNow(), local - 1, local + 1);
+    }
+
+    [Fact]
+    public void ImplausibleOffset_DoesNotDestroyAGoodOffsetAlreadyApplied()
+    {
+        // התרחיש בשטח: האתר סונכרן כראוי, ואז מדידה אחת חוזרת מופרכת.
+        // אסור שהיא תמחק סנכרון תקין — אחרת כשל רגעי בשרת הזמן היה מוריד
+        // אתר שכבר עבד.
+        var clock = new AgentClock();
+        Assert.True(clock.ApplyOffset(TimeSpan.FromSeconds(34)));
+        DateTime? syncedAt = clock.LastSyncUtc;
+
+        Assert.False(clock.ApplyOffset(TimeSpan.FromHours(9)));
+
+        Assert.Equal(TimeSpan.FromSeconds(34), clock.Offset);
+        Assert.True(clock.IsSynced);
+        Assert.Equal(syncedAt, clock.LastSyncUtc);
+    }
+
+    [Fact]
+    public void PersistedOffset_IsRejected_WhenImplausible()
+    {
+        // קובץ שנכתב בגרסה שקדמה לחסם יכול להכיל ערך מופרך. בלי הבדיקה
+        // בטעינה, האתר היה מתחיל את חייו עם כל ההודעות נדחות — והפעם בלי
+        // אפילו מדידת NTP שתסביר למה.
+        string path = Path.Combine(Path.GetTempPath(), $"clk-{Guid.NewGuid():N}");
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            File.WriteAllText(path, $"18000.000 {now}");   // 5 שעות, מדידה טרייה
+
+            var clock = new AgentClock();
+            Assert.False(clock.TryLoadPersisted(path));
+            Assert.Equal(TimeSpan.Zero, clock.Offset);
+        }
+        finally { File.Delete(path); }
     }
 
     // ===== הידוק מרווח הסנכרון =====

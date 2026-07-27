@@ -28,15 +28,63 @@ public class OperationDetectorTests
     }
 
     [Fact]
-    public void FirstRead_EntryMode_PublishesOperatingState_ButNoOperationYet()
+    public void FirstRead_EntryMode_OpensTheOperation()
     {
         var detector = new OperationDetector();
 
-        // בהרצה ראשונה אין MODE קודם, ולכן לא נפתחת פעולה — רק state.
+        // הסוכן עלה כשה-MODE כבר בכניסה — למשל אחרי restart באמצע פעולה.
+        // פעם לא נפתחה כאן פעולה, והאתר הוצג "בפעולה" בלי כיוון ובלי כרטיס
+        // (נצפה באתרים אביגיל 20 ומגדל 1). עכשיו פותחים אותה: הסוכן יודע גם
+        // את הכיוון וגם את הכרטיס מהקריאה עצמה.
         DetectionResult result = detector.Process(mode: 2, cardNumber: "1234", cycleCounter: 5);
 
         Assert.NotNull(result.State);
         Assert.Equal(SiteState.Operating, result.State!.State);
+
+        OperationMessage op = Assert.Single(result.Operations);
+        Assert.Equal("start", op.StartEnd);
+        Assert.Equal("entry", op.EntryExit);
+        Assert.Equal("1234", op.User);
+    }
+
+    [Fact]
+    public void FirstRead_ExitMode_OpensExitOperation()
+    {
+        var detector = new OperationDetector();
+        DetectionResult result = detector.Process(mode: 3, cardNumber: "77", cycleCounter: 9);
+
+        OperationMessage op = Assert.Single(result.Operations);
+        Assert.Equal("start", op.StartEnd);
+        Assert.Equal("exit", op.EntryExit);
+        Assert.Equal("77", op.User);
+    }
+
+    [Fact]
+    public void FirstReadMidOperation_ThenModeChanges_ProducesMatchedEnd()
+    {
+        // הלב של התיקון: ה-end שנוצר כשה-MODE זז סוף-סוף כבר *לא* יתום —
+        // יש לו start תואם, ולכן שיוך המשכים והספירה עובדים כרגיל.
+        var detector = new OperationDetector();
+
+        DetectionResult first = detector.Process(mode: 2, cardNumber: "555", cycleCounter: 10);
+        Assert.Equal("start", Assert.Single(first.Operations).StartEnd);
+
+        DetectionResult second = detector.Process(mode: 1, cardNumber: "", cycleCounter: 11);
+        OperationMessage end = Assert.Single(second.Operations);
+        Assert.Equal("end", end.StartEnd);
+        Assert.Equal("entry", end.EntryExit);
+        Assert.Equal("555", end.User);   // הכרטיס נשמר לאורך הפעולה
+    }
+
+    [Fact]
+    public void FirstRead_NonOperationMode_StillOpensNothing()
+    {
+        // רגרסיה: MODE שאינו כניסה/יציאה לא פותח פעולה גם בקריאה הראשונה.
+        var detector = new OperationDetector();
+        DetectionResult result = detector.Process(mode: 1, cardNumber: "", cycleCounter: 0);
+
+        Assert.NotNull(result.State);
+        Assert.Equal(SiteState.Ready, result.State!.State);
         Assert.Empty(result.Operations);
     }
 

@@ -69,9 +69,11 @@ public static class ConfigStore
         return result;
     }
 
-    // אם המתקין הניח דגל איפוס: כותב config עם ברירות המחדל אך שומר את ה-SiteId
-    // הקיים (אם יש), ומוחק את הדגל. כך "אילוץ ברירות מחדל בכל התקנה" מרענן את שאר
-    // ההגדרות בלי למחוק את זהות האתר. best-effort — כשל בו לא מפיל את הסוכן.
+    // אם המתקין הניח דגל איפוס: כותב config עם ברירות המחדל אך שומר את זהות
+    // האתר, ומוחק את הדגל. כך "אילוץ ברירות מחדל בכל התקנה" מרענן את שאר
+    // ההגדרות בלי למחוק את מה שמזהה את האתר הזה. ההחלטה עצמה נמצאת ב-
+    // BuildResetConfig (טהורה וניתנת לבדיקה); כאן רק ה-I/O.
+    // best-effort — כשל בו לא מפיל את הסוכן.
     private static void ApplyResetMarkerIfPresent()
     {
         try
@@ -79,21 +81,18 @@ public static class ConfigStore
             if (!File.Exists(AgentPaths.ResetToDefaultsFlag))
                 return;
 
-            // קוראים את ה-SiteId הישן (אם קובץ ה-config עדיין קיים ותקין).
-            string siteId = "";
+            SiteConfig? old = null;
             if (File.Exists(AgentPaths.ConfigFile))
             {
                 try
                 {
-                    SiteConfig? old = JsonSerializer.Deserialize<SiteConfig>(
+                    old = JsonSerializer.Deserialize<SiteConfig>(
                         File.ReadAllText(AgentPaths.ConfigFile), Options);
-                    siteId = old?.SiteId ?? "";
                 }
                 catch { /* config פגום — מתחילים נקי */ }
             }
 
-            // ברירות מחדל טריות (PLC/HiveMQ מברירת המחדל המהודרת), עם ה-SiteId שנשמר.
-            Save(new SiteConfig { SiteId = siteId });
+            Save(BuildResetConfig(old));
 
             // הדגל בוצע — מסירים כדי שלא נאפס שוב בעליות הבאות.
             File.Delete(AgentPaths.ResetToDefaultsFlag);
@@ -102,6 +101,47 @@ public static class ConfigStore
         {
             // איפוס הוא nice-to-have; כשל בו לא ישבש את עליית הסוכן.
         }
+    }
+
+    /// <summary>
+    /// בונה את ה-config שאחרי איפוס-לברירות-מחדל: הכל טרי, חוץ ממה שמזהה את
+    /// האתר הזה ואי אפשר לגזור מחדש. פונקציה טהורה — בלי דיסק.
+    ///
+    /// ==========================================================
+    /// מה שורד איפוס, ולמה גם שם המשתמש והסיסמה
+    /// ==========================================================
+    /// עד כה שרד רק ה-SiteId, ופרטי ה-HiveMQ נדרסו בברירות המחדל המהודרות
+    /// בכל התקנה. כשברירת המחדל של הסיסמה ריקה, המשמעות היא ש**כל שדרוג
+    /// גרסה מוחק את הסיסמה של האתר** והטכנאי חייב להקליד אותה מחדש בשטח —
+    /// אחרת הגשר לא מתחבר ל-HiveMQ והאתר מפסיק לדווח.
+    ///
+    /// זה בדיוק הלחץ שהוליד ניסיון להדביק את הסיסמה בקוד המקור, במאגר
+    /// ציבורי. התיקון הנכון הוא לא ברירת מחדל חזקה יותר אלא הכרה בכך
+    /// ש**פרטי ההזדהות הם זהות האתר, לא העדפה**: בדיוק כמו SiteId, הם הוזנו
+    /// פעם אחת ואין שום דרך לגזור אותם מחדש. לכן הם שורדים.
+    ///
+    /// שדה ריק בקובץ הישן *אינו* שורד — הוא נופל לברירת המחדל המהודרת, כדי
+    /// שהתקנה על מכונה שמעולם לא הוגדרה תקבל את הערך שנצרב ב-build.
+    ///
+    /// PLC וכל השאר כן נדרסים: הם ניתנים לגזירה מחדש מברירות המחדל, וזו כל
+    /// מטרת האיפוס — לנקות סחף הגדרות מהתקנות ישנות.
+    /// </summary>
+    public static SiteConfig BuildResetConfig(SiteConfig? old)
+    {
+        var fresh = new SiteConfig();
+
+        if (old is null)
+            return fresh;
+
+        fresh.SiteId = Keep(old.SiteId, fresh.SiteId);
+        fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
+        fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);
+
+        return fresh;
+
+        // ערך ישן שיש בו ממש גובר; ריק/רווחים/null נופל לברירת המחדל.
+        static string Keep(string? previous, string fallback)
+            => string.IsNullOrWhiteSpace(previous) ? fallback : previous;
     }
 
     /// <summary>

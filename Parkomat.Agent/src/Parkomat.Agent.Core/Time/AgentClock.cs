@@ -51,11 +51,41 @@ public sealed class AgentClock
     /// <summary>הזמן הנוכחי המתוקן ב-unix-שניות — הפורמט של חוזה ה-MQTT.</summary>
     public long UnixNow() => UtcNow.ToUnixTimeSeconds();
 
-    /// <summary>מחיל היסט חדש שנמדד מול שרת NTP.</summary>
-    public void ApplyOffset(TimeSpan offset)
+    // ==========================================================
+    // חסם על גודל ההיסט — ולמה בלעדיו אתר נכבה בשקט
+    // ==========================================================
+    // ApplyOffset קיבל קודם **כל** ערך. היסט מופרך יכול להגיע משרת NTP שבור,
+    // מתשובה מזויפת, או מכשל בפירוש חותמת (למשל גלישת עידן 2036 שלא טופלה).
+    // וההשלכה אינה "זמן מעט לא מדויק" אלא אובדן מלא:
+    //
+    //   השרת מסווג כל חותם לפני קליטה (ingestion/plausibility.js). חותם יותר
+    //   מ-5 דקות בעתיד — **נדחה**. חותם לפני רגע רישום האתר — **נדחה**. כלומר
+    //   היסט מופרך אחד מפיל *כל* הודעה מהאתר, והאתר נראה שקט ותקין: אין תקלה,
+    //   אין no_comm, פשוט אין נתונים.
+    //
+    // שעה היא הגבול הנכון: סטייה אמיתית שנמדדה בשדה היא שניות עד דקות (34s,
+    // 235s), ואפילו שעון שאיבד את אזור הזמן חורג לכל היותר בשעות בודדות —
+    // שם כבר עדיף להשאיר את השעון המקומי כפי שהוא ולתת ל-HostClockDiagnostics
+    // לזעוק בלוג, מאשר "לתקן" למקום שהשרת ידחה.
+    public static readonly TimeSpan MaxPlausibleOffset = TimeSpan.FromHours(1);
+
+    /// <summary>האם היסט נמצא בטווח שאפשר לתקן לפיו. פונקציה טהורה.</summary>
+    public static bool IsPlausibleOffset(TimeSpan offset)
+        => Math.Abs(offset.Ticks) <= MaxPlausibleOffset.Ticks;
+
+    /// <summary>
+    /// מחיל היסט חדש שנמדד מול שרת NTP.
+    /// מחזיר false אם ההיסט מופרך — ואז **לא נוגעים בכלום**, ונשארים על השעון
+    /// המקומי. ברירת המחדל הבטוחה היא תמיד "בלי תיקון".
+    /// </summary>
+    public bool ApplyOffset(TimeSpan offset)
     {
+        if (!IsPlausibleOffset(offset))
+            return false;
+
         Interlocked.Exchange(ref _offsetTicks, offset.Ticks);
         Interlocked.Exchange(ref _lastSyncUtcTicks, DateTime.UtcNow.Ticks);
+        return true;
     }
 
     // ==========================================================
@@ -89,7 +119,13 @@ public sealed class AgentClock
             TimeSpan age = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(measuredAtUnix);
             if (age < TimeSpan.Zero || age > MaxPersistedAge) return false;   // ישן / שעון קפץ אחורה
 
-            Interlocked.Exchange(ref _offsetTicks, TimeSpan.FromSeconds(seconds).Ticks);
+            // אותו חסם גודל כמו במדידה טרייה. קובץ שנכתב בגרסה קודמת (לפני שהיה
+            // חסם) יכול להכיל ערך מופרך, ובלי הבדיקה הזו הוא היה מוחל בעלייה —
+            // כלומר האתר היה מתחיל את חייו עם כל ההודעות נדחות.
+            TimeSpan persisted = TimeSpan.FromSeconds(seconds);
+            if (!IsPlausibleOffset(persisted)) return false;
+
+            Interlocked.Exchange(ref _offsetTicks, persisted.Ticks);
             // *לא* מסמנים IsSynced: זה היסט משוחזר, לא מדידה טרייה מול NTP.
             return true;
         }

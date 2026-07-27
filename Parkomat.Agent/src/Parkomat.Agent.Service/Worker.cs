@@ -529,22 +529,40 @@ public class Worker : BackgroundService
 
             if (offset.HasValue)
             {
-                clock.ApplyOffset(offset.Value);
-                clock.Persist();   // כדי שהעלייה הבאה לא תתחיל מאפס אם אין רשת
                 double seconds = offset.Value.TotalSeconds;
 
-                // סטייה של יותר משתי שניות אינה רעש מדידה — היא שעון שגוי
-                // באתר, ושווה שתהיה גלויה בלוג. הזמן המשודר כבר מתוקן.
-                if (Math.Abs(seconds) >= 2)
+                // ApplyOffset מחזיר false כשההיסט מופרך (ראה
+                // AgentClock.MaxPlausibleOffset) — ואז **לא הוחל כלום**. חובה
+                // להבדיל: לוג שאומר "corrected" כשלא תוקן דבר הוא בדיוק הכשל
+                // השקט שהחסם נועד למנוע — מי שקורא את הלוג רואה "טופל"
+                // וממשיך הלאה, בזמן שהשרת דוחה כל הודעה מהאתר.
+                if (!clock.ApplyOffset(offset.Value))
                 {
-                    _logger.LogWarning(
-                        "NTP: this PC's clock is off by {Seconds:F1}s (per {Server}). Published timestamps are corrected.",
-                        seconds, server);
+                    // *לא* מתמידים: Persist היה כותב מחדש את ההיסט הישן, ובכך
+                    // רק מרענן חותם של מדידה שכלל לא התקבלה.
+                    _logger.LogError(
+                        "NTP: {Server} reported an implausible offset of {Seconds:F1}s (over the {Max:F0}h limit) — REJECTED. " +
+                        "The clock stays local and published timestamps are NOT corrected. " +
+                        "Check this PC's clock and the time source; while this lasts the server may reject this site's messages.",
+                        server, seconds, AgentClock.MaxPlausibleOffset.TotalHours);
                 }
                 else
                 {
-                    _logger.LogInformation(
-                        "NTP synced with {Server}; clock offset {Seconds:F3}s.", server, seconds);
+                    clock.Persist();   // כדי שהעלייה הבאה לא תתחיל מאפס אם אין רשת
+
+                    // סטייה של יותר משתי שניות אינה רעש מדידה — היא שעון שגוי
+                    // באתר, ושווה שתהיה גלויה בלוג. הזמן המשודר כבר מתוקן.
+                    if (Math.Abs(seconds) >= 2)
+                    {
+                        _logger.LogWarning(
+                            "NTP: this PC's clock is off by {Seconds:F1}s (per {Server}). Published timestamps are corrected.",
+                            seconds, server);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "NTP synced with {Server}; clock offset {Seconds:F3}s.", server, seconds);
+                    }
                 }
             }
             else

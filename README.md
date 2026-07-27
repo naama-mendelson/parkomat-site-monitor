@@ -84,7 +84,7 @@ cd master
 npm install
 cp .env.example .env     # מלא את פרטי ה-HiveMQ
 npm start                # http://localhost:4000
-npm test                 # 78 בדיקות יחידה
+npm test                 # 114 בדיקות יחידה
 ```
 
 השרת **נעצר במכוון** אם חסרים פרטי HiveMQ — שרת שרץ בלי קליטה נראה תקין
@@ -105,10 +105,34 @@ npm run dev              # http://localhost:5173
 ```sh
 cd Parkomat.Agent
 dotnet build Parkomat.Agent.slnx
-dotnet test  Parkomat.Agent.slnx
+dotnet test  Parkomat.Agent.slnx      # 127 בדיקות יחידה
 ```
 
 ההתקנה באתר נעשית דרך `installer.iss` (Inno Setup).
+
+#### הכנת מכונת build שמייצרת installer עובד — קובץ אחד, ערך אחד
+
+clone טרי **נבנה ועובר בדיקות כמו שהוא**, אבל ה-installer שייצא ממנו יעלה
+בלי סיסמת HiveMQ. כדי לייצר installer לשיגור צריך צעד אחד:
+
+```sh
+cd Parkomat.Agent
+cp agent-defaults.password.example agent-defaults.password
+#  ערוך את agent-defaults.password: שורה אחת, הסיסמה בלבד, בלי מרכאות
+dotnet build Parkomat.Agent.slnx -t:Rebuild
+```
+
+זה הכל. ה-build צורב את הערך לבינארי (`Parkomat.Agent.Core.csproj` → target
+`GenerateBuildDefaults` → `obj\BuildDefaults.g.cs`), ולכן ההתקנה באתר אינה
+דורשת הקלדת סיסמה.
+
+| | |
+|---|---|
+| **הערך** | `Parkomat.Agent/agent-defaults.password` — **מוחרג מגיט** |
+| **התבנית** | `Parkomat.Agent/agent-defaults.password.example` — בגיט, בלי סוד |
+| **בלי הקובץ** | ה-build מצליח, ברירת המחדל `""` — תקין לפיתוח ול-CI, לא לשיגור |
+
+> אחרי שינוי הקובץ צריך `-t:Rebuild`. build רגיל לא בהכרח יצרוב מחדש.
 
 ## רישום אתר — השער לקליטה
 
@@ -140,7 +164,16 @@ cd master && npm run add-site -- 1234 "אילת 4"
 
 ## אבטחה
 
-- הסודות (`master/.env`, `master/.env.test`) **מוחרגים מגיט**. הריפו הזה **ציבורי**.
+- הסודות (`master/.env`, `master/.env.test`, `Parkomat.Agent/agent-defaults.password`)
+  **מוחרגים מגיט**. הריפו הזה **ציבורי**.
+- **סיסמת ה-HiveMQ של הסוכן נצרבת לבינארי בזמן build** (ראה "הכנת מכונת build"
+  למעלה), כדי שהתקנה באתר לא תדרוש הקלדה. המשמעות: הסיסמה **חילוצית מכל
+  installer משוגר** במחרוזות. זו ההתנהגות מאז 1.0.4, וההחרגה מגיט מגינה על
+  המאגר הציבורי — לא על הבינארי. סיבוב הסיסמה הוא לכן פעולה שדורשת גם build
+  חדש וגם עדכון האתרים, ולא רק שינוי ב-HiveMQ.
+- אל תדביקו את הסיסמה ב-`SiteConfig.cs`. היא נמחקה משם פעם אחת לפני commit;
+  הסיבה שהיא הגיעה לשם — איפוס שמחק אותה בכל שדרוג — תוקנה, ופרטי ההזדהות
+  שורדים עכשיו איפוס כמו ה-`SiteId`.
 - הרשאת ה-Master מול HiveMQ היא **האזנה בלבד** — הוא לעולם לא מפרסם.
 - **TLS מול HiveMQ הוא חובה ואי אפשר לכבות אותו.** היה בסוכן checkbox שאִפשר זאת; הוא הוסר.
   הגשר מעביר שם משתמש וסיסמה דרך האינטרנט הפתוח — בלי TLS הם נוסעים בטקסט גלוי.

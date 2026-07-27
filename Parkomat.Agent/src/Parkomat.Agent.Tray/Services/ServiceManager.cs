@@ -107,6 +107,10 @@ public class ServiceManager
     /// </summary>
     public string? Start()
     {
+        // פעולה מפורשת של המשתמש מאפסת את הריסון: מי שלחץ "הפעל" מבקש ניסיון
+        // *עכשיו*, ולא אחרי ההמתנה שהצטברה מקריסות קודמות.
+        _agentRestarts.Reset();
+
         // התנעה נקייה: קודם הורגים כל שארית (תהליך תקוע/זומבי שנשאר "רץ" בשם אך
         // אינו מתפקד). בלי זה, StartAgent/StartMosquitto היו מדלגים על ההפעלה בגלל
         // בדיקת IsRunning על שארית כזו — והשירות לא היה עולה אחרי "הפעל את השירות".
@@ -129,6 +133,7 @@ public class ServiceManager
     /// <summary>עוצר את שני התהליכים. מחזיר null (best-effort).</summary>
     public string? Stop()
     {
+        _agentRestarts.Reset();   // עצירה יזומה — ההפעלה הבאה מתחילה מדף חלק
         KillByName(MosquittoProcName);
         KillByName(AgentProcName);
 
@@ -148,6 +153,8 @@ public class ServiceManager
     /// </summary>
     public string? ApplyConfigChange(bool startMosquitto)
     {
+        // הגדרות חדשות = תקלה קודמת אולי נפתרה. לא מחילים עליהן המתנה שהצטברה.
+        _agentRestarts.Reset();
         KillByName(MosquittoProcName);
         KillByName(AgentProcName);
 
@@ -162,17 +169,108 @@ public class ServiceManager
         return StartMosquitto();
     }
 
+    // ריסון ההפעלות-מחדש של הסוכן. מצב, ולכן שדה מופע ולא סטטי — ל-TrayContext
+    // יש ServiceManager אחד לכל אורך חייו.
+    private readonly RestartThrottle _agentRestarts = new();
+
+    /// <summary>לאבחון ולתצוגה: כמה הפעלות-מחדש רצופות בוצעו לסוכן.</summary>
+    public int AgentConsecutiveRestarts => _agentRestarts.ConsecutiveRestarts;
+
     /// <summary>
-    /// שומר על ריצה: מפעיל כל תהליך שמת (watchdog). נקרא מדי כמה שניות מה-Tray.
-    /// לא עוצר כלום — רק דואג שמה שאמור לרוץ, ירוץ.
+    /// שומר על ריצה: מפעיל כל תהליך שמת, ומפעיל מחדש סוכן שתקוע (watchdog).
+    /// נקרא מדי כמה שניות מה-Tray. לא עוצר כלום מיוזמתו חוץ מהמקרה התקוע.
+    ///
+    /// ==========================================================
+    /// שני שינויים שהיו חסרים כאן, ושניהם עלו בסקירת השדה
+    /// ==========================================================
+    /// 1. **ריסון.** קודם כל טיק שראה תהליך מת הפעיל אותו מיד, כל 5 שניות, ללא
+    ///    גבול. מ-1.0.15 זה מנפח נתונים: כל עלייה של הסוכן באמצע מחזור MODE
+    ///    פותחת פעולה חדשה בשרת (ראה RestartPolicy). עכשיו כל ניסיון עובר דרך
+    ///    RestartThrottle, וההמתנה מוכפלת עד תקרה של 5 דקות.
+    ///
+    /// 2. **זיהוי תקיעה.** קודם נבדק *קיום התהליך* בלבד. סוכן שנתקע — thread
+    ///    שמת, קריאת PLC תלויה, deadlock — נשאר "רץ" לנצח, והאתר היה חשוך
+    ///    בשקט עד שטכנאי היה מבחין באייקון אפור על מחשב בחניון. פעימת הלב כבר
+    ///    הייתה קיימת ומחושבת נכון, אבל שימשה רק לצביעת האייקון. עכשיו היא
+    ///    מפעילה החלטה.
+    ///
+    /// ⚠️ מגבלה מוכרת, מתועדת בכוונה: הסוכן כותב פעימת לב רק אחרי קריאת PLC
+    /// *מוצלחת* (Worker.WriteHeartbeat). לכן נתק PLC ממושך נראה מכאן זהה
+    /// לתקיעה, וייגרום להפעלה מחדש. זה רועש אך לא מזיק — בנתק PLC אין קריאות
+    /// ולכן אין פעולות שיינפחו, המצב 'error' ממילא כבר דווח, והריסון מוריד את
+    /// זה לניסיון אחד ל-5 דקות. התיקון השלם הוא פעימת לב שמשקפת חיוּת של
+    /// הלולאה ולא הצלחת הקריאה; הוא נוגע ב-Worker ולכן לא נכלל כאן.
     /// </summary>
     public void EnsureRunning()
     {
-        if (!IsRunning(AgentProcName))
-            StartAgent();
+        bool alive = IsRunning(AgentProcName);
 
+        if (alive && IsHeartbeatFresh())
+        {
+            // בריא. אחרי שהות בריאה מספקת מאפסים את הריסון, כדי שתקלה עתידית
+            // תטופל מיד ולא תירש את ההמתנה הארוכה מהתקלה הקודמת.
+            _agentRestarts.NoteHealthy();
+        }
+        else if (alive && IsAgentWedged())
+        {
+            // חי אך לא מדווח מזמן. הריגה ואז הפעלה — StartAgent מדלג כשהתהליך
+            // הישן עוד קיים, ולכן ההריגה חייבת לקרות לפניה.
+            if (_agentRestarts.TryTake())
+            {
+                KillByName(AgentProcName);
+                StartAgent();
+            }
+        }
+        else if (!alive)
+        {
+            if (_agentRestarts.TryTake())
+                StartAgent();
+        }
+        // בין חלון אחד לשלושה בלי פעימה — לא עושים כלום. זה עוד יכול להיות
+        // דגימה איטית או כמה קריאות שנכשלו, ולהרוג על זה גרוע מלחכות.
+
+        // Mosquitto אינו מרוסן: הוא לא מייצר פעולות, ולכן הפעלה חוזרת שלו אינה
+        // משחיתה נתונים — והוא כן צריך לעלות מהר כשהוא נופל.
         if (BridgeConfigHasUsername() && !IsRunning(MosquittoProcName))
             StartMosquitto();
+    }
+
+    // האם הסוכן חי אך פעימת הלב שלו מיושנת מעבר לסף התקיעה.
+    // בלי קובץ פעימה כלל (סוכן שרק עלה ועדיין לא קרא PLC) — *לא* מכריזים על
+    // תקיעה: אין ממה למדוד, וכל התקנה טרייה הייתה נכנסת ללופ הריגה.
+    private static bool IsAgentWedged()
+    {
+        try
+        {
+            if (!File.Exists(AgentPaths.HeartbeatFile))
+                return false;
+
+            string text = ReadAllTextShared(AgentPaths.HeartbeatFile).Trim();
+            if (!long.TryParse(text, out long beatUnix))
+                return false;
+
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long age = now - beatUnix;
+
+            // פעימה מהעתיד (שעון שקפץ אחורה) אינה תקיעה — מתעלמים, אחרת שינוי
+            // שעון היה מפעיל את הסוכן מחדש בלי סיבה.
+            if (age < 0)
+                return false;
+
+            return age > WedgedAfterSeconds();
+        }
+        catch
+        {
+            return false;   // לא ניתן לקרוא — לא הורגים על ספק
+        }
+    }
+
+    private static int WedgedAfterSeconds()
+    {
+        int pollMs;
+        try { pollMs = ConfigStore.Load().PollIntervalMs; }
+        catch { pollMs = 1000; }
+        return RestartPolicy.WedgedAfterSeconds(pollMs);
     }
 
     // ===== עזרים =====

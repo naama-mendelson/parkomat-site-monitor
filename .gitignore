@@ -9,6 +9,12 @@
 !.env.example
 !.env.test.example
 !.env.docker.example
+
+# סיסמת ה-HiveMQ שנצרבת לבינארי של הסוכן בזמן build. הערך עצמו לעולם לא
+# בגיט; רק קובץ הדוגמה, שמסביר איך למלא אותו על מכונת ה-build.
+# (ראה Parkomat.Agent/src/Parkomat.Agent.Core/Parkomat.Agent.Core.csproj)
+Parkomat.Agent/agent-defaults.password
+!Parkomat.Agent/agent-defaults.password.example
 *.pem
 *.key
 *.pfx

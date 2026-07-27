@@ -48,18 +48,69 @@ public static class NtpClient
             var request = new byte[48];
             request[0] = 0x1B;
 
+            // ==========================================================
+            // nonce בשדה ה-Transmit Timestamp — כדי שתשובה תהיה מאומתת
+            // ==========================================================
+            // UDP הוא ללא חיבור, וכל מי שיכול לשלוח דאטגרם ל-socket הזה יכול
+            // לענות במקום שרת הזמן. תשובה מזויפת אחת קובעת את ההיסט של האתר,
+            // וממנה כל חותם שהסוכן משדר שגוי — והשרת דוחה את כולם (ראה
+            // AgentClock.MaxPlausibleOffset). האתר נכבה בשקט.
+            //
+            // לפי RFC 4330 השרת מחזיר את ה-Transmit Timestamp שלנו כמו-שהוא
+            // בשדה ה-Originate Timestamp (בייטים 24-31). קודם שלחנו שם אפסים,
+            // ולכן ההד היה חסר משמעות. עכשיו שולחים ערך מקרי ובודקים אותו —
+            // כך תשובה שאינה למדידה *שלנו* נדחית.
+            //
+            // זה אינו קריפטוגרפי ואינו מתיימר להיות: הוא חוסם off-path בלבד.
+            // מי שיושב על הקו יכול לראות את ה-nonce ולהחזיר אותו. ההגנה
+            // האמיתית מפני זה היא החסם על גודל ההיסט.
+            var nonce = new byte[8];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(nonce);
+            Buffer.BlockCopy(nonce, 0, request, 40, 8);
+
             // T1/T4 נמדדים בשעון המקומי; T2/T3 מגיעים מהשרת.
             DateTime t1 = DateTime.UtcNow;
             await udp.SendAsync(request, endpoint, cts.Token);
-            UdpReceiveResult result = await udp.ReceiveAsync(cts.Token);
+
+            UdpReceiveResult result;
+            byte[] buffer;
+
+            // מתעלמים מדאטגרמים שאינם מהשרת שנשאל או שאינם תשובה למדידה הזו,
+            // וממשיכים להמתין עד ה-timeout — אחרת חבילה זרה אחת הייתה מבטלת
+            // סנכרון תקין.
+            while (true)
+            {
+                result = await udp.ReceiveAsync(cts.Token);
+                buffer = result.Buffer;
+
+                // מאיזה שרת? חייב להיות זה שאליו שלחנו, ומפורט 123.
+                if (!result.RemoteEndPoint.Address.Equals(endpoint.Address) ||
+                    result.RemoteEndPoint.Port != endpoint.Port)
+                    continue;
+
+                if (buffer.Length < 48)
+                    continue;
+
+                // האם זו תשובה למדידה *שלנו*? ההד של ה-nonce.
+                if (!buffer.AsSpan(24, 8).SequenceEqual(nonce))
+                    continue;
+
+                break;
+            }
+
             DateTime t4 = DateTime.UtcNow;
 
-            byte[] buffer = result.Buffer;
-            if (buffer.Length < 48)
+            // Leap Indicator = 3 פירושו "השעון שלי לא מסונכרן" — השרת עצמו
+            // מודה שאין לו זמן אמין. אין סיבה לתקן לפיו.
+            if ((buffer[0] >> 6) == 3)
                 return null;
 
-            // Stratum 0 = "kiss-o'-death" — תשובה שאינה זמן. לא סומכים עליה.
-            if (buffer[1] == 0)
+            // Mode 4 = server. כל דבר אחר אינו תשובה לשאילתת לקוח.
+            if ((buffer[0] & 0x07) != 4)
+                return null;
+
+            // Stratum 0 = "kiss-o'-death" — תשובה שאינה זמן. מעל 15 = שמור/פסול.
+            if (buffer[1] == 0 || buffer[1] > 15)
                 return null;
 
             DateTime? t2 = ReadTimestamp(buffer, 32);   // Receive Timestamp
