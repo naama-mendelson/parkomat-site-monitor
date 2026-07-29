@@ -422,6 +422,22 @@ function init() {
         ALTER TABLE operations
           DROP CONSTRAINT IF EXISTS operations_site_id_occurred_at_start_end_entry_exit_card_nu_key;
       `);
+
+      // ============================================================
+      // פונקציות המדדים — נטענות בכל עלייה, אחרי הסכמה
+      // ============================================================
+      // אותו היגיון בדיוק כמו ה-DDL שמעליו: כל פונקציה היא CREATE OR REPLACE,
+      // ולכן ההרצה אידמפוטנטית והרצה שנייה מחליפה גוף באותו גוף. אין כאן
+      // מנגנון הגירות מגורסאות, ולא צריך — הקובץ *הוא* מצב היעד.
+      //
+      // **אחרי** הסכמה ולא לפניה: הפונקציות מתייחסות ל-status_history ולעמודות
+      // שנוספות ב-ALTER למעלה. סדר הפוך היה נכשל ב-clone טרי עם
+      // "relation does not exist".
+      //
+      // רץ על אותו חיבור session (5432) מאותה סיבה: זהו סקריפט מרובה-פקודות,
+      // וה-transaction pooler מנתק עליו.
+      const functions = fs.readFileSync(path.join(__dirname, "functions.postgres.sql"), "utf8");
+      await setup.query(functions);
     } finally {
       // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
       // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.

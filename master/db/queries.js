@@ -766,10 +766,14 @@ function availabilityFrom(ms) {
  * אתר שנרשם באמצע התקופה לא ייענש על זמן שלא היה קיים בו.
  */
 async function getUptimeBreakdown(siteId, { from, to }) {
+  // measuredHours נכלל כאן במפורש: מסלול ההצלחה מחזיר אותו, ובלעדיו מסלול
+  // החלון-הריק החזיר צורה *חלקית*. הבדיקה `measuredHours > 0` אצל הקורא
+  // נתנה במקרה את התוצאה הנכונה (undefined > 0 הוא false), ולכן הפער היה
+  // בלתי-נראה — עד שהשוואת ה-parity מול SQL חשפה אותו.
   const empty = {
     readyHours: 0, operatingHours: 0, errorHours: 0,
     maintenanceHours: 0, noCommHours: 0,
-    totalHours: 0, availabilityPercent: 0,
+    totalHours: 0, measuredHours: 0, availabilityPercent: 0,
   };
 
   const nowIso = new Date().toISOString();
@@ -1885,10 +1889,11 @@ function statsFromData(data, siteId, { from, to }) {
 
 /** גרסת הזיכרון של getUptimeBreakdown — אותם חיתוכים ואותם עיגולים. */
 function uptimeFromData(data, siteId, { from, to }) {
+  // אותה צורה מלאה כמו ב-getUptimeBreakdown — ראה ההסבר שם.
   const empty = {
     readyHours: 0, operatingHours: 0, errorHours: 0,
     maintenanceHours: 0, noCommHours: 0,
-    totalHours: 0, availabilityPercent: 0,
+    totalHours: 0, measuredHours: 0, availabilityPercent: 0,
   };
 
   const nowIso = new Date().toISOString();
@@ -2096,9 +2101,16 @@ async function getAllSitesWithMetrics({ from }) {
 }
 
 /**
- * גרסת הזיכרון של getSiteUptime (השונה מ-getUptimeBreakdown!):
- * אחוז הזמן שהאתר *לא* היה ב-error/no_comm, מתוך *כל* החלון — ולא מתוך
- * הזמן הנמדד. מחזיר null כשאין היסטוריה, בדיוק כמו המקור.
+ * גרסת הזיכרון של getSiteUptime — אותה הגדרה בדיוק, רק מהנתונים הטעונים
+ * במקום משאילתה. מחזיר null כשאין נתון (measuredHours = 0) במקום 0, כי
+ * "0%" נקרא כ"שבור לגמרי" במקום "לא ידוע".
+ *
+ * ⚠️ ההערה שהייתה כאן טענה שהפונקציה מחלקת ב**כל החלון** ולא בזמן הנמדד.
+ * זה לא נכון — הגוף מאציל ל-uptimeFromData, שמחלק בזמן הנמדד דרך
+ * availabilityFrom, ויש הגדרת זמינות אחת בלבד בקוד. ההערה השגויה הזו כבר
+ * הובילה לניתוח שגוי ולהחלטת מוצר שכלל לא הייתה קיימת. אילו מישהו היה
+ * "מתקן" את הקוד כדי שיתאים לה, אתר 2439 היה קופץ מ-51.6% ל-98.2%
+ * בתצוגה השנתית — כלומר אתר מושבת חצי מהזמן היה נראה מושלם.
  */
 function uptimeFromDataLegacy(data, siteId, from, to) {
   const uptime = uptimeFromData(data, siteId, { from, to });

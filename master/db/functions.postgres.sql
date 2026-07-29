@@ -1,0 +1,150 @@
+-- functions.postgres.sql — מדדים כפונקציות SQL, ליד הנתונים.
+--
+-- ============================================================
+-- למה הקובץ הזה קיים
+-- ============================================================
+-- החישובים חיו ב-queries.js, כלומר רק השרת ידע לחשב אותם. כדי שהדשבורד
+-- יוכל לשאול את בסיס הנתונים ישירות, ההגדרה חייבת לחיות *בבסיס הנתונים*.
+--
+-- הקובץ נטען ב-db.init() בכל עלייה, אחרי schema.postgres.sql. כל פונקציה
+-- היא CREATE OR REPLACE ולכן ההרצה אידמפוטנטית בדיוק כמו ה-DDL של הסכמה:
+-- הרצה שנייה מחליפה את הגוף באותו גוף. גלגול לאחור = להחזיר את הקובץ
+-- ולהפעיל מחדש.
+--
+-- ============================================================
+-- ארבעה כללים שכל פונקציה כאן מקיימת. אל תפרו אותם.
+-- ============================================================
+-- 1. **סינון לקסיקוגרפי על TEXT, המרה רק לחשבון.**
+--    התאריכים הם TEXT בפורמט ISO-8601 (החלטה מכוונת — ראה schema).
+--    השוואת מחרוזות על ISO היא כרונולוגית, ולכן
+--        WHERE started_at < p_to
+--    משתמש ב-idx_status_hist_site כרגיל. לעומת זאת
+--        WHERE started_at::timestamptz < p_to::timestamptz
+--    ממיר את *העמודה*, פוסל את האינדקס, והופך כל טווח ל-seq scan על הטבלה
+--    הגדולה ביותר. ההמרה ל-timestamptz מותרת רק על שורות ש**כבר סוננו**.
+--
+-- 2. **מקבלת מערך מזהי אתרים ומחזירה שורה לכל אתר.**
+--    הקריאה מ-JS היא פעם אחת לכל הבקשה. פונקציה לאתר-בודד שנקראת בלולאה
+--    הייתה משחזרת בדיוק את ה-N+1 שנמחק מ-queries.js (חודש בגרנולריות יומית
+--    עם 200 אתרים = ~18,000 סיבובי רשת).
+--
+-- 3. **::double precision על כל מספר שמוחזר.**
+--    ROUND(x, 2) ב-Postgres מחזיר NUMERIC, והדרייבר (pg) מחזיר NUMERIC
+--    כ**מחרוזת**. הדשבורד עושה חשבון על הערכים האלה, ולכן מחרוזת הופכת
+--    חיבור לשרשור בשקט. אותה מלכודת כבר מתועדת בסכמה עבור REAL מול NUMERIC.
+--
+-- 4. **בלי auth.* בתוך פונקציות מדד.**
+--    auth.uid() קיים רק ב-Supabase. פונקציה שמשתמשת בו מפסיקה לרוץ על
+--    Postgres רגיל, וזו בדיוק דלת היציאה שאנחנו שומרים פתוחה. היקוף
+--    (מי רואה מה) שייך ל-RLS ברמת הטבלה, לא לחישוב.
+
+-- ============================================================
+-- site_uptime — זמינות, פירוק שעות לפי מצב
+-- ============================================================
+-- תרגום מדויק של getUptimeBreakdown + availabilityFrom מ-queries.js.
+-- כל החלטה כאן קיימת גם שם; הרשימה למטה היא מה שקל לשבור בתרגום.
+--
+-- **חיתוך מקטעים.** מקטע שמתחיל לפני החלון או נגמר אחריו נחתך לגבולות.
+-- מקטע פתוח (ended_at IS NULL) נמשך עד סוף החלון.
+--
+-- **לא סופרים אל תוך העתיד.** גבול עליון אפקטיבי = min(p_to, now).
+-- ההשוואה לקסיקוגרפית על מחרוזות ISO, בדיוק כמו ב-JS.
+--
+-- **תחזוקה מוחרגת מהמכנה.** היא אינה זמינות ואינה השבתה. הורדה מתוכננת
+-- לא תיראה ככשל, וגם לא תזכה בקרדיט של זמינות.
+--
+-- **measured_hours = 0 פירושו "אין נתון", לא "זמינות אפס".** הפונקציה
+-- מחזירה 0 באחוז, והקורא מבדיל לפי measured_hours — כמו ב-JS, שם
+-- getSiteUptime מחזיר null. אפס אחוז נקרא כ"שבור לגמרי" במקום "לא ידוע".
+--
+-- **total_hours כולל תחזוקה** (לתצוגה), והוא סכום המקטעים ולא אורך החלון:
+-- אתר שנרשם באמצע התקופה לא נענש על זמן שבו לא היה קיים.
+--
+-- אין כאן אזור זמן, וזה מכוון: הגבולות מגיעים כפרמטרים. חישוב התקופה
+-- (שבוע מתגלגל / חודש / שנה קלנדריים) הוא המקום שבו Asia/Jerusalem נחוץ,
+-- והוא עדיין ב-api/periods.js.
+CREATE OR REPLACE FUNCTION public.site_uptime(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id              integer,
+  ready_hours          double precision,
+  operating_hours      double precision,
+  error_hours          double precision,
+  maintenance_hours    double precision,
+  no_comm_hours        double precision,
+  total_hours          double precision,
+  measured_hours       double precision,
+  availability_percent double precision
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH bounds AS (
+  SELECT
+    p_from AS w_from,
+    -- min(p_to, now) על מחרוזות ISO — לקסיקוגרפי = כרונולוגי, כמו ב-JS
+    LEAST(p_to, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) AS w_to
+),
+-- חלון לא-חוקי (to <= from) מחזיר אפסים, ולא שורות חסרות
+ok AS (SELECT *, (w_to > w_from) AS valid FROM bounds),
+clipped AS (
+  SELECT
+    h.site_id,
+    h.status,
+    GREATEST(h.started_at::timestamptz, o.w_from::timestamptz) AS seg_start,
+    LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end
+  FROM status_history h
+  CROSS JOIN ok o
+  WHERE o.valid
+    AND h.site_id = ANY(p_site_ids)
+    -- שתי ההשוואות על TEXT: האינדקס (site_id, started_at) נשאר בשימוש
+    AND h.started_at < o.w_to
+    AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
+),
+secs AS (
+  SELECT
+    c.site_id,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
+             FILTER (WHERE c.status = 'ready'       AND c.seg_end > c.seg_start), 0) AS ready_s,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
+             FILTER (WHERE c.status = 'operating'   AND c.seg_end > c.seg_start), 0) AS operating_s,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
+             FILTER (WHERE c.status = 'error'       AND c.seg_end > c.seg_start), 0) AS error_s,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
+             FILTER (WHERE c.status = 'maintenance' AND c.seg_end > c.seg_start), 0) AS maintenance_s,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
+             FILTER (WHERE c.status = 'no_comm'     AND c.seg_end > c.seg_start), 0) AS no_comm_s
+  FROM clipped c
+  GROUP BY c.site_id
+)
+SELECT
+  ids.site_id,
+  ROUND((COALESCE(s.ready_s,0)       / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.operating_s,0)   / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.error_s,0)       / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.maintenance_s,0) / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.no_comm_s,0)     / 3600.0)::numeric, 2)::double precision,
+  -- total כולל תחזוקה
+  ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0) + COALESCE(s.error_s,0)
+        + COALESCE(s.maintenance_s,0) + COALESCE(s.no_comm_s,0)) / 3600.0)::numeric, 2)::double precision,
+  -- measured = זמין + מושבת. **בלי תחזוקה** — זה המכנה של הזמינות.
+  ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
+        + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0)) / 3600.0)::numeric, 2)::double precision,
+  CASE
+    WHEN (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
+        + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0)) > 0
+    THEN ROUND((((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0))
+               / (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
+                + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0))) * 100)::numeric, 2)::double precision
+    ELSE 0::double precision
+  END
+FROM unnest(p_site_ids) AS ids(site_id)
+LEFT JOIN secs s ON s.site_id = ids.site_id;
+$$;
+
+COMMENT ON FUNCTION public.site_uptime(integer[], text, text) IS
+  'זמינות ופירוק שעות לכל אתר בטווח. תרגום של getUptimeBreakdown/availabilityFrom. '
+  'תחזוקה מוחרגת ממכנה הזמינות. measured_hours=0 פירושו אין נתון.';
