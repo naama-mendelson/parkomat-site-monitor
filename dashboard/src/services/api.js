@@ -262,21 +262,32 @@ export function fetchMaintenance(code) {
 }
 
 // הפעלת תחזוקה — פעולה חופשית, ללא קוד מנהל (השרת פתח את המסלול במכוון).
+// ============================================================
+// תחזוקה — פעולת ניהול, ולכן עם קוד מנהל
+// ============================================================
+// שני הנתיבים האלה היו פתוחים לחלוטין בשרת. תחזוקה אינה תווית: היא
+// מדכאת רישום תקלות לגמרי ומוחרגת ממכנה הזמינות, כלומר היא משתיקה אתר
+// אמיתי עד 30 יום ומשנה מספרים בדוחות. עכשיו השרת דורש קוד מנהל
+// (requireAdmin), ולכן הקריאות נושאות אותו.
+//
+// מי שכבר נכנס למצב ניהול לא ירגיש שינוי — הקוד שמור ו-adminHeaders
+// מצרף אותו. מי שלא, יקבל 401 במקום להפעיל תחזוקה.
 export async function startMaintenance(code, name, durationHours, reason = "") {
   const res = await fetch(`${BASE}/sites/${code}/maintenance`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
     body: JSON.stringify({ name, duration_hours: durationHours, reason }),
   });
   if (!res.ok) return parseError(res, "שגיאה בהפעלת תחזוקה");
   return res.json();
 }
 
-// ביטול תחזוקה — פעולה חופשית, ללא קוד מנהל
+// ביטול תחזוקה — מוגן גם הוא: הוא מחזיר את האתר לספירת התקלות ולמכנה
+// הזמינות, ולכן משנה מספרים בדיוק כמו ההפעלה.
 export async function cancelMaintenance(code) {
   const res = await fetch(`${BASE}/sites/${code}/maintenance`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: adminHeaders(),
   });
   if (!res.ok) return parseError(res, "שגיאה בביטול תחזוקה");
   return res.json();

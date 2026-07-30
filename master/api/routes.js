@@ -114,8 +114,50 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+// ============================================================
+// מגביל קצב לניחוש קוד המנהל
+// ============================================================
+// הקוד הוא סוד משותף אחד, ההשוואה שלו זולה, ולכן בלי הגבלה אפשר לנחש
+// אותו בקצב הרשת. עשרה ניסיונות לחמש דקות לכל IP: מספיק בנדיבות למי
+// שהקליד שגוי פעם-פעמיים, וסוגר ניחוש שיטתי.
+//
+// ⚠️ אינו תחליף לאימות אמיתי, וגם לא מתיימר: תוקף עם כמה כתובות עוקף
+// אותו. הוא מעלה את המחיר של ניחוש עיוור על ברירת המחדל החלשה, עד
+// ש-Supabase Auth יאכף באמת (ראה auth/provider.js).
+//
+// המפה מנוקה בעצלתיים באותה תבנית כמו מגביל הצ'אט — בלעדיה היא גדלה
+// לנצח עם כל IP שאי-פעם ניסה.
+const ADMIN_RATE_LIMIT = 10;
+const ADMIN_RATE_WINDOW_MS = 5 * 60_000;
+const adminHits = new Map();
+
+function adminRateLimit(req, res, next) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const hits = (adminHits.get(ip) || []).filter((t) => now - t < ADMIN_RATE_WINDOW_MS);
+
+  if (hits.length >= ADMIN_RATE_LIMIT) {
+    const retryMs = ADMIN_RATE_WINDOW_MS - (now - hits[0]);
+    res.set("Retry-After", String(Math.ceil(retryMs / 1000)));
+    console.warn(`[api] חסימת קצב על ניסיונות קוד מנהל מ-${ip}`);
+    return res.status(429).json({
+      error: `יותר מדי ניסיונות. נסי שוב בעוד ${Math.ceil(retryMs / 60_000)} דקות.`,
+    });
+  }
+
+  hits.push(now);
+  adminHits.set(ip, hits);
+
+  if (adminHits.size > 500) {
+    for (const [key, times] of adminHits) {
+      if (times.every((t) => now - t >= ADMIN_RATE_WINDOW_MS)) adminHits.delete(key);
+    }
+  }
+  next();
+}
+
 // POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
-app.post("/api/admin/verify", async (req, res) => {
+app.post("/api/admin/verify", adminRateLimit, async (req, res) => {
   try {
     if (!await verifyAdminCode(req.body?.code)) {
       return res.status(401).json({ error: "קוד מנהל שגוי" });
@@ -420,8 +462,20 @@ app.get("/api/sites/:code/stats", cache(), async (req, res) => {
 // ל-114,000 שנה, ו-1e15 היה מפיל את השרת ב-RangeError (Invalid Date).
 const MAX_MAINTENANCE_HOURS = 720;   // 30 יום — מעבר לזה זו כבר לא "תחזוקה"
 
-// POST /api/sites/:code/maintenance — הפעלת תחזוקה על אתר (פתוח, ללא קוד מנהל)
-app.post("/api/sites/:code/maintenance", async (req, res) => {
+// ============================================================
+// POST /api/sites/:code/maintenance — מוגן ב-requireAdmin
+// ============================================================
+// היה **פתוח לחלוטין**, וזה היה החור החמור ביותר ב-API. תחזוקה אינה
+// תווית: היא מדכאת רישום תקלות לגמרי (הודעת error בזמן תחזוקה נזרקת
+// ואינה נרשמת ב-status_history, אינה נספרת ואינה מתריעה) והיא מוחרגת
+// ממכנה הזמינות. כלומר כל מי שהגיע ל-API יכול היה להשתיק אתר אמיתי עד
+// 30 יום בקריאה אחת — והמערכת הייתה מציגה אותו כתקין.
+//
+// ⚠️ שינוי התנהגות: הדשבורד שולח מעכשיו את קוד המנהל בקריאות האלה
+// (adminHeaders ב-services/api.js). מי שלא נכנס למצב ניהול יקבל 401
+// במקום להפעיל תחזוקה. זה מכוון — פעולה שמשתיקה אתר לחודש היא פעולת
+// ניהול.
+app.post("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -458,8 +512,10 @@ app.post("/api/sites/:code/maintenance", async (req, res) => {
   }
 });
 
-// DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה
-app.delete("/api/sites/:code/maintenance", async (req, res) => {
+// DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה. מוגן גם הוא:
+// ביטול תחזוקה מחזיר אתר לספירת התקלות ולמכנה הזמינות, ולכן הוא משנה
+// מספרים בדוחות בדיוק כמו ההפעלה.
+app.delete("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
