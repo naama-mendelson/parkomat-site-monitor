@@ -2369,10 +2369,15 @@ async function getRecentErrors({ limit = 10 } = {}) {
     .all(limit))
     .map((r) => {
       const end = r.endedAt ? Date.parse(r.endedAt) : Date.now();
+      const ms = Math.max(0, end - Date.parse(r.startedAt));
       return {
         ...r,
         ongoing: !r.endedAt,
-        durationMinutes: Math.max(0, Math.round((end - Date.parse(r.startedAt)) / 60000)),
+        durationMinutes: Math.round(ms / 60000),
+        // ההשבתות הקצרות הן רוב הרשימה, ובדקות מעוגלות כולן נראות "0 דק'" —
+        // כלומר בדיוק המידע שמבדיל בין הבהוב של 3 שניות לתקלה של 50 אובד.
+        // השרת שולח את המשך המדויק, והתצוגה בוחרת יחידה (ראה formatOutage).
+        durationSeconds: Math.round(ms / 1000),
       };
     });
 }

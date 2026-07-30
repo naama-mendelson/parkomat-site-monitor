@@ -6,7 +6,7 @@ import { cancelMaintenance } from "../../services/api";
 import { useSupervisorStats } from "../../hooks/useSupervisorStats";
 import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
-import { fuzzyMatch, formatDate } from "../../utils/helpers";
+import { fuzzyMatch, formatDate, formatOutage } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
 import "./SupervisorView.css";
 
@@ -247,7 +247,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                     <span className="sv-err-time">{formatDate(e.startedAt)}</span>
                   </div>
                   <span className={`sv-err-dur ${e.ongoing ? "is-ongoing" : ""}`}>
-                    {e.ongoing ? "פעילה כעת" : `${e.durationMinutes} דק'`}
+                    {e.ongoing
+                      ? "פעילה כעת"
+                      : formatOutage(e.durationSeconds, e.durationMinutes)}
                   </span>
                 </li>
               ))}

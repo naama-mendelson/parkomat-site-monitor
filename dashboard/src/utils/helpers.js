@@ -12,6 +12,27 @@ export function formatDate(isoString) {
   });
 }
 
+/**
+ * משך השבתה לתצוגה. מתחת לדקה — בשניות, אחרת בדקות.
+ *
+ * למה: רוב ההשבתות ברשימת "תקלות אחרונות" קצרות משנייה עד עשרות שניות,
+ * ובעיגול לדקות כולן הוצגו כ-"0 דק'". זה נראה כמו באג, והרע מכך — הוא מחק
+ * את ההבדל בין הבהוב של שתי שניות לבין השבתה של חמישים.
+ *
+ * @param seconds משך בשניות (durationSeconds מהשרת)
+ * @param minutes נפילה לאחור אם השרת ישן ולא שולח שניות
+ */
+export function formatOutage(seconds, minutes) {
+  if (!Number.isFinite(seconds)) {
+    return Number.isFinite(minutes) ? `${minutes} דק'` : "—";
+  }
+  if (seconds < 60) {
+    // "שנייה אחת" ולא "1 שניות" — צורת היחיד בעברית שונה.
+    return seconds === 1 ? "שנייה" : `${seconds} שניות`;
+  }
+  return `${Math.round(seconds / 60)} דק'`;
+}
+
 // "לפני כמה זמן" — מקבל ISO string, מחזיר "לפני 3 דקות" וכו'
 export function timeAgo(isoString) {
   if (!isoString) return "לא ידוע";
