@@ -1,0 +1,91 @@
+/* components/AlertBell/AlertBell.css
+   שני מראות לאותו כפתור: קומפקטי כשהכל תקין, ורחב ומתריע כשהאודיו חסום.
+   הצבעים תואמים ל-.theme-toggle שלידו (ה-header כהה בשתי ערכות הנושא). */
+
+.alert-bell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, opacity 0.15s;
+}
+
+/* ===== מצב רגיל: חמוש / מושתק ===== */
+.alert-bell-compact {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--brand-on);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.alert-bell-compact:hover {
+  background: rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+
+/* מושתק — עמום, כדי שההבדל ייקרא במבט אחד גם מרחוק */
+.alert-bell-compact.is-muted {
+  opacity: 0.55;
+}
+
+/* הנקודה היא הסימן המהיר: ירוקה = יצלצל, אפורה = מושתק */
+.alert-bell-dot {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand-lime, #7ddb2f);
+  box-shadow: 0 0 5px var(--brand-lime, #7ddb2f);
+}
+
+.alert-bell-dot.is-off {
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
+
+/* ===== מצב חסום: אזהרה מלאה ===== */
+.alert-bell-locked {
+  position: relative;
+  padding: 0 14px 0 12px;
+  height: 38px;
+  background: #b45309;
+  color: #fff;
+  border: 1px solid #f59e0b;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.alert-bell-locked:hover {
+  background: #92400e;
+  transform: translateY(-1px);
+}
+
+.alert-bell-text {
+  letter-spacing: 0.01em;
+}
+
+/* פעימה איטית — נראית מעבר לחדר בלי להיות מטרידה */
+.alert-bell-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fde68a;
+  animation: alert-bell-blink 1.8s ease-in-out infinite;
+}
+
+@keyframes alert-bell-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.8); }
+}
+
+/* מכבדים העדפת מערכת: בלי אנימציה, הצבע לבדו נושא את המסר */
+@media (prefers-reduced-motion: reduce) {
+  .alert-bell-pulse { animation: none; }
+}

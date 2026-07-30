@@ -13,7 +13,8 @@ import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
 import { needsRefetch } from "./utils/sitePatch";
-import { alertError, alertNoComm, unlockAudio } from "./utils/audio/alerts";
+import { useFaultAlerts } from "./hooks/useFaultAlerts";
+import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
 
@@ -100,63 +101,20 @@ function App() {
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
 
   // ==========================================================
-  // צלילי התראה — נגזרים משינוי הסטטוס, לא מהודעת SSE
+  // צליל התראה — נגזר משינוי הסטטוס, לא מהודעת SSE
   // ==========================================================
   // קודם הצליל התנגן ישירות מתוך handler ה-SSE. זה נשמע נכון אבל נשבר בשקט:
   // אם חיבור ה-SSE נופל לרגע (אתחול שרת, נפילת רשת, טאב שנרדם), ההודעה
   // שנשלחה באותו רגע **אובדת** — ל-SSE אין מסירה חוזרת. הכרטיס בכל זאת היה
   // מתעדכן ל"מושבת" מאוחר יותר דרך שליפה מלאה, אבל הצליל כבר לא היה מתנגן.
   //
-  // כאן משווים את הסטטוס הקודם לנוכחי בכל עדכון של הרשימה — לא משנה אם הוא
-  // הגיע מ-SSE או משליפה. כל מעבר ל"מושבת" משמיע צליל, בדיוק פעם אחת.
-  //
-  // בונוס: הסטטוס כאן הוא ה*אפקטיבי* (השרת כבר החיל "תחזוקה גוברת"), ולכן
-  // אתר בתחזוקה לעולם לא יגיע ל"מושבת" — ולא יצפצף. בלי תנאי מיוחד.
-  const prevStatuses = useRef(null);
+  // ההשוואה, הקיבוץ לצליל אחד, וניהול ה-AudioContext עברו ל-useFaultAlerts
+  // ול-useAlertAudio. כאן נשארה רק ההרכבה.
+  useFaultAlerts(sites);
+
+  // בדיקה מהירה מהקונסול: parkomatTestAlert()
   useEffect(() => {
-    if (!sites || sites.length === 0) return;
-
-    const current = new Map(sites.map((s) => [s.code, s.status]));
-    const previous = prevStatuses.current;
-    prevStatuses.current = current;
-
-    // טעינה ראשונה: רק זוכרים. בלי זה כל רענון דף היה מצפצף על כל אתר שכבר מושבת.
-    if (!previous) return;
-
-    for (const [code, status] of current) {
-      const before = previous.get(code);
-      if (!before || before === status) continue;   // אתר חדש / בלי שינוי
-
-      if (status === "error") {
-        console.info(`[alert] אתר ${code}: ${before} → מושבת — צליל התראה`);
-        alertError();
-      } else if (status === "no_comm") {
-        alertNoComm();
-      }
-    }
-  }, [sites]);
-
-  // ===== שחרור/החייאת אודיו =====
-  // *לא* { once }: הדפדפן משעה מחדש את ה-AudioContext כשהטאב יורד לרקע, ואז
-  // צליל תקלה לא היה נשמע כשחוזרים. לכן מחיים אותו בכל אינטראקציה *וגם* כשהטאב
-  // חוזר להיות גלוי. unlockAudio זול ואידמפוטנטי — קריאה חוזרת לא מזיקה.
-  useEffect(() => {
-    const handler = () => unlockAudio();
-    handler();   // ניסיון מיידי (אם כבר הייתה אינטראקציה קודמת בטעינה)
-    window.addEventListener("pointerdown", handler);
-    window.addEventListener("keydown", handler);
-    document.addEventListener("visibilitychange", handler);
-    return () => {
-      window.removeEventListener("pointerdown", handler);
-      window.removeEventListener("keydown", handler);
-      document.removeEventListener("visibilitychange", handler);
-    };
-  }, []);
-
-  // בדיקה מהירה של צליל התקלה — להריץ בקונסול של הדפדפן: parkomatTestAlert()
-  // (מחייה את האודיו ומנגן את אותו צליל שמושמע כשאתר עובר למושבת).
-  useEffect(() => {
-    window.parkomatTestAlert = () => { unlockAudio(); alertError(); };
+    window.parkomatTestAlert = testAlert;
     return () => { delete window.parkomatTestAlert; };
   }, []);
 

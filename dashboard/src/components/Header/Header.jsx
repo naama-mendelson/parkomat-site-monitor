@@ -2,6 +2,7 @@
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
+import AlertBell from "../AlertBell/AlertBell";
 import "./Header.css";
 
 function Header({
@@ -40,6 +41,11 @@ function Header({
 
         <div className="header-actions">
           {isOperator && <SearchBar value={searchQuery} onChange={onSearchChange} />}
+
+          {/* מצב ההתראות הקוליות. מוצג בכל התפקידים — אזעקה חסומה היא בעיה
+              של המסך, לא של התפקיד שמסתכל בו. */}
+          <AlertBell />
+
 
           {canManage && (
             <button className="add-site-btn" onClick={onAdmin} title="ניהול אתרים">
