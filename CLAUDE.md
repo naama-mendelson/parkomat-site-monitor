@@ -59,21 +59,28 @@ recorded here because they are cheap to hold and expensive to re-derive:
 1. **Every user sees every site.** No subsets, no user↔site association table. RLS is
    therefore `USING (true)` for `authenticated` — that is the exact expression of the rule,
    not a shortcut standing in for something finer.
-2. **Whoever has access to a site may trigger maintenance.** Combined with (1), "access to
-   a site" means **any authenticated user** — not admin-only.
+2. **Everyone may put a site into maintenance.** No credential required. This is also the
+   original design: the dashboard button was never role-gated, and the form has always
+   required the user to type their name.
 
-What (2) means in practice, and it is worth knowing: any authenticated user can silence any
-site for up to 30 days, and maintenance suppresses fault logging entirely while excluding
-the site from the availability denominator. What balances that is **attribution, not
-prevention** — `set_by_name` is recorded, and it now comes from the verified identity
-(`req.actor`) rather than free text the client supplies. The action is not blocked; it is
-traceable.
+So the rule is **attribution, not prevention** — and that is a deliberate trade, not an
+oversight. Maintenance suppresses fault logging entirely and excludes the site from the
+availability denominator, so anyone can silence any site for up to 30 days. What stands
+between "someone silenced a site" and "we have no idea who" is:
 
-`requireSiteAccess` (in `api/routes.js`) accepts a valid bearer token **or** the admin code.
-The token path is the target; the admin-code path is the only one that works today, because
-there are no users yet and nothing can issue a token. When users exist, the second path can
-be closed in one line. A token that is *sent and rejected* is a hard 401 and deliberately
-does **not** fall back to the admin code.
+- **A name is mandatory.** `400` without one. That is the one thing the endpoint does insist on.
+- **`set_by_name` prefers verified identity.** A bearer token wins over the body; the typed
+  name is used only when there is no token. Verified Hebrew names round-trip intact — tested.
+- **An audit line per action**, on both start and cancel, recording name, IP, and a `trust`
+  level: `token` / `admin-code` / `anonymous`. **Do not remove `trust`** — without it every
+  name looks equally trustworthy, and an anonymous claim reads like a verified identity.
+
+`identifyActor` (in `api/routes.js`) is therefore **not a gate** — it populates `req.actor`
+and always calls `next()`. Two deliberate details: a token that is *sent and rejected* is
+still a hard `401` (someone who sent a token meant to identify themselves, and silently
+downgrading them to anonymous would hide a real auth failure); and making the route blocking
+later is **one line** — uncomment the `return res.status(401)` at the end of the middleware.
+Do that once users exist.
 
 **What D is still blocked on — credentials, not decisions.** The dashboard cannot query
 Supabase directly until `SUPABASE_URL`, the anon key, and `SUPABASE_JWT_SECRET` exist in the

@@ -160,46 +160,53 @@ function adminRateLimit(req, res, next) {
 }
 
 // ============================================================
-// requireSiteAccess — "כל מי שיש לו גישה לאתר"
+// identifyActor — מזהה, ולא חוסם
 // ============================================================
-// החלטת מוצר: הפעלת תחזוקה וביטולה פתוחות לכל מי שיש לו גישה לאתר, ולא רק
-// למנהל. מכיוון שכל המשתמשים רואים את כל האתרים (ההחלטה השנייה), "גישה
-// לאתר" = **משתמש מאומת**.
+// החלטת מוצר: **לכל אחד** יש אפשרות להכניס אתר להשבתה. זה גם העיצוב
+// המקורי — הכפתור בדשבורד מעולם לא היה מוגן לפי תפקיד, והטופס דורש
+// מהמשתמש להקליד את שמו. כלומר הכלל תמיד היה "כל אחד יכול, אבל חייב לומר
+// מי הוא": **ייחוס במקום מנע.**
 //
-// זה מהדק לעומת מה שהיה — הנתיבים היו פתוחים לכל קורא HTTP אנונימי — ומרפה
-// לעומת requireAdmin שהונח כאן קודם, שהיה מהדק יותר מהכוונה.
+// לכן ה-middleware הזה אינו שער. הוא ממלא את req.actor אם יש אישורים,
+// ומעביר הלאה גם כשאין.
 //
-// שני מסלולים מתקבלים, ולא מטעמי נוחות:
-//   1. אסימון תקין (Authorization: Bearer …) — זה היעד.
-//   2. קוד המנהל — **המסלול היחיד שעובד היום**, כי אין עדיין משתמשים
-//      במערכת ואף אחד לא יכול להנפיק אסימון. בלעדיו התכונה הייתה מושבתת
-//      לחלוטין עד שהאימות ייאכף.
+// שלוש דרגות של אמון בזהות, והן נרשמות כמו שהן:
+//   1. אסימון תקין  → זהות מאומתת. הזהות גוברת על מה שהלקוח שלח בגוף.
+//   2. קוד מנהל     → פעולת ניהול. אין שם, ולכן נלקח מהגוף.
+//   3. שום דבר      → אנונימי. השם מהגוף הוא הצהרה, לא אימות, והוא
+//                     נרשם ככזה בלוג.
 //
-// ברגע שיהיו משתמשים, מסלול 1 נהיה החי ומסלול 2 יכול להיסגר בשורה אחת.
+// אסימון שנשלח ונפסל הוא עדיין 401: מי ששלח אסימון התכוון להזדהות, וקבלה
+// שקטה שלו כאנונימי הייתה מסתירה תקלת אימות אמיתית.
 //
-// req.actor נמלא כדי ש-set_by_name יבוא מהזהות ולא מטקסט חופשי שהלקוח
-// שולח. זה ההבדל בין "מי הצהיר שהוא הפעיל" ל"מי הפעיל".
-async function requireSiteAccess(req, res, next) {
+// ⚠️ מה שזה אומר בפועל, ומתועד ב-README: הנתיב פתוח לכל קורא HTTP, כלומר
+// אפשר להשתיק אתר עד 30 יום בלי שום אישור. **להפוך אותו לחוסם זו שורה
+// אחת** — להסיר את ההערה מה-return למטה. עשו זאת ברגע שיש משתמשים.
+async function identifyActor(req, res, next) {
   const header = req.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
   if (token) {
     const actor = auth.verifyToken(token);
-    if (actor) {
-      req.actor = { userId: actor.userId, name: actor.email || actor.userId, role: actor.role };
-      return next();
-    }
-    // אסימון שנשלח ונפסל הוא כשל מפורש, ולא הזמנה לנסות את קוד המנהל.
-    return res.status(401).json({ error: "אסימון לא תקין או שפג" });
-  }
-
-  const code = req.get("x-admin-code") || req.body?.adminCode;
-  if (await verifyAdminCode(code)) {
-    req.actor = { userId: null, name: null, role: "admin" };
+    if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+    req.actor = { userId: actor.userId, name: actor.email || actor.userId,
+                  role: actor.role, trust: "token" };
     return next();
   }
 
-  return res.status(401).json({ error: "נדרשת הזדהות" });
+  const code = req.get("x-admin-code") || req.body?.adminCode;
+  if (code && await verifyAdminCode(code)) {
+    req.actor = { userId: null, name: null, role: "admin", trust: "admin-code" };
+    return next();
+  }
+
+  // אנונימי — מותר לפי ההחלטה. מסומן ככזה כדי שהלוג לא ייראה כמו זהות.
+  req.actor = { userId: null, name: null, role: null, trust: "anonymous" };
+
+  // כדי להפוך את הנתיב לחוסם (אחרי שיהיו משתמשים), הסירו את ההערה:
+  // return res.status(401).json({ error: "נדרשת הזדהות" });
+
+  return next();
 }
 
 // POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
@@ -524,7 +531,7 @@ const MAX_MAINTENANCE_HOURS = 720;   // 30 יום — מעבר לזה זו כב�
 // כל אתר עד 30 יום. מה שמאזן את זה הוא התיעוד — set_by_name נרשם, ומעכשיו
 // הוא נלקח מהזהות (req.actor) ולא מטקסט חופשי שהלקוח שולח. כלומר הפעולה
 // אינה חסומה אך היא **מיוחסת**.
-app.post("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => {
+app.post("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -536,12 +543,13 @@ app.post("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => 
     // ============================================================
     // מי הפעיל — מהזהות אם יש, ומהגוף רק כשאין
     // ============================================================
-    // תחזוקה פתוחה לכל מאומת (החלטת מוצר), ולכן התיעוד הוא מה שמאזן אותה.
-    // אסימון מביא שם מאומת; טקסט חופשי מהלקוח הוא הצהרה בלבד, ולכן הוא
-    // נדחק למקום השני. כשהאימות ייאכף לכולם, אפשר להפסיק לקבל אותו בכלל.
+    // תחזוקה פתוחה לכל אחד (החלטת מוצר), ולכן התיעוד הוא מה שמאזן אותה.
+    // אסימון מביא שם מאומת וגובר; טקסט חופשי מהלקוח הוא הצהרה בלבד ולכן
+    // נדחק למקום השני — אבל הוא **חובה**, וזה הכלל שהופך "כל אחד יכול"
+    // ל"כל אחד יכול, ואנחנו יודעים מי".
     const setBy = req.actor?.name || name;
 
-    if (!setBy || typeof setBy !== "string") {
+    if (!setBy || typeof setBy !== "string" || !setBy.trim()) {
       return res.status(400).json({ error: "חסר שם (name)" });
     }
     // Number.isFinite ולא !duration_hours: Infinity עובר את בדיקת ה-falsy
@@ -553,7 +561,19 @@ app.post("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => 
     }
 
     const result = await startMaintenance(
-      site.id, setBy, duration_hours, reason || null, req.actor?.role || null);
+      site.id, setBy.trim(), duration_hours, reason || null, req.actor?.role || null);
+
+    // ============================================================
+    // שורת ביקורת — זה מה שהופך "ייחוס" ממילה למשהו שאפשר לבדוק
+    // ============================================================
+    // תחזוקה משתיקה אתר עד 30 יום ומוחרגת ממכנה הזמינות. כשהפעולה פתוחה
+    // לכולם, הדבר היחיד שעומד בין "מישהו השתיק אתר" ל"אין לנו מושג מי" הוא
+    // השורה הזו. trust נרשם במפורש: "anonymous" אומר שהשם הוא הצהרה בלבד,
+    // ולא זהות שאומתה. אל תסירו אותו — בלעדיו כל השמות נראים אמינים במידה שווה.
+    console.log(
+      `[maintenance] אתר ${site.code}: הופעלה ל-${duration_hours} שעות ` +
+      `ע"י "${setBy.trim()}" (אמון: ${req.actor?.trust || "unknown"}, ` +
+      `IP: ${req.ip || "?"})${reason ? ` — ${reason}` : ""}`);
 
     // חובה לשדר: תחזוקה משנה את המצב האפקטיבי של האתר (applyMaintenanceStatus),
     // ובלי האירוע הזה המטמון לא מתנקה ושאר הדשבורדים לא יודעים.
@@ -573,7 +593,7 @@ app.post("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => 
 // DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה. אותה הגנה
 // בדיוק: ביטול מחזיר אתר לספירת התקלות ולמכנה הזמינות, ולכן הוא משנה
 // מספרים בדוחות בדיוק כמו ההפעלה.
-app.delete("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => {
+app.delete("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -584,6 +604,13 @@ app.delete("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) =
     if (result.changes === 0) {
       return res.status(404).json({ error: "אין תחזוקה פעילה לביטול" });
     }
+
+    // ביטול משנה מספרים בדוחות בדיוק כמו הפעלה — הוא מחזיר את האתר לספירת
+    // התקלות ולמכנה הזמינות. לכן הוא מתועד באותה מידה.
+    console.log(
+      `[maintenance] אתר ${site.code}: בוטלה ע"י ` +
+      `"${req.actor?.name || "לא צוין"}" (אמון: ${req.actor?.trust || "unknown"}, ` +
+      `IP: ${req.ip || "?"})`);
 
     bus.publish({ type: "maintenance", code: site.code, action: "cancel" });
 
