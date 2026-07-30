@@ -2872,6 +2872,7 @@ module.exports = {
   getAllSitesGlobals,       // מדדים לא-תלויי-טווח לכל האתרים בבת אחת
   loadRangeData,            // שליפת הנתונים הגולמיים לטווח (3 שאילתות)
   statsFromData,            // = getSiteStats, מהזיכרון
+  collapseNoCommFlicker,    // נחשף כדי ש-tools/parity.js יוכל להשוות מול ה-SQL
   uptimeFromData,           // = getUptimeBreakdown, מהזיכרון
   directionFromData,        // = getDirectionCounts, מהזיכרון
   getBucketRanges,

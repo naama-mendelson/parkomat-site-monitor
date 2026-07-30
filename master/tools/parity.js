@@ -29,7 +29,7 @@
 //    שלמים (ספירות) מושווים בשוויון מוחלט — שם כל הפרש הוא באג.
 
 const db = require("../db/db");
-const { loadRangeData, uptimeFromData } = require("../db/queries");
+const { loadRangeData, uptimeFromData, collapseNoCommFlicker } = require("../db/queries");
 const { resolvePeriod } = require("../api/periods");
 
 // ===== דיווח =====
@@ -242,8 +242,182 @@ async function parityEdgeCases() {
 class Rollback extends Error {}
 const hash = (s) => [...s].reduce((a, ch) => ((a << 5) - a + ch.charCodeAt(0)) | 0, 0);
 
+// ============================================================
+// קיפול ריצוד הנתק
+// ============================================================
+// JS  — collapseNoCommFlicker על segments הממוינים מ-loadRangeData
+// SQL — public.site_segments_collapsed
+//
+// ⚠️ parity על נתוני פרודקשן **אינו מספיק כאן**, וזה נמדד: בכל ההיסטוריה
+// יש 161 רצפי ריצוד, ובאף אחד מהם המצב החוזר אינו 'error'. מכיוון
+// ש-statsFromData מסתכל רק על 'error', ההגנה שהקיפול נותן אינה נדרשת
+// בפרודקשן — ולכן פורט שבור לגמרי היה עובר. מקרי הקצה למטה הם הבדיקה
+// האמיתית, ולכן הם נבדקו גם מול גרסאות שבורות בכוונה.
+async function parityFlicker() {
+  const sites = await db.prepare("SELECT id, code FROM sites ORDER BY code").all();
+  const ids = sites.map((s) => s.id);
+  const byId = new Map(sites.map((s) => [s.id, s.code]));
+
+  console.log(`\n=== קיפול ריצוד — ${sites.length} אתרים × week/month/year ===`);
+
+  for (const period of ["week", "month", "year"]) {
+    const { range } = resolvePeriod(period);
+    const to = new Date().toISOString();
+
+    const data = await loadRangeData(null, { from: range.from, to });
+    const sql = await db.prepare(
+      "SELECT * FROM public.site_segments_collapsed(?, ?, ?)"
+    ).all(ids, range.from, to);
+
+    const sqlBySite = new Map();
+    for (const r of sql) {
+      if (!sqlBySite.has(r.site_id)) sqlBySite.set(r.site_id, []);
+      sqlBySite.get(r.site_id).push(r);
+    }
+
+    let periodFails = 0, dropped = 0, loaded = 0;
+    for (const id of ids) {
+      const input = data.segments.get(id) || [];
+      const js = collapseNoCommFlicker(input);
+      const s = sqlBySite.get(id) || [];
+      loaded += input.length;
+      dropped += input.length - js.length;
+
+      const before = failures;
+      compare(`flicker/${period}/${byId.get(id)}.keptCount`, js.length, s.length);
+      // השוואה כקבוצת מזהים — הסדר אינו חלק מהחוזה, הזהות כן
+      const jsIds = js.map((r) => r.id).sort((a, b) => a - b).join(",");
+      const sqlIds = s.map((r) => r.id).sort((a, b) => a - b).join(",");
+      compare(`flicker/${period}/${byId.get(id)}.keptIds`, jsIds, sqlIds);
+      if (failures > before) periodFails++;
+    }
+    console.log(`  ${period.padEnd(6)} — ${sites.length - periodFails}/${sites.length} אתרים תואמים ` +
+                `(${loaded} מקטעים נטענו, ${dropped} נקפלו)`);
+  }
+}
+
+// מקרי הקצה של הקיפול. שני הראשונים הם ה-look-back, ובלעדיו הם נכשלים.
+const FLICKER_CASES = [
+  {
+    name: "look-back: תקלה שהתחילה לפני החלון, נותקה, וחזרה בתוכו — המשך, לא תקלה שנייה",
+    // error חוצה את p_from → no_comm → error בתוך החלון.
+    // בלי look-back ה-error הראשון אינו נטען, ולכן השני נראה חדש ונשמר.
+    segments: (f) => [
+      { status: "error",   started_at: iso(f - 2 * H), ended_at: iso(f + 1 * H) },
+      { status: "no_comm", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "error",   started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    expectKept: 2,   // error הראשון + no_comm. השני נקפל.
+  },
+  {
+    name: "look-back: אותו רצף אך המצב שונה — ready אחרי error, נשמר",
+    segments: (f) => [
+      { status: "error",   started_at: iso(f - 2 * H), ended_at: iso(f + 1 * H) },
+      { status: "no_comm", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "ready",   started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    expectKept: 3,
+  },
+  {
+    name: "ריצוד כפול: error → no_comm → error → no_comm → error",
+    segments: (f) => [
+      { status: "error",   started_at: iso(f + 0 * H), ended_at: iso(f + 1 * H) },
+      { status: "no_comm", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "error",   started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+      { status: "no_comm", started_at: iso(f + 3 * H), ended_at: iso(f + 4 * H) },
+      { status: "error",   started_at: iso(f + 4 * H), ended_at: iso(f + 5 * H) },
+    ],
+    expectKept: 3,   // error אחד + שני no_comm
+  },
+  {
+    name: "no_comm נשמר תמיד, גם רצוף",
+    segments: (f) => [
+      { status: "no_comm", started_at: iso(f + 0 * H), ended_at: iso(f + 1 * H) },
+      { status: "no_comm", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+    ],
+    expectKept: 2,
+  },
+  {
+    name: "מצבים עוקבים זהים בלי נתק — השני נקפל",
+    segments: (f) => [
+      { status: "ready", started_at: iso(f + 0 * H), ended_at: iso(f + 1 * H) },
+      { status: "ready", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+    ],
+    expectKept: 1,
+  },
+  {
+    name: "מצבים מתחלפים — שום דבר לא נקפל",
+    segments: (f) => [
+      { status: "ready",     started_at: iso(f + 0 * H), ended_at: iso(f + 1 * H) },
+      { status: "operating", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "error",     started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    expectKept: 3,
+  },
+  {
+    name: "שובר-שוויון: שני מקטעים באותה שנייה (כמו אתר 2439)",
+    segments: (f) => [
+      { status: "no_comm",   started_at: iso(f + 1 * H), ended_at: iso(f + 1 * H) },
+      { status: "operating", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+    ],
+    expectKept: 2,
+  },
+];
+
+async function parityFlickerEdges() {
+  console.log(`\n=== קיפול ריצוד — ${FLICKER_CASES.length} מקרי קצה ===`);
+  const to = Date.parse("2026-06-15T00:00:00.000Z");
+  const from = to - 24 * H;
+  const winFrom = iso(from), winTo = iso(to);
+
+  for (const c of FLICKER_CASES) {
+    const segments = c.segments(from, to);
+    let sqlRows, jsKept;
+
+    await db.transaction(async () => {
+      const site = await db.prepare(
+        "INSERT INTO sites (code, site_name, registered_at) VALUES (?, ?, ?) RETURNING id"
+      ).run(`FLK-${Math.abs(hash(c.name))}`, "parity-flicker", iso(from - 100 * H));
+      const siteId = site.lastInsertRowid;
+
+      const inserted = [];
+      for (const s of segments) {
+        const r = await db.prepare(
+          "INSERT INTO status_history (site_id, status, started_at, ended_at) VALUES (?, ?, ?, ?) RETURNING id"
+        ).run(siteId, s.status, s.started_at, s.ended_at);
+        inserted.push({ ...s, id: r.lastInsertRowid, site_id: siteId });
+      }
+
+      sqlRows = await db.prepare(
+        "SELECT * FROM public.site_segments_collapsed(?, ?, ?)"
+      ).all([siteId], winFrom, winTo);
+
+      // צד ה-JS: אותו טווח קלט בדיוק כמו ה-SQL (כולל ה-look-back),
+      // באותו מיון כמו sortByStartedAt
+      const loaded = inserted
+        .filter((s) => s.started_at < winTo && (s.ended_at === null || s.ended_at >= winFrom))
+        .sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.id - b.id));
+      jsKept = collapseNoCommFlicker(loaded);
+
+      throw new Rollback();
+    }).catch((e) => { if (!(e instanceof Rollback)) throw e; });
+
+    const before = failures;
+    compare(`flickerEdge[${c.name}].keptCount`, jsKept.length, sqlRows.length);
+    compare(`flickerEdge[${c.name}].expected`, c.expectKept, sqlRows.length);
+    const a = jsKept.map((r) => r.id).sort((x, y) => x - y).join(",");
+    const b = sqlRows.map((r) => r.id).sort((x, y) => x - y).join(",");
+    compare(`flickerEdge[${c.name}].keptIds`, a, b);
+
+    console.log(`  ${failures === before ? "✓" : "✗"} ${c.name}`);
+  }
+}
+
 // ===== main =====
-const SUITES = { uptime: async () => { await parityUptime(); await parityEdgeCases(); } };
+const SUITES = {
+  uptime: async () => { await parityUptime(); await parityEdgeCases(); },
+  flicker: async () => { await parityFlicker(); await parityFlickerEdges(); },
+};
 
 (async () => {
   await db.init();

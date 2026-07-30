@@ -148,3 +148,81 @@ $$;
 COMMENT ON FUNCTION public.site_uptime(integer[], text, text) IS
   'זמינות ופירוק שעות לכל אתר בטווח. תרגום של getUptimeBreakdown/availabilityFrom. '
   'תחזוקה מוחרגת ממכנה הזמינות. measured_hours=0 פירושו אין נתון.';
+
+-- ============================================================
+-- site_segments_collapsed — קיפול ריצוד הנתק
+-- ============================================================
+-- תרגום של collapseNoCommFlicker. הכלל: מקטע no_comm נשמר תמיד, ומקטע
+-- שאינו no_comm נזרק אם הוא זהה למצב הלא-no_comm שקדם לו — כלומר הוא
+-- *המשך* של אותו מצב ולא אירוע חדש.
+--
+-- למה זה קיים: אתר במצב error שנותק וחזר מייצר שלושה מקטעים —
+-- error → no_comm → error — אבל זו תקלה אחת, לא שתיים. בלי הקיפול
+-- statsFromData היה סופר אותה פעמיים, ואחוז הכשל היה מוכפל.
+--
+-- ============================================================
+-- ה-look-back הוא הלב, והוא מה שקל לפספס בתרגום
+-- ============================================================
+-- טווח הקלט הוא **כל מקטע שחופף לחלון**, כולל מקטע שהתחיל *לפני* p_from
+-- ונמשך לתוכו:
+--     started_at < p_to AND (ended_at IS NULL OR ended_at >= p_from)
+--
+-- זה מכוון ומועתק מ-loadRangeData. תקלה שהתחילה לפני החלון, נותקה, וחזרה
+-- בתוך החלון היא המשך — ואי אפשר לדעת זאת בלי לראות את המקטע שלפני
+-- הגבול. סינון ל-[p_from, p_to) לפני הקיפול נראה נכון, עובר כל בדיקה על
+-- נתוני פרודקשן, **ומכפיל בשקט תקלות שחוצות את גבול החלון**.
+--
+-- ============================================================
+-- למה LAG על תת-הקבוצה, ולא ניסיון לחשב "המצב הקודם" על הכול
+-- ============================================================
+-- ב-JS lastObserved מתעדכן רק במקטע שאינו no_comm, ולכן הוא תמיד "המצב של
+-- המקטע הלא-no_comm האחרון שנראה". אם מסננים את מקטעי ה-no_comm ומריצים
+-- LAG על מה שנשאר, מקבלים בדיוק את הערך הזה — בלי לחקות IGNORE NULLS
+-- (שאינו קיים ב-Postgres) ובלי טריק gaps-and-islands.
+--
+-- ה-ORDER BY כולל id כשובר-שוויון: קיימים מקטעים באותה שנייה בדיוק, ובלי
+-- שובר-שוויון ה-LAG היה שרירותי. אותו סדר בדיוק כמו sortByStartedAt ב-JS.
+CREATE OR REPLACE FUNCTION public.site_segments_collapsed(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id    integer,
+  id         integer,
+  status     text,
+  started_at text,
+  ended_at   text
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH src AS (
+  SELECT h.id, h.site_id, h.status, h.started_at, h.ended_at
+    FROM status_history h
+   WHERE h.site_id = ANY(p_site_ids)
+     -- שתי ההשוואות על TEXT — האינדקס נשאר בשימוש. ה-look-back מתקבל
+     -- מהתנאי השני: מקטע שהתחיל לפני p_from אך נמשך לתוך החלון נכלל.
+     AND h.started_at < p_to
+     AND (h.ended_at IS NULL OR h.ended_at >= p_from)
+),
+observed AS (
+  -- רק מקטעים שאינם no_comm. LAG כאן = "המצב הלא-no_comm שקדם".
+  SELECT s.*,
+         LAG(s.status) OVER (PARTITION BY s.site_id ORDER BY s.started_at, s.id) AS prev_status
+    FROM src s
+   WHERE s.status <> 'no_comm'
+)
+SELECT o.site_id, o.id, o.status, o.started_at, o.ended_at
+  FROM observed o
+ WHERE o.prev_status IS NULL OR o.status <> o.prev_status
+UNION ALL
+SELECT s.site_id, s.id, s.status, s.started_at, s.ended_at
+  FROM src s
+ WHERE s.status = 'no_comm'
+ORDER BY 1, 4, 2;
+$$;
+
+COMMENT ON FUNCTION public.site_segments_collapsed(integer[], text, text) IS
+  'מקטעי מצב אחרי קיפול ריצוד נתק. תרגום של collapseNoCommFlicker. '
+  'הקלט כולל מקטעים שהתחילו לפני p_from (look-back) — חיוני לזיהוי המשכיות.';
