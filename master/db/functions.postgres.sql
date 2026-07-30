@@ -226,3 +226,111 @@ $$;
 COMMENT ON FUNCTION public.site_segments_collapsed(integer[], text, text) IS
   'מקטעי מצב אחרי קיפול ריצוד נתק. תרגום של collapseNoCommFlicker. '
   'הקלט כולל מקטעים שהתחילו לפני p_from (look-back) — חיוני לזיהוי המשכיות.';
+
+-- ============================================================
+-- site_stats — פעולות, תקלות, ואחוז כשל
+-- ============================================================
+-- תרגום של statsFromData. בונה על site_segments_collapsed, ולכן הגדרת
+-- הקיפול נשארת במקום אחד בלבד.
+--
+-- **פעולות** = שורות ב-operations עם is_anomaly = 0 ו-start_end = 'end'.
+-- רק 'end': פעולה נספרת כשהיא הושלמה, לא כשהתחילה. is_anomaly INTEGER
+-- ולא BOOLEAN — החלטה מכוונת בסכמה, והשוואה ל-0 היא הנכונה.
+--
+-- **תקלות** = מקטעי error שנותרו אחרי הקיפול ושהתחילו בתוך החלון. שים לב
+-- לאסימטריה: הקיפול רואה גם מקטעים שלפני p_from (look-back), אבל הספירה
+-- כוללת רק מקטעים ש-started_at שלהם בתוך [p_from, p_to). תקלה שהתחילה
+-- לפני החלון אינה תקלה *של* החלון — היא רק ההקשר שמסביר שהחזרה שאחריה
+-- היא המשך.
+--
+-- **החרגת תחזוקה** משני מקורות, ושניהם נדרשים:
+--   1. חלון תחזוקה ידני (maintenance_windows) — מה שמופעל מהדשבורד.
+--   2. מקטע 'maintenance' ב-status_history — מה שה-PLC עצמו מדווח.
+-- הגבולות **כוללים בשני הקצוות** (<= ו->=), וזה מכוון: כשה-PLC עובר
+-- מתחזוקה לתקלה, applyStateChange סוגר את מקטע התחזוקה ופותח את מקטע
+-- התקלה באותו חותם זמן בדיוק. ה->= גורם לתקלה שמתחילה ברגע שהתחזוקה
+-- נגמרה להיחשב "בתוך תחזוקה" — ההתנהגות הרצויה: תקלה בזמן או בגבול
+-- תחזוקה מתוכננת אינה תקלה.
+--
+-- התקלות המוחרגות מוחזרות ב-errors_in_maintenance, לא נזרקות — כדי
+-- שאפשר יהיה להציג "היו 3 תקלות, כולן בתחזוקה" במקום "לא היו תקלות".
+--
+-- **אחוז כשל = תקלות ÷ פעולות**, ולא מ-cycle_total. אתר ותיק עם מונה
+-- מכונה של מיליון ועם 500 פעולות נמדדות ו-5 תקלות הוא 1%, לא 0.0005%.
+-- אפס פעולות מחזיר 0 ולא חלוקה באפס.
+CREATE OR REPLACE FUNCTION public.site_stats(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id               integer,
+  operations            integer,
+  errors                integer,
+  errors_in_maintenance integer,
+  failure_rate          double precision
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH ops AS (
+  SELECT o.site_id, COUNT(*)::int AS n
+    FROM operations o
+   WHERE o.site_id = ANY(p_site_ids)
+     AND o.is_anomaly = 0
+     AND o.start_end = 'end'
+     -- לקסיקוגרפי על TEXT — idx_operations_site_time נשאר בשימוש
+     AND o.occurred_at >= p_from
+     AND o.occurred_at < p_to
+   GROUP BY o.site_id
+),
+-- מקטעי התקלה ששרדו את הקיפול ושהתחילו בתוך החלון
+err AS (
+  SELECT c.site_id, c.started_at
+    FROM public.site_segments_collapsed(p_site_ids, p_from, p_to) c
+   WHERE c.status = 'error'
+     AND c.started_at >= p_from
+     AND c.started_at < p_to
+),
+classified AS (
+  SELECT
+    e.site_id,
+    (EXISTS (
+       SELECT 1 FROM maintenance_windows w
+        WHERE w.site_id = e.site_id
+          AND w.started_at <= e.started_at
+          AND COALESCE(w.cancelled_at, w.expires_at) >= e.started_at)
+     OR EXISTS (
+       SELECT 1 FROM status_history m
+        WHERE m.site_id = e.site_id
+          AND m.status = 'maintenance'
+          AND m.started_at <= e.started_at
+          AND (m.ended_at IS NULL OR m.ended_at >= e.started_at))
+    ) AS in_maintenance
+  FROM err e
+),
+agg AS (
+  SELECT site_id,
+         COUNT(*) FILTER (WHERE NOT in_maintenance)::int AS errors,
+         COUNT(*) FILTER (WHERE in_maintenance)::int     AS errors_in_maint
+    FROM classified
+   GROUP BY site_id
+)
+SELECT
+  ids.site_id,
+  COALESCE(o.n, 0)::int,
+  COALESCE(a.errors, 0)::int,
+  COALESCE(a.errors_in_maint, 0)::int,
+  CASE
+    WHEN COALESCE(o.n, 0) > 0
+    THEN ROUND(((COALESCE(a.errors, 0)::numeric / o.n) * 100), 2)::double precision
+    ELSE 0::double precision
+  END
+FROM unnest(p_site_ids) AS ids(site_id)
+LEFT JOIN ops o ON o.site_id = ids.site_id
+LEFT JOIN agg a ON a.site_id = ids.site_id;
+$$;
+
+COMMENT ON FUNCTION public.site_stats(integer[], text, text) IS
+  'פעולות, תקלות, תקלות-בתחזוקה ואחוז כשל לכל אתר בטווח. תרגום של statsFromData. '
+  'התקלות עוברות דרך site_segments_collapsed; החרגת התחזוקה משני מקורות, גבולות כוללים.';

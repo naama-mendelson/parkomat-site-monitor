@@ -29,7 +29,7 @@
 //    שלמים (ספירות) מושווים בשוויון מוחלט — שם כל הפרש הוא באג.
 
 const db = require("../db/db");
-const { loadRangeData, uptimeFromData, collapseNoCommFlicker } = require("../db/queries");
+const { loadRangeData, uptimeFromData, collapseNoCommFlicker, statsFromData } = require("../db/queries");
 const { resolvePeriod } = require("../api/periods");
 
 // ===== דיווח =====
@@ -413,10 +413,263 @@ async function parityFlickerEdges() {
   }
 }
 
+// ============================================================
+// פעולות, תקלות ואחוז כשל
+// ============================================================
+// JS  — loadRangeData + statsFromData
+// SQL — public.site_stats
+async function parityStats() {
+  const sites = await db.prepare("SELECT id, code FROM sites ORDER BY code").all();
+  const ids = sites.map((s) => s.id);
+  const byId = new Map(sites.map((s) => [s.id, s.code]));
+
+  console.log(`\n=== מדדים — ${sites.length} אתרים × week/month/year ===`);
+
+  for (const period of ["week", "month", "year"]) {
+    const { range } = resolvePeriod(period);
+    const to = new Date().toISOString();
+
+    const data = await loadRangeData(null, { from: range.from, to });
+    const sql = await db.prepare(
+      "SELECT * FROM public.site_stats(?, ?, ?)"
+    ).all(ids, range.from, to);
+    const sqlById = new Map(sql.map((r) => [r.site_id, r]));
+
+    let periodFails = 0, totalOps = 0, totalErr = 0;
+    for (const id of ids) {
+      const js = statsFromData(data, id, { from: range.from, to });
+      const s = sqlById.get(id);
+      const code = byId.get(id);
+      totalOps += js.operations; totalErr += js.errors;
+
+      if (!s) { failures++; checks++; fails.push(`stats/${period}/${code}: SQL no row`); periodFails++; continue; }
+
+      const before = failures;
+      compare(`stats/${period}/${code}.operations`,   js.operations,          s.operations);
+      compare(`stats/${period}/${code}.errors`,       js.errors,              s.errors);
+      compare(`stats/${period}/${code}.errInMaint`,   js.errorsInMaintenance, s.errors_in_maintenance);
+      compare(`stats/${period}/${code}.failureRate`,  js.failureRate,         s.failure_rate);
+      expectNumber(`stats/${period}/${code}.failureRate type`, s.failure_rate);
+      expectNumber(`stats/${period}/${code}.operations type`,   s.operations);
+      if (failures > before) periodFails++;
+    }
+    console.log(`  ${period.padEnd(6)} — ${sites.length - periodFails}/${sites.length} אתרים תואמים ` +
+                `(${totalOps} פעולות, ${totalErr} תקלות)`);
+  }
+}
+
+// ============================================================
+// אחוז כשל משוקלל — סך תקלות ÷ סך פעולות
+// ============================================================
+// **לא** ממוצע של אחוזים. אתר עם 2 פעולות ותקלה אחת אינו שווה במשקל לאתר
+// עם 2,000. הפער בפרודקשן קטן היום רק כי גדלי האתרים דומים (4–55 פעולות),
+// ולכן נבדק גם על תרחיש זרוע עם אתר זעיר ורועש — שם ההבדל בין משוקלל
+// ללא-משוקלל הוא הבדל של אחוזים שלמים.
+async function parityWeighted() {
+  const sites = await db.prepare("SELECT id, code FROM sites ORDER BY code").all();
+  const ids = sites.map((s) => s.id);
+
+  console.log(`\n=== אחוז כשל משוקלל ===`);
+  for (const period of ["week", "month", "year"]) {
+    const { range } = resolvePeriod(period);
+    const to = new Date().toISOString();
+
+    const data = await loadRangeData(null, { from: range.from, to });
+    let sumOps = 0, sumErr = 0;
+    for (const id of ids) {
+      const js = statsFromData(data, id, { from: range.from, to });
+      sumOps += js.operations; sumErr += js.errors;
+    }
+    const jsWeighted = sumOps > 0 ? Math.round((sumErr / sumOps) * 10000) / 100 : 0;
+
+    const [row] = await db.prepare(
+      `SELECT CASE WHEN SUM(operations) > 0
+                THEN ROUND((SUM(errors)::numeric / SUM(operations)) * 100, 2)::double precision
+                ELSE 0::double precision END AS weighted,
+              SUM(operations)::int AS ops, SUM(errors)::int AS errs
+         FROM public.site_stats(?, ?, ?)`
+    ).all(ids, range.from, to);
+
+    compare(`weighted/${period}.rate`, jsWeighted, row.weighted);
+    compare(`weighted/${period}.sumOps`, sumOps, row.ops);
+    compare(`weighted/${period}.sumErrors`, sumErr, row.errs);
+    expectNumber(`weighted/${period}.rate type`, row.weighted);
+
+    const unweighted = ids.length
+      ? Math.round((ids.reduce((acc, id) => {
+          const st = statsFromData(data, id, { from: range.from, to });
+          return acc + (st.operations > 0 ? (st.errors / st.operations) * 100 : 0);
+        }, 0) / ids.length) * 100) / 100
+      : 0;
+    console.log(`  ${period.padEnd(6)} — משוקלל ${row.weighted}%  (${row.errs}/${row.ops})` +
+                `   [לא-משוקלל היה ${unweighted}%]`);
+  }
+}
+
+// מקרי הקצה של המדדים. פרודקשן אינו מכיל אף תקלה בתחזוקה ואף ריצוד-error,
+// ולכן כל מסלול ההחרגה והקיפול נבדק כאן בלבד.
+const STATS_CASES = [
+  {
+    name: "תקלה פשוטה בתוך החלון",
+    segments: (f) => [{ status: "error", started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) }],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 1, errors_in_maintenance: 0, failure_rate: 100 },
+  },
+  {
+    name: "תקלה בתוך חלון תחזוקה ידני — מוחרגת",
+    segments: (f) => [{ status: "error", started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) }],
+    windows: (f) => [{ started_at: iso(f + 1 * H), expires_at: iso(f + 5 * H), cancelled_at: null }],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 1, failure_rate: 0 },
+  },
+  {
+    name: "תקלה בתוך מקטע תחזוקה של ה-PLC — מוחרגת",
+    segments: (f) => [
+      { status: "maintenance", started_at: iso(f + 1 * H), ended_at: iso(f + 4 * H) },
+      { status: "error",       started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 1, failure_rate: 0 },
+  },
+  {
+    name: "תקלה בדיוק בגבול סיום התחזוקה — מוחרגת (גבול כולל)",
+    segments: (f) => [
+      { status: "maintenance", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "error",       started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 1, failure_rate: 0 },
+  },
+  {
+    name: "ריצוד: error → no_comm → error — תקלה אחת, לא שתיים",
+    segments: (f) => [
+      { status: "error",   started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "no_comm", started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+      { status: "error",   started_at: iso(f + 3 * H), ended_at: iso(f + 4 * H) },
+    ],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 1, errors_in_maintenance: 0, failure_rate: 100 },
+  },
+  {
+    name: "look-back: תקלה שחוצה את p_from וחוזרת — לא נספרת פעמיים ולא בכלל",
+    // הראשונה התחילה לפני החלון (לא נספרת — אינה תקלה *של* החלון),
+    // השנייה נקפלת כהמשך. סה\"כ 0.
+    segments: (f) => [
+      { status: "error",   started_at: iso(f - 2 * H), ended_at: iso(f + 1 * H) },
+      { status: "no_comm", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) },
+      { status: "error",   started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) },
+    ],
+    ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 0, failure_rate: 0 },
+  },
+  {
+    name: "פעולות: is_anomaly=1 ו-start_end='start' אינן נספרות",
+    segments: () => [],
+    ops: (f) => [
+      { occurred_at: iso(f + 1 * H), start_end: "end",   is_anomaly: 0 },
+      { occurred_at: iso(f + 2 * H), start_end: "end",   is_anomaly: 1 },
+      { occurred_at: iso(f + 3 * H), start_end: "start", is_anomaly: 0 },
+    ],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 0, failure_rate: 0 },
+  },
+  {
+    name: "אפס פעולות עם תקלה — אחוז כשל 0, בלי חלוקה באפס",
+    segments: (f) => [{ status: "error", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) }],
+    ops: () => [],
+    expect: { operations: 0, errors: 1, errors_in_maintenance: 0, failure_rate: 0 },
+  },
+  {
+    name: "גבולות החלון: פעולה ותקלה בדיוק ב-p_from נספרות",
+    segments: (f) => [{ status: "error", started_at: iso(f), ended_at: iso(f + 1 * H) }],
+    ops: (f) => [{ occurred_at: iso(f), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 1, errors_in_maintenance: 0, failure_rate: 100 },
+  },
+  {
+    name: "גבולות החלון: פעולה ותקלה בדיוק ב-p_to אינן נספרות",
+    segments: (f, t) => [{ status: "error", started_at: iso(t), ended_at: iso(t + 1 * H) }],
+    ops: (f, t) => [{ occurred_at: iso(t), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 0, errors: 0, errors_in_maintenance: 0, failure_rate: 0 },
+  },
+  {
+    name: "עיגול: 1 תקלה מתוך 3 פעולות = 33.33%",
+    segments: (f) => [{ status: "error", started_at: iso(f + 1 * H), ended_at: iso(f + 2 * H) }],
+    ops: (f) => [
+      { occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 },
+      { occurred_at: iso(f + 2 * H), start_end: "end", is_anomaly: 0 },
+      { occurred_at: iso(f + 3 * H), start_end: "end", is_anomaly: 0 },
+    ],
+    expect: { operations: 3, errors: 1, errors_in_maintenance: 0, failure_rate: 33.33 },
+  },
+];
+
+async function parityStatsEdges() {
+  console.log(`\n=== מדדים — ${STATS_CASES.length} מקרי קצה ===`);
+  const to = Date.parse("2026-06-15T00:00:00.000Z");
+  const from = to - 24 * H;
+  const winFrom = iso(from), winTo = iso(to);
+
+  for (const c of STATS_CASES) {
+    const segments = (c.segments || (() => []))(from, to);
+    const ops = (c.ops || (() => []))(from, to);
+    const windows = (c.windows || (() => []))(from, to);
+    let sqlRow, jsRow;
+
+    await db.transaction(async () => {
+      const site = await db.prepare(
+        "INSERT INTO sites (code, site_name, registered_at) VALUES (?, ?, ?) RETURNING id"
+      ).run(`ST-${Math.abs(hash(c.name))}`, "parity-stats", iso(from - 100 * H));
+      const siteId = site.lastInsertRowid;
+
+      for (const s of segments) {
+        await db.prepare(
+          "INSERT INTO status_history (site_id, status, started_at, ended_at) VALUES (?, ?, ?, ?)"
+        ).run(siteId, s.status, s.started_at, s.ended_at);
+      }
+      for (const o of ops) {
+        await db.prepare(
+          `INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly,
+                                   occurred_at, received_at, reported_at)
+           VALUES (?, ?, 'entry', '', 'operating', ?, ?, ?, ?)`
+        ).run(siteId, o.start_end, o.is_anomaly, o.occurred_at, o.occurred_at, o.occurred_at);
+      }
+      for (const w of windows) {
+        await db.prepare(
+          `INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours, expires_at, cancelled_at)
+           VALUES (?, 'parity', ?, ?, ?, ?)`
+        ).run(siteId, w.started_at, 4, w.expires_at, w.cancelled_at);
+      }
+
+      [sqlRow] = await db.prepare("SELECT * FROM public.site_stats(?, ?, ?)")
+        .all([siteId], winFrom, winTo);
+
+      // צד ה-JS דרך המסלול האמיתי — loadRangeData רואה את שורות הטרנזקציה
+      const data = await loadRangeData([siteId], { from: winFrom, to: winTo });
+      jsRow = statsFromData(data, siteId, { from: winFrom, to: winTo });
+
+      throw new Rollback();
+    }).catch((e) => { if (!(e instanceof Rollback)) throw e; });
+
+    const before = failures;
+    compare(`statsEdge[${c.name}].operations`,  jsRow.operations,          sqlRow.operations);
+    compare(`statsEdge[${c.name}].errors`,      jsRow.errors,              sqlRow.errors);
+    compare(`statsEdge[${c.name}].errInMaint`,  jsRow.errorsInMaintenance, sqlRow.errors_in_maintenance);
+    compare(`statsEdge[${c.name}].failureRate`, jsRow.failureRate,         sqlRow.failure_rate);
+    // וגם מול הציפייה המוצהרת — כדי שגם JS *וגם* SQL ייתפסו אם שניהם טועים
+    compare(`statsEdge[${c.name}].EXPECT.operations`,  c.expect.operations,            sqlRow.operations);
+    compare(`statsEdge[${c.name}].EXPECT.errors`,      c.expect.errors,                sqlRow.errors);
+    compare(`statsEdge[${c.name}].EXPECT.errInMaint`,  c.expect.errors_in_maintenance, sqlRow.errors_in_maintenance);
+    compare(`statsEdge[${c.name}].EXPECT.failureRate`, c.expect.failure_rate,          sqlRow.failure_rate);
+
+    console.log(`  ${failures === before ? "✓" : "✗"} ${c.name}`);
+  }
+}
+
 // ===== main =====
 const SUITES = {
   uptime: async () => { await parityUptime(); await parityEdgeCases(); },
   flicker: async () => { await parityFlicker(); await parityFlickerEdges(); },
+  stats: async () => { await parityStats(); await parityStatsEdges(); },
+  weighted: async () => { await parityWeighted(); },
 };
 
 (async () => {
