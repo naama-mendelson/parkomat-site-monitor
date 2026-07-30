@@ -149,12 +149,107 @@ This is **not real authentication** — it is one shared code, and it is a place
 Supabase Auth lands. But it is enforced **on the server**: hiding a button in the dashboard is
 not security. If you add a write endpoint, it gets `requireAdmin`.
 
+## Metrics also live in SQL now — and there is a parity gate
+
+`db/functions.postgres.sql` is applied by `db.init()` on **every boot**, after the schema
+and before `security.postgres.sql`. Every function is `CREATE OR REPLACE`, so re-running is
+a no-op; rollback is "revert the file and restart". There is no migration framework and
+none is needed — **the file is the target state.**
+
+| Function | Ports |
+|---|---|
+| `public.site_uptime` | `getUptimeBreakdown` + `availabilityFrom` |
+| `public.site_segments_collapsed` | `collapseNoCommFlicker` |
+| `public.site_stats` | `statsFromData` |
+
+**Four rules every function here follows. Breaking any of them is a bug:**
+
+1. **Filter lexically on TEXT; cast only for arithmetic, only after filtering.** Dates are
+   TEXT ISO-8601 (deliberate — see schema). `WHERE started_at < p_to` uses
+   `idx_status_hist_site`; `WHERE started_at::timestamptz < …` casts the *column*, kills the
+   index, and turns a range scan into a seq scan on the biggest table.
+2. **Take a site-id array, return a row per site.** `NULL` means all sites — same convention
+   as `loadRangeData`, and for the same reason: otherwise the caller must fetch ids first, a
+   whole round trip in series. A per-site function called in a loop rebuilds the N+1 that was
+   deleted from `queries.js`.
+3. **`::double precision` on every returned number.** `ROUND(x,2)` returns NUMERIC and the
+   `pg` driver returns NUMERIC **as a string**; the dashboard does arithmetic on these, so a
+   string silently turns addition into concatenation.
+4. **No `auth.*` inside a metric function.** `auth.uid()` exists only on Supabase. Scoping
+   belongs to RLS at the table level, not to the computation.
+
+**`npm run parity` is the adoption gate.** It compares JS against SQL on real data before a
+port is trusted: 13 sites × week/month/year plus 29 seeded edge cases, currently 939
+comparisons / 0 differences. It uses `db.js`'s own pool on purpose (so `keepAlive` matches by
+construction, not by a copy that drifts), and it compares the *rounded, user-visible* value —
+JS accumulates whole milliseconds while Postgres accumulates seconds as double, so bit
+equality is the wrong bar.
+
+Two things the harness taught us, both worth keeping in mind:
+
+- **Production parity and seeded edge cases catch different bugs.** Removing the flicker
+  fold's look-back was caught by both. Removing `ORDER BY` from its `LAG` window was caught
+  by production only — all 7 edge cases passed, because each case has too few segments for
+  arbitrary ordering to change the answer.
+- **Mutate before you trust a pass.** Every port here was run against deliberately broken
+  versions first. One of those mutations was itself partial (`false AND EXISTS` disabled only
+  one of two branches) and the tests correctly passed — the bug was in the mutation.
+
+## `events` is the event contract, not the transport
+
+Every semantic event is written to `events` by `bus.publish()` — one place, not the eight
+scattered `bus.emit` calls it replaced. Same payload the SSE stream sends.
+
+- **Replay:** `GET /api/stream/since?after=<id>`. SSE alone cannot do this — a message sent
+  to a disconnected tab is simply gone.
+- **Two readers, one contract:** Supabase Realtime can subscribe to inserts here, and the
+  existing SSE reads the same table. Switching is changing a reader, not a rewrite.
+- **Order matters in `publish`:** emit first, persist second — SSE must not wait on an INSERT.
+  ⚠️ Consequence: if the INSERT fails the event is broadcast but not recorded, leaving a hole
+  in replay. Deliberate — an event is derived data, and failing an ingestion message over it
+  would be worse. The audible alert derives from state diffing, not events, precisely so it
+  survives such holes.
+- `site_id` is `ON DELETE SET NULL` with `site_code` kept alongside: deleting a site *emits*
+  an event, and a cascading FK would delete the announcement along with the site.
+- Retention is 7 days, pruned by the daily job. Real history lives in `status_history` and
+  `operations` and does not depend on this table.
+
+## Identity is abstracted; nothing is enforced yet
+
+`app.current_actor()` reads the `sub` claim from `request.jwt.claims`, falling back to the
+`app.user_id` session GUC. Both are the same mechanism — Supabase's `auth.uid()` *is* a
+`current_setting('request.jwt.claims')` read that PostgREST populates. Twenty lines of
+indirection is what lets the same policy file run on plain Postgres.
+
+**Never write `auth.uid()` in a policy or a function.** Go through the helper.
+
+`app.current_role()` returns the *application* role (operator/supervisor/executive), read
+from a `parkomat_role` claim — **not** `role`, which Supabase uses for the Postgres role.
+
+RLS was **already enabled** on every table by Supabase (`rls_auto_enable`); what was missing
+were policies, and a table with RLS and no policy returns zero rows. Policies now grant
+`SELECT` to `authenticated`. The server is unaffected because `postgres` has
+`rolbypassrls = true` — verify that before touching policies, or ingestion stops instantly.
+
+**`settings` has no policy on purpose** — it holds the admin-code hash. If the dashboard ever
+needs a value from it, expose that one key through a `STABLE` function; do not add a policy to
+the table.
+
+`auth/provider.js` follows the `ai/provider.js` pattern: two providers, chosen by
+`AUTH_PROVIDER`, uniform interface. **The seam is token verification, not sign-in** — under
+Supabase, sign-in happens in the browser against GoTrue and the server never sees a password;
+self-hosted it must be a server endpoint. That asymmetry is real, is tested, and is not to be
+"fixed" by adding `signIn` to one provider only. 27 tests run every case against **both**
+providers so the dormant path cannot rot.
+
 ## Do not reintroduce N+1
 
 The executive/supervisor views once ran ~100 queries and took 3.5s. They now run a **fixed 9
 queries** regardless of site count, via a batch layer in `queries.js`:
 
 - `loadRangeData(siteIds, {from,to})` — 3 queries, loads ops/segments/windows into Maps.
+  Still used by supervisor/executive/analytics; **no longer used by `GET /api/sites`**, which
+  now computes in Postgres via `site_stats` / `site_uptime`.
 - `getAllSitesGlobals(siteIds)` — 5 queries (`DISTINCT ON`, CTE).
 - Then pure in-memory functions: `statsFromData`, `uptimeFromData`, `directionFromData`,
   `heatmapFromData`.
