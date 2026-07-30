@@ -187,7 +187,7 @@ async function identifyActor(req, res, next) {
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
   if (token) {
-    const actor = auth.verifyToken(token);
+    const actor = await auth.verifyToken(token);
     if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
     req.actor = { userId: actor.userId, name: actor.email || actor.userId,
                   role: actor.role, trust: "token" };

@@ -45,6 +45,7 @@ if (!active) {
 }
 
 module.exports = {
+  // async: ספק Supabase מאמת ES256 מול מפתח ציבורי שנמשך מ-JWKS.
   verifyToken: (token) => active.verifyToken(token),
   isConfigured: () => active.isConfigured(),
   info: () => ({ provider: active.name, configured: active.isConfigured() }),

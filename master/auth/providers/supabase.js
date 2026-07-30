@@ -9,37 +9,56 @@
 //
 // זו האסימטריה שקובעת איפה נמצא ה-seam: התחברות אינה סימטרית בין המצבים
 // (במצב עצמי היא חייבת להיות נקודת קצה בשרת), ולכן ה-seam הוא **אימות
-// אסימון** — הפעולה שכן נדרשת בשרת בשני המצבים, עבור נתיב ה-AI וכל כתיבה
-// שתישאר.
+// אסימון** — הפעולה שכן נדרשת בשרת בשני המצבים.
 //
-// SUPABASE_JWT_SECRET הוא הסוד שבו GoTrue חותם (Project Settings → API →
-// JWT Secret). בלעדיו הספק אינו מוגדר, ואימות מחזיר null — כלומר "אין
-// זהות", ולא "כל אחד מאומת". נכשל סגור.
+// ============================================================
+// ES256 ולא HS256 — וזה לא בחירה, זה מה שהפרויקט חותם
+// ============================================================
+// הקובץ הזה אימת קודם HS256 מול SUPABASE_JWT_SECRET. בדיקה מול הפרויקט
+// האמיתי הראתה שהוא חותם ב-**ES256** ומפרסם מפתח ציבורי ב-JWKS:
+//
+//     GET <SUPABASE_URL>/auth/v1/.well-known/jwks.json
+//     → { keys: [{ alg: "ES256", kty: "EC", crv: "P-256", kid: … }] }
+//
+// כלומר הגרסה הקודמת לא הייתה מאמתת שום אסימון אמיתי, אף פעם — היא הייתה
+// "עוברת בדיקות" מול אסימונים שהבדיקה עצמה חתמה, וזה בדיוק סוג הכשל
+// שבדיקות חוזה נועדו למנוע וכאן דווקא הסתירו.
+//
+// תוצאת משנה חשובה: **אין סוד לאחסן.** אימות אסימטרי משתמש במפתח ציבורי,
+// ולכן SUPABASE_JWT_SECRET אינו נדרש — וגם לא מפתח ה-Secret של הפרויקט.
+// ההגדרה היחידה הנחוצה היא SUPABASE_URL.
 
-const { verify } = require("../jwt");
+const { verifyEs256 } = require("../jwt");
+const jwks = require("../jwks");
 
-const SECRET = process.env.SUPABASE_JWT_SECRET || "";
-
-// המנפיק של Supabase. אם הוגדר — נאכף, כדי שאסימון תקין של פרויקט *אחר*
-// לא ייחשב שלנו. אופציונלי כי הוא נגזר מכתובת הפרויקט ולא כולם מגדירים.
-const ISSUER = process.env.SUPABASE_JWT_ISSUER || null;
+// המנפיק של Supabase נגזר מכתובת הפרויקט: <url>/auth/v1. נאכף כשאפשר, כדי
+// שאסימון תקין של פרויקט *אחר* לא ייחשב שלנו.
+function expectedIssuer() {
+  const base = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  return base ? `${base}/auth/v1` : null;
+}
 
 function isConfigured() {
-  return SECRET.length > 0;
+  return jwks.isConfigured();
 }
 
 /**
- * @returns {{userId: string, email: string|null, role: string}|null}
+ * @returns {Promise<{userId: string, email: string|null, role: string}|null>}
+ *
+ * **אסינכרוני**, בשונה מהגרסה הקודמת: אימות אסימטרי מחייב את המפתח
+ * הציבורי, והוא נמשך מהרשת (וממוטמן). הקוראים חייבים await.
  *
  * התפקיד היישומי נקרא מ-parkomat_role ולא מ-role: ב-Supabase התביעה 'role'
  * מחזיקה את תפקיד ה-Postgres ('authenticated'), וזו שאלה אחרת לגמרי —
- * "האם התחברת" ולא "מה מותר לך". אותה הבחנה בדיוק קיימת ב-app.current_role()
+ * "האם התחברת" ולא "מה מותר לך". אותה הבחנה קיימת ב-app.current_role()
  * בצד ה-SQL, וההתאמה ביניהם אינה מקרית.
  */
-function verifyToken(token) {
+async function verifyToken(token) {
   if (!isConfigured()) return null;
 
-  const claims = verify(token, SECRET, { issuer: ISSUER });
+  const claims = await verifyEs256(token, (kid) => jwks.getKey(kid), {
+    issuer: expectedIssuer(),
+  });
   if (!claims || typeof claims.sub !== "string" || claims.sub.length === 0) return null;
 
   return {
@@ -51,4 +70,4 @@ function verifyToken(token) {
   };
 }
 
-module.exports = { name: "supabase", isConfigured, verifyToken };
+module.exports = { name: "supabase", isConfigured, verifyToken, expectedIssuer };

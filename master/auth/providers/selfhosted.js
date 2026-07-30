@@ -35,9 +35,12 @@ function isConfigured() {
  * אותה צורת החזרה בדיוק כמו ספק Supabase. זו כל הנקודה — הקורא אינו יודע
  * מי אימת.
  *
- * @returns {{userId: string, email: string|null, role: string}|null}
+ * @returns {Promise<{userId: string, email: string|null, role: string}|null>}
+ *
+ * **אסינכרוני** אף שהאימות כאן סינכרוני לגמרי: החוזה חייב להיות זהה לספק
+ * Supabase, שם המפתח הציבורי נמשך מהרשת. ממשק שמשתנה בין המצבים אינו seam.
  */
-function verifyToken(token) {
+async function verifyToken(token) {
   if (!isConfigured()) return null;
 
   const claims = verify(token, SECRET, { issuer: ISSUER });
