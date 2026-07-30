@@ -89,6 +89,106 @@ COMMENT ON FUNCTION app.current_role() IS
   'התפקיד היישומי (בקר/מנהל/מנכ"ל), לא תפקיד ה-Postgres. ברירת מחדל anonymous.';
 
 -- ============================================================
+-- הגבלת דומיין — רק מיילים של החברה יכולים להיכנס
+-- ============================================================
+-- ============================================================
+-- למה טריגר על בסיס הנתונים, ולא בדיקה בנתיב ההזמנה
+-- ============================================================
+-- יש **ארבע** דרכים שמשתמש נוצר בהן, ובדיקה בנתיב ההזמנה שלנו חוסמת רק
+-- אחת מהן:
+--   1. POST /api/users/invite — הנתיב שלנו.
+--   2. הרשמה עצמית ב-/auth/v1/signup — disable_signup הוא false בפרויקט.
+--   3. **התחברות עם Google** — כל בעל חשבון Google נוצר כמשתמש חדש בפעם
+--      הראשונה. זו הדרך המסוכנת: בלי הגבלה, כל אדם בעולם עם חשבון Google
+--      נכנס, מקבל authenticated, ורואה את כל נתוני האתרים.
+--   4. ה-Admin API.
+--
+-- טריגר לפני INSERT על auth.users חוסם את כל הארבע, כולל דרכים שטרם
+-- קיימות. זה המקום היחיד שאי אפשר לעקוף.
+--
+-- ============================================================
+-- הפרדה שמשרתת את דלת היציאה
+-- ============================================================
+-- **הלוגיקה** יושבת ב-app (סכמה שלנו) ולכן היא ניידת ונוסעת ב-pg_dump.
+-- **הקישור** הוא טריגר על auth.users — סכמה של Supabase, ולכן הוא *אינו*
+-- נוסע ב-dump. במעבר להתקנה עצמית צריך ליצור מחדש את הטריגר בלבד, ולא
+-- לכתוב מחדש את הכלל. זו גם הסיבה שזה טריגר ואינו מפתח זר: FK ל-auth.users
+-- אסור כאן (ראה CLAUDE.md), טריגר הוא קישור הפיך.
+--
+-- ⚠️ ל-pg_dump צריך **גם** את הסכמה app:
+--     pg_dump --schema=public --schema=app
+
+-- הרשימה. **שני הדומיינים מכוונים**: בפועל שני מיילים שונים בשימוש —
+-- parkomat.co.il ו-parkomat.com — והגבלה לאחד מהם הייתה נועלת בחוץ את
+-- הבעלים של השני. לשינוי: עורכים כאן ומפעילים מחדש (הקובץ נטען בכל עלייה).
+CREATE OR REPLACE FUNCTION app.allowed_email_domains()
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT ARRAY['parkomat.co.il', 'parkomat.com'];
+$$;
+
+-- ============================================================
+-- למה SECURITY DEFINER, ובלעדיו הטריגר חוסם את *כולם*
+-- ============================================================
+-- GoTrue מתחבר לבסיס הנתונים כ-supabase_auth_admin, ולסכמה app יש USAGE
+-- רק ל-postgres ול-authenticated. בלי SECURITY DEFINER גוף הטריגר נכשל על
+-- permission denied בכל יצירת משתמש — כולל מדומיין מאושר. התסמין הוא
+-- "Database error creating new user" בלי שום רמז לסיבה.
+--
+-- ⚠️ זה נתפס רק כי הבדיקה כללה גם מקרה שאמור **לעבור**: חסימת gmail
+-- "הצליחה" מהסיבה הלא נכונה. בדיקה שלילית בלבד הייתה מדווחת ירוק ונועלת
+-- את כל החברה בחוץ.
+--
+-- הבחירה היא SECURITY DEFINER ולא GRANT ל-supabase_auth_admin, משתי סיבות:
+-- לא להרחיב לרול של Supabase גישה לכל הסכמה app, ולא לקבע שם של רול
+-- ספציפי ל-Supabase בקוד שלנו — בהתקנה עצמית הרול הזה אינו קיים.
+--
+-- search_path מקובע: חובה ב-SECURITY DEFINER, אחרת מי שיכול ליצור אובייקט
+-- בסכמה קודמת בנתיב יכול להחליף את split_part ולהריץ קוד כ-postgres.
+CREATE OR REPLACE FUNCTION app.enforce_email_domain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, pg_catalog
+AS $$
+DECLARE
+  domain text;
+BEGIN
+  -- אין אימייל (למשל התחברות טלפונית) — לא חוסמים. הכלל הוא על דומיינים,
+  -- ולא "חייב אימייל".
+  IF NEW.email IS NULL OR NEW.email = '' THEN
+    RETURN NEW;
+  END IF;
+
+  -- lower כי דומיינים אינם תלויי-רישיות, ומשתמש שיקליד @Parkomat.com אינו
+  -- אמור להיחסם.
+  domain := lower(split_part(NEW.email, '@', 2));
+
+  IF NOT (domain = ANY (app.allowed_email_domains())) THEN
+    -- ההודעה מגיעה למשתמש דרך GoTrue, ולכן היא מנוסחת אליו ולא ללוג.
+    RAISE EXCEPTION 'רק כתובות דואר של החברה יכולות להתחבר (%)',
+      array_to_string(app.allowed_email_domains(), ', ')
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- BEFORE INSERT בלבד: משתמשים **קיימים** אינם נבדקים ואינם נמחקים. שינוי
+-- הרשימה בעתיד לא יינעל אף אחד שכבר בפנים — הוא רק ימנע חדשים.
+DROP TRIGGER IF EXISTS enforce_email_domain ON auth.users;
+CREATE TRIGGER enforce_email_domain
+  BEFORE INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION app.enforce_email_domain();
+
+COMMENT ON FUNCTION app.enforce_email_domain() IS
+  'חוסם יצירת משתמש שאינו מדומיין מאושר. חל על כל מסלולי היצירה — הרשמה, '
+  'Google OAuth, Admin API והנתיב שלנו. הלוגיקה ניידת; הטריגר על auth.users אינו.';
+
+-- ============================================================
 -- תפקיד authenticated — נוצר אם חסר
 -- ============================================================
 -- Supabase יוצר anon/authenticated/service_role בעצמו. Postgres רגיל לא,

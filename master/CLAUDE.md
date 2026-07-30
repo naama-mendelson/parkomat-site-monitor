@@ -235,6 +235,35 @@ were policies, and a table with RLS and no policy returns zero rows. Policies no
 needs a value from it, expose that one key through a `STABLE` function; do not add a policy to
 the table.
 
+## Only company email addresses can be created
+
+A `BEFORE INSERT` trigger on `auth.users` calls `app.enforce_email_domain()` and rejects any
+address outside `app.allowed_email_domains()`. **Two domains are allowed on purpose** —
+`parkomat.co.il` and `parkomat.com` are both in real use, and allowing only one would have
+locked out the owner of the other. To change the list, edit the array in
+`db/security.postgres.sql` and restart; the file is the target state.
+
+It is a **database** trigger and not a check in `POST /api/users/invite`, because there are
+four ways a user gets created and the invite route is only one of them. The one that matters:
+**Google sign-in creates a user on first login**, so without this trigger any Google account
+on earth would become `authenticated` and see every site. Self-signup (`disable_signup` is
+`false`) and the Admin API are the other two.
+
+- **`SECURITY DEFINER` is load-bearing.** GoTrue connects as `supabase_auth_admin`, which has
+  no `USAGE` on `app`. Without it the trigger body fails on permission denied for *every*
+  insert — including allowed domains — surfacing only as `Database error creating new user`.
+  Chosen over granting `supabase_auth_admin` access to `app` so no Supabase-specific role name
+  is baked into our SQL. `search_path` is pinned, as it must be for any `SECURITY DEFINER`.
+- **`BEFORE INSERT` only.** Existing users are never re-checked, so narrowing the list later
+  cannot lock out somebody already in.
+- **Portability:** the logic sits in `app` and travels in `pg_dump`; the trigger binds to
+  `auth.users` and does not. Recreating one trigger is the migration cost — and it is a trigger
+  rather than an FK because an FK into `auth.users` is forbidden (root `CLAUDE.md`, rule 1).
+  Note `pg_dump` needs `--schema=public --schema=app`.
+- ⚠️ **Test the allowed case, not just the blocked one.** The first version of this blocked
+  everybody, and the gmail rejection still "passed" — from a permission error, not the rule.
+  A negative-only test would have reported green.
+
 `auth/provider.js` follows the `ai/provider.js` pattern: two providers, chosen by
 `AUTH_PROVIDER`, uniform interface. **The seam is token verification, not sign-in** — under
 Supabase, sign-in happens in the browser against GoTrue and the server never sees a password;
