@@ -44,6 +44,73 @@ export async function signIn(email, password) {
   return { user: mapUser(data.user), error: null };
 }
 
+/**
+ * אילו ספקי התחברות מופעלים בפרויקט.
+ *
+ * ============================================================
+ * למה שואלים במקום לתפוס שגיאה
+ * ============================================================
+ * signInWithOAuth **מנווט את הדפדפן** ולא מחזיר שגיאה כשהספק מושבת. הכשל
+ * קורה בצד השרת *אחרי* הניווט, ולכן המשתמש נוחת על עמוד שגיאה ריק של
+ * הדפדפן — נבדק בפועל: chrome-error://chromewebdata. שום טיפול בשגיאה בקוד
+ * הזה לא היה מוצג, כי הדף שהיה אמור להציג אותו כבר לא קיים.
+ *
+ * לכן לא מציעים כפתור שאינו יכול לעבוד. נקודת הקצה settings היא ציבורית
+ * (מפתח publishable בלבד), ולכן זו שאלה זולה. בונוס: ברגע שמפעילים Google
+ * ב-Supabase, הכפתור מופיע לבד — בלי שינוי קוד ובלי פריסה.
+ */
+export async function enabledProviders() {
+  if (!isSupabaseConfigured) return { email: true, google: false };
+
+  try {
+    const url = import.meta.env.VITE_SUPABASE_URL;
+    const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const res = await fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } });
+    if (!res.ok) throw new Error(String(res.status));
+    const s = await res.json();
+    return { email: Boolean(s.external?.email), google: Boolean(s.external?.google) };
+  } catch {
+    // נכשל → מציגים סיסמה בלבד. עדיף מסך שעובד חלקית מכפתור שמוביל למסך
+    // שגיאה ריק.
+    return { email: true, google: false };
+  }
+}
+
+/**
+ * התחברות עם Google.
+ *
+ * ============================================================
+ * למה אין כאן user בהחזרה
+ * ============================================================
+ * הפונקציה הזו **מנווטת את הדפדפן** ל-Google ולא מחזירה משתמש. הזהות
+ * מגיעה אחרי החזרה, דרך onAuthChange — וזו הסיבה שה-hook מאזין ולא רק
+ * קורא פעם אחת בעלייה. מי שיצפה כאן ל-{ user } יקבל undefined ולא יבין למה.
+ *
+ * redirectTo הוא ה-origin הנוכחי: כך אותו קוד עובד בפיתוח (5173) ובפרודקשן
+ * בלי משתנה סביבה נוסף. ⚠️ הכתובת חייבת להיות רשומה ב-Supabase תחת
+ * Authentication → URL Configuration → Redirect URLs, אחרת Google יחזיר
+ * שגיאת redirect_uri_mismatch.
+ */
+export async function signInWithGoogle() {
+  if (!isSupabaseConfigured) {
+    return { error: "האימות אינו מוגדר בדשבורד (חסר VITE_SUPABASE_URL)" };
+  }
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin },
+  });
+
+  if (!error) return { error: null };
+
+  // ספק שאינו מופעל בפרויקט מחזיר שגיאה גנרית. מתרגמים אותה למשהו
+  // שאומר *מה לעשות*, כי "Unsupported provider" לא מרמז על הפעולה הנדרשת.
+  const friendly = /provider is not enabled|unsupported provider/i.test(error.message)
+    ? "התחברות עם Google אינה מופעלת בפרויקט Supabase. יש להפעיל אותה תחת Authentication → Providers."
+    : error.message;
+  return { error: friendly };
+}
+
 export async function signOut() {
   if (!isSupabaseConfigured) return;
   await supabase.auth.signOut();

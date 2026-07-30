@@ -43,7 +43,14 @@ export const supabase = isSupabaseConfigured
         // זה מה שמונע התנתקות באמצע משמרת.
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: false,   // אין כאן זרימות OAuth/magic-link
+        // ============================================================
+        // חייב להיות true מרגע שיש התחברות עם Google
+        // ============================================================
+        // היה false כשהייתה רק סיסמה. ב-OAuth הזרימה היא: יציאה ל-Google,
+        // חזרה לכאן עם האסימון ב-fragment של ה-URL. עם false ה-SDK מתעלם
+        // מה-fragment — כלומר החזרה "מצליחה", ה-URL נראה תקין, ואין session.
+        // כשל שקט קלאסי: אין שגיאה, פשוט חוזרים למסך ההתחברות.
+        detectSessionInUrl: true,
       },
     })
   : null;
