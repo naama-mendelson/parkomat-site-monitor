@@ -1749,6 +1749,38 @@ async function loadRangeData(siteIds, { from, to }) {
     return m;
   };
 
+  // ============================================================
+  // מיון כרונולוגי — collapseNoCommFlicker הוא קיפול תלוי-סדר
+  // ============================================================
+  // הקיפול משווה כל מקטע ל*מצב הקודם שנצפה*, כלומר המשמעות שלו מוגדרת רק
+  // על קלט ממוין. השאילתה שמעליו אינה ממוינת, ו-Postgres אינו מבטיח סדר
+  // בלי ORDER BY — נמדד בפועל: **כל 13 האתרים** מחזירים שורות בסדר
+  // לא-כרונולוגי (heap order). כלומר "המצב הקודם" היה בפועל "השורה
+  // שהמנוע החזיר לפני זו".
+  //
+  // למה כאן ולא ORDER BY בשאילתה: נמדד עם EXPLAIN ANALYZE על 1,323 שורות —
+  // ORDER BY גורם למתכנן לזנוח את ה-Seq Scan לטובת idx_status_hist_site
+  // כדי להימנע ממיון, ומשלם על כך בגישה אקראית לערמה: 0.52ms → 6.12ms
+  // ו-35 → 391 buffers. מיון של 837 שורות בזיכרון עולה 0.22ms ואינו נוגע
+  // בתוכנית כלל. אותה דטרמיניזם, שמינית מהמחיר.
+  //
+  // רק segments מקבל מיון: הוא היחיד שמוזן לקיפול תלוי-סדר. ops ו-windows
+  // נצרכים באגרגציה בלבד, ושם הסדר אינו משנה.
+  // id הוא שובר-השוויון, ולא קוסמטיקה: קיימים מקטעים באותה שנייה בדיוק
+  // (נמדד — אתר 2439 ב-2026-07-22T11:57:05: מקטע no_comm באורך אפס לצד
+  // מקטע operating). מיון JS הוא יציב, ולכן שוויון היה משמר את סדר ה-heap
+  // — כלומר בדיוק את האי-דטרמיניזם שהמיון בא להסיר. id הוא SERIAL, ולכן
+  // הוא סדר ההכנסה: המקטע שנרשם ראשון גם ממוין ראשון.
+  const sortByStartedAt = (m) => {
+    for (const segs of m.values()) {
+      segs.sort((a, b) =>
+        a.started_at < b.started_at ? -1
+        : a.started_at > b.started_at ? 1
+        : (a.id ?? 0) - (b.id ?? 0));
+    }
+    return m;
+  };
+
   const [ops, segments, windows] = await Promise.all([
     // כל הפעולות בטווח
     db.prepare(
@@ -1760,8 +1792,9 @@ async function loadRangeData(siteIds, { from, to }) {
     // כל מקטעי המצב שחופפים לטווח.
     // '>= from' ולא '> from' (כמו במקור) — זה superset, ומקטע באורך אפס
     // תורם 0ms ממילא. עדיף להביא יותר מדי מלפספס מקטע קצה.
+    // id נשלף כדי לשמש שובר-שוויון למיון — ראה sortByStartedAt.
     db.prepare(
-      `SELECT site_id, status, started_at, ended_at
+      `SELECT id, site_id, status, started_at, ended_at
        FROM status_history
        WHERE ${filter} AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
     ).all(...ids, to, from),
@@ -1774,7 +1807,7 @@ async function loadRangeData(siteIds, { from, to }) {
     ).all(...ids, to, from),
   ]);
 
-  return { ops: group(ops), segments: group(segments), windows: group(windows) };
+  return { ops: group(ops), segments: sortByStartedAt(group(segments)), windows: group(windows) };
 }
 
 // האם ברגע ts האתר היה בתחזוקה — גרסת הזיכרון של wasInMaintenance.
