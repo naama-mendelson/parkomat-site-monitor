@@ -18,6 +18,9 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         updateSite, deleteSite } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
+// שכבת האימות. מאחורי seam — ראה auth/provider.js. היום היא מאמתת בלבד
+// (verifyToken) ואינה מנפיקה: ההנפקה במצב Supabase קורית בדפדפן.
+const auth = require("../auth/provider");
 const { cache } = require("./cache");
 const { resolvePeriod } = require("./periods");
 const { runChat, isChatConfigured } = require("../ai/chat");
@@ -154,6 +157,49 @@ function adminRateLimit(req, res, next) {
     }
   }
   next();
+}
+
+// ============================================================
+// requireSiteAccess — "כל מי שיש לו גישה לאתר"
+// ============================================================
+// החלטת מוצר: הפעלת תחזוקה וביטולה פתוחות לכל מי שיש לו גישה לאתר, ולא רק
+// למנהל. מכיוון שכל המשתמשים רואים את כל האתרים (ההחלטה השנייה), "גישה
+// לאתר" = **משתמש מאומת**.
+//
+// זה מהדק לעומת מה שהיה — הנתיבים היו פתוחים לכל קורא HTTP אנונימי — ומרפה
+// לעומת requireAdmin שהונח כאן קודם, שהיה מהדק יותר מהכוונה.
+//
+// שני מסלולים מתקבלים, ולא מטעמי נוחות:
+//   1. אסימון תקין (Authorization: Bearer …) — זה היעד.
+//   2. קוד המנהל — **המסלול היחיד שעובד היום**, כי אין עדיין משתמשים
+//      במערכת ואף אחד לא יכול להנפיק אסימון. בלעדיו התכונה הייתה מושבתת
+//      לחלוטין עד שהאימות ייאכף.
+//
+// ברגע שיהיו משתמשים, מסלול 1 נהיה החי ומסלול 2 יכול להיסגר בשורה אחת.
+//
+// req.actor נמלא כדי ש-set_by_name יבוא מהזהות ולא מטקסט חופשי שהלקוח
+// שולח. זה ההבדל בין "מי הצהיר שהוא הפעיל" ל"מי הפעיל".
+async function requireSiteAccess(req, res, next) {
+  const header = req.get("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (token) {
+    const actor = auth.verifyToken(token);
+    if (actor) {
+      req.actor = { userId: actor.userId, name: actor.email || actor.userId, role: actor.role };
+      return next();
+    }
+    // אסימון שנשלח ונפסל הוא כשל מפורש, ולא הזמנה לנסות את קוד המנהל.
+    return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+  }
+
+  const code = req.get("x-admin-code") || req.body?.adminCode;
+  if (await verifyAdminCode(code)) {
+    req.actor = { userId: null, name: null, role: "admin" };
+    return next();
+  }
+
+  return res.status(401).json({ error: "נדרשת הזדהות" });
 }
 
 // POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
@@ -463,7 +509,7 @@ app.get("/api/sites/:code/stats", cache(), async (req, res) => {
 const MAX_MAINTENANCE_HOURS = 720;   // 30 יום — מעבר לזה זו כבר לא "תחזוקה"
 
 // ============================================================
-// POST /api/sites/:code/maintenance — מוגן ב-requireAdmin
+// POST /api/sites/:code/maintenance — מוגן ב-requireSiteAccess
 // ============================================================
 // היה **פתוח לחלוטין**, וזה היה החור החמור ביותר ב-API. תחזוקה אינה
 // תווית: היא מדכאת רישום תקלות לגמרי (הודעת error בזמן תחזוקה נזרקת
@@ -471,11 +517,14 @@ const MAX_MAINTENANCE_HOURS = 720;   // 30 יום — מעבר לזה זו כב�
 // ממכנה הזמינות. כלומר כל מי שהגיע ל-API יכול היה להשתיק אתר אמיתי עד
 // 30 יום בקריאה אחת — והמערכת הייתה מציגה אותו כתקין.
 //
-// ⚠️ שינוי התנהגות: הדשבורד שולח מעכשיו את קוד המנהל בקריאות האלה
-// (adminHeaders ב-services/api.js). מי שלא נכנס למצב ניהול יקבל 401
-// במקום להפעיל תחזוקה. זה מכוון — פעולה שמשתיקה אתר לחודש היא פעולת
-// ניהול.
-app.post("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
+// ההגנה היא **הזדהות ולא הרשאת מנהל**, לפי החלטת המוצר: מי שיש לו גישה
+// לאתר מוסמך להפעיל תחזוקה. ראה requireSiteAccess.
+//
+// ⚠️ מה שההחלטה הזו אומרת בפועל, ושווה להכיר: כל משתמש מאומת יכול להשתיק
+// כל אתר עד 30 יום. מה שמאזן את זה הוא התיעוד — set_by_name נרשם, ומעכשיו
+// הוא נלקח מהזהות (req.actor) ולא מטקסט חופשי שהלקוח שולח. כלומר הפעולה
+// אינה חסומה אך היא **מיוחסת**.
+app.post("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -484,7 +533,15 @@ app.post("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
 
     const { name, duration_hours, reason } = req.body || {};
 
-    if (!name || typeof name !== "string") {
+    // ============================================================
+    // מי הפעיל — מהזהות אם יש, ומהגוף רק כשאין
+    // ============================================================
+    // תחזוקה פתוחה לכל מאומת (החלטת מוצר), ולכן התיעוד הוא מה שמאזן אותה.
+    // אסימון מביא שם מאומת; טקסט חופשי מהלקוח הוא הצהרה בלבד, ולכן הוא
+    // נדחק למקום השני. כשהאימות ייאכף לכולם, אפשר להפסיק לקבל אותו בכלל.
+    const setBy = req.actor?.name || name;
+
+    if (!setBy || typeof setBy !== "string") {
       return res.status(400).json({ error: "חסר שם (name)" });
     }
     // Number.isFinite ולא !duration_hours: Infinity עובר את בדיקת ה-falsy
@@ -495,7 +552,8 @@ app.post("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
       });
     }
 
-    const result = await startMaintenance(site.id, name, duration_hours, reason || null);
+    const result = await startMaintenance(
+      site.id, setBy, duration_hours, reason || null, req.actor?.role || null);
 
     // חובה לשדר: תחזוקה משנה את המצב האפקטיבי של האתר (applyMaintenanceStatus),
     // ובלי האירוע הזה המטמון לא מתנקה ושאר הדשבורדים לא יודעים.
@@ -512,10 +570,10 @@ app.post("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה. מוגן גם הוא:
-// ביטול תחזוקה מחזיר אתר לספירת התקלות ולמכנה הזמינות, ולכן הוא משנה
+// DELETE /api/sites/:code/maintenance — ביטול תחזוקה פעילה. אותה הגנה
+// בדיוק: ביטול מחזיר אתר לספירת התקלות ולמכנה הזמינות, ולכן הוא משנה
 // מספרים בדוחות בדיוק כמו ההפעלה.
-app.delete("/api/sites/:code/maintenance", requireAdmin, async (req, res) => {
+app.delete("/api/sites/:code/maintenance", requireSiteAccess, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {

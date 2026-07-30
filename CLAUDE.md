@@ -37,8 +37,8 @@ escape path exists in the repo, written and tested but inactive.
 | A — metrics into SQL | **Built.** `db/functions.postgres.sql`: `site_uptime`, `site_segments_collapsed`, `site_stats`. Verified by `tools/parity.js` (939 comparisons, 0 differences). |
 | A' — first live adoption | **Built.** `getAllSitesWithMetrics` (`GET /api/sites`) computes in Postgres. 203ms → 109ms, 2,200 rows over the wire → 26. |
 | B — `events` table | **Built.** One row per semantic event, `bus.publish`, replay via `GET /api/stream/since?after=<id>`, 7-day retention. |
-| C — identity + RLS | **Partly.** `app.current_actor()` / `app.current_role()` exist; RLS policies grant read to `authenticated`; `auth/provider.js` has two tested providers. **Nothing is enforced yet** — no route requires a token. |
-| D — dashboard queries directly | **Not built.** Blocked on product decisions, not code (see below). |
+| C — identity + RLS | **Mostly.** `app.current_actor()` / `app.current_role()` exist; RLS grants read to `authenticated`; `auth/provider.js` has two tested providers. Maintenance is the first route behind `requireSiteAccess`. No route *requires* a token yet, because nothing can issue one. |
+| D — dashboard queries directly | **Not built.** Access decisions are now settled (see below); blocked on Supabase credentials and on at least one user existing. |
 | E — delete the read API | **Not built.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
 
@@ -51,12 +51,37 @@ still used by those paths *and* they are the reference side of the parity harnes
 layer's only real test coverage — 31 of 141 tests) and `computeInsights` (224 lines,
 presentation thresholds rather than a metric definition).
 
-**What D is actually blocked on** — two product decisions, neither derivable from the code:
-does an operator see all sites or a subset (that decides whether a user↔site table is
-needed), and who may trigger maintenance. Until those are answered, RLS deliberately stays
-at "authenticated may read everything" rather than encoding a guess and locking it in with
-tests. There are **no users at all** today — the dashboard role is `useState("operator")`
-in the browser.
+## The two access decisions — settled
+
+Both were product decisions, not code questions. They are now answered, and the answers are
+recorded here because they are cheap to hold and expensive to re-derive:
+
+1. **Every user sees every site.** No subsets, no user↔site association table. RLS is
+   therefore `USING (true)` for `authenticated` — that is the exact expression of the rule,
+   not a shortcut standing in for something finer.
+2. **Whoever has access to a site may trigger maintenance.** Combined with (1), "access to
+   a site" means **any authenticated user** — not admin-only.
+
+What (2) means in practice, and it is worth knowing: any authenticated user can silence any
+site for up to 30 days, and maintenance suppresses fault logging entirely while excluding
+the site from the availability denominator. What balances that is **attribution, not
+prevention** — `set_by_name` is recorded, and it now comes from the verified identity
+(`req.actor`) rather than free text the client supplies. The action is not blocked; it is
+traceable.
+
+`requireSiteAccess` (in `api/routes.js`) accepts a valid bearer token **or** the admin code.
+The token path is the target; the admin-code path is the only one that works today, because
+there are no users yet and nothing can issue a token. When users exist, the second path can
+be closed in one line. A token that is *sent and rejected* is a hard 401 and deliberately
+does **not** fall back to the admin code.
+
+**What D is still blocked on — credentials, not decisions.** The dashboard cannot query
+Supabase directly until `SUPABASE_URL`, the anon key, and `SUPABASE_JWT_SECRET` exist in the
+environment; only `DATABASE_URL` is configured today. And with RLS granting reads to
+`authenticated` only, a dashboard holding the anon key alone would read **nothing** — so
+Supabase Auth has to be wired and at least one user has to exist before D delivers anything.
+There are **no users at all** today; the dashboard role is `useState("operator")` in the
+browser.
 
 ## Target architecture
 
