@@ -2090,16 +2090,42 @@ async function getAllSitesGlobals(siteIds) {
  * גרסת ה-batch של GET /api/sites: כל האתרים, כל המדדים — במספר שאילתות
  * קבוע (8) במקום 6 לכל אתר. מחזיר בדיוק את אותו מבנה כמו הלולאה הישנה.
  */
+// ============================================================
+// המסלול הראשון שעבר לחישוב בבסיס הנתונים
+// ============================================================
+// קודם נטענו כל מקטעי המצב וכל הפעולות של הטווח לזיכרון (loadRangeData),
+// והחישוב רץ ב-JS לכל אתר. עכשיו site_stats ו-site_uptime מחשבים בתוך
+// Postgres ומחזירים שורה לכל אתר.
+//
+// למה זה עדיף כאן ולא רק "יותר נכון ארכיטקטונית":
+//   • הנתונים לא עוברים ברשת. במקום ~840 מקטעים + כל הפעולות של השבוע,
+//     חוזרות 13 שורות מסוכמות.
+//   • הפעולה החוסמת נעלמת. ההערה ב-CLAUDE.md מזהירה שהמעבר בזיכרון הוא
+//     O(אתרים × דליים × פעולות) ושב-200 אתרים × 365 ימים הוא חוסם את
+//     לולאת האירועים ל-~26 שניות — ומכיוון ש-Node חד-חוטי, זה עוצר גם את
+//     הקליטה. אגרגציה בצד ה-DB אינה חוסמת את הלולאה בכלל.
+//   • זו אותה הגדרה שהדשבורד יקרא לה ישירות בהמשך, ולכן אין שתי גרסאות.
+//
+// NULL = כל האתרים, ולכן שלוש הקריאות עדיין רצות במקביל: אין צורך לשלוף
+// קודם את רשימת המזהים.
+//
+// ⚠️ הפונקציות בזיכרון (statsFromData / uptimeFromData) **נשארות** — הן
+// עדיין משמשות מסלולים אחרים (supervisor/executive) שטרם הועברו, והן
+// נקודת ההשוואה של tools/parity.js. אין למחוק אותן לפני שגם אלה עברו.
 async function getAllSitesWithMetrics({ from }) {
   const now = new Date().toISOString();
 
-  // הכול במקביל — אין תלות בין שליפת האתרים לשליפת הנתונים שלהם
-  const [sites, data, globals] = await Promise.all([
+  // הכול במקביל — אין תלות בין שליפת האתרים לחישוב המדדים שלהם
+  const [sites, statsRows, uptimeRows, globals] = await Promise.all([
     getAllSites(),
-    loadRangeData(null, { from, to: now }),
+    db.prepare("SELECT * FROM public.site_stats(NULL, ?, ?)").all(from, now),
+    db.prepare("SELECT * FROM public.site_uptime(NULL, ?, ?)").all(from, now),
     getAllSitesGlobals(null),
   ]);
   if (sites.length === 0) return [];
+
+  const statsById = new Map(statsRows.map((r) => [r.site_id, r]));
+  const uptimeById = new Map(uptimeRows.map((r) => [r.site_id, r]));
 
   return sites.map((site) => {
     // אתר שאין לו שום היסטוריה לא יופיע בשליפות — ואז g היה undefined
@@ -2107,7 +2133,12 @@ async function getAllSitesWithMetrics({ from }) {
       lastFaultAt: null, statusSince: null, lastOperation: null,
       operationsSinceLastError: 0, activeMaintenance: null, firstStatusAt: null,
     };
-    const stats = statsFromData(data, site.id, { from, to: now });
+    // אתר בלי נתונים בטווח מקבל שורת אפסים מהפונקציה (הנהג הוא טבלת
+    // האתרים), ולכן ה-fallback כאן הוא הגנה על מקרה שאתר נמחק בין
+    // השליפות — לא מסלול רגיל.
+    const stats = statsById.get(site.id)
+      || { operations: 0, errors: 0, errors_in_maintenance: 0, failure_rate: 0 };
+    const up = uptimeById.get(site.id);
 
     // חלון תחזוקה ידני פעיל. הוא גובר על מה שה-PLC דיווח (כמו applyMaintenanceStatus):
     // תקלה שקורה בתוך תחזוקה מתוכננת אינה "תקלה" — היא כבר מוחרגת מאחוז הכשל
@@ -2122,10 +2153,12 @@ async function getAllSitesWithMetrics({ from }) {
       ...site,
       status,
       inMaintenance,
-      failureRate: stats.failureRate,
+      failureRate: stats.failure_rate,
       operations: stats.operations,
       errors: stats.errors,
-      uptime: uptimeFromDataLegacy(data, site.id, from, now),
+      // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהדשבורד יציג
+      // "—" ולא "0%". אותו כלל בדיוק כמו getSiteUptime.
+      uptime: up && up.measured_hours > 0 ? up.availability_percent : null,
       lastFaultAt: g.lastFaultAt,
       lastOperation: g.lastOperation,
       statusSince: g.statusSince,
@@ -2133,22 +2166,15 @@ async function getAllSitesWithMetrics({ from }) {
   });
 }
 
-/**
- * גרסת הזיכרון של getSiteUptime — אותה הגדרה בדיוק, רק מהנתונים הטעונים
- * במקום משאילתה. מחזיר null כשאין נתון (measuredHours = 0) במקום 0, כי
- * "0%" נקרא כ"שבור לגמרי" במקום "לא ידוע".
- *
- * ⚠️ ההערה שהייתה כאן טענה שהפונקציה מחלקת ב**כל החלון** ולא בזמן הנמדד.
- * זה לא נכון — הגוף מאציל ל-uptimeFromData, שמחלק בזמן הנמדד דרך
- * availabilityFrom, ויש הגדרת זמינות אחת בלבד בקוד. ההערה השגויה הזו כבר
- * הובילה לניתוח שגוי ולהחלטת מוצר שכלל לא הייתה קיימת. אילו מישהו היה
- * "מתקן" את הקוד כדי שיתאים לה, אתר 2439 היה קופץ מ-51.6% ל-98.2%
- * בתצוגה השנתית — כלומר אתר מושבת חצי מהזמן היה נראה מושלם.
- */
-function uptimeFromDataLegacy(data, siteId, from, to) {
-  const uptime = uptimeFromData(data, siteId, { from, to });
-  return uptime.measuredHours > 0 ? uptime.availabilityPercent : null;
-}
+// uptimeFromDataLegacy הוסרה כאן: היא הייתה עטיפה של uptimeFromData עבור
+// getAllSitesWithMetrics בלבד, וזה המסלול שעבר ל-site_uptime ב-SQL. הכלל
+// שהיא מימשה — measuredHours = 0 מחזיר null ולא 0% — נשמר במקום שקורא
+// לפונקציה, וגם ב-getSiteUptime.
+//
+// ההערה שהייתה מעליה טענה שהיא מחלקת בכל החלון ולא בזמן הנמדד. זה היה לא
+// נכון, וזו הטעות שהובילה לניתוח שגוי ולהחלטת מוצר שלא הייתה קיימת. נמדד
+// אז על כל 13 האתרים: הפרש 0 בכל התקופות. שווה לזכור כשמוסיפים עטיפה —
+// שם מטעה עולה יותר מקוד מיותר.
 
 // ==========================================================
 // ===== אגרגציה מערכתית (מנהל בקרה / מנהל כללי) =====

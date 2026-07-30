@@ -99,7 +99,7 @@ clipped AS (
   FROM status_history h
   CROSS JOIN ok o
   WHERE o.valid
-    AND h.site_id = ANY(p_site_ids)
+    AND (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
     -- שתי ההשוואות על TEXT: האינדקס (site_id, started_at) נשאר בשימוש
     AND h.started_at < o.w_to
     AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
@@ -141,7 +141,16 @@ SELECT
                 + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0))) * 100)::numeric, 2)::double precision
     ELSE 0::double precision
   END
-FROM unnest(p_site_ids) AS ids(site_id)
+-- ============================================================
+-- הנהג הוא טבלת האתרים ולא unnest, ומשתי סיבות
+-- ============================================================
+-- 1. **p_site_ids = NULL פירושו "כל האתרים".** אותה מוסכמה בדיוק כמו
+--    loadRangeData, וקיימת מאותה סיבה: בלעדיה הקורא היה חייב לשלוף קודם
+--    את רשימת המזהים ורק אז לקרוא לפונקציה — סיבוב רשת שלם בטור, במקום
+--    שהכול ירוץ במקביל.
+-- 2. תמיד חוזרת שורה לכל אתר *קיים*, גם לאתר בלי שום היסטוריה בטווח.
+FROM (SELECT id AS site_id FROM sites
+       WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)) AS ids
 LEFT JOIN secs s ON s.site_id = ids.site_id;
 $$;
 
@@ -200,7 +209,7 @@ AS $$
 WITH src AS (
   SELECT h.id, h.site_id, h.status, h.started_at, h.ended_at
     FROM status_history h
-   WHERE h.site_id = ANY(p_site_ids)
+   WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      -- שתי ההשוואות על TEXT — האינדקס נשאר בשימוש. ה-look-back מתקבל
      -- מהתנאי השני: מקטע שהתחיל לפני p_from אך נמשך לתוך החלון נכלל.
      AND h.started_at < p_to
@@ -276,7 +285,7 @@ AS $$
 WITH ops AS (
   SELECT o.site_id, COUNT(*)::int AS n
     FROM operations o
-   WHERE o.site_id = ANY(p_site_ids)
+   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
      -- לקסיקוגרפי על TEXT — idx_operations_site_time נשאר בשימוש
@@ -326,7 +335,10 @@ SELECT
     THEN ROUND(((COALESCE(a.errors, 0)::numeric / o.n) * 100), 2)::double precision
     ELSE 0::double precision
   END
-FROM unnest(p_site_ids) AS ids(site_id)
+-- כמו ב-site_uptime: הנהג הוא טבלת האתרים, כדי לתמוך ב-NULL (כל האתרים)
+-- ולהחזיר שורה לכל אתר קיים גם בלי נתונים בטווח.
+FROM (SELECT id AS site_id FROM sites
+       WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)) AS ids
 LEFT JOIN ops o ON o.site_id = ids.site_id
 LEFT JOIN agg a ON a.site_id = ids.site_id;
 $$;
