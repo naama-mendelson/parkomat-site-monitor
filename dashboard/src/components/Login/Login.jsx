@@ -29,6 +29,12 @@ function Login({ onSignedIn }) {
   // ריק, ולא ניתן להציג הודעה אחרי שהדף עזב. ראה enabledProviders.
   const [google, setGoogle] = useState(false);
 
+  // האם המשתמש ביקש במפורש את מסלול הסיסמה. כשאין Google אין מה לבקש —
+  // showPassword מחשב את שני המצבים במקום אחד, כדי שהטופס לא יוכל להיעלם
+  // ולהשאיר מסך בלי שום דרך להיכנס.
+  const [pwMode, setPwMode] = useState(false);
+  const showPassword = !google || pwMode;
+
   useEffect(() => {
     let alive = true;
     enabledProviders().then((p) => { if (alive) setGoogle(p.google); });
@@ -69,42 +75,16 @@ function Login({ onSignedIn }) {
 
         <h1 className="login-title">התחברות</h1>
 
-        <label className="login-field">
-          <span>אימייל</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="username"
-            required
-            autoFocus
-            disabled={busy}
-          />
-        </label>
+        {/* ============================================================
+            Google ראשי, סיסמה מקופלת מתחתיו
+            ============================================================
+            קודם הסיסמה הייתה הדרך הראשית ו-Google נספח מתחתיה. זה הפוך:
+            Google הוא לחיצה אחת בלי סיסמה לזכור ובלי סיסמה להחליף, והוא גם
+            היחיד שמוכיח שהאדם באמת שולט בתיבת הדואר של פרקומט.
 
-        <label className="login-field">
-          <span>סיסמה</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-            disabled={busy}
-          />
-        </label>
-
-        {/* role="alert" כדי שקורא מסך יכריז על הכשל ולא רק יצבע אותו */}
-        {error && <p className="login-error" role="alert">{error}</p>}
-
-        <button className="login-submit" type="submit" disabled={busy}>
-          {busy ? "מתחבר…" : "התחבר"}
-        </button>
-
+            כשהספק כבוי אין מה לקפל — הטופס מוצג ישר, אחרת המסך היה ריק. */}
         {google && (
           <>
-            <div className="login-divider"><span>או</span></div>
-
             {/* type="button" ולא submit — אחרת לחיצה עליו שולחת את הטופס */}
             <button
               className="login-google"
@@ -125,8 +105,57 @@ function Login({ onSignedIn }) {
               <GoogleMark />
               המשך עם Google
             </button>
+
+            <p className="login-note">
+              כניסה אחת מספיקה — המסך נשאר מחובר.
+            </p>
+
+            {!pwMode && (
+              <button className="login-alt" type="button" onClick={() => setPwMode(true)}>
+                התחברות עם סיסמה
+              </button>
+            )}
+
+            {pwMode && <div className="login-divider"><span>או</span></div>}
           </>
         )}
+
+        {showPassword && (
+          <>
+            <label className="login-field">
+              <span>אימייל</span>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                required
+                autoFocus
+                disabled={busy}
+              />
+            </label>
+
+            <label className="login-field">
+              <span>סיסמה</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+                disabled={busy}
+              />
+            </label>
+
+            <button className="login-submit" type="submit" disabled={busy}>
+              {busy ? "מתחבר…" : "התחבר"}
+            </button>
+          </>
+        )}
+
+        {/* role="alert" כדי שקורא מסך יכריז על הכשל ולא רק יצבע אותו.
+            מחוץ לתנאי: שגיאת Google צריכה להופיע גם כשהטופס מקופל. */}
+        {error && <p className="login-error" role="alert">{error}</p>}
       </form>
     </div>
   );

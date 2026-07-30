@@ -177,3 +177,32 @@
   height: 18px;
   flex-shrink: 0;
 }
+
+/* ===== Google כמסלול ראשי ===== */
+
+/* הבטחה שהמשתמש שאל עליה במפורש: לחיצה אחת ולא חוזרים לכאן. ה-session
+   נשמר ומתחדש לבד (ראה services/supabase.js), ולכן זו אמירה נכונה. */
+.login-note {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* מסלול הסיסמה — קישור ולא כפתור מלא. הוא קיים למי שצריך אותו, ואינו
+   מתחרה חזותית עם המסלול הראשי. */
+.login-alt {
+  margin-top: 12px;
+  padding: 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.84rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.login-alt:hover {
+  color: var(--text-primary);
+}

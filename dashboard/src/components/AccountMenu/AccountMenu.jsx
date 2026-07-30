@@ -15,13 +15,66 @@ import "./AccountMenu.css";
 
 const ROLE_LABELS = { operator: "בקר", supervisor: "מנהל בקרה", executive: 'מנכ"ל' };
 
+// ============================================================
+// רוחב התפריט יושב כאן ולא ב-CSS — בכוונה
+// ============================================================
+// חישוב המיקום למטה צריך לדעת את הרוחב האמיתי. אם ה-CSS יחזיק רוחב משלו,
+// שני המספרים ייפרדו בשקט בעריכה הבאה והתפריט יחזור לצאת מהמסך.
+const MENU_WIDTH = 260;
+const GAP = 8;      // מרווח מהכפתור
+const MARGIN = 8;   // מרווח מינימלי מקצה החלון
+
 function AccountMenu() {
   const [user, setUser] = useState(null);
   const [open, setOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const wrapRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  // מיקום מחושב במקום מיקום מוצהר ב-CSS.
+  //
+  // ============================================================
+  // למה לא inset-inline-start / end
+  // ============================================================
+  // הגרסה הראשונה השתמשה ב-inset-inline-start: 0, והתפריט יצא מהמסך. הדף
+  // הוא dir="rtl" ו-header-actions יושב ב-justify-content: space-between,
+  // כלומר הכפתור נמצא בקצה **השמאלי** של החלון — ובעברית inline-start הוא
+  // הקצה הימני, אז 260 הפיקסלים נפרשו שמאלה אל מחוץ לחלון.
+  //
+  // היפוך ל-end היה מתקן את המקרה הזה בלבד. מיקום מחושב וחתוך לגבולות
+  // החלון נכון בכל כיוון ובכל מקום שהכפתור יימצא בו — כולל אחרי סידור מחדש
+  // של הכותרת, שהוא בדיוק מה שהפיל את הגרסה הראשונה.
+  const [pos, setPos] = useState(null);
 
   useEffect(() => { currentUser().then(setUser); }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function place() {
+      const el = triggerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+
+      // מיושר לקצה הסוגר של הכפתור, ואז נחתך כך שלא ייצא משני הצדדים.
+      const wanted = r.right - MENU_WIDTH;
+      const maxLeft = window.innerWidth - MENU_WIDTH - MARGIN;
+      const left = Math.max(MARGIN, Math.min(wanted, maxLeft));
+      const top = r.bottom + GAP;
+
+      // גובה: טופס הסיסמה מאריך את התפריט, ובחלון נמוך הוא היה נחתך למטה.
+      setPos({ top, left, maxHeight: Math.max(160, window.innerHeight - top - MARGIN) });
+    }
+
+    place();
+    // scroll ב-capture כדי לתפוס גם גלילה של מכל פנימי, לא רק של החלון.
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, pwOpen]);
 
   // סגירה בלחיצה בחוץ וב-Escape. תפריט שנשאר פתוח על מסך קיר מסתיר תוכן
   // עד שמישהו יבוא ויסגור אותו ידנית.
@@ -53,6 +106,7 @@ function AccountMenu() {
   return (
     <div className="account" ref={wrapRef}>
       <button
+        ref={triggerRef}
         className="account-trigger"
         onClick={() => (open ? close() : setOpen(true))}
         title={user.email || "החשבון שלי"}
@@ -65,8 +119,13 @@ function AccountMenu() {
         <span className="account-role-chip">{ROLE_LABELS[user.role] || user.role}</span>
       </button>
 
-      {open && (
-        <div className="account-menu" role="menu">
+      {/* לא מוצג עד שהמיקום חושב — אחרת פריים אחד מהבהב בפינה הלא נכונה. */}
+      {open && pos && (
+        <div
+          className="account-menu"
+          role="menu"
+          style={{ top: pos.top, left: pos.left, width: MENU_WIDTH, maxHeight: pos.maxHeight }}
+        >
           <div className="account-who">
             <span className="account-email">{user.email}</span>
             <span className="account-role">{ROLE_LABELS[user.role] || user.role}</span>
