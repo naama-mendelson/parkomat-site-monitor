@@ -485,6 +485,11 @@ function init() {
       // וה-transaction pooler מנתק עליו.
       const functions = fs.readFileSync(path.join(__dirname, "functions.postgres.sql"), "utf8");
       await setup.query(functions);
+
+      // זהות ומדיניות שורה. **אחרי** הפונקציות, כי הוא נותן עליהן GRANT
+      // EXECUTE — סדר הפוך היה נכשל על "function does not exist".
+      const security = fs.readFileSync(path.join(__dirname, "security.postgres.sql"), "utf8");
+      await setup.query(security);
     } finally {
       // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
       // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.
