@@ -52,13 +52,30 @@ $$;
 -- היישומי אומר "מה מותר לך".
 --
 -- התביעה נקראת parkomat_role ולא role, כי 'role' תפוס: Supabase מכניס
--- לשם את תפקיד ה-Postgres, ודריסה שלו הייתה שוברת את PostgREST עצמו.
+-- לשם את תפקיד ה-Postgres ('authenticated'), ודריסה שלו הייתה שוברת את
+-- PostgREST עצמו.
+--
+-- ============================================================
+-- הוא יושב בתוך app_metadata, ולא כתביעה עליונה
+-- ============================================================
+-- נבדק מול אסימון אמיתי: Supabase מקנן את app_metadata כאובייקט ואינו
+-- משטח אותו. קריאה של התביעה העליונה בלבד הייתה מחזירה NULL תמיד, ולכן
+-- כל מדיניות שתישען על התפקיד הייתה מתנהגת כאילו לאיש אין תפקיד.
+--
+-- הסדר: app_metadata קודם (מה שקיים בפועל), אחריו תביעה עליונה — כי
+-- Custom Access Token Hook כן יכול לשטח אותה בעתיד.
+--
+-- **user_metadata אינו נקרא בכוונה**: המשתמש יכול לערוך אותו בעצמו דרך
+-- updateUser, ולכן תפקיד משם היה מאפשר לכל אחד להעלות את עצמו למנכ"ל.
+-- app_metadata ניתן לשינוי רק דרך ה-Admin API.
 CREATE OR REPLACE FUNCTION app.current_role()
 RETURNS text
 LANGUAGE sql
 STABLE
 AS $$
   SELECT COALESCE(
+    NULLIF(current_setting('request.jwt.claims', true)::json
+             -> 'app_metadata' ->> 'parkomat_role', ''),
     NULLIF(current_setting('request.jwt.claims', true)::json ->> 'parkomat_role', ''),
     NULLIF(current_setting('app.role', true), ''),
     'anonymous'

@@ -155,6 +155,47 @@ test("supabase: אסימון HS256 נדחה — אי אפשר להחליף אל�
   assert.strictEqual(await supabase.verifyToken(t), null);
 });
 
+test("supabase: התפקיד נקרא מ-app_metadata — שם Supabase באמת שם אותו", async () => {
+  // ============================================================
+  // נוספה אחרי שאסימון אמיתי הראה שהקוד קרא במקום הלא נכון
+  // ============================================================
+  // הגרסה הראשונה קראה claims.parkomat_role. Supabase מקנן את app_metadata
+  // ואינו משטח אותו, ולכן משתמש שהוגדר executive קיבל בשקט operator —
+  // הורדת הרשאות שקטה, שאינה מייצרת שגיאה ולכן אינה מתגלה.
+  const r = await supabase.verifyToken(
+    signEs256({ sub: "u-role", app_metadata: { parkomat_role: "executive", provider: "email" } }));
+  assert.ok(r);
+  assert.strictEqual(r.role, "executive");
+});
+
+test("supabase: app_metadata גובר על תביעה עליונה — ותואם ל-app.current_role()", async () => {
+  // הסדר חייב להיות זהה בשני הצדדים, אחרת אותו אסימון נותן תפקיד אחד
+  // ב-JS ותפקיד אחר במדיניות ה-RLS — ואי-התאמה כזו מתגלה רק כשמישהו רואה
+  // מסך שהוא לא אמור לראות. app.current_role() קורא app_metadata קודם,
+  // ולכן גם כאן.
+  //
+  // app_metadata הוא גם המקור השמרני מהשניים: הוא ניתן לשינוי רק דרך
+  // ה-Admin API, כלומר עם מפתח ה-Secret.
+  const r = await supabase.verifyToken(
+    signEs256({ sub: "u", parkomat_role: "supervisor", app_metadata: { parkomat_role: "executive" } }));
+  assert.strictEqual(r.role, "executive");
+});
+
+test("supabase: תביעה עליונה משמשת כשאין app_metadata", async () => {
+  // המסלול שנפתח אם יוגדר Custom Access Token Hook שמשטח את התפקיד.
+  const r = await supabase.verifyToken(signEs256({ sub: "u", parkomat_role: "supervisor" }));
+  assert.strictEqual(r.role, "supervisor");
+});
+
+test("supabase: user_metadata אינו מקור לתפקיד — המשתמש יכול לערוך אותו", async () => {
+  // התקיפה שזה מונע: משתמש קורא ל-updateUser ומעלה את עצמו למנכ"ל.
+  // app_metadata ניתן לשינוי רק דרך ה-Admin API, ולכן רק הוא נקרא.
+  const r = await supabase.verifyToken(
+    signEs256({ sub: "u", user_metadata: { parkomat_role: "executive" } }));
+  assert.ok(r);
+  assert.strictEqual(r.role, "operator");
+});
+
 test("supabase: alg שאינו ES256 נדחה — גם כשהחתימה עצמה תקינה", async () => {
   // ============================================================
   // הבדיקה הזו נוספה אחרי שמוטציה חשפה שהיא חסרה

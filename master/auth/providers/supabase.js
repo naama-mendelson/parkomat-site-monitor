@@ -48,11 +48,39 @@ function isConfigured() {
  * **אסינכרוני**, בשונה מהגרסה הקודמת: אימות אסימטרי מחייב את המפתח
  * הציבורי, והוא נמשך מהרשת (וממוטמן). הקוראים חייבים await.
  *
+ * ============================================================
+ * התפקיד יושב ב-app_metadata, ולא כתביעה עליונה
+ * ============================================================
+ * הגרסה הראשונה קראה claims.parkomat_role. בדיקה מול אסימון אמיתי הראתה
+ * שהוא **לא שם**: Supabase מקנן את app_metadata כאובייקט בתוך האסימון ואינו
+ * משטח אותו לתביעות עליונות. התוצאה הייתה שמשתמש שהוגדר executive קיבל
+ * בשקט operator — כלומר הורדת הרשאות שקטה, מהסוג שלא מייצר שגיאה ולכן לא
+ * מתגלה עד שמישהו מתלונן שחסר לו כפתור.
+ *
+ * הסדר: app_metadata קודם (מה ש-Supabase באמת מייצר), ואז תביעה עליונה
+ * כמסלול גיבוי — עבור Custom Access Token Hook שמשטח את התפקיד.
+ *
+ * ⚠️ **הסדר הזה חייב להיות זהה ל-app.current_role() בצד ה-SQL.** אם הם
+ * ייבדלו, אותו אסימון ייתן תפקיד אחד ב-JS ותפקיד אחר במדיניות ה-RLS —
+ * ואי-התאמה כזו מתגלה רק כשמישהו רואה מסך שאינו אמור לראות. יש בדיקה
+ * שמקבעת את הסדר בדיוק מהסיבה הזו.
+ *
+ * **user_metadata אינו נבדק, וזה מכוון**: המשתמש עצמו יכול לערוך אותו דרך
+ * updateUser. תפקיד שנקרא משם היה מאפשר לכל אחד להעלות את עצמו למנכ"ל.
+ * app_metadata ניתן לשינוי רק דרך ה-Admin API, כלומר עם מפתח ה-Secret.
+ *
  * התפקיד היישומי נקרא מ-parkomat_role ולא מ-role: ב-Supabase התביעה 'role'
  * מחזיקה את תפקיד ה-Postgres ('authenticated'), וזו שאלה אחרת לגמרי —
  * "האם התחברת" ולא "מה מותר לך". אותה הבחנה קיימת ב-app.current_role()
  * בצד ה-SQL, וההתאמה ביניהם אינה מקרית.
  */
+function readRole(claims) {
+  const fromAppMetadata = claims.app_metadata && claims.app_metadata.parkomat_role;
+  if (typeof fromAppMetadata === "string" && fromAppMetadata) return fromAppMetadata;
+  if (typeof claims.parkomat_role === "string" && claims.parkomat_role) return claims.parkomat_role;
+  return "operator";   // ברירת מחדל שמרנית: הרשאות הצפייה בלבד
+}
+
 async function verifyToken(token) {
   if (!isConfigured()) return null;
 
@@ -64,9 +92,7 @@ async function verifyToken(token) {
   return {
     userId: claims.sub,
     email: typeof claims.email === "string" ? claims.email : null,
-    role: typeof claims.parkomat_role === "string" && claims.parkomat_role
-      ? claims.parkomat_role
-      : "operator",   // ברירת מחדל שמרנית: הרשאות הצפייה בלבד
+    role: readRole(claims),
   };
 }
 
