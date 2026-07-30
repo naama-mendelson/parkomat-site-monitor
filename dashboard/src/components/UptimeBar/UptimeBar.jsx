@@ -1,5 +1,5 @@
 // components/UptimeBar/UptimeBar.jsx — זמינות האתר: אחוז ראשי, שורה צבעונית ופירוט שעות
-import { STATUS_COLORS } from "../../utils/constants";
+import { UPTIME_COLORS } from "../../utils/constants";
 import "./UptimeBar.css";
 
 // עיצוב שעות בעברית קריאה: "12.5 שעות" / "45 דקות"
@@ -32,45 +32,78 @@ function UptimeBar({ uptime, trend }) {
   const availableHours = readyHours + operatingHours;
   const pct = (h) => (h / totalHours) * 100;
 
-  // המקטעים בשורה הצבעונית — לפי חמשת המצבים, בצבעי המערכת.
+  // המקטעים בשורה הצבעונית — בצבעי המצב המערכתיים (מוכן ירוק, בפעולה כחול),
+  // אותם צבעים בדיוק כמו בתגית המצב ובדונאט. מה שמבהיר שהכחול הוא חלק
+  // מהזמינות אינו הגוון אלא שורות-המשנה במקרא (ראה rows למטה).
   const segments = [
-    { key: "ready", hours: readyHours, color: STATUS_COLORS.ready.dot },
-    { key: "operating", hours: operatingHours, color: STATUS_COLORS.operating.dot },
-    { key: "error", hours: errorHours, color: STATUS_COLORS.error.dot },
-    { key: "maintenance", hours: maintenanceHours, color: STATUS_COLORS.maintenance.dot },
-    { key: "no_comm", hours: noCommHours, color: STATUS_COLORS.no_comm.dot },
+    {
+      key: "ready", hours: readyHours, color: UPTIME_COLORS.availableReady,
+      title: `מוכן — ${formatHours(readyHours)} (חלק מהזמינות)`,
+    },
+    {
+      key: "operating", hours: operatingHours, color: UPTIME_COLORS.availableOperating,
+      title: `בפעולה — ${formatHours(operatingHours)} (חלק מהזמינות)`,
+    },
+    {
+      key: "error", hours: errorHours, color: UPTIME_COLORS.error,
+      title: `מושבת — ${formatHours(errorHours)}`,
+    },
+    {
+      key: "maintenance", hours: maintenanceHours, color: UPTIME_COLORS.maintenance,
+      title: `בתחזוקה — ${formatHours(maintenanceHours)}`,
+    },
+    {
+      key: "no_comm", hours: noCommHours, color: UPTIME_COLORS.no_comm,
+      title: `ללא תקשורת — ${formatHours(noCommHours)}`,
+    },
   ].filter((s) => s.hours > 0);
 
-  // הפירוט — מקובץ לארבע קטגוריות שמנהל מבין מיד.
+  // ==========================================================
+  // הכלל של המקרא: לכל מקטע בפס יש שורה משלו. בלי יוצאי דופן.
+  // ==========================================================
+  // 'בפעולה' הוא כחול ומהווה חלק מהזמינות — שילוב שנראה סותר, ובאמת בלבל.
+  // נוסו שני פתרונות: קודם להשאיר את הכחול בלי שורה במקרא (ואז הוא נקרא
+  // כמשהו שאינו זמינות, למרות שהוא רובה), ואחר כך לצבוע אותו בירוק כהה
+  // (ואז השאלה הפכה ל"מה הירוק הכהה הזה?"). שניהם אותו כשל: מקטע בפס בלי
+  // שורה משלו במקרא.
+  //
+  // מה שעובד: 'זמין לשירות' הוא כותרת עם הסיכום, ומתחתיה **שתי שורות-משנה**
+  // — 'מוכן' ו'בפעולה' — כל אחת בצבע המדויק של המקטע שלה. אפשר להצביע על
+  // כל צבע בפס, לרדת למקרא, ולמצוא אותו בשם. ברגע שיש הסבר, הצבע חופשי
+  // להיות הצבע המערכתי הנכון.
   const rows = [
     {
       key: "available",
       label: "זמין לשירות",
       explain: "האתר היה זמין לקבל רכבים",
       hours: availableHours,
-      color: STATUS_COLORS.ready.dot,
-      detail: `מוכן ${formatHours(readyHours)} · בפעולה ${formatHours(operatingHours)}`,
+      color: UPTIME_COLORS.availableReady,
+      // שורות-המשנה הן ההסבר לשני המקטעים הירוקים בפס.
+      children: [
+        { key: "ready", label: "מוכן", hours: readyHours, color: UPTIME_COLORS.availableReady },
+        { key: "operating", label: "בפעולה", hours: operatingHours, color: UPTIME_COLORS.availableOperating },
+      ],
     },
     {
       key: "error",
       label: "מושבת",
       explain: "האתר לא יכול היה לפעול עקב תקלה",
       hours: errorHours,
-      color: STATUS_COLORS.error.dot,
+      color: UPTIME_COLORS.error,
     },
     {
       key: "maintenance",
       label: "בתחזוקה",
       explain: "עבודות תחזוקה מתוכננות",
       hours: maintenanceHours,
-      color: STATUS_COLORS.maintenance.dot,
+      color: UPTIME_COLORS.maintenance,
     },
     {
       key: "no_comm",
       label: "ללא תקשורת",
       explain: "לא התקבל מידע מהאתר",
       hours: noCommHours,
-      color: STATUS_COLORS.no_comm.dot,
+      color: UPTIME_COLORS.no_comm,
     },
   ];
 
@@ -97,6 +130,7 @@ function UptimeBar({ uptime, trend }) {
             key={s.key}
             className="uptime-seg"
             style={{ width: `${pct(s.hours)}%`, background: s.color }}
+            title={s.title}
           />
         ))}
       </div>
@@ -104,19 +138,35 @@ function UptimeBar({ uptime, trend }) {
       {/* הפירוט */}
       <ul className="uptime-rows">
         {rows.map((r) => (
-          <li key={r.key} className="uptime-row">
-            <span className="uptime-dot" style={{ background: r.color }} />
-            <div className="uptime-row-text">
-              <span className="uptime-row-label">{r.label}</span>
-              <span className="uptime-row-explain">{r.explain}</span>
-              {r.detail && r.hours > 0 && (
-                <span className="uptime-row-detail">{r.detail}</span>
-              )}
+          <li key={r.key} className="uptime-row-group">
+            <div className="uptime-row">
+              <span className="uptime-dot" style={{ background: r.color }} />
+              <div className="uptime-row-text">
+                <span className="uptime-row-label">{r.label}</span>
+                <span className="uptime-row-explain">{r.explain}</span>
+              </div>
+              <div className="uptime-row-nums">
+                <strong>{Math.round(pct(r.hours) * 10) / 10}%</strong>
+                <span>{formatHours(r.hours)}</span>
+              </div>
             </div>
-            <div className="uptime-row-nums">
-              <strong>{Math.round(pct(r.hours) * 10) / 10}%</strong>
-              <span>{formatHours(r.hours)}</span>
-            </div>
+
+            {/* שורות-משנה: אחת לכל מקטע בפס, בצבע המדויק שלו. מוצגות רק
+                כשיש בהן ממש — קטגוריה על אפס לא צריכה פירוט. */}
+            {r.children && r.hours > 0 && (
+              <ul className="uptime-subrows">
+                {r.children.map((c) => (
+                  <li key={c.key} className="uptime-subrow">
+                    <span className="uptime-dot uptime-dot-sm" style={{ background: c.color }} />
+                    <span className="uptime-subrow-label">{c.label}</span>
+                    <div className="uptime-row-nums">
+                      <strong>{Math.round(pct(c.hours) * 10) / 10}%</strong>
+                      <span>{formatHours(c.hours)}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>

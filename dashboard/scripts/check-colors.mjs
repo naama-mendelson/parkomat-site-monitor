@@ -9,7 +9,7 @@
 // יחד באותו גרף/מקרא. אותו אדום בתגית מצב ובגרף אחר הוא בסדר גמור.
 //
 //   npm run check:colors
-import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS, STUCK_COLOR } from "../src/utils/constants.js";
+import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS, STUCK_COLOR, UPTIME_COLORS } from "../src/utils/constants.js";
 
 const MIN_DELTA_E = 25;   // מתחת לזה — שני הצבעים נקראים כאותו צבע במבט חטוף
 const MIN_CONTRAST = 3;   // מול רקע הכרטיס הכהה — אחרת הקו בגרף פשוט נעלם
@@ -56,7 +56,14 @@ const GROUPS = {
     ...Object.fromEntries(Object.entries(STATUS_COLORS).map(([k, v]) => [k, v.dot])),
     stuck: STUCK_COLOR.dot,
   },
+  "שורת הזמינות (UptimeBar)": UPTIME_COLORS,
 };
+
+// הערה למי שיחשוב לצבוע שני מקטעים באותה משפחת גוונים כדי "לקבץ" אותם:
+// זה נוסה בשורת הזמינות (מוכן/בפעולה בשני ירוקים) ולא עבד — צבע דומה אומר
+// "אלה שייכים יחד" אבל לא אומר *מה זה*, והשאלה הראשונה על המסך הייתה "מה
+// הירוק הכהה הזה?". הקיבוץ הוא תפקיד המקרא (שורות-משנה), לא תפקיד הגוון.
+// לכן הכלל כאן נשאר אחד ופשוט: צבעים באותה קבוצה חייבים להיות נבדלים.
 
 let failures = 0;
 

@@ -14,7 +14,7 @@
 /* טקסטי הסבר — ממשק, לא מידע להעתקה */
 .uptime-sub,
 .uptime-row-explain,
-.uptime-row-detail,
+.uptime-subrow-label,
 .uptime-hero-text,
 .uptime-total {
   user-select: none;
@@ -82,11 +82,53 @@
   gap: 8px;
 }
 
+.uptime-row-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .uptime-row {
   display: flex;
   align-items: flex-start;
   gap: 8px;
 }
+
+/* ===== שורות-המשנה של 'זמין לשירות' =====
+   מוסחות פנימה ותלויות על קו אנכי, כדי שייקראו כחלק מהשורה שמעליהן ולא
+   כשתי קטגוריות נוספות. הקו הוא מה שאומר "אלה החלקים של זה". */
+.uptime-subrows {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-inline-start: 17px;
+  padding-inline-start: 10px;
+  border-inline-start: 1px solid var(--border-color);
+}
+
+.uptime-subrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.uptime-subrow-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.78em;
+}
+
+.uptime-dot-sm {
+  width: 7px;
+  height: 7px;
+  margin-top: 0;
+}
+
+/* המספרים בשורת-המשנה קטנים יותר — הסיכום שייך לשורה הראשית */
+.uptime-subrow .uptime-row-nums strong { font-size: 0.82em; }
+.uptime-subrow .uptime-row-nums span   { font-size: 0.7em; }
 
 .uptime-dot {
   width: 9px;
@@ -113,12 +155,6 @@
   color: var(--text-muted);
   font-size: 0.72em;
   line-height: 1.35;
-}
-
-.uptime-row-detail {
-  color: var(--text-muted);
-  font-size: 0.7em;
-  margin-top: 2px;
 }
 
 .uptime-row-nums {
