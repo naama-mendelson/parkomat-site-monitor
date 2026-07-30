@@ -49,7 +49,7 @@ async function handleOperation(site, data) {
     persistOperation(site, data, { occurredAt, receivedAt, reportedAt, opState, isAnomaly }));
 
   if (result.emit) {
-    bus.emit("siteUpdate", result.emit);
+    bus.publish(result.emit);
   }
 }
 

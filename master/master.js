@@ -10,6 +10,15 @@ const { runBackup } = require("./tools/backup-db");
 const { runMonthlySummary } = require("./tools/monthly-summary");
 const { runCleanup } = require("./tools/cleanup-old-data");
 
+// גריפת טבלת events. הרטנציה שלה קצרה בכוונה (שבוע): היא נועדה ל-replay
+// אחרי ניתוק, שנמדד בדקות עד שעות. ההיסטוריה האמיתית יושבת ב-status_history
+// וב-operations ואינה תלויה בה, ולכן אין סיבה לצבור אותה לאורך שנה.
+async function runPruneEvents() {
+  const { pruneEvents } = require("./db/queries");
+  const removed = await pruneEvents(7);
+  console.log(`[events] נגרפו ${removed} אירועים מעל שבוע.`);
+}
+
 async function dailyMaintenance() {
   // כל שלב עטוף בנפרד: כשל בסיכום/ניקוי לא צריך להפיל את השרת (MQTT + API)
   // ולא צריך למנוע את השלבים האחרים.
@@ -17,6 +26,7 @@ async function dailyMaintenance() {
     ["גיבוי", runBackup],               // 1. ביטוח — לפני כל שינוי
     ["סיכום חודשי", runMonthlySummary],  // 2. לחודש שנגמר
     ["ניקוי", runCleanup],              // 3. מעל שנה
+    ["גריפת אירועים", runPruneEvents],  // 4. events מעל שבוע — נועדו ל-replay, לא להיסטוריה
   ];
 
   for (const [name, step] of steps) {

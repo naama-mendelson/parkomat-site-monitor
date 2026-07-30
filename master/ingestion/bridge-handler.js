@@ -89,7 +89,7 @@ async function handleBridgeState(site, payload) {
     `סומן no_comm (היה ${site.status})`
   );
 
-  bus.emit("siteUpdate", {
+  bus.publish({
     type: "state",
     code: site.code,
     oldStatus: site.status,

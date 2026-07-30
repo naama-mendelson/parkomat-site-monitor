@@ -74,7 +74,7 @@ async function handleState(site, data) {
   console.log(`[state] אתר ${site.code}: ${site.status} → ${newStatus} (שינוי נרשם)`);
 
   // שידור לכל מי שמאזין (SSE, ועוד בעתיד)
-  bus.emit("siteUpdate", {
+  bus.publish({
     type: "state",
     code: site.code,
     oldStatus: site.status,

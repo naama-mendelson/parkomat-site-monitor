@@ -4,6 +4,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRecentOperations, getFilteredOperations,
+  getEventsSince, getLatestEventId,
         startMaintenance, getActiveMaintenance, cancelMaintenance, getSiteStats,
         getCurrentStatusSince, getStatusHistory, getMaintenanceHistory,
         getSystemSummary, getSystemMonthlyBreakdown,
@@ -184,7 +185,7 @@ app.patch("/api/sites/:code", requireAdmin, async (req, res) => {
       }
     }
 
-    bus.emit("siteUpdate", { type: "registered", code: result.site.code });
+    bus.publish({ type: "registered", code: result.site.code });
     console.log(`[api] אתר עודכן: ${req.params.code} → ${result.site.code} (${result.site.site_name})`);
     res.json({ ok: true, site: result.site });
   } catch (err) {
@@ -201,7 +202,7 @@ app.delete("/api/sites/:code", requireAdmin, async (req, res) => {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
-    bus.emit("siteUpdate", { type: "registered", code: req.params.code });
+    bus.publish({ type: "registered", code: req.params.code });
     console.log(
       `[api] אתר נמחק: ${result.deleted.code} (${result.deleted.name}) — ` +
       `${result.deleted.operations} פעולות, ${result.deleted.statusHistory} שינויי מצב`
@@ -297,7 +298,7 @@ app.post("/api/sites", requireAdmin, async (req, res) => {
 
     // מודיעים ללקוחות ה-SSE שנוסף אתר, כדי שירעננו את הרשימה בלי המתנה
     // להודעת ה-MQTT הראשונה (שעשויה לאחר דקות, עד שהאתר ידווח).
-    bus.emit("siteUpdate", {
+    bus.publish({
       type: "registered",
       code: site.code,
       siteName: site.site_name,
@@ -444,7 +445,7 @@ app.post("/api/sites/:code/maintenance", async (req, res) => {
 
     // חובה לשדר: תחזוקה משנה את המצב האפקטיבי של האתר (applyMaintenanceStatus),
     // ובלי האירוע הזה המטמון לא מתנקה ושאר הדשבורדים לא יודעים.
-    bus.emit("siteUpdate", { type: "maintenance", code: site.code, action: "start" });
+    bus.publish({ type: "maintenance", code: site.code, action: "start" });
 
     res.json({
       ok: true,
@@ -470,7 +471,7 @@ app.delete("/api/sites/:code/maintenance", async (req, res) => {
       return res.status(404).json({ error: "אין תחזוקה פעילה לביטול" });
     }
 
-    bus.emit("siteUpdate", { type: "maintenance", code: site.code, action: "cancel" });
+    bus.publish({ type: "maintenance", code: site.code, action: "cancel" });
 
     res.json({ ok: true, message: `תחזוקה בוטלה על אתר ${site.code}` });
   } catch (err) {
@@ -1031,6 +1032,41 @@ app.get("/api/stream", async (req, res) => {
   });
 
   console.log("api: SSE client connected");
+});
+
+// ============================================================
+// GET /api/stream/since?after=<id> — ה-replay שה-SSE לא יכול לתת
+// ============================================================
+// SSE הוא שידור בלבד: הודעה שנשלחה כשהטאב היה מנותק אבדה, ואין דרך לבקש
+// אותה שוב. הדשבורד שומר את ה-id האחרון שראה, ואחרי חזרה מבקש כאן את מה
+// שאחריו — וסוגר את הפער בלי לשלוף מחדש את כל רשימת האתרים.
+//
+// **הנתיב אינו /api/events**: השם הזה כבר תפוס ומחזיר *פעולות* (operations),
+// לא אירועים. השם המבלבל ההוא קדם לטבלת events ואינו בשימוש הדשבורד.
+//
+// ללא after — מחזיר את הסמן הנוכחי בלבד. כך לקוח חדש יודע מאיפה להתחיל
+// בלי להוריד היסטוריה שהוא ממילא מקבל מ-/api/sites.
+app.get("/api/stream/since", async (req, res) => {
+  try {
+    const after = req.query.after;
+    const latestId = await getLatestEventId();
+
+    if (after === undefined) {
+      return res.json({ cursor: latestId, events: [] });
+    }
+
+    const events = await getEventsSince(after, req.query.limit);
+    res.json({
+      cursor: events.length ? events[events.length - 1].id : Number(after) || 0,
+      latestId,
+      // true = נחתך בתקרה, ויש עוד. הלקוח פשוט מבקש שוב מהסמן החדש.
+      hasMore: events.length > 0 && events[events.length - 1].id < latestId,
+      events,
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET /api/stream/since:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
 });
 
 // ============================================================

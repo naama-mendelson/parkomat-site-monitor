@@ -2739,6 +2739,62 @@ function hashCode(code) {
   return crypto.createHash("sha256").update(String(code), "utf8").digest("hex");
 }
 
+// ============================================================
+// events — רישום אירוע סמנטי אחד
+// ============================================================
+// המטענה נרשמת *כפי שהיא נשלחת ל-SSE*, בלי עיבוד. site_id נגזר מהקוד
+// בתוך אותה שאילתה (תת-שאילתה ולא lookup נפרד) כדי לא להוסיף סיבוב רשת
+// לכל הודעה נכנסת. אתר שאינו קיים נותן NULL ב-site_id, וזה תקין: הקוד
+// נשמר ב-site_code והאירוע שורד.
+async function recordEvent(payload) {
+  const code = String(payload?.code ?? "");
+  return await db
+    .prepare(
+      `INSERT INTO events (site_id, site_code, type, payload, created_at)
+       VALUES ((SELECT id FROM sites WHERE code = ?), ?, ?, ?::jsonb, ?)
+       RETURNING id`
+    )
+    .run(code, code, String(payload?.type ?? "unknown"), JSON.stringify(payload ?? {}),
+         new Date().toISOString());
+}
+
+/**
+ * אירועים שאחרי סמן נתון — זה ה-replay.
+ *
+ * הדשבורד שומר את ה-id האחרון שראה; אחרי ניתוק הוא מבקש את מה שאחריו
+ * ומשלים את הפער. ה-SSE לבדו לא יכול לזה — הודעה שנשלחה לטאב מנותק אבדה.
+ *
+ * limit הוא תקרה קשה: אחרי ניתוק ארוך עדיף להחזיר את ההתחלה ולתת ללקוח
+ * לבקש שוב, מאשר לשלוף מאה אלף שורות לזיכרון.
+ */
+async function getEventsSince(afterId, limit = 500) {
+  const rows = await db
+    .prepare(
+      `SELECT id, site_code, type, payload, created_at
+         FROM events
+        WHERE id > ?
+        ORDER BY id
+        LIMIT ?`
+    )
+    .all(Number(afterId) || 0, Math.min(Math.max(Number(limit) || 500, 1), 2000));
+  return rows;
+}
+
+/** ה-id הגבוה ביותר — הסמן שממנו לקוח חדש מתחיל להאזין. */
+async function getLatestEventId() {
+  const row = await db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM events").get();
+  return row.id;
+}
+
+// גריפת רטנציה. שבעה ימים ולא שנה: הטבלה הזו נועדה ל-replay אחרי ניתוק,
+// שנמדד בדקות עד שעות. ההיסטוריה האמיתית יושבת ב-status_history
+// וב-operations, ואינה תלויה בטבלה הזו.
+async function pruneEvents(retentionDays = 7) {
+  const cutoff = new Date(Date.now() - retentionDays * 86400_000).toISOString();
+  const res = await db.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
+  return res.changes;
+}
+
 async function getSetting(key) {
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
   return row ? row.value : null;
@@ -2930,6 +2986,10 @@ module.exports = {
   deleteSite,
   getRecentErrors,
   getActiveMaintenances,
+  recordEvent,              // נקרא מ-bus.publish — נקודת הרישום היחידה
+  getEventsSince,           // ה-replay
+  getLatestEventId,
+  pruneEvents,
   getSystemHeatmap,
   generateMonthlySummary,
   getSystemSummary,
