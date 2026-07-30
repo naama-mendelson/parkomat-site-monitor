@@ -116,6 +116,70 @@ export async function signOut() {
   await supabase.auth.signOut();
 }
 
+/** אורך סיסמה מינימלי. נאכף גם ב-GoTrue; כאן כדי לומר זאת *לפני* סבב רשת. */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * שינוי סיסמה. { error } — null בהצלחה.
+ *
+ * ============================================================
+ * למה מאמתים את הסיסמה הנוכחית, למרות ש-Supabase אינו דורש זאת
+ * ============================================================
+ * updateUser({ password }) מצליח על סמך ה-session בלבד. במוצר הזה זו בעיה
+ * ממשית ולא תיאורטית: הדשבורד רץ על **מסך משותף בחדר בקרה**, שנשאר מחובר
+ * לאורך משמרות — זו בדיוק הסיבה שנוסף כפתור יציאה. בלי אימות, כל מי שעובר
+ * ליד מסך פתוח יכול להחליף את הסיסמה ולנעל בחוץ את בעל החשבון.
+ *
+ * האימות נעשה בהתחברות מחדש עם הסיסמה הנוכחית. זה גם *הדרך היחידה* לדעת
+ * שהיא נכונה — GoTrue אינו חושף נקודת קצה של "אמת סיסמה".
+ *
+ * ⚠️ התחברות מוצלחת **מחליפה את ה-session** באותו משתמש. זה תקין, ומכוון:
+ * אם השינוי ייכשל בשלב הבא, המשתמש נשאר מחובר ולא נזרק החוצה באמצע.
+ */
+export async function changePassword(currentPassword, nextPassword) {
+  if (!isSupabaseConfigured) return { error: "האימות אינו מוגדר בדשבורד" };
+
+  const next = String(nextPassword || "");
+  if (next.length < MIN_PASSWORD_LENGTH) {
+    return { error: `הסיסמה החדשה צריכה ${MIN_PASSWORD_LENGTH} תווים לפחות` };
+  }
+
+  const { data } = await supabase.auth.getSession();
+  const email = data.session?.user?.email;
+  if (!email) return { error: "אין חיבור פעיל. יש להתחבר מחדש." };
+
+  // ============================================================
+  // מסלול Google: אין סיסמה להחליף
+  // ============================================================
+  // מי שנכנס דרך Google אינו מחזיק סיסמה במערכת, וקביעת סיסמה כאן הייתה
+  // *פותחת* מסלול כניסה שני שהוא לא ביקש. עדיף לומר זאת מלהצליח בשקט.
+  const viaGoogle = (data.session.user.app_metadata?.providers || []).includes("google");
+  const hasPassword = (data.session.user.app_metadata?.providers || []).includes("email");
+  if (viaGoogle && !hasPassword) {
+    return { error: "החשבון הזה נכנס דרך Google ואין לו סיסמה — אין מה להחליף." };
+  }
+
+  const { error: reauth } = await supabase.auth.signInWithPassword({
+    email,
+    password: String(currentPassword || ""),
+  });
+  if (reauth) {
+    return /invalid login credentials/i.test(reauth.message)
+      ? { error: "הסיסמה הנוכחית שגויה" }
+      : { error: reauth.message };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: next });
+  if (error) {
+    // GoTrue דוחה סיסמה זהה לקודמת בהודעה באנגלית; מתרגמים את המקרה השכיח.
+    return /should be different|same as the old/i.test(error.message)
+      ? { error: "הסיסמה החדשה זהה לנוכחית" }
+      : { error: error.message };
+  }
+
+  return { error: null };
+}
+
 /** ה-session הנוכחי, או null. נקרא בעלייה כדי לא לבקש התחברות מחדש. */
 export async function currentUser() {
   if (!isSupabaseConfigured) return null;

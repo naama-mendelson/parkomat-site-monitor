@@ -1,0 +1,174 @@
+/* components/AccountMenu/AccountMenu.css */
+
+.account {
+  position: relative;
+}
+
+.account-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px 5px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.account-trigger:hover {
+  background: var(--bg-hover);
+}
+
+.account-avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: var(--brand-on);
+  font-weight: 700;
+  font-size: 0.85rem;
+  direction: ltr;
+}
+
+.account-role-chip {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-start: 0;
+  z-index: 70;
+  width: 260px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-who {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
+}
+
+.account-email {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  direction: ltr;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.account-role {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.account-item {
+  padding: 8px 9px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.87rem;
+  text-align: start;
+  cursor: pointer;
+}
+
+.account-item:hover {
+  background: var(--bg-hover);
+}
+
+/* היציאה נבדלת חזותית: היא הפעולה היחידה כאן שאי אפשר לבטל בלחיצה שנייה. */
+.account-item--exit {
+  color: #ef4444;
+}
+
+.account-pw {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.account-pw input {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.account-pw input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.account-pw-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.account-pw-actions button {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.account-pw-actions button[type="submit"] {
+  border-color: transparent;
+  background: var(--brand);
+  color: var(--brand-on);
+  font-weight: 600;
+}
+
+.account-pw-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.account-pw-error {
+  margin: 2px 0 0;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+  font-size: 0.8rem;
+}
+
+.account-pw-done {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: rgba(148, 193, 30, 0.14);
+  border: 1px solid rgba(148, 193, 30, 0.4);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}

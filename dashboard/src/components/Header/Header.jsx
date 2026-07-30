@@ -5,7 +5,7 @@ import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import AlertBell from "../AlertBell/AlertBell";
 import UsersPanel from "../UsersPanel/UsersPanel";
-import { signOut } from "../../services/auth";
+import AccountMenu from "../AccountMenu/AccountMenu";
 import "./Header.css";
 
 function Header({
@@ -71,16 +71,9 @@ function Header({
             👥
           </button>
 
-          {/* יציאה. עד עכשיו לא הייתה שום דרך להתנתק — במסך משותף זה אומר
-              שמי שנכנס נשאר מחובר לכל מי שיגיע אחריו. */}
-          <button
-            className="theme-toggle"
-            onClick={signOut}
-            title="התנתקות"
-            aria-label="התנתקות"
-          >
-            ⎋
-          </button>
+          {/* מי מחובר, שינוי סיסמה, ויציאה. החליף כפתור ⎋ בודד שלא אמר בשם
+              מי המסך פועל — וזה מה שנרשם על כל פעולת תחזוקה. */}
+          <AccountMenu />
 
           <button
             className="theme-toggle"
