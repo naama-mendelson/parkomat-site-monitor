@@ -1,8 +1,11 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
+import { useState } from "react";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import AlertBell from "../AlertBell/AlertBell";
+import UsersPanel from "../UsersPanel/UsersPanel";
+import { signOut } from "../../services/auth";
 import "./Header.css";
 
 function Header({
@@ -24,6 +27,11 @@ function Header({
   // ניהול האתרים (הוספה/עריכה/מחיקה) פתוח רק למנהל בקרה ומנהל כללי.
   // הבקר מנטר בלבד. השרת אוכף את זה גם הוא — הסתרה ב-UI אינה אבטחה.
   const canManage = role === "supervisor" || role === "executive";
+
+  // צירוף משתמשים פתוח לכל מי שמחובר (החלטת מוצר), ולכן הכפתור אינו תלוי
+  // בתפקיד — בשונה מ"ניהול אתרים" שמעליו. השרת הוא שאוכף בשני המקרים
+  // (requireAuth ב-api/routes.js); הסתרה ב-UI אינה אבטחה.
+  const [usersOpen, setUsersOpen] = useState(false);
 
   return (
     <header className="app-header">
@@ -56,6 +64,26 @@ function Header({
 
           <button
             className="theme-toggle"
+            onClick={() => setUsersOpen(true)}
+            title="משתמשים — צירוף וצפייה"
+            aria-label="משתמשים"
+          >
+            👥
+          </button>
+
+          {/* יציאה. עד עכשיו לא הייתה שום דרך להתנתק — במסך משותף זה אומר
+              שמי שנכנס נשאר מחובר לכל מי שיגיע אחריו. */}
+          <button
+            className="theme-toggle"
+            onClick={signOut}
+            title="התנתקות"
+            aria-label="התנתקות"
+          >
+            ⎋
+          </button>
+
+          <button
+            className="theme-toggle"
             onClick={onToggleDarkMode}
             title={darkMode ? "מצב בהיר" : "מצב כהה"}
             aria-label={darkMode ? "מעבר למצב בהיר" : "מעבר למצב כהה"}
@@ -64,6 +92,8 @@ function Header({
           </button>
         </div>
       </div>
+
+      {usersOpen && <UsersPanel onClose={() => setUsersOpen(false)} />}
 
       {/* מוני סטטוס כפילטרים — רק בתצוגת הבקר */}
       {isOperator && (

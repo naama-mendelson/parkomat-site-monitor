@@ -65,6 +65,48 @@ export function storeAdminCode(code) {
   }
 }
 
+// ============================================================
+// כותרות עם אסימון המשתמש — לנתיבים שדורשים זהות אמיתית
+// ============================================================
+// שונה מ-adminHeaders: שם זה סוד משותף בלי זהות, וכאן זו זהות מאומתת.
+// הזמנת משתמש דורשת את השנייה — אחרת אי אפשר לרשום *מי* הזמין, וזה כל
+// מה שמאזן את העובדה שההזמנה פתוחה לכל מחובר.
+async function authHeaders() {
+  // import דינמי כדי שהמודול הזה לא ייגרר ל-supabase-js בכל טעינה.
+  const { supabase } = await import("./supabase");
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/**
+ * הזמנת משתמש חדש. פתוח לכל מי שמחובר.
+ *
+ * הסיסמה הזמנית מוחזרת **פעם אחת** ואינה נשמרת בשום מקום — המזמין מעביר
+ * אותה למוזמן. הסיבה שזו יצירה עם סיסמה ולא הזמנה במייל היא ש-SMTP של
+ * Supabase בברירת מחדל מוגבל לבודדים לשעה, ולעיתים רק לחברי הצוות — כלומר
+ * מייל שנשלח ולא מגיע, בלי שגיאה. ראה master/auth/admin.js.
+ */
+export async function inviteUser(email) {
+  const res = await fetch(`${BASE}/users/invite`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) await parseError(res, "הזמנת המשתמש נכשלה");
+  return res.json();
+}
+
+/** מי כבר במערכת — כדי לא להזמין כפולים. */
+export async function fetchUsers() {
+  const res = await fetch(`${BASE}/users`, { headers: await authHeaders() });
+  if (!res.ok) await parseError(res, "שגיאה בטעינת המשתמשים");
+  return res.json();
+}
+
 function adminHeaders() {
   const code = getAdminCode();
   return {

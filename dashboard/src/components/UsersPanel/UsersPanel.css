@@ -1,0 +1,212 @@
+/* components/UsersPanel/UsersPanel.css */
+
+.users-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 20, 40, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 60;
+}
+
+.users-panel {
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+.users-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.users-head h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+
+.users-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.users-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.users-hint {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.users-invite {
+  display: flex;
+  gap: 8px;
+}
+
+.users-invite input {
+  flex: 1;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.users-invite input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.users-invite button {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: var(--brand-on);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.users-invite button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.users-error {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+  font-size: 0.85rem;
+}
+
+/* הסיסמה הזמנית — ענבר ולא ירוק. זו אינה "הצלחה, סיימנו" אלא
+   "הצלחה, ויש עוד צעד שרק אתה יכול לעשות". */
+.users-invited {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.users-invited strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.users-invited p {
+  margin: 6px 0 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.users-temp-pw {
+  display: block;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+  /* בחירה בלחיצה אחת — סיסמה שמוצגת פעם אחת חייבת להיות קלה להעתקה */
+  user-select: all;
+  direction: ltr;
+  text-align: left;
+}
+
+.users-copy {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.users-copy:hover {
+  background: var(--bg-hover);
+}
+
+.users-list-title {
+  margin: 20px 0 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.users-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.users-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  font-size: 0.87rem;
+}
+
+.users-email {
+  flex: 1;
+  color: var(--text-primary);
+  direction: ltr;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.users-role {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.users-role--executive { background: rgba(61, 120, 216, 0.16); color: #3d78d8; }
+.users-role--supervisor { background: rgba(148, 193, 30, 0.18); color: #6f8f16; }
+
+.users-seen {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

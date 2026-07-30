@@ -21,6 +21,7 @@ const bus = require("../bus");
 // שכבת האימות. מאחורי seam — ראה auth/provider.js. היום היא מאמתת בלבד
 // (verifyToken) ואינה מנפיקה: ההנפקה במצב Supabase קורית בדפדפן.
 const auth = require("../auth/provider");
+const adminUsers = require("../auth/admin");   // ניהול משתמשים — המקום היחיד שנוגע במפתח ה-Secret
 const { cache } = require("./cache");
 const { resolvePeriod } = require("./periods");
 const { runChat, isChatConfigured } = require("../ai/chat");
@@ -208,6 +209,120 @@ async function identifyActor(req, res, next) {
 
   return next();
 }
+
+// ============================================================
+// requireAuth — שער אמיתי, בשונה מ-identifyActor
+// ============================================================
+// ההבדל מהתחזוקה אינו קפריזה. תחזוקה פתוחה לכל אחד כי הנזק שלה מוגבל
+// ומתועד (משתיקה אתר, נרשם מי עשה זאת). **יצירת משתמש היא אחרת**: משתמש
+// חדש מקבל authenticated, ו-RLS מתיר לכל authenticated לקרוא את כל נתוני
+// האתרים. כלומר נתיב יצירה אנונימי היה מאפשר לכל אדם באינטרנט להנפיק
+// לעצמו גישה מלאה לנתונים — לא "לעשות פעולה", אלא לפתוח את הדלת.
+//
+// לכן כאן נדרש אסימון תקין, ואין מסלול חלופי של קוד מנהל: קוד מנהל הוא
+// סוד משותף בלי זהות, ואי אפשר לרשום בעזרתו *מי* הזמין.
+async function requireAuth(req, res, next) {
+  const header = req.get("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) return res.status(401).json({ error: "נדרשת התחברות" });
+
+  const actor = await auth.verifyToken(token);
+  if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+
+  req.actor = { userId: actor.userId, name: actor.email || actor.userId,
+                role: actor.role, trust: "token" };
+  next();
+}
+
+// ============================================================
+// מגביל קצב להזמנות
+// ============================================================
+// ההזמנה פתוחה לכל מחובר, ולכן חשבון אחד שנפרץ או משתמש אחד לא זהיר יכול
+// לייצר מאה חשבונות בלופ. עשר לשעה הוא מעל ומעבר לשימוש אמיתי (מי מזמין
+// עשרה אנשים בשעה?) וחוסם לופ.
+const INVITE_RATE_LIMIT = 10;
+const INVITE_RATE_WINDOW_MS = 60 * 60_000;
+const inviteHits = new Map();
+
+function inviteRateLimit(req, res, next) {
+  // המפתח הוא **המשתמש** ולא ה-IP: הגבלה לפי IP הייתה חוסמת משרד שלם
+  // מאחורי NAT אחד, ובו-זמנית לא חוסמת מי שמחליף רשתות.
+  const who = req.actor?.userId || req.ip || "unknown";
+  const now = Date.now();
+  const hits = (inviteHits.get(who) || []).filter((t) => now - t < INVITE_RATE_WINDOW_MS);
+
+  if (hits.length >= INVITE_RATE_LIMIT) {
+    const retryMs = INVITE_RATE_WINDOW_MS - (now - hits[0]);
+    res.set("Retry-After", String(Math.ceil(retryMs / 1000)));
+    console.warn(`[users] חסימת קצב על הזמנות מ-${req.actor?.name || who}`);
+    return res.status(429).json({
+      error: `יותר מדי הזמנות. נסי שוב בעוד ${Math.ceil(retryMs / 60_000)} דקות.`,
+    });
+  }
+
+  hits.push(now);
+  inviteHits.set(who, hits);
+
+  if (inviteHits.size > 500) {
+    for (const [k, times] of inviteHits) {
+      if (times.every((t) => now - t >= INVITE_RATE_WINDOW_MS)) inviteHits.delete(k);
+    }
+  }
+  next();
+}
+
+// ============================================================
+// POST /api/users/invite — כל מי שמחובר יכול לצרף מישהו
+// ============================================================
+// החלטת מוצר. מה שמאזן אותה, כמו בתחזוקה, הוא **ייחוס**: כל הזמנה נרשמת
+// עם מי הזמין את מי. בשונה מהתחזוקה, כאן הזהות מאומתת ולא מוצהרת — כי
+// requireAuth דורש אסימון.
+//
+// ⚠️ מה שההחלטה אומרת בפועל: ההרשאה להזמין היא **מדבקת**. כל מוזמן יכול
+// להזמין הלאה, ולכן חשבון אחד מספיק כדי לצרף את העולם — בשרשרת ולא
+// בקריאה אחת. התפקיד שנוצר הוא תמיד operator (ראה auth/admin.js), ולכן
+// אין הסלמת הרשאות; אבל operator רואה את כל נתוני האתרים.
+app.post("/api/users/invite", requireAuth, inviteRateLimit, async (req, res) => {
+  try {
+    const result = await adminUsers.createUser(req.body?.email);
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    // שורת הביקורת. זה כל מה שעומד בין "נוצר חשבון" ל"אין לנו מושג מי
+    // צירף אותו" — וכאן, בשונה מהתחזוקה, השם מאומת.
+    console.log(
+      `[users] ${req.actor.name} (${req.actor.userId}) הזמין את ${result.user.email} ` +
+      `בתפקיד ${result.user.role}`);
+
+    res.json({
+      ok: true,
+      user: result.user,
+      // הסיסמה הזמנית מוחזרת פעם אחת בלבד ואינה נשמרת אצלנו. המזמין מעביר
+      // אותה, והמוזמן מחליף. ראה ההסבר על SMTP ב-auth/admin.js.
+      tempPassword: result.tempPassword,
+      message: `נוצר משתמש ${result.user.email}. העבירו לו את הסיסמה הזמנית — היא מוצגת פעם אחת.`,
+    });
+  } catch (err) {
+    console.error("[api] שגיאה ב-POST /api/users/invite:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// GET /api/users — מי כבר במערכת. פתוח לכל מחובר, כמו ההזמנה עצמה:
+// מי שיכול לצרף צריך לדעת את מי כבר צירפו, אחרת הוא מזמין כפולים.
+app.get("/api/users", requireAuth, async (req, res) => {
+  try {
+    const result = await adminUsers.listUsers();
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ users: result.users });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET /api/users:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
 
 // POST /api/admin/verify — בדיקת קוד (לפתיחת מצב ניהול ב-UI)
 app.post("/api/admin/verify", adminRateLimit, async (req, res) => {
