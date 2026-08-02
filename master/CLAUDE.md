@@ -244,10 +244,11 @@ locked out the owner of the other. To change the list, edit the array in
 `db/security.postgres.sql` and restart; the file is the target state.
 
 It is a **database** trigger and not a check in `POST /api/users/invite`, because there are
-four ways a user gets created and the invite route is only one of them. The one that matters:
-**Google sign-in creates a user on first login**, so without this trigger any Google account
-on earth would become `authenticated` and see every site. Self-signup (`disable_signup` is
-`false`) and the Admin API are the other two.
+three ways a user gets created and the invite route is only one of them. The one that matters:
+**self-signup** — `disable_signup` is `false`, so `/auth/v1/signup` is open to anyone on the
+internet and never touches our server. The Admin API is the third. (Google sign-in was a
+fourth and has been removed from the product; the trigger would have covered it, and will
+cover any external provider added later without anyone remembering to add a check.)
 
 - **`SECURITY DEFINER` is load-bearing.** GoTrue connects as `supabase_auth_admin`, which has
   no `USAGE` on `app`. Without it the trigger body fails on permission denied for *every*

@@ -124,85 +124,10 @@
   cursor: default;
 }
 
-/* ===== מפריד "או" ===== */
-.login-divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.login-divider::before,
-.login-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border-color);
-}
-
-/* ===== כפתור Google =====
-   לבן עם מסגרת, בכל ערכת נושא — זו הצורה שמשתמשים מזהים, והיא גם מה
-   שהנחיות המיתוג של Google מבקשות. לכן הוא אינו מקבל את צבעי ה-theme. */
-.login-google {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid #dadce0;
-  border-radius: 8px;
-  background: #fff;
-  color: #3c4043;
-  font-size: 0.95rem;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-
-.login-google:hover:not(:disabled) {
-  background: #f8f9fa;
-  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.25);
-}
-
-.login-google:disabled {
-  opacity: 0.65;
-  cursor: default;
-}
-
-.login-google-mark {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-}
-
-/* ===== Google כמסלול ראשי ===== */
-
-/* הבטחה שהמשתמש שאל עליה במפורש: לחיצה אחת ולא חוזרים לכאן. ה-session
-   נשמר ומתחדש לבד (ראה services/supabase.js), ולכן זו אמירה נכונה. */
+/* ההבטחה שמתחת לכפתור — הערה, לא כותרת */
 .login-note {
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   font-size: 0.8rem;
   color: var(--text-muted);
   text-align: center;
-}
-
-/* מסלול הסיסמה — קישור ולא כפתור מלא. הוא קיים למי שצריך אותו, ואינו
-   מתחרה חזותית עם המסלול הראשי. */
-.login-alt {
-  margin-top: 12px;
-  padding: 6px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.84rem;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.login-alt:hover {
-  color: var(--text-primary);
 }
