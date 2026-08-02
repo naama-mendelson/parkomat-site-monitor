@@ -338,7 +338,11 @@ app.post("/api/admin/verify", adminRateLimit, async (req, res) => {
 });
 
 // POST /api/admin/code — שינוי קוד המנהל
-app.post("/api/admin/code", async (req, res) => {
+// ⚠️ adminRateLimit נוסף כאן אחרי ביקורת: הנתיב הזה מאמת את הקוד הנוכחי
+// לפני שהוא מחליף אותו, כלומר הוא **אורקל ניחוש** בדיוק כמו /admin/verify —
+// אבל הוא היה היחיד בלי הגבלת קצב. מי שרצה לנחש את הקוד היה פשוט תוקף כאן
+// במקום שם, וכל ההגנה של /verify הייתה מעוקפת בשינוי כתובת אחת.
+app.post("/api/admin/code", adminRateLimit, async (req, res) => {
   try {
     const { currentCode, newCode } = req.body || {};
 

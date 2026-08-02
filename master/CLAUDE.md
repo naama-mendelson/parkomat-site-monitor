@@ -161,6 +161,7 @@ none is needed — **the file is the target state.**
 | `public.site_uptime` | `getUptimeBreakdown` + `availabilityFrom` |
 | `public.site_segments_collapsed` | `collapseNoCommFlicker` |
 | `public.site_stats` | `statsFromData` |
+| `public.site_globals` | `getAllSitesGlobals` |
 
 **Four rules every function here follows. Breaking any of them is a bug:**
 
@@ -179,7 +180,7 @@ none is needed — **the file is the target state.**
    belongs to RLS at the table level, not to the computation.
 
 **`npm run parity` is the adoption gate.** It compares JS against SQL on real data before a
-port is trusted: 13 sites × week/month/year plus 29 seeded edge cases, currently 939
+port is trusted: every registered site × week/month/year plus 43 seeded edge cases, currently 1,262
 comparisons / 0 differences. It uses `db.js`'s own pool on purpose (so `keepAlive` matches by
 construction, not by a copy that drifts), and it compares the *rounded, user-visible* value —
 JS accumulates whole milliseconds while Postgres accumulates seconds as double, so bit

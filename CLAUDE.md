@@ -9,18 +9,20 @@ editing either component. Source comments are Hebrew; these instruction files ar
 
 ```
 Agent (on site) → HiveMQ → Node server → Supabase (Postgres)
-                              ↓
-                     dashboard asks the server
+                              ↓                    ↑
+                        SSE + assistant      dashboard reads directly
 ```
 
-The server does everything: ingests MQTT, writes, computes every metric, and serves the
-dashboard. ~6,000 lines. The dashboard never touches the database.
+The site list is read straight from PostgREST; the server still computes every other read
+(supervisor, executive, analytics, insights, activity log) and owns ingestion, SSE and the
+AI assistant. **~8,700 lines** — the read endpoints are no longer on the hot path but are
+deliberately kept as the way back (see *Phase E is cancelled*, below).
 
 | Component | Role |
 |---|---|
 | `Parkomat.Agent/` | C# / .NET 10, runs on a PC at the site. Reads the PLC over Modbus-TCP, publishes to MQTT. |
-| `master/` | Node/Express. MQTT ingestion + all metric computation + REST/SSE for the dashboard. |
-| `dashboard/` | React 19 / Vite. Talks only to `master`. |
+| `master/` | Node/Express. MQTT ingestion, the AI assistant, SSE, and the read endpoints that have not moved. |
+| `dashboard/` | React 19 / Vite. Reads sites from Supabase directly; everything else through `master`. One flag switches it all back. |
 
 ---
 
@@ -34,10 +36,10 @@ escape path exists in the repo, written and tested but inactive.
 
 | Phase | State |
 |---|---|
-| A — metrics into SQL | **Built.** `db/functions.postgres.sql`: `site_uptime`, `site_segments_collapsed`, `site_stats`. Verified by `tools/parity.js` (939 comparisons, 0 differences). |
+| A — metrics into SQL | **Built.** `db/functions.postgres.sql`: `site_uptime`, `site_segments_collapsed`, `site_stats`, `site_globals`. Verified by `tools/parity.js` (1,262 comparisons, 0 differences). |
 | A' — first live adoption | **Built.** `getAllSitesWithMetrics` (`GET /api/sites`) computes in Postgres. 203ms → 109ms, 2,200 rows over the wire → 26. |
 | B — `events` table | **Built.** One row per semantic event, `bus.publish`, replay via `GET /api/stream/since?after=<id>`, 7-day retention. |
-| C — identity + RLS | **Mostly.** `app.current_actor()` / `app.current_role()` exist; RLS grants read to `authenticated`; `auth/provider.js` has two tested providers. Maintenance is the first route behind `requireSiteAccess`. No route *requires* a token yet, because nothing can issue one. |
+| C — identity + RLS | **Built.** `app.current_actor()` / `app.current_role()`; RLS enabled on all 7 tables, read granted to `authenticated`, `settings` deliberately policy-less. Real users exist. `POST /api/users/invite` and `GET /api/users` are behind `requireAuth` — token only. Verified adversarially: anon reads return `401`, `settings` returns `403` even with a valid token, writes from the browser return `403`. |
 | D — dashboard queries directly | **Built and live.** `getAllSitesGlobals` is now `site_globals` in SQL — that was the last blocker. `useSites` goes through `services/dataSource.js`; the site list is read straight from PostgREST. |
 | E — delete the read API | **Deliberately not done — see below.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
@@ -82,13 +84,25 @@ downgrading them to anonymous would hide a real auth failure); and making the ro
 later is **one line** — uncomment the `return res.status(401)` at the end of the middleware.
 Do that once users exist.
 
-**What D is still blocked on — credentials, not decisions.** The dashboard cannot query
-Supabase directly until `SUPABASE_URL`, the anon key, and `SUPABASE_JWT_SECRET` exist in the
-environment; only `DATABASE_URL` is configured today. And with RLS granting reads to
-`authenticated` only, a dashboard holding the anon key alone would read **nothing** — so
-Supabase Auth has to be wired and at least one user has to exist before D delivers anything.
-There are **no users at all** today; the dashboard role is `useState("operator")` in the
-browser.
+## How accounts work now
+
+**Invitation only, and it is the database that enforces it.** Two triggers on `auth.users`:
+
+- **Domain** — the address must be `@parkomat.co.il`. One domain exactly.
+- **Invite-only** — a `DEFERRABLE INITIALLY DEFERRED` constraint trigger requires
+  `parkomat_role` in `app_metadata` at commit. Only the Admin API can set it, so in effect
+  only the holder of the Secret key can create a user.
+
+It is enforced in SQL and **not** in server code, on purpose: `/auth/v1/signup` is open to
+the internet and never touches our server, so a check in `auth/admin.js` would guard one of
+three creation paths. The server only *relays* the database's reason (Postgres error `23514`)
+so the inviter sees why, instead of a bare `502`.
+
+Details, including why the invite rule had to be deferred, are in
+[`master/CLAUDE.md`](master/CLAUDE.md).
+
+**Google sign-in was built and then removed** at the product owner's request. Email and
+password only.
 
 ## Phase E is cancelled, and that is a decision — not an omission
 
@@ -133,7 +147,10 @@ The server keeps only two jobs, both of which genuinely cannot move:
    There is no serverless primitive for holding a persistent MQTT session.
 2. **The AI assistant** — holds `GROQ_API_KEY`, which must never reach a browser.
 
-~2,200 lines. Everything else — 17 of 18 read endpoints — goes away.
+~2,200 lines was the original target, reached by deleting the 17 read endpoints. **That
+target is no longer the plan** — deleting them would close the exit door, so they stay and
+the server stays around 8,700 lines. See *Phase E is cancelled* above; this is a trade that
+was made deliberately, not a goal that was missed.
 
 ## What each part becomes
 
@@ -219,7 +236,7 @@ in with tests.
 
 ## Cost trigger worth knowing
 
-At 13 sites the Supabase free tier is a non-issue: ~1 MB of application data, and a
+At the current site count (12) the Supabase free tier is a non-issue: ~1 MB of application data, and a
 12-month-retention steady state around 47–82 MB. At 200 sites the limit is reached in
 6–12 months and the steady state is 560 MB – 1.1 GB. The crossover is roughly 60–80 sites.
 `DELETE` does not return disk to the OS, so retention plateaus at the high-water mark
