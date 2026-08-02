@@ -346,3 +346,120 @@ $$;
 COMMENT ON FUNCTION public.site_stats(integer[], text, text) IS
   'פעולות, תקלות, תקלות-בתחזוקה ואחוז כשל לכל אתר בטווח. תרגום של statsFromData. '
   'התקלות עוברות דרך site_segments_collapsed; החרגת התחזוקה משני מקורות, גבולות כוללים.';
+
+
+-- ============================================================
+-- public.site_globals — הנתונים ה"גלובליים" של כל אתר
+-- ============================================================
+-- תרגום של getAllSitesGlobals (queries.js). זו הפונקציה שחסמה את המעבר
+-- של הדשבורד לקריאה ישירה: בלעדיה fetchSitesDirect החזיר תמונה חלקית.
+--
+-- חמש השאילתות המקוריות מתאחדות כאן ל-CTE-ים, ו-ids הוא הנהג — כדי
+-- שאתר בלי שום היסטוריה עדיין יקבל שורה, בדיוק כמו ש-at() ב-JS יצר
+-- רשומה ריקה. אתר כזה הוא המקרה של אתר חדש שנרשם ועוד לא דיווח.
+--
+-- ⚠️ להבדיל משאר הפונקציות כאן, אין כאן טווח תאריכים: אלה נתונים "עד
+-- עכשיו" ולא "בטווח". לכן אין סינון לקסיקלי על started_at — אבל גם אין
+-- cast של עמודה, ולכן האינדקסים נשמרים.
+CREATE OR REPLACE FUNCTION public.site_globals(p_site_ids integer[] DEFAULT NULL)
+RETURNS TABLE (
+  site_id                     integer,
+  last_fault_at               text,
+  first_status_at             text,
+  status_since                text,
+  last_op_start_end           text,
+  last_op_entry_exit          text,
+  last_op_card_number         text,
+  last_op_occurred_at         text,
+  operations_since_last_error integer,
+  maintenance_id              integer,
+  maintenance_set_by_name     text,
+  maintenance_set_by_role     text,
+  maintenance_reason          text,
+  maintenance_started_at      text,
+  maintenance_duration_hours  double precision,
+  maintenance_expires_at      text
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH ids AS (
+  SELECT id AS site_id FROM sites
+   WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)
+),
+-- התקלה האחרונה + המקטע הראשון אי-פעם
+faults AS (
+  SELECT h.site_id,
+         MAX(h.started_at) FILTER (WHERE h.status = 'error') AS last_fault_at,
+         MIN(h.started_at)                                   AS first_status_at
+    FROM status_history h
+    JOIN ids ON ids.site_id = h.site_id
+   GROUP BY h.site_id
+),
+-- המצב הפתוח הנוכחי. DISTINCT ON = "שורה אחת לכל קבוצה" בלי N+1.
+open_seg AS (
+  SELECT DISTINCT ON (h.site_id) h.site_id, h.started_at
+    FROM status_history h
+    JOIN ids ON ids.site_id = h.site_id
+   WHERE h.ended_at IS NULL
+   ORDER BY h.site_id, h.started_at DESC
+),
+-- הפעולה האחרונה. שובר השוויון על id נשמר מה-JS: שתי פעולות באותה שנייה
+-- הן מקרה אמיתי, ובלעדיו הבחירה ביניהן שרירותית.
+last_op AS (
+  SELECT DISTINCT ON (o.site_id)
+         o.site_id, o.start_end, o.entry_exit, o.card_number, o.occurred_at
+    FROM operations o
+    JOIN ids ON ids.site_id = o.site_id
+   ORDER BY o.site_id, o.occurred_at DESC, o.id DESC
+),
+-- כמה פעולות מאז התקלה האחרונה. LEFT JOIN ולא INNER: אתר שמעולם לא
+-- נכשל צריך לספור את **כל** פעולותיו, לא אפס.
+since_error AS (
+  SELECT o.site_id, COUNT(*)::int AS n
+    FROM operations o
+    JOIN ids ON ids.site_id = o.site_id
+    LEFT JOIN faults f ON f.site_id = o.site_id
+   WHERE o.is_anomaly = 0 AND o.start_end = 'end'
+     AND (f.last_fault_at IS NULL OR o.occurred_at > f.last_fault_at)
+   GROUP BY o.site_id
+),
+-- תחזוקה ידנית פעילה כרגע. now() ולא פרמטר: ב-JS הזמן נלקח בתוך
+-- הפונקציה עצמה, אז זו אותה סמנטיקה — ולכן הפונקציה STABLE ולא IMMUTABLE.
+maint AS (
+  SELECT DISTINCT ON (m.site_id) m.*
+    FROM maintenance_windows m
+    JOIN ids ON ids.site_id = m.site_id
+   WHERE m.cancelled_at IS NULL
+     AND m.expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+   ORDER BY m.site_id, m.expires_at DESC
+)
+SELECT
+  ids.site_id,
+  f.last_fault_at,
+  f.first_status_at,
+  s.started_at,
+  lo.start_end,
+  lo.entry_exit,
+  lo.card_number,
+  lo.occurred_at,
+  -- 0 ולא NULL: ב-JS blank() מאתחל ל-0, והדשבורד מציג את המספר הזה.
+  COALESCE(se.n, 0)::int,
+  m.id,
+  m.set_by_name,
+  m.set_by_role,
+  m.reason,
+  m.started_at,
+  m.duration_hours,
+  m.expires_at
+FROM ids
+LEFT JOIN faults      f  ON f.site_id  = ids.site_id
+LEFT JOIN open_seg    s  ON s.site_id  = ids.site_id
+LEFT JOIN last_op     lo ON lo.site_id = ids.site_id
+LEFT JOIN since_error se ON se.site_id = ids.site_id
+LEFT JOIN maint       m  ON m.site_id  = ids.site_id;
+$$;
+
+COMMENT ON FUNCTION public.site_globals(integer[]) IS
+  'נתונים גלובליים לכל אתר: תקלה אחרונה, מקטע ראשון, מצב פתוח, פעולה אחרונה, '
+  'פעולות מאז התקלה, ותחזוקה פעילה. תרגום של getAllSitesGlobals. ללא טווח תאריכים.';

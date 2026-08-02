@@ -182,6 +182,35 @@ const txStore = new AsyncLocalStorage();
 const executor = () => txStore.getStore() || pool;
 
 // ============================================================
+// תור לכל client — כי לחיבור אחד יש ערוץ פרוטוקול אחד
+// ============================================================
+// pool.query מקצה client לכל שאילתה, ולכן Promise.all עליו בטוח לגמרי.
+// **בתוך טרנזקציה זה הפוך**: executor() מחזיר client יחיד, ו-Promise.all
+// יורה עליו כמה שאילתות במקביל. pg מסמן את זה כמיושן ("client is already
+// executing a query") — לחיבור Postgres יש ערוץ אחד, והתוצאות עלולות
+// להתערבב או להיזרק.
+//
+// זה אינו תיאורטי: getAllSitesGlobals עושה Promise.all על חמש שאילתות.
+// בייצור הוא נקרא מנתיב REST ורץ על ה-pool, ולכן תקין; ברגע שנקרא בתוך
+// טרנזקציה הוא נפל לסירוגין — מה שהתגלה כשהוא נכנס לשער ה-parity.
+//
+// הפתרון הוא שרשור ולא נעילה: כל שאילתה על client נתון ממתינה לקודמתה.
+// **בייצור המחיר אפס** — בתוך טרנזקציה שאילתות ממילא חייבות להיות סדרתיות,
+// והשרשור רק הופך את זה למפורש במקום לתלוי-מזל. ה-pool אינו נכנס לתור.
+const clientQueues = new WeakMap();
+
+function runOn(target, sql, params) {
+  if (target === pool) return pool.query(sql, params);
+
+  const prev = clientQueues.get(target) || Promise.resolve();
+  // catch על החוליה הקודמת: שאילתה שנכשלה לא אמורה להרעיל את הבאות בתור —
+  // הטרנזקציה כולה תתגלגל לאחור ממילא, וזה תפקידו של transaction().
+  const next = prev.catch(() => {}).then(() => target.query(sql, params));
+  clientQueues.set(target, next);
+  return next;
+}
+
+// ============================================================
 // טרנזקציה מקננת — מצטרפת, ולא פותחת חדשה
 // ============================================================
 // בלי הבדיקה הזו, קריאה ל-transaction() *מתוך* טרנזקציה הייתה שולפת client
@@ -324,7 +353,7 @@ function resetQueryStats() {
 async function runOnce(text, params) {
   const started = process.hrtime.bigint();
   try {
-    return await executor().query(text, params);
+    return await runOn(executor(), text, params);
   } finally {
     counters.queries++;
     counters.ms += Number(process.hrtime.bigint() - started) / 1e6;
@@ -389,7 +418,7 @@ function prepare(sql) {
 
 // הרצת SQL גולמי (DDL)
 async function exec(sql) {
-  await executor().query(sql);
+  await runOn(executor(), sql);
 }
 
 // ============================================================

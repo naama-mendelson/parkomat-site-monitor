@@ -29,24 +29,51 @@
 //    שלמים (ספירות) מושווים בשוויון מוחלט — שם כל הפרש הוא באג.
 
 const db = require("../db/db");
-const { loadRangeData, uptimeFromData, collapseNoCommFlicker, statsFromData } = require("../db/queries");
+const { loadRangeData, uptimeFromData, collapseNoCommFlicker, statsFromData,
+        getAllSitesGlobals } = require("../db/queries");
 const { resolvePeriod } = require("../api/periods");
 
 // ===== דיווח =====
 let checks = 0, failures = 0;
 const fails = [];
 
+// ============================================================
+// תיקו-עיגול — הפרש שאינו של אף אחד מהצדדים
+// ============================================================
+// נתפס בפועל: readyHours של אתר 3513 יצא JS=130.51 מול SQL=130.52. הערך
+// הגולמי בשני הצדדים היה **זהה עד הספרה העשירית** — 130.5150000000. כל
+// ההפרש הוא בעיגול על גבול ה-.005: ב-JS 130.515 אינו ניתן לייצוג מדויק
+// ב-double ויושב מעט מתחת לחצי, ולכן Math.round יורד; Postgres מעגל
+// ב-NUMERIC, חשבון עשרוני מדויק, ולכן עולה.
+//
+// אף צד אינו שגוי — למען האמת Postgres כאן מדויק יותר, וזה גם הצד שיישאר
+// אחרי ההגירה. ליפול על זה פירושו שער שנצבע אדום מנתונים שזזו, ולא מקוד
+// שנשבר; זהו בדיוק סוג הכשל שגורם להתעלם משער.
+//
+// לכן: הפרש של **סנט אחד בדיוק** נספר בנפרד ומוצג בסוף, אך אינו מפיל.
+// כל דבר גדול מזה עדיין מפיל. שלמים — ספירות — מושווים בשוויון מוחלט
+// ואינם זכאים להקלה הזו, כי שם כל הפרש הוא באג.
+const TIE = 0.0100001;
+let ties = 0;
+const tieList = [];
+
 function compare(label, expected, actual) {
   checks++;
-  const same = expected === actual
-    || (typeof expected === "number" && typeof actual === "number"
-        && Number.isFinite(expected) && Number.isFinite(actual)
-        && Math.abs(expected - actual) < 1e-9);
-  if (!same) {
-    failures++;
-    fails.push(`${label}: JS=${JSON.stringify(expected)} SQL=${JSON.stringify(actual)}`);
+  const bothNum = typeof expected === "number" && typeof actual === "number"
+    && Number.isFinite(expected) && Number.isFinite(actual);
+
+  if (expected === actual || (bothNum && Math.abs(expected - actual) < 1e-9)) return true;
+
+  const bothInt = bothNum && Number.isInteger(expected) && Number.isInteger(actual);
+  if (bothNum && !bothInt && Math.abs(expected - actual) <= TIE) {
+    ties++;
+    tieList.push(`${label}: JS=${expected} SQL=${actual}`);
+    return true;
   }
-  return same;
+
+  failures++;
+  fails.push(`${label}: JS=${JSON.stringify(expected)} SQL=${JSON.stringify(actual)}`);
+  return false;
 }
 
 // ============================================================
@@ -664,12 +691,234 @@ async function parityStatsEdges() {
   }
 }
 
+
+// ============================================================
+// הבדיקה: נתונים גלובליים (site_globals מול getAllSitesGlobals)
+// ============================================================
+// זו הפונקציה שחסמה את המעבר של הדשבורד לקריאה ישירה, ולכן היא נבדקת
+// בשתי צורות הקריאה: null (כל האתרים) ורשימת מזהים מפורשת. שתיהן חייבות
+// להסכים — קריאה עם רשימה היא מה שהדשבורד יעשה בפועל.
+async function parityGlobals() {
+  console.log("\n=== נתונים גלובליים ===");
+
+  const sites = await db.prepare("SELECT id, code FROM sites ORDER BY id").all();
+  const ids = sites.map((s) => s.id);
+  const byId = new Map(sites.map((s) => [s.id, s.code]));
+
+  for (const [mode, arg] of [["all", null], ["explicit", ids]]) {
+    const js = await getAllSitesGlobals(arg);
+    const rows = await db.prepare("SELECT * FROM site_globals(?)").all(arg);
+    const sql = new Map(rows.map((r) => [r.site_id, r]));
+
+    compare(`globals[${mode}].siteCount`, js.size, sql.size);
+
+    for (const id of ids) {
+      const j = js.get(id), s = sql.get(id), c = byId.get(id);
+      if (!j || !s) { compare(`globals[${mode}]/${c}.present`, Boolean(j), Boolean(s)); continue; }
+
+      compare(`globals[${mode}]/${c}.lastFaultAt`,   j.lastFaultAt,   s.last_fault_at);
+      compare(`globals[${mode}]/${c}.firstStatusAt`, j.firstStatusAt, s.first_status_at);
+      compare(`globals[${mode}]/${c}.statusSince`,   j.statusSince,   s.status_since);
+      compare(`globals[${mode}]/${c}.opsSinceError`, j.operationsSinceLastError, s.operations_since_last_error);
+
+      // הפעולה האחרונה — ארבעת השדות בנפרד. השוואת האובייקט כמחרוזת הייתה
+      // מסתירה איזה שדה נשבר.
+      const jo = j.lastOperation;
+      compare(`globals[${mode}]/${c}.lastOp.startEnd`,   jo?.start_end   ?? null, s.last_op_start_end);
+      compare(`globals[${mode}]/${c}.lastOp.entryExit`,  jo?.entry_exit  ?? null, s.last_op_entry_exit);
+      compare(`globals[${mode}]/${c}.lastOp.card`,       jo?.card_number ?? null, s.last_op_card_number);
+      compare(`globals[${mode}]/${c}.lastOp.occurredAt`, jo?.occurred_at ?? null, s.last_op_occurred_at);
+
+      const jm = j.activeMaintenance;
+      compare(`globals[${mode}]/${c}.maint.id`,      jm?.id             ?? null, s.maintenance_id);
+      compare(`globals[${mode}]/${c}.maint.name`,    jm?.set_by_name    ?? null, s.maintenance_set_by_name);
+      compare(`globals[${mode}]/${c}.maint.expires`, jm?.expires_at     ?? null, s.maintenance_expires_at);
+      compare(`globals[${mode}]/${c}.maint.hours`,   jm?.duration_hours ?? null, s.maintenance_duration_hours);
+    }
+    console.log(`  ${mode.padEnd(9)} — ${ids.length} אתרים הושוו`);
+  }
+}
+
+// ============================================================
+// מקרי קצה לנתונים הגלובליים — נזרעים, כי הייצור לא מכיל אותם
+// ============================================================
+// ארבע מוטציות הורצו מול נתוני הייצור בלבד, ורק אחת נתפסה. הסיבה אינה
+// שהפורט נכון אלא שהנתונים לא מכילים את המקרים: לכל אתר בייצור יש תקלה
+// כלשהי, אין שתי פעולות באותה שנייה, ואין תחזוקה מבוטלת. שלוש הבדיקות
+// האלה היו עיוורות לחלוטין. כל תרחיש כאן קיים כדי לתפוס מוטציה מסוימת,
+// ותוצאות המוטציות מתועדות ב-master/CLAUDE.md.
+const GLOBAL_EDGES = [
+  {
+    // תופס מוטציה A: LEFT JOIN → INNER בספירת הפעולות מאז התקלה. אתר
+    // שמעולם לא נכשל צריך לספור את **כל** פעולותיו, ולא אפס.
+    name: "אתר שמעולם לא נכשל",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: (t) => [
+      { start_end: "end", entry_exit: "entry", card_number: "A1", occurred_at: iso(t - 5 * H) },
+      { start_end: "end", entry_exit: "exit",  card_number: "A2", occurred_at: iso(t - 4 * H) },
+    ],
+  },
+  {
+    // ============================================================
+    // התרחיש שמוטציה A דרשה, והראשון לא סיפק
+    // ============================================================
+    // "אתר שמעולם לא נכשל" *לא* תפס את LEFT JOIN → INNER, ובצדק: יש לו
+    // מקטעי מצב, ולכן ה-CTE של התקלות מחזיר עבורו שורה (עם NULL בתקלה),
+    // וה-INNER מוצא אותה. השניים שקולים שם.
+    //
+    // ההפרש מתגלה רק כשאין **שום** שורת status_history: אז ל-CTE אין שורה
+    // בכלל, INNER זורק את כל הפעולות, והספירה יוצאת 0 במקום המספר האמיתי.
+    // זה קורה באמת — פעולות שהגיעו לפני הודעת המצב הראשונה.
+    name: "פעולות בלי שום היסטוריית מצב",
+    segments: () => [],
+    operations: (t) => [
+      { start_end: "end", entry_exit: "entry", card_number: "N1", occurred_at: iso(t - 5 * H) },
+      { start_end: "end", entry_exit: "exit",  card_number: "N2", occurred_at: iso(t - 4 * H) },
+      { start_end: "end", entry_exit: "entry", card_number: "N3", occurred_at: iso(t - 3 * H) },
+    ],
+  },
+  {
+    // תופס מוטציה B: הסרת שובר השוויון על id. שתי פעולות באותה שנייה
+    // בדיוק — בלי ORDER BY id הבחירה ביניהן שרירותית.
+    name: "שתי פעולות באותה שנייה",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: (t) => [
+      { start_end: "end", entry_exit: "entry", card_number: "FIRST",  occurred_at: iso(t - 2 * H) },
+      { start_end: "end", entry_exit: "exit",  card_number: "SECOND", occurred_at: iso(t - 2 * H) },
+    ],
+  },
+  {
+    // תופס מוטציה C: התעלמות מ-cancelled_at. החלון עוד בתוקף אבל בוטל
+    // ידנית, ולכן חייב לחזור null — אחרת אתר פעיל ייראה מושבת.
+    name: "תחזוקה שבוטלה אך טרם פגה",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: () => [],
+    maintenance: (t) => [
+      { set_by_name: "נעמה", started_at: iso(t - 3 * H), duration_hours: 24,
+        expires_at: iso(t + 21 * H), cancelled_at: iso(t - 1 * H) },
+    ],
+  },
+  {
+    // חלון שפג — גם הוא לא אמור לחזור.
+    name: "תחזוקה שפגה",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: () => [],
+    maintenance: (t) => [
+      { set_by_name: "נעמה", started_at: iso(t - 30 * H), duration_hours: 2,
+        expires_at: iso(t - 28 * H), cancelled_at: null },
+    ],
+  },
+  {
+    // שני חלונות פעילים — נבחר זה עם expires_at המאוחר.
+    name: "שני חלונות פעילים",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: () => [],
+    maintenance: (t) => [
+      { set_by_name: "קצר",  started_at: iso(t - 2 * H), duration_hours: 4,
+        expires_at: iso(t + 2 * H),  cancelled_at: null },
+      { set_by_name: "ארוך", started_at: iso(t - 2 * H), duration_hours: 48,
+        expires_at: iso(t + 46 * H), cancelled_at: null },
+    ],
+  },
+  {
+    // תופס מוטציה D: הסרת COALESCE. אתר בלי שום פעולה — 0 ולא NULL.
+    name: "אתר בלי פעולות כלל",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: () => [],
+  },
+  {
+    // אתר שנרשם ועוד לא דיווח דבר. חייב לקבל שורה — ב-JS זה at() שיוצר
+    // רשומה ריקה, וב-SQL זה ids כנהג.
+    name: "אתר ריק לגמרי",
+    segments: () => [],
+    operations: () => [],
+  },
+  {
+    // פעולות משני צדי התקלה — רק המאוחרות נספרות.
+    name: "פעולות משני צדי התקלה",
+    segments: (t) => [
+      { status: "ready", started_at: iso(t - 20 * H), ended_at: iso(t - 12 * H) },
+      { status: "error", started_at: iso(t - 12 * H), ended_at: iso(t - 11 * H) },
+      { status: "ready", started_at: iso(t - 11 * H), ended_at: null },
+    ],
+    operations: (t) => [
+      { start_end: "end", entry_exit: "entry", card_number: "BEFORE", occurred_at: iso(t - 15 * H) },
+      { start_end: "end", entry_exit: "exit",  card_number: "AFTER1", occurred_at: iso(t - 9 * H) },
+      { start_end: "end", entry_exit: "entry", card_number: "AFTER2", occurred_at: iso(t - 8 * H) },
+    ],
+  },
+  {
+    // אנומליות ו-start אינן נספרות — אותו כלל בדיוק כמו ב-JS.
+    name: "אנומליה ו-start לא נספרות",
+    segments: (t) => [{ status: "ready", started_at: iso(t - 10 * H), ended_at: null }],
+    operations: (t) => [
+      { start_end: "end",   entry_exit: "entry", card_number: "OK",   occurred_at: iso(t - 5 * H) },
+      { start_end: "start", entry_exit: "entry", card_number: "STRT", occurred_at: iso(t - 4 * H) },
+      { start_end: "end",   entry_exit: "exit",  card_number: "ANOM", occurred_at: iso(t - 3 * H), is_anomaly: 1 },
+    ],
+  },
+];
+
+async function parityGlobalsEdges() {
+  console.log("\n=== מקרי קצה גלובליים — " + GLOBAL_EDGES.length + " תרחישים ===");
+  const now = Date.now();
+
+  for (const c of GLOBAL_EDGES) {
+    const before = failures;
+
+    // שני הצדדים רצים **בתוך אותה טרנזקציה** על אותם נתונים זרועים, ואז
+    // הכול מתגלגל לאחור. זה מה שמאפשר להשוות את getAllSitesGlobals, שהוא
+    // עצמו פונה לבסיס הנתונים ואינו פונקציה טהורה כמו uptimeFromData.
+    await db.transaction(async () => {
+      const site = await db.prepare(
+        "INSERT INTO sites (code, site_name, registered_at) VALUES (?, ?, ?) RETURNING id"
+      ).run("PG-" + Math.abs(hash(c.name)), "parity-globals", iso(now - 500 * H));
+      const id = site.lastInsertRowid;
+
+      for (const s of c.segments(now)) {
+        await db.prepare(
+          "INSERT INTO status_history (site_id, status, started_at, ended_at) VALUES (?, ?, ?, ?)"
+        ).run(id, s.status, s.started_at, s.ended_at);
+      }
+      for (const o of (c.operations ? c.operations(now) : [])) {
+        await db.prepare(
+          "INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly, occurred_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(id, o.start_end, o.entry_exit, o.card_number, "ready", o.is_anomaly || 0, o.occurred_at, o.occurred_at);
+      }
+      for (const m of (c.maintenance ? c.maintenance(now) : [])) {
+        await db.prepare(
+          "INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours, expires_at, cancelled_at) VALUES (?, ?, ?, ?, ?, ?)"
+        ).run(id, m.set_by_name, m.started_at, m.duration_hours, m.expires_at, m.cancelled_at);
+      }
+
+      const js = (await getAllSitesGlobals([id])).get(id);
+      const sql = (await db.prepare("SELECT * FROM site_globals(?)").all([id]))[0];
+      const n = c.name;
+
+      compare("gedge[" + n + "].present",       Boolean(js), Boolean(sql));
+      compare("gedge[" + n + "].lastFaultAt",   js?.lastFaultAt   ?? null, sql?.last_fault_at   ?? null);
+      compare("gedge[" + n + "].firstStatusAt", js?.firstStatusAt ?? null, sql?.first_status_at ?? null);
+      compare("gedge[" + n + "].statusSince",   js?.statusSince   ?? null, sql?.status_since    ?? null);
+      compare("gedge[" + n + "].opsSinceError", js?.operationsSinceLastError ?? null, sql?.operations_since_last_error ?? null);
+      compare("gedge[" + n + "].lastOp.card",   js?.lastOperation?.card_number ?? null, sql?.last_op_card_number ?? null);
+      compare("gedge[" + n + "].lastOp.at",     js?.lastOperation?.occurred_at ?? null, sql?.last_op_occurred_at ?? null);
+      compare("gedge[" + n + "].maint.name",    js?.activeMaintenance?.set_by_name ?? null, sql?.maintenance_set_by_name ?? null);
+      compare("gedge[" + n + "].maint.expires", js?.activeMaintenance?.expires_at  ?? null, sql?.maintenance_expires_at  ?? null);
+
+      throw new Rollback();
+    }).catch((e) => { if (!(e instanceof Rollback)) throw e; });
+
+    console.log("  " + (failures === before ? "✓" : "✗") + " " + c.name);
+  }
+}
+
 // ===== main =====
 const SUITES = {
   uptime: async () => { await parityUptime(); await parityEdgeCases(); },
   flicker: async () => { await parityFlicker(); await parityFlickerEdges(); },
   stats: async () => { await parityStats(); await parityStatsEdges(); },
   weighted: async () => { await parityWeighted(); },
+  globals: async () => { await parityGlobals(); await parityGlobalsEdges(); },
 };
 
 (async () => {
@@ -688,6 +937,11 @@ const SUITES = {
   console.log(`\n${"=".repeat(60)}`);
   if (failures === 0) {
     console.log(`✅ PARITY נקי — ${checks} השוואות, 0 הבדלים`);
+    // מוצג תמיד ולא נבלע: תיקו הוא מידע, וקפיצה במספרם היא סימן לבדוק.
+    if (ties) {
+      console.log(`   (${ties} תיקו-עיגול על גבול .005 — הערך הגולמי זהה בשני הצדדים)`);
+      for (const t of tieList.slice(0, 5)) console.log(`     ${t}`);
+    }
   } else {
     console.log(`❌ ${failures} הבדלים מתוך ${checks} השוואות:\n`);
     for (const f of fails.slice(0, 40)) console.log(`   ${f}`);
