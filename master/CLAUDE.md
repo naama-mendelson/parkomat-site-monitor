@@ -347,3 +347,39 @@ parity gate.
 production this costs nothing** — queries inside a transaction are serial anyway —
 and it removes the hazard from any future code that runs `Promise.all` in a
 transaction. The pool path is untouched.
+
+## Users are created by invitation only — enforced in the database
+
+Two triggers on `auth.users`, at different stages, for a reason.
+
+**Domain** — `enforce_user_creation`, BEFORE INSERT. The address must end in a domain from
+`app.allowed_email_domains()`; today that is `parkomat.co.il` alone.
+
+**Invite-only** — `enforce_invite_only`, `DEFERRABLE INITIALLY DEFERRED`. At commit time
+`app_metadata` must carry `parkomat_role`. Only the Admin API can set it, so the rule is in
+effect *"created by whoever holds the Secret key"*.
+
+### Why the second is deferred, and why that is not a style choice
+
+The first attempt checked `parkomat_role` in BEFORE INSERT. **It failed, and it was
+measured**: at INSERT time both paths produce a byte-identical row —
+
+```
+{"provider": "email", "providers": ["email"]}
+```
+
+GoTrue inserts the row and writes `app_metadata` *afterwards*, so BEFORE INSERT cannot tell
+self-signup from an Admin-API create — the requirement blocked the invite path too. A
+deferred constraint trigger runs at commit, where the difference does exist.
+
+Forgery was tested, not assumed: `app_metadata` in the signup body, `parkomat_role` via
+`data`, via `options.data`, and `role`/`aud` overrides — all rejected. `app_metadata` is not
+client-writable, the same property the role system already relies on.
+
+- **Every user creation must set `parkomat_role`**, including future Admin API calls.
+  Deliberate: without one, `app.current_role()` reads `anonymous`.
+- A blocked self-signup sees GoTrue's generic *"Unexpected failure"* — deferred trigger
+  errors are not surfaced. Acceptable: nobody should reach that path, and the invite path
+  never does.
+- `disable_signup` is still `false` in the project config. The database no longer cares, but
+  flipping it in the Supabase dashboard would reject those requests one layer earlier.

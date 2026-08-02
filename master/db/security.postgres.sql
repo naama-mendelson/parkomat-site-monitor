@@ -162,7 +162,7 @@ $$;
 --
 -- search_path מקובע: חובה ב-SECURITY DEFINER, אחרת מי שיכול ליצור אובייקט
 -- בסכמה קודמת בנתיב יכול להחליף את split_part ולהריץ קוד כ-postgres.
-CREATE OR REPLACE FUNCTION app.enforce_email_domain()
+CREATE OR REPLACE FUNCTION app.enforce_user_creation()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -194,14 +194,100 @@ $$;
 
 -- BEFORE INSERT בלבד: משתמשים **קיימים** אינם נבדקים ואינם נמחקים. שינוי
 -- הרשימה בעתיד לא יינעל אף אחד שכבר בפנים — הוא רק ימנע חדשים.
+-- שם ישן, מלפני שהכלל כלל גם חסימת הרשמה עצמית. נשאר ב-DROP כדי
+-- שהרצה על מופע קיים תנקה אותו ולא תשאיר שני טריגרים פעילים.
 DROP TRIGGER IF EXISTS enforce_email_domain ON auth.users;
-CREATE TRIGGER enforce_email_domain
+DROP FUNCTION IF EXISTS app.enforce_email_domain();
+DROP TRIGGER IF EXISTS enforce_user_creation ON auth.users;
+CREATE TRIGGER enforce_user_creation
   BEFORE INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION app.enforce_email_domain();
+  FOR EACH ROW EXECUTE FUNCTION app.enforce_user_creation();
 
-COMMENT ON FUNCTION app.enforce_email_domain() IS
-  'חוסם יצירת משתמש שאינו מדומיין מאושר. חל על כל מסלולי היצירה — הרשמה, '
-  'Admin API והנתיב שלנו. הלוגיקה ניידת; הטריגר על auth.users אינו.';
+COMMENT ON FUNCTION app.enforce_user_creation() IS
+  'חוסם יצירת משתמש שאינו מדומיין מאושר. חל על כל מסלולי היצירה. '
+  'הלוגיקה ניידת; הטריגר על auth.users אינו.';
+
+-- ============================================================
+-- רק בהזמנה. אין הרשמה עצמית.
+-- ============================================================
+-- /auth/v1/signup פתוח לכל אדם באינטרנט (disable_signup הוא false בפרויקט),
+-- אינו עובר דרך השרת שלנו, ונמדד בפועל: הרשמה עצמית החזירה 200 ויצרה משתמש.
+--
+-- ============================================================
+-- למה זה טריגר **נדחה**, ולמה זה לא היה יכול להיות BEFORE INSERT
+-- ============================================================
+-- הניסיון הראשון היה לדרוש parkomat_role ב-BEFORE INSERT, בהנחה שההזמנה
+-- קובעת אותו וההרשמה העצמית לא. **זה נכשל, ונמדד:** שתי השורות זהות לחלוטין
+-- ברגע ה-INSERT —
+--
+--     {"provider": "email", "providers": ["email"]}
+--
+-- ב*שני* המסלולים. GoTrue מכניס את השורה ורק אחר כך כותב את app_metadata,
+-- ולכן BEFORE INSERT פשוט אינו יכול להבחין ביניהם. זו מגבלה, לא חוסר מזל,
+-- והדרישה חסמה גם את ההזמנה עצמה.
+--
+-- טריגר CONSTRAINT נדחה נבדק **בסוף הטרנזקציה**, אחרי שה-metadata נכתב.
+-- שם ההבדל קיים, וגם זה נמדד:
+--
+--     הרשמה עצמית → {"provider":"email","providers":["email"]}
+--     Admin API    → {..., "parkomat_role": "operator"}
+--
+-- ============================================================
+-- למה אי אפשר לזייף את זה מדפדפן
+-- ============================================================
+-- **app_metadata אינו ניתן לכתיבה מהלקוח.** בקשת signup יכולה לקבוע
+-- user_metadata (השדה data) אבל לא app_metadata — זו בדיוק הסיבה שהתפקיד
+-- נשמר שם מלכתחילה, ואותה תכונה מגינה גם כאן. נבדק בפועל: שליחת
+-- app_metadata בגוף הבקשה, וכן parkomat_role דרך data ודרך options.data,
+-- כולן נחסמו.
+--
+-- לכן הדרישה שקולה בפועל ל"נוצר בידי מי שמחזיק את מפתח ה-Secret".
+--
+-- ⚠️ המשמעות: **כל** יצירת משתמש חייבת לקבוע parkomat_role, גם דרך ה-Admin
+-- API. זה מכוון ולא תופעת לוואי — משתמש בלי תפקיד היה מקבל 'anonymous'
+-- מ-app.current_role() ומתנהג בצורה לא צפויה.
+--
+-- ⚠️ ההודעה למי שמנסה להירשם אינה יפה ("Unexpected failure"): GoTrue אינו
+-- מעביר שגיאות של טריגר נדחה. זה מקובל כאן — מי שמגיע לשם אינו אמור להירשם
+-- מלכתחילה. מסלול ההזמנה עובר ולכן אינו רואה את זה לעולם.
+CREATE OR REPLACE FUNCTION app.enforce_invite_only()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, pg_catalog
+AS $$
+DECLARE
+  meta jsonb;
+BEGIN
+  -- קוראים מהטבלה ולא מ-NEW: NEW הוא צילום מרגע ה-INSERT, ואילו העדכון
+  -- של app_metadata קרה אחריו. זו כל הנקודה של הדחייה.
+  SELECT raw_app_meta_data INTO meta FROM auth.users WHERE id = NEW.id;
+
+  -- השורה נמחקה באותה טרנזקציה — אין מה לאכוף.
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  IF meta IS NULL OR meta ->> 'parkomat_role' IS NULL THEN
+    RAISE EXCEPTION
+      'הרשמה עצמית אינה אפשרית. משתמש חדש נוצר רק בהזמנה ממשתמש קיים.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS enforce_invite_only ON auth.users;
+CREATE CONSTRAINT TRIGGER enforce_invite_only
+  AFTER INSERT ON auth.users
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION app.enforce_invite_only();
+
+COMMENT ON FUNCTION app.enforce_invite_only() IS
+  'חוסם הרשמה עצמית: בסוף הטרנזקציה app_metadata חייב לשאת parkomat_role, '
+  'ואותו רק ה-Admin API יכול לקבוע. נדחה בכוונה — ב-BEFORE INSERT שני '
+  'המסלולים נראים זהים לחלוטין, וזה נמדד.';
 
 -- ============================================================
 -- תפקיד authenticated — נוצר אם חסר
