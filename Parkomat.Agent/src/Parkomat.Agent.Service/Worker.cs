@@ -97,6 +97,27 @@ public class Worker : BackgroundService
 
         // --- יצירת שלושת הרכיבים ---
         var detector = new OperationDetector(clock.UnixNow);
+
+        // ==========================================================
+        // ממשיכים מאיפה שהפסקנו, במקום לפתוח פעולה חדשה
+        // ==========================================================
+        // ה-detector הוא edge-triggered, ולכן בלי MODE קודם כל עלייה באמצע
+        // מחזור (MODE 2/3) פותחת פעולה עם חותם "עכשיו". זה נכון להתקנה
+        // טרייה ושגוי אחרי הפעלה-מחדש — שם הפעולה כבר הייתה פתוחה, וכל
+        // עלייה ייצרה שורה נוספת שמנפחת את מכנה אחוז הכשל.
+        DetectorState? saved = DetectorState.TryLoad();
+        if (saved is not null)
+        {
+            detector.Restore(saved.PreviousMode, saved.OperationCard);
+            _logger.LogInformation(
+                "Resuming detector state from previous run (MODE={Mode}, card='{Card}') — no phantom operation will be opened.",
+                saved.PreviousMode, saved.OperationCard);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "No recent detector state — starting fresh. A first reading inside MODE 2/3 will open an operation.");
+        }
         using var plc = new PlcReader(config.Plc);
         await using var mqtt = new MqttPublisher(config.Mqtt, config.SiteId, clock);
 
@@ -145,6 +166,15 @@ public class Worker : BackgroundService
         // סופג כפילות QoS-1). הרצפה גבוהה מספיק לכל אורך נתק סביר של הברוקר המקומי.
         var pendingOps = new List<OperationMessage>();
         const int MaxPendingOps = 1000;
+
+        // מונה המחזורים מהקריאה הקודמת, לזיהוי ירידה (גלישה/איפוס). מאותחל
+        // ל-int.MinValue כדי שהקריאה הראשונה לעולם לא תיראה כירידה.
+        int previousCycle = int.MinValue;
+
+        // מה שכבר נשמר לדיסק, כדי לא לכתוב את אותו מצב שוב בכל דגימה.
+        // מאותחלים ממה שנטען (או null), כך שהשמירה הראשונה תקרה רק על שינוי אמיתי.
+        int? savedMode = saved?.PreviousMode;
+        string savedCard = saved?.OperationCard ?? "";
 
         // ה-MODE שנרשם לאחרונה ללוג. משמש כדי לרשום (ב-Information) *כל* שינוי MODE
         // ואת התרגום שלו — כך שבשדה רואים מה הבקר מחזיר ואם הערך בכלל ממופה ל-state.
@@ -249,6 +279,16 @@ public class Worker : BackgroundService
             DetectionResult result = detector.Process(
                 reading.Mode, reading.CardNumber, reading.CycleCounter);
 
+            // שומרים את מצב ה-detector כדי שהפעלה מחדש תמשיך ולא תפתח פעולה
+            // חדשה. **רק כשמשהו זז** — כתיבה בכל דגימה הייתה עוד I/O לשנייה
+            // בלי שום תועלת, והחותם בקובץ ממילא מתעדכן בכל שינוי אמיתי.
+            if (detector.PreviousMode != savedMode || detector.OperationCard != savedCard)
+            {
+                savedMode = detector.PreviousMode;
+                savedCard = detector.OperationCard;
+                new DetectorState(reading.Mode, detector.OperationCard).Save();
+            }
+
             // המצב הנוכחי המתורגם — לשימוש בשידור-מחדש אחרי חיבור-מחדש.
             SiteState? currentState = ModeTranslator.FromMode(reading.Mode);
 
@@ -269,6 +309,36 @@ public class Worker : BackgroundService
                 }
                 pendingOps.Add(op);
             }
+
+            // ===== אבחון: מונה מחזורים שירד =====
+            // ==========================================================
+            // למה רק מדווחים, ולא "מתקנים"
+            // ==========================================================
+            // המונה נקרא מרגיסטר Modbus יחיד — 16 ביט, כלומר תקרה של 65,535.
+            // ירידה בערך יכולה לנבוע משתי סיבות **שאי אפשר להבחין ביניהן
+            // מהנתון עצמו**:
+            //   • גלישה (65,530 → 5) — הבקר המשיך לספור, המונה התהפך.
+            //   • איפוס בקר (65,530 → 0) — ספירה אמיתית שהתחילה מחדש.
+            //
+            // השרת מפרש ירידה כאיפוס ואינו מוסיף את ההפרש (ראה
+            // master/CLAUDE.md, applyCycleCounter). אם זו הייתה גלישה, המשמעות
+            // היא ספירה בחסר של עד 65,535 מחזורים בכל התהפכות.
+            //
+            // ניחוש כאן היה מסוכן יותר מהבעיה: הוספת 65,536 אוטומטית על כל
+            // ירידה הייתה מנפחת את המונה בכל *איפוס אמיתי*. לכן הסוכן מדווח
+            // בלבד — והלוג נותן בדיוק את המידע שנדרש כדי להכריע: אם הקפיצות
+            // מגיעות תמיד סביב 65,535 זו גלישה וצריך לקרוא 32 ביט (שני
+            // רגיסטרים), ואם הן מכל ערך — אלה איפוסי בקר אמיתיים.
+            if (reading.CycleCounter < previousCycle)
+            {
+                _logger.LogWarning(
+                    "Cycle counter DROPPED: {Prev} -> {Now}. Either the 16-bit register wrapped " +
+                    "(max 65535 — the server counts this as a reset and loses the delta) or the PLC " +
+                    "counter was reset. If drops cluster near 65535, the counter is wider than one " +
+                    "register and CycleRegister should read 32 bits.",
+                    previousCycle, reading.CycleCounter);
+            }
+            previousCycle = reading.CycleCounter;
 
             // ===== אבחון: רושמים כל שינוי ב-MODE ואת התרגום שלו =====
             // זה הצעד הכי חשוב לאבחון בשדה: הוא חושף מה הבקר באמת מחזיר, והאם

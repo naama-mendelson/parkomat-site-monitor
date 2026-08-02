@@ -20,6 +20,33 @@ public class OperationDetector
     // ה-MODE מהקריאה הקודמת. null = עדיין לא ראינו אף קריאה (הרצה ראשונה).
     private int? _previousMode = null;
 
+    /// <summary>
+    /// משחזר מצב מהרצה קודמת, כדי שהפעלה מחדש לא תיראה כמו "הרצה ראשונה".
+    ///
+    /// בלי זה, כל עלייה באמצע מחזור (MODE 2/3) פותחת פעולה חדשה עם חותם
+    /// "עכשיו" — פעולה פיקטיבית שמנפחת את מכנה אחוז הכשל (ראה
+    /// AgentPaths.DetectorStateFile). עם זה, הסוכן ממשיך מאיפה שהפסיק:
+    /// אם ה-MODE לא זז — אין הודעה; אם זז — נוצרות end/start אמיתיות.
+    ///
+    /// ⚠️ מיועד לקריאה **לפני** ה-Process הראשון בלבד. קריאה באמצע ריצה
+    /// הייתה דורסת את מצב הזיכרון החי ומייצרת מעבר מדומה, ולכן היא נחסמת.
+    /// </summary>
+    public void Restore(int previousMode, string operationCard)
+    {
+        if (_previousMode.HasValue)
+            throw new InvalidOperationException(
+                "Restore נקרא אחרי שה-detector כבר עיבד קריאה. המצב נטען פעם אחת בלבד, בעלייה.");
+
+        _previousMode = previousMode;
+        _operationCard = operationCard ?? "";
+    }
+
+    /// <summary>ה-MODE האחרון שעובד, או null אם עדיין לא עובדה אף קריאה.</summary>
+    public int? PreviousMode => _previousMode;
+
+    /// <summary>הכרטיס של הפעולה הפתוחה, לשמירה בין הרצות.</summary>
+    public string OperationCard => _operationCard;
+
     // הכרטיס של הפעולה *הפתוחה* — נתפס בתחילתה, ומתעדכן לכל כרטיס לא-ריק לאורכה.
     // חשוב לסגירה (end): במקצת הבקרים רגיסטר הכרטיס מתאפס ל-0 *לפני* שה-MODE יוצא
     // ממצב הפעולה — קורה ביציאה (exit). שימוש בכרטיס מהקריאה הקודמת בלבד היה מאבד
