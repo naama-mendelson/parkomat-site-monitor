@@ -153,6 +153,12 @@ public class Worker : BackgroundService
         // --- הלולאה הראשית ---
         while (!stoppingToken.IsCancellationRequested)
         {
+            // ===== חיוּת: "הלולאה מסתובבת" — לפני הכול, ובלי תנאי =====
+            // נכתב כאן ולא אחרי הקריאה, ובכוונה: זו הצהרה על כך שהתהליך לא
+            // תקוע, ולא על כך שהבקר עונה. ראה AgentPaths.LivenessFile —
+            // הערבוב בין השניים הרג את הסוכן לפני שהספיק לדווח תקלת PLC.
+            WriteLiveness();
+
             // ===== שלב א': קריאה מה-PLC (טיפול שגיאות נפרד מה-MQTT) =====
             // מוצהר בלי null: נתיב הכשל ב-catch מסתיים ב-continue, כך שאם הגענו
             // מעבר ל-try/catch — הקריאה הצליחה ו-reading הושם בוודאות.
@@ -364,6 +370,13 @@ public class Worker : BackgroundService
                 // תשודר שוב בסבב הבא, עם החותם המקורי. אין אובדן ואין קידום-לפני-שידור.
                 while (pendingOps.Count > 0)
                 {
+                    // חיוּת גם *בתוך* הריקון: התור מחזיק עד 1000 פעולות, ולכל
+                    // שידור timeout של 5 שניות. מול ברוקר איטי (לא מת — מת נכשל
+                    // מהר) ריקון ארוך היה עובר את סף התקיעה בזמן שהסוכן עובד
+                    // כשורה, ה-watchdog היה הורג אותו, **והתור חי בזיכרון בלבד**
+                    // — כלומר כל הפעולות שהוא נועד להציל היו אובדות בדיוק כאן.
+                    WriteLiveness();
+
                     var op = pendingOps[0];
                     await mqtt.PublishOperationAsync(op, stoppingToken);
                     pendingOps.RemoveAt(0);
@@ -467,6 +480,29 @@ public class Worker : BackgroundService
         catch
         {
             // כשל בכתיבת פעימת לב אינו קריטי — מתעלמים.
+        }
+    }
+
+    // כותב את קובץ החיוּת: "הלולאה מסתובבת", בלי קשר להצלחת הקריאה מה-PLC.
+    //
+    // ⚠️ **לא** לאחד את זה עם WriteHeartbeat. הם עונים על שתי שאלות שונות
+    // (ראה AgentPaths.LivenessFile): heartbeat אומרת "הבקר עונה" וצובעת את
+    // הסמל, וזו אומרת "התהליך אינו תקוע" ומזינה את ה-watchdog. איחוד היה
+    // מחזיר בדיוק את הבאג שזה תיקן — או שנתק PLC היה נראה כתקיעה ומוביל
+    // להריגה, או שאתר עם בקר מת היה נראה ירוק ב-Tray.
+    //
+    // כמו ב-heartbeat: שעון מקומי ולא מתוקן-NTP, כי ה-Tray משווה מול השעון
+    // המקומי שלו.
+    private void WriteLiveness()
+    {
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            AtomicWriteAllText(AgentPaths.LivenessFile, now.ToString());
+        }
+        catch
+        {
+            // כשל בכתיבה אינו קריטי — מתעלמים, בדיוק כמו בפעימת הלב.
         }
     }
 

@@ -142,6 +142,11 @@ public class ServiceManager
         // בסתירה לכפתור "הפעל את השירות". הסוכן כותב אותם מחדש בעלייתו.
         try { File.Delete(AgentPaths.HeartbeatFile); } catch { /* best-effort */ }
         try { File.Delete(AgentPaths.HiveMqStatusFile); } catch { /* best-effort */ }
+        // גם קובץ החיוּת, מאותו טעם ובאותה נשימה: אחרת נשאר קובץ "alive" ישן
+        // אחרי עצירה יזומה. הוא אמנם לא היה מזיק (התקיעה נבדקת רק על תהליך
+        // *חי*, וסוכן חי כותב אותו בסבב הראשון), אבל שריד סותר בתיקייה הוא
+        // בדיוק מה שמבלבל את מי שיאבחן תקלה הבאה.
+        try { File.Delete(AgentPaths.LivenessFile); } catch { /* best-effort */ }
         return null;
     }
 
@@ -194,40 +199,53 @@ public class ServiceManager
     ///    הייתה קיימת ומחושבת נכון, אבל שימשה רק לצביעת האייקון. עכשיו היא
     ///    מפעילה החלטה.
     ///
-    /// ⚠️ מגבלה מוכרת, מתועדת בכוונה: הסוכן כותב פעימת לב רק אחרי קריאת PLC
-    /// *מוצלחת* (Worker.WriteHeartbeat). לכן נתק PLC ממושך נראה מכאן זהה
-    /// לתקיעה, וייגרום להפעלה מחדש. זה רועש אך לא מזיק — בנתק PLC אין קריאות
-    /// ולכן אין פעולות שיינפחו, המצב 'error' ממילא כבר דווח, והריסון מוריד את
-    /// זה לניסיון אחד ל-5 דקות. התיקון השלם הוא פעימת לב שמשקפת חיוּת של
-    /// הלולאה ולא הצלחת הקריאה; הוא נוגע ב-Worker ולכן לא נכלל כאן.
+    /// 3. **מקור המדידה תוקן.** קודם נכתב כאן שהסתמכות על פעימת הלב היא
+    ///    "מגבלה רועשת אך לא מזיקה", בנימוק שבנתק PLC "המצב 'error' ממילא
+    ///    כבר דווח". **הנימוק היה שגוי, וזה נמדד:** כשל קריאה עולה ~3.2
+    ///    שניות, ולכן 10 הכשלונות שנדרשים לשידור error לוקחים ~42 שניות —
+    ///    מול סף תקיעה של 30. הסוכן נהרג לפני הדיווח, ההריגה איפסה את המונה,
+    ///    ולכן error לא שודר לעולם. התקיעה נמדדת עכשיו מול AgentPaths.
+    ///    LivenessFile, שנכתב בכל סבב של הלולאה ולא רק אחרי קריאה מוצלחת.
     /// </summary>
     public void EnsureRunning()
     {
-        bool alive = IsRunning(AgentProcName);
+        // ההחלטה עצמה חיה ב-WatchdogPolicy — פונקציה טהורה שמכוסה ב-unit tests.
+        // כאן רק אוספים את הקלט מהעולם האמיתי ומבצעים. זה בדיוק הדפוס של
+        // RestartPolicy ו-ResyncPolicy, והוא הסיבה שהבאג הזה ניתן לבדיקה עכשיו.
+        WatchdogAction action = WatchdogPolicy.Decide(
+            processAlive: IsRunning(AgentProcName),
+            heartbeatAgeSeconds: FileAgeSeconds(AgentPaths.HeartbeatFile),
+            livenessAgeSeconds: FileAgeSeconds(AgentPaths.LivenessFile),
+            pollIntervalMs: ConfiguredPollIntervalMs());
 
-        if (alive && IsHeartbeatFresh())
+        switch (action)
         {
-            // בריא. אחרי שהות בריאה מספקת מאפסים את הריסון, כדי שתקלה עתידית
-            // תטופל מיד ולא תירש את ההמתנה הארוכה מהתקלה הקודמת.
-            _agentRestarts.NoteHealthy();
+            case WatchdogAction.NoteHealthy:
+                // אחרי שהות בריאה מספקת הריסון מתאפס, כדי שתקלה עתידית תטופל
+                // מיד ולא תירש את ההמתנה הארוכה מהתקלה הקודמת.
+                _agentRestarts.NoteHealthy();
+                break;
+
+            case WatchdogAction.KillAndStart:
+                // הריגה ואז הפעלה — StartAgent מדלג כשהתהליך הישן עוד קיים,
+                // ולכן ההריגה חייבת לקרות לפניה.
+                if (_agentRestarts.TryTake())
+                {
+                    KillByName(AgentProcName);
+                    StartAgent();
+                }
+                break;
+
+            case WatchdogAction.Start:
+                if (_agentRestarts.TryTake())
+                    StartAgent();
+                break;
+
+            case WatchdogAction.None:
+                // חי, הלולאה מסתובבת, אבל הבקר לא נענה — נתק PLC. לא נוגעים:
+                // הסוכן צריך את השניות האלה כדי לשדר state=error בעצמו.
+                break;
         }
-        else if (alive && IsAgentWedged())
-        {
-            // חי אך לא מדווח מזמן. הריגה ואז הפעלה — StartAgent מדלג כשהתהליך
-            // הישן עוד קיים, ולכן ההריגה חייבת לקרות לפניה.
-            if (_agentRestarts.TryTake())
-            {
-                KillByName(AgentProcName);
-                StartAgent();
-            }
-        }
-        else if (!alive)
-        {
-            if (_agentRestarts.TryTake())
-                StartAgent();
-        }
-        // בין חלון אחד לשלושה בלי פעימה — לא עושים כלום. זה עוד יכול להיות
-        // דגימה איטית או כמה קריאות שנכשלו, ולהרוג על זה גרוע מלחכות.
 
         // Mosquitto אינו מרוסן: הוא לא מייצר פעולות, ולכן הפעלה חוזרת שלו אינה
         // משחיתה נתונים — והוא כן צריך לעלות מהר כשהוא נופל.
@@ -235,42 +253,35 @@ public class ServiceManager
             StartMosquitto();
     }
 
-    // האם הסוכן חי אך פעימת הלב שלו מיושנת מעבר לסף התקיעה.
-    // בלי קובץ פעימה כלל (סוכן שרק עלה ועדיין לא קרא PLC) — *לא* מכריזים על
-    // תקיעה: אין ממה למדוד, וכל התקנה טרייה הייתה נכנסת ללופ הריגה.
-    private static bool IsAgentWedged()
+    // אלה שני העזרים היחידים שההחלטה צריכה. **הכלל עצמו — מתי סוכן נחשב
+    // תקוע, ולמה זה נמדד מול החיוּת ולא מול פעימת הלב — חי ב-WatchdogPolicy**,
+    // ושם גם ההסבר וגם הטסטים. כאן רק איסוף הקלט.
+
+    // גיל הקובץ בשניות לפי החותם שכתוב *בתוכו*, או null אם אינו קיים/קריא.
+    // null אומר "אין ממה למדוד", ו-WatchdogPolicy מתייחס לזה כאל "לא לגעת".
+    private static long? FileAgeSeconds(string path)
     {
         try
         {
-            if (!File.Exists(AgentPaths.HeartbeatFile))
-                return false;
+            if (!File.Exists(path))
+                return null;
 
-            string text = ReadAllTextShared(AgentPaths.HeartbeatFile).Trim();
-            if (!long.TryParse(text, out long beatUnix))
-                return false;
+            string text = ReadAllTextShared(path).Trim();
+            if (!long.TryParse(text, out long stampUnix))
+                return null;
 
-            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            long age = now - beatUnix;
-
-            // פעימה מהעתיד (שעון שקפץ אחורה) אינה תקיעה — מתעלמים, אחרת שינוי
-            // שעון היה מפעיל את הסוכן מחדש בלי סיבה.
-            if (age < 0)
-                return false;
-
-            return age > WedgedAfterSeconds();
+            return DateTimeOffset.UtcNow.ToUnixTimeSeconds() - stampUnix;
         }
         catch
         {
-            return false;   // לא ניתן לקרוא — לא הורגים על ספק
+            return null;   // לא ניתן לקרוא — לא מחליטים על ספק
         }
     }
 
-    private static int WedgedAfterSeconds()
+    private static int ConfiguredPollIntervalMs()
     {
-        int pollMs;
-        try { pollMs = ConfigStore.Load().PollIntervalMs; }
-        catch { pollMs = 1000; }
-        return RestartPolicy.WedgedAfterSeconds(pollMs);
+        try { return ConfigStore.Load().PollIntervalMs; }
+        catch { return 1000; }
     }
 
     // ===== עזרים =====
