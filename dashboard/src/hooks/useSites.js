@@ -1,6 +1,8 @@
 // hooks/useSites.js — שליפת וניהול רשימת כל האתרים
 import { useState, useEffect, useCallback } from "react";
-import { fetchSites } from "../services/api";
+// ה-hook לא יודע מאיפה הנתונים מגיעים — dataSource מכריע, והמבנה זהה
+// בשני המסלולים. ראה services/dataSource.js לתוכנית ב'.
+import { fetchSitesList } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
 
 export function useSites() {
@@ -10,7 +12,7 @@ export function useSites() {
 
   const loadSites = useCallback(async () => {
     try {
-      const data = await fetchSites();
+      const data = await fetchSitesList();
       setSites(data);
       setError(null);
     } catch (err) {

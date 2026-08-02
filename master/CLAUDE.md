@@ -298,3 +298,51 @@ once and compute from the Maps.
   (`MAX_ENTRIES = 200`, LRU), keyed off a **whitelist** of query params, caches only 200s, and
   **single-flights** identical concurrent requests (50 simultaneous → 1 query, 49 coalesced).
 - Any `siteUpdate` on the bus clears it.
+
+## `site_globals`, and what it taught about the gate
+
+`public.site_globals` ports `getAllSitesGlobals` — the function that blocked the
+dashboard from reading directly. Five queries become CTEs; `ids` is the driver so a
+site with no history still gets a row, matching `at()` in the JS.
+
+**The lesson here is about the harness, not the port.** Four mutations were run
+against production data and only one was caught — not because the SQL was right,
+but because the data has no such cases: every production site has had a fault, no
+two operations share a timestamp, and no maintenance window has been cancelled.
+Three checks were blind. Ten seeded scenarios were added; all four mutations fail
+now.
+
+Mutation A taught a second thing: *"a site that never failed"* did **not** catch
+`LEFT JOIN` → `INNER`, and correctly so — it has status rows, so the faults CTE
+returns a row (with a NULL fault) and the INNER finds it. The divergence only
+appears with **no `status_history` at all** — a real case, operations arriving
+before the first state message.
+
+### Rounding ties are not differences
+
+`readyHours` for site 3513 came out JS=130.51 vs SQL=130.52 while the raw value was
+identical to ten decimals (`130.5150000000`). That is the `.005` boundary: in
+`double` the number sits just under half, in `NUMERIC` exactly on it. Neither side
+is wrong — Postgres is arguably more correct, and it is the side that survives the
+migration.
+
+So a **one-cent** difference is counted and printed separately but does not fail.
+Anything larger still fails, and integers stay exact. A gate that goes red because
+the data moved is a gate people learn to ignore.
+
+## One connection, one query at a time
+
+Inside `db.transaction()`, `executor()` returns a single client — so `Promise.all`
+fires several queries down one connection. A Postgres connection has one protocol
+channel; `pg` flags this ("client is already executing a query") and results can be
+dropped or interleaved.
+
+This is not theoretical: `getAllSitesGlobals` does exactly that with five queries.
+On a REST route it runs on the pool and is fine; the moment it ran inside a
+transaction it failed intermittently — which surfaced only when it entered the
+parity gate.
+
+`runOn()` now chains every query on a given client behind the previous one. **In
+production this costs nothing** — queries inside a transaction are serial anyway —
+and it removes the hazard from any future code that runs `Promise.all` in a
+transaction. The pool path is untouched.

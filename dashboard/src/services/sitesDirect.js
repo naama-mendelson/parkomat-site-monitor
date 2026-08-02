@@ -5,74 +5,99 @@
 // ============================================================
 // עד כאן הדשבורד שאל את השרת, והשרת חישב. כאן הוא שואל את בסיס הנתונים
 // ומבקש ממנו לחשב — אותן פונקציות SQL בדיוק שנבדקו ב-tools/parity.js מול
-// ה-JS (939 השוואות, 0 הבדלים). כלומר אין כאן הגדרה שנייה של שום מדד.
+// ה-JS. כלומר אין כאן הגדרה שנייה של שום מדד, וזו הנקודה: שתי הגדרות של
+// "זמינות" כבר נפרדו בשקט בפרויקט הזה פעם אחת.
 //
-// שלוש קריאות במקביל, לא בטור:
+// ארבע קריאות במקביל, לא בטור:
 //   • sites          — קריאת טבלה תחת RLS
 //   • site_stats     — RPC. פעולות, תקלות, אחוז כשל
 //   • site_uptime    — RPC. זמינות
+//   • site_globals   — RPC. תקלה אחרונה, פעולה אחרונה, מצב נוכחי, תחזוקה
 //
 // p_site_ids = null פירושו "כל האתרים". זו בדיוק הסיבה שהפונקציות מקבלות
 // null: אחרת היה צריך לשלוף קודם את המזהים ורק אז לקרוא — סיבוב רשת שלם
 // בטור, לפני שאפשר להתחיל.
 //
 // ============================================================
-// מה שהמסלול הזה עדיין **אינו** מספק, ובמפורש
+// המבנה המוחזר חייב להיות זהה ל-getAllSitesWithMetrics
 // ============================================================
-// getAllSitesGlobals בשרת (107 שורות) מספק statusSince, lastFaultAt,
-// lastOperation ו-inMaintenance. הוא **לא הועבר ל-SQL**, ולכן השדות האלה
-// אינם זמינים כאן. הכרטיס משתמש בהם: בלי statusSince אין "בפעולה 3 שעות",
-// ובלי inMaintenance התחזוקה לא גוברת על מה שה-PLC דיווח.
-//
-// לכן זה מסלול **מקביל ולא מחליף**: הוא מוכיח את הארכיטקטורה מקצה לקצה
-// על מסך אחד, ומודד את המחיר האמיתי. המסך הראשי ממשיך דרך השרת עד
-// שהפונקציה ההיא תעבור גם היא. אל תחליפו את fetchSites בזה לפני כן —
-// המסך יאבד שדות בשקט.
+// המסך אינו יודע דרך מה הנתונים הגיעו, וזה התנאי לכך שהמתג ב-dataSource.js
+// יהיה באמת מתג ולא שכתוב. כל שדה שנוסף בצד אחד חייב להתווסף בשני —
+// ובמיוחד inMaintenance ו-statusSince, שבלעדיהם הכרטיס מאבד מידע *בשקט*
+// ולא בשגיאה.
 
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 /**
- * @returns {Promise<{sites: Array, error: string|null, source: string}>}
- * source נחשף כדי שהמסך יוכל להראות מאיפה הנתונים הגיעו. במעבר הדרגתי זה
- * ההבדל בין "עובד" לבין "עובד, ואני יודע דרך מה".
+ * רשימת האתרים עם כל המדדים, ישירות מבסיס הנתונים.
+ *
+ * @param {string} fromIso תחילת החלון לחישוב המדדים
+ * @param {string} toIso   סופו (ברירת מחדל: עכשיו)
+ * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
+ * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
 export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()) {
   if (!isSupabaseConfigured) {
-    return { sites: [], error: "Supabase אינו מוגדר בדשבורד", source: "none" };
+    throw new Error("Supabase אינו מוגדר בדשבורד");
   }
 
-  const [sitesRes, statsRes, uptimeRes] = await Promise.all([
-    supabase.from("sites").select("id, code, site_name, status, last_seen, tier, cycle_total"),
-    supabase.rpc("site_stats", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
-    supabase.rpc("site_uptime", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+  const [sitesRes, statsRes, uptimeRes, globalsRes] = await Promise.all([
+    supabase.from("sites").select("*"),
+    supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    supabase.rpc("site_globals", { p_site_ids: null }),
   ]);
 
-  const failed = sitesRes.error || statsRes.error || uptimeRes.error;
+  const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
   if (failed) {
     // 42501 = permission denied. כמעט תמיד "אין session" ולא "המדיניות
     // שבורה", ולכן ההודעה אומרת את הדבר שסביר שקרה.
-    const msg = failed.code === "42501"
-      ? "אין הרשאת קריאה — נדרשת התחברות"
-      : failed.message;
-    return { sites: [], error: msg, source: "supabase" };
+    throw new Error(
+      failed.code === "42501"
+        ? "אין הרשאת קריאה — נדרשת התחברות"
+        : failed.message
+    );
   }
 
-  const statsById = new Map((statsRes.data || []).map((r) => [r.site_id, r]));
-  const uptimeById = new Map((uptimeRes.data || []).map((r) => [r.site_id, r]));
+  const statsById   = new Map((statsRes.data   || []).map((r) => [r.site_id, r]));
+  const uptimeById  = new Map((uptimeRes.data  || []).map((r) => [r.site_id, r]));
+  const globalsById = new Map((globalsRes.data || []).map((r) => [r.site_id, r]));
 
-  const sites = (sitesRes.data || []).map((s) => {
-    const st = statsById.get(s.id);
-    const up = uptimeById.get(s.id);
+  return (sitesRes.data || []).map((site) => {
+    const st = statsById.get(site.id);
+    const up = uptimeById.get(site.id);
+    const g  = globalsById.get(site.id) || {};
+
+    // תקלה שקורה בתוך תחזוקה מתוכננת אינה "תקלה" — היא כבר מוחרגת מאחוז
+    // הכשל, וכאן היא לא הופכת את הכרטיס למושבת. אותו כלל בדיוק כמו בשרת;
+    // אם הוא ישתנה שם ולא כאן, שני המסלולים יראו סטטוס שונה לאותו אתר.
+    const inMaintenance = Boolean(g.maintenance_id);
+    const status = inMaintenance || site.status === "maintenance"
+      ? "maintenance"
+      : site.status;
+
     return {
-      ...s,
-      operations: st?.operations ?? 0,
-      errors: st?.errors ?? 0,
+      ...site,
+      status,
+      inMaintenance,
       failureRate: st?.failure_rate ?? 0,
+      operations:  st?.operations   ?? 0,
+      errors:      st?.errors       ?? 0,
       // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהמסך יציג "—"
-      // ולא "0%". אותו כלל בדיוק כמו בשרת.
+      // ולא "0%". "0%" נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
       uptime: up && up.measured_hours > 0 ? up.availability_percent : null,
+      lastFaultAt: g.last_fault_at ?? null,
+      statusSince: g.status_since ?? null,
+      // השרת מחזיר אובייקט או null — ולא אובייקט עם שדות ריקים, שהיה נראה
+      // למסך כמו "יש פעולה אחרונה" עם כל השדות undefined.
+      lastOperation: g.last_op_occurred_at
+        ? {
+            start_end:   g.last_op_start_end,
+            entry_exit:  g.last_op_entry_exit,
+            card_number: g.last_op_card_number,
+            occurred_at: g.last_op_occurred_at,
+          }
+        : null,
     };
   });
-
-  return { sites, error: null, source: "supabase" };
 }

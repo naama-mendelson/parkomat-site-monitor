@@ -38,8 +38,8 @@ escape path exists in the repo, written and tested but inactive.
 | A' — first live adoption | **Built.** `getAllSitesWithMetrics` (`GET /api/sites`) computes in Postgres. 203ms → 109ms, 2,200 rows over the wire → 26. |
 | B — `events` table | **Built.** One row per semantic event, `bus.publish`, replay via `GET /api/stream/since?after=<id>`, 7-day retention. |
 | C — identity + RLS | **Mostly.** `app.current_actor()` / `app.current_role()` exist; RLS grants read to `authenticated`; `auth/provider.js` has two tested providers. Maintenance is the first route behind `requireSiteAccess`. No route *requires* a token yet, because nothing can issue one. |
-| D — dashboard queries directly | **Not built.** Access decisions are now settled (see below); blocked on Supabase credentials and on at least one user existing. |
-| E — delete the read API | **Not built.** |
+| D — dashboard queries directly | **Built and live.** `getAllSitesGlobals` is now `site_globals` in SQL — that was the last blocker. `useSites` goes through `services/dataSource.js`; the site list is read straight from PostgREST. |
+| E — delete the read API | **Deliberately not done — see below.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
 
 **What still runs the old way.** `supervisor`, `executive`, `analytics`, `insights` and the
@@ -89,6 +89,36 @@ environment; only `DATABASE_URL` is configured today. And with RLS granting read
 Supabase Auth has to be wired and at least one user has to exist before D delivers anything.
 There are **no users at all** today; the dashboard role is `useState("operator")` in the
 browser.
+
+## Phase E is cancelled, and that is a decision — not an omission
+
+Deleting the 17 read endpoints was the plan. **It directly contradicts the exit
+door.** Those endpoints *are* the way back: with them gone, leaving Supabase stops
+being a config change and becomes a migration project.
+
+So they stay. **The server shrinks by not being used, not by losing code.** The
+switch is one variable:
+
+```
+dashboard/.env
+VITE_SUPABASE_DIRECT=true    ← today: dashboard reads PostgREST directly
+VITE_SUPABASE_DIRECT=false   ← everything routes back through the server
+```
+
+Both arms of `services/dataSource.js` return **the identical shape**, which is what
+makes it a switch rather than a rewrite. Verified in the browser: 12 site cards,
+character-for-character identical in both positions, each hitting only its own
+data path.
+
+Two consequences worth holding on to:
+
+- **No automatic fallback.** It is tempting to make a failed direct read retry
+  through the server. That is exactly how a broken RLS policy, an expired session,
+  or an unapplied function becomes invisible. The switch is explicit.
+- **A path that never runs rots.** Test both positions before a release — the same
+  reasoning that keeps the dormant self-hosted auth covered by tests.
+
+Full procedure, costs, and ordering: [`EXIT-PLAN.md`](EXIT-PLAN.md).
 
 ## Target architecture
 
