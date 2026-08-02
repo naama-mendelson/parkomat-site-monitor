@@ -2,7 +2,8 @@
 
 const db = require("../db/db");
 const { insertOperation, applyCycleCounter, applyStateChange,
-        updateLastSeenIfNewer, getOpenStatusStartedAt } = require("../db/queries");
+        updateLastSeenIfNewer, getOpenStatusStartedAt,
+        getActiveMaintenance } = require("../db/queries");
 const bus = require("../bus");
 
 const VALID_STATE = "operating";
@@ -98,10 +99,28 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
   //
   // רשת ביטחון: רק הודעת start יכולה למשוך את הסטטוס ל-operating — למקרה
   // שהודעת ה-state=operating אבדה. זה תמיד תואם לכיוון הנכון (תחילת פעולה).
+  // ==========================================================
+  // גם כאן: מצב תחזוקה גובר על הכל
+  // ==========================================================
+  // handleState בודק תחזוקה לפני שהוא מקבל error, אבל המסלול הזה לא בדק
+  // כלום — ולכן פעולה בזמן חלון ידני משכה את הסטטוס ל-'operating' ודרסה את
+  // התחזוקה. אותה החלטה מוצרית, שני מסלולי קליטה, וכלל שנאכף רק באחד מהם
+  // הוא כלל שלא נאכף.
+  //
+  // הבדיקה נעשית רק כשבאמת עומדים לשנות סטטוס — כדי לא לשלם שאילתה על כל
+  // הודעת start בשגרה.
   const isStart = data.start_end === "start";
   if (isStart && data.state !== site.status && !isBackfill) {
-    await applyStateChange(site.id, data.state, occurredAt);
-    console.log(`[operation] אתר ${site.code}: state סונכרן מ-start ${site.status} → ${data.state}`);
+    const inMaintenance =
+      site.status === "maintenance" || Boolean(await getActiveMaintenance(site.id));
+
+    if (inMaintenance) {
+      console.log(
+        `[operation] אתר ${site.code}: פעולה בזמן תחזוקה — הסטטוס לא שונה (התחזוקה גוברת)`);
+    } else {
+      await applyStateChange(site.id, data.state, occurredAt);
+      console.log(`[operation] אתר ${site.code}: state סונכרן מ-start ${site.status} → ${data.state}`);
+    }
   }
 
   const isEnd = data.start_end === "end";

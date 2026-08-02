@@ -207,6 +207,49 @@ const EDGE_CASES = [
     ],
   },
   {
+    // ==========================================================
+    // חלון תחזוקה ידני — הכיסוי היחיד שיש לו
+    // ==========================================================
+    // בייצור יש **אפס** חלונות ידניים, ולכן 1,262 ההשוואות מול נתוני אמת
+    // לא נוגעות בכלל הזה. אותו לקח כמו ב-site_globals: מה שהנתונים לא
+    // מכילים — הבדיקה עיוורת אליו.
+    name: "חלון תחזוקה ידני מוחרג מהמכנה",
+    segments: (f, t) => [{ status: "ready", started_at: iso(f), ended_at: iso(t) }],
+    windows: (f) => [{ started_at: iso(f), expires_at: iso(f + 12 * H), cancelled_at: null }],
+  },
+  {
+    // שני חלונות חופפים היו נספרים פעמיים, וזמן התחזוקה היה יוצא גדול
+    // מהחלון הנמדד. האיחוד לקטעים זרים הוא מה שמונע את זה.
+    name: "שני חלונות ידניים חופפים — נספרים פעם אחת",
+    segments: (f, t) => [{ status: "ready", started_at: iso(f), ended_at: iso(t) }],
+    windows: (f) => [
+      { started_at: iso(f),          expires_at: iso(f + 12 * H), cancelled_at: null },
+      { started_at: iso(f + 6 * H),  expires_at: iso(f + 18 * H), cancelled_at: null },
+    ],
+  },
+  {
+    // חלון שבוטל נגמר ב-cancelled_at ולא ב-expires_at.
+    name: "חלון ידני שבוטל — נספר עד רגע הביטול",
+    segments: (f, t) => [{ status: "ready", started_at: iso(f), ended_at: iso(t) }],
+    windows: (f) => [
+      { started_at: iso(f), expires_at: iso(f + 20 * H), cancelled_at: iso(f + 5 * H) },
+    ],
+  },
+  {
+    // חלון שחורג משני קצות החלון הנמדד — נחתך, ולא נספר מעבר לו.
+    name: "חלון ידני שעוטף את כל התקופה",
+    segments: (f, t) => [{ status: "ready", started_at: iso(f), ended_at: iso(t) }],
+    windows: (f, t) => [
+      { started_at: iso(f - 50 * H), expires_at: iso(t + 50 * H), cancelled_at: null },
+    ],
+  },
+  {
+    // תחזוקה ידנית *מעל* מקטע שכבר במצב maintenance — אסור לספור פעמיים.
+    name: "חלון ידני מעל מקטע תחזוקה — בלי ספירה כפולה",
+    segments: (f, t) => [{ status: "maintenance", started_at: iso(f), ended_at: iso(t) }],
+    windows: (f) => [{ started_at: iso(f), expires_at: iso(f + 10 * H), cancelled_at: null }],
+  },
+  {
     name: "חלון הפוך (to <= from) — אפסים, לא שורה חסרה",
     inverted: true,
     segments: (f) => [{ status: "ready", started_at: iso(f), ended_at: null }],
@@ -226,6 +269,7 @@ async function parityEdgeCases() {
     const winFrom = c.inverted ? iso(to) : iso(from);
     const winTo = c.inverted ? iso(from) : iso(to);
     const segments = c.segments(from, to);
+    const windows = c.windows ? c.windows(from, to) : [];
 
     let sqlRow;
     await db.transaction(async () => {
@@ -240,6 +284,14 @@ async function parityEdgeCases() {
         ).run(siteId, s.status, s.started_at, s.ended_at);
       }
 
+      for (const w of windows) {
+        await db.prepare(
+          `INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours,
+                                            expires_at, cancelled_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(siteId, "parity", w.started_at, 0, w.expires_at, w.cancelled_at);
+      }
+
       const rows = await db.prepare(
         "SELECT * FROM public.site_uptime(?, ?, ?)"
       ).all([siteId], winFrom, winTo);
@@ -250,7 +302,13 @@ async function parityEdgeCases() {
     }).catch((e) => { if (!(e instanceof Rollback)) throw e; });
 
     // צד ה-JS מקבל בדיוק אותם מקטעים
-    const data = { segments: new Map([[1, segments.map((s) => ({ ...s, site_id: 1 }))]]) };
+    // windows מפורש ולא מושמט: uptimeFromData קורא אותו ישירות ואינו סלחן
+    // בכוונה — קורא אמיתי ששוכח לטעון חלונות צריך לקרוס, ולא להחזיר זמינות
+    // מנופחת בשקט. התרחישים כאן הם ללא תחזוקה ידנית, ולכן מפה ריקה.
+    const data = {
+      segments: new Map([[1, segments.map((s) => ({ ...s, site_id: 1 }))]]),
+      windows: new Map([[1, windows.map((w) => ({ ...w, site_id: 1 }))]]),
+    };
     const js = uptimeFromData(data, 1, { from: winFrom, to: winTo });
 
     const before = failures;

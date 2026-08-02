@@ -104,21 +104,82 @@ clipped AS (
     AND h.started_at < o.w_to
     AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
 ),
-secs AS (
+-- ============================================================
+-- חלונות תחזוקה ידניים — נספרים כתחזוקה, ולא לפי מה שה-PLC דיווח
+-- ============================================================
+-- עד כאן רק סטטוס 'maintenance' בהיסטוריה הוחרג מהמכנה, כלומר תחזוקה
+-- שהבקר דיווח עליה. חלון ידני מהדשבורד לא נגע בחישוב כלל.
+--
+-- וזה לא היה ניטרלי אלא הפוך מהכוונה: תקלה בזמן תחזוקה נזרקת בקליטה
+-- (state-handler), ולכן מקטע ה-'ready' פשוט ממשיך — **וזמן שבור נספר כזמן
+-- זמין**. נמדד: 24 שעות שמתוכן 12 בתחזוקה ידנית החזירו maintenance_hours=0
+-- וזמינות 100%. שני קובצי ההנחיות אומרים את ההפך במפורש.
+--
+-- ⚠️ החלונות מאוחדים לקטעים זרים לפני הספירה. שני חלונות חופפים (הארכה,
+-- או שניים שהופעלו במקביל) היו נספרים פעמיים, וזמן התחזוקה היה יוצא גדול
+-- מהחלון עצמו. אותו איחוד בדיוק נעשה ב-JS (mergedWindows).
+win AS (
+  SELECT
+    m.site_id,
+    GREATEST(m.started_at::timestamptz, o.w_from::timestamptz) AS s,
+    LEAST(COALESCE(m.cancelled_at, m.expires_at)::timestamptz, o.w_to::timestamptz) AS e
+  FROM maintenance_windows m
+  CROSS JOIN ok o
+  WHERE o.valid
+    AND (p_site_ids IS NULL OR m.site_id = ANY(p_site_ids))
+    -- סינון לקסיקלי על TEXT, כמו בכל שאר הפונקציות כאן
+    AND m.started_at < o.w_to
+    AND COALESCE(m.cancelled_at, m.expires_at) > o.w_from
+),
+-- איחוד קטעים חופפים: קטע פותח קבוצה חדשה רק אם הוא מתחיל אחרי הסוף
+-- המקסימלי של כל מי שלפניו.
+win_grp AS (
+  SELECT
+    site_id, s, e,
+    SUM(CASE WHEN prev_max IS NULL OR s > prev_max THEN 1 ELSE 0 END)
+      OVER (PARTITION BY site_id ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp
+  FROM (
+    SELECT
+      site_id, s, e,
+      MAX(e) OVER (PARTITION BY site_id ORDER BY s, e
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_max
+    FROM win
+    WHERE e > s
+  ) w
+),
+win_merged AS (
+  SELECT site_id, MIN(s) AS s, MAX(e) AS e
+  FROM win_grp
+  GROUP BY site_id, grp
+),
+-- לכל מקטע: כמה ממנו מכוסה בחלון ידני.
+cov AS (
   SELECT
     c.site_id,
-    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
-             FILTER (WHERE c.status = 'ready'       AND c.seg_end > c.seg_start), 0) AS ready_s,
-    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
-             FILTER (WHERE c.status = 'operating'   AND c.seg_end > c.seg_start), 0) AS operating_s,
-    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
-             FILTER (WHERE c.status = 'error'       AND c.seg_end > c.seg_start), 0) AS error_s,
-    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
-             FILTER (WHERE c.status = 'maintenance' AND c.seg_end > c.seg_start), 0) AS maintenance_s,
-    COALESCE(SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)))
-             FILTER (WHERE c.status = 'no_comm'     AND c.seg_end > c.seg_start), 0) AS no_comm_s
+    c.status,
+    EXTRACT(EPOCH FROM (c.seg_end - c.seg_start)) AS dur_s,
+    COALESCE((
+      SELECT SUM(EXTRACT(EPOCH FROM (LEAST(w.e, c.seg_end) - GREATEST(w.s, c.seg_start))))
+      FROM win_merged w
+      WHERE w.site_id = c.site_id
+        AND w.e > c.seg_start
+        AND w.s < c.seg_end
+    ), 0) AS covered_s
   FROM clipped c
-  GROUP BY c.site_id
+  WHERE c.seg_end > c.seg_start
+),
+secs AS (
+  SELECT
+    v.site_id,
+    COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'ready'),     0) AS ready_s,
+    COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'operating'), 0) AS operating_s,
+    COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'error'),     0) AS error_s,
+    -- כל הזמן המכוסה, ועוד החלק הלא-מכוסה של מקטעי תחזוקה אמיתיים
+    COALESCE(SUM(v.covered_s), 0)
+      + COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'maintenance'), 0) AS maintenance_s,
+    COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'no_comm'),   0) AS no_comm_s
+  FROM cov v
+  GROUP BY v.site_id
 )
 SELECT
   ids.site_id,

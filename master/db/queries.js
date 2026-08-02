@@ -1921,6 +1921,43 @@ function statsFromData(data, siteId, { from, to }) {
 }
 
 /** גרסת הזיכרון של getUptimeBreakdown — אותם חיתוכים ואותם עיגולים. */
+// ==========================================================
+// איחוד חלונות התחזוקה לקטעים זרים — ולמה זה חובה
+// ==========================================================
+// שני חלונות חופפים (טכנאי שהאריך תחזוקה, או שניים שהפעילו במקביל) היו
+// נספרים פעמיים, וזמן התחזוקה היה גדול מהחלון עצמו. איחוד לקטעים זרים הופך
+// את החישוב לחסין לכך.
+//
+// נחתך מראש לגבולות החלון הנמדד, כך שהספירה בהמשך היא חיתוך פשוט.
+function mergedWindows(windows, windowStart, windowEnd) {
+  const spans = [];
+  for (const w of windows) {
+    const s = Math.max(Date.parse(w.started_at), windowStart);
+    const e = Math.min(Date.parse(w.cancelled_at || w.expires_at), windowEnd);
+    if (e > s) spans.push([s, e]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+
+  const merged = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push([span[0], span[1]]);
+  }
+  return merged;
+}
+
+/** כמה מ-[start,end) מכוסה בקטעים המאוחדים. */
+function coveredMs(merged, start, end) {
+  let total = 0;
+  for (const [s, e] of merged) {
+    if (e <= start) continue;
+    if (s >= end) break;              // ממוינים — אין טעם להמשיך
+    total += Math.min(e, end) - Math.max(s, start);
+  }
+  return total;
+}
+
 function uptimeFromData(data, siteId, { from, to }) {
   // אותה צורה מלאה כמו ב-getUptimeBreakdown — ראה ההסבר שם.
   const empty = {
@@ -1937,6 +1974,22 @@ function uptimeFromData(data, siteId, { from, to }) {
 
   const ms = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
 
+  // ==========================================================
+  // חלון תחזוקה ידני נספר כתחזוקה, ולא כמצב שה-PLC דיווח
+  // ==========================================================
+  // עד כאן רק סטטוס 'maintenance' *בהיסטוריה* הוחרג מהמכנה — כלומר תחזוקה
+  // שהבקר דיווח עליה. חלון ידני מהדשבורד לא נגע בחישוב בכלל, והזמן שבתוכו
+  // נספר לפי מה שה-PLC אמר.
+  //
+  // וזה לא היה ניטרלי אלא הפוך מהכוונה: תקלה בזמן תחזוקה נזרקת בקליטה
+  // (state-handler), ולכן מקטע ה-'ready' פשוט ממשיך — **וזמן שבור נספר
+  // כזמן זמין**. אתר שהושבת ידנית קיבל 100% זמינות. נמדד: 24 שעות שמתוכן
+  // 12 בתחזוקה ידנית החזירו maintenance_hours=0 ו-100%.
+  //
+  // שני קובצי ההנחיות אומרים את ההפך במפורש — "מוחרגת מהמכנה", "אינה
+  // uptime ואינה downtime, ואסור שתתוגמל כזמינות". זה מיישר את הקוד למפרט.
+  const cover = mergedWindows(data.windows.get(siteId) || [], windowStart, windowEnd);
+
   for (const row of data.segments.get(siteId) || []) {
     if (ms[row.status] === undefined) continue;
     // אותו תנאי חפיפה כמו בשאילתה המקורית
@@ -1944,7 +1997,13 @@ function uptimeFromData(data, siteId, { from, to }) {
 
     const start = Math.max(Date.parse(row.started_at), windowStart);
     const end = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    if (end > start) ms[row.status] += end - start;
+    if (!(end > start)) continue;
+
+    // החלק שנופל בתוך חלון ידני עובר ל-maintenance; היתר נשאר במצבו.
+    const covered = coveredMs(cover, start, end);
+    ms.maintenance += covered;
+    if (row.status !== "maintenance") ms[row.status] += (end - start) - covered;
+    else ms.maintenance += (end - start) - covered;
   }
 
   const toHours = (v) => Math.round((v / 3600000) * 100) / 100;

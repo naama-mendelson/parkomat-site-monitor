@@ -103,6 +103,30 @@ downtime. Taking a site down deliberately must not look like a failure, and must
 as availability either. If you need availability anywhere new, **call `availabilityFrom()`**.
 Do not re-derive it.
 
+**Both kinds of maintenance count**, and until recently only one did:
+
+- `status = 'maintenance'` in `status_history` — what the PLC reported.
+- A row in `maintenance_windows` — what someone pressed in the dashboard.
+
+The second was invisible to `site_uptime` / `uptimeFromData`, and that was not neutral, it was
+backwards. A fault during maintenance is dropped at ingestion (`state-handler`), so the `ready`
+segment simply continues — **broken time was counted as available**. Measured: 24 hours with 12
+under a manual window returned `maintenance_hours = 0` and 100%.
+
+- **Overlapping windows are merged first.** An extension, or two people starting one, would
+  otherwise be counted twice and produce more maintenance than the measured window contains.
+- **`uptimeFromData` reads `data.windows` directly and is deliberately not defensive.** A caller
+  that forgets to load windows should crash, not quietly return inflated availability.
+- Production has **zero** manual windows, so the 1,297-comparison parity run says nothing about
+  this rule — the five seeded scenarios are its only coverage. All three mutations (SQL stops
+  excluding, JS stops excluding, merge disabled) are caught.
+
+⚠️ **Still open, and it is a spec gap rather than a bug:** a fault suppressed during a window is
+gone for good, and the agent is edge-triggered so it never resends. After the window expires the
+site keeps showing its pre-maintenance status until the next MODE change or agent restart. The
+documented decision ("maintenance suppresses fault logging entirely") implies this; whether a
+suppressed fault should resurface at expiry is a product call that has not been made.
+
 `measuredHours === 0` means *no data*, and the API returns `null` so the dashboard shows `—`.
 Never `0%` — that reads as "totally broken" when it means "we don't know".
 
