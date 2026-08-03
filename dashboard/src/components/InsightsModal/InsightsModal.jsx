@@ -14,6 +14,8 @@ import Logo from "../Logo/Logo";
 
 const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
 const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יציאות
+// אותו אדום של תקלה בכל המערכת — כדי שהעין תקשר מיד, בלי לקרוא כותרת.
+const FAULT_COLOR = METRIC_COLORS.errors;
 
 // סדרת "הפעולות" בגרפי הפעילות — פעילות כוללת ולא כיוון תנועה, ולכן
 // היא נושאת את צבע מדד הפעולות המשותף (כחול המותג).
@@ -194,6 +196,14 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                           <th>סך פעולות</th>
                           <th>כניסות</th>
                           <th>יציאות</th>
+                          {/* ==========================================================
+                              תקלות שקרו *בזמן* שהכרטיס עבר
+                              ==========================================================
+                              לא "תקלות של הכרטיס" — הכרטיס אינו אשם בהכרח. זו נוכחות:
+                              המחסום נכשל בזמן שהרכב הזה עבר. כרטיס שחוזר כאן מצביע על
+                              כרטיס שהקורא מתקשה בו או על רכב שמפעיל את החיישן בעייתי. */}
+                          <th>תקלות בכניסה</th>
+                          <th>תקלות ביציאה</th>
                           <th>שימוש אחרון</th>
                         </tr>
                       </thead>
@@ -205,6 +215,18 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                             <td><strong>{c.total}</strong></td>
                             <td><span className="pill" style={{ background: ENTRY_COLOR }}>{c.entries}</span></td>
                             <td><span className="pill" style={{ background: EXIT_COLOR }}>{c.exits}</span></td>
+                            {/* אפס נשאר דהוי ולא נצבע: טבלה שכולה גלולות אדומות מאבדת
+                                את מה שהיא באה להבליט. */}
+                            <td>
+                              {c.faultsOnEntry > 0
+                                ? <span className="pill" style={{ background: FAULT_COLOR }}>{c.faultsOnEntry}</span>
+                                : <span className="muted">0</span>}
+                            </td>
+                            <td>
+                              {c.faultsOnExit > 0
+                                ? <span className="pill" style={{ background: FAULT_COLOR }}>{c.faultsOnExit}</span>
+                                : <span className="muted">0</span>}
+                            </td>
                             <td className="muted">
                               {c.lastAt ? new Date(c.lastAt).toLocaleString("he-IL", {
                                 day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",

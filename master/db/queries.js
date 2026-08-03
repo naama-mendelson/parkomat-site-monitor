@@ -1201,7 +1201,15 @@ function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
   const byHour = Array.from({ length: 24 }, () => 0);
   const byWeekday = Array.from({ length: 7 }, () => 0);
   const byDay = new Map();     // "2026-07-12" → מספר פעולות
-  const cards = new Map();     // מספר כרטיס → { total, entries, exits, lastAt }
+  // מספר כרטיס → { total, entries, exits, faultsOnEntry, faultsOnExit, lastAt }
+  const cards = new Map();
+
+  // חותמי הפתיחה של מקטעי התקלה, לזיהוי פעולה שנקטעה (ראה הלולאה למטה).
+  //
+  // ⚠️ errorRows כאן הן כבר **המסוננות** — תקלות שקרו בתחזוקה הוסרו לפני
+  // הקריאה (ראה counted ב-getInsights). כלומר תקלה שהתרחשה בזמן תחזוקה לא
+  // תיזקף לכרטיס, וזה נכון: היא ממילא אינה נספרת כתקלה בשום מדד אחר.
+  const errorStartSet = new Set(errorRows.map((e) => e.started_at));
 
   // שיוך start↔end לחישוב משך פעולה. מפתח: אתר+כיוון+כרטיס (site_id חיוני
   // למצב המצרף — בלעדיו כרטיס זהה בשני אתרים היה משתייך בטעות).
@@ -1242,9 +1250,30 @@ function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
 
     if (op.card_number) {
       withCard++;
-      const c = cards.get(op.card_number) || { card: op.card_number, total: 0, entries: 0, exits: 0, lastAt: null };
+      const c = cards.get(op.card_number)
+        || { card: op.card_number, total: 0, entries: 0, exits: 0,
+             faultsOnEntry: 0, faultsOnExit: 0, lastAt: null };
       c.total++;
       if (op.entry_exit === "entry") c.entries++; else c.exits++;
+
+      // ==========================================================
+      // תקלה שקרתה *בזמן* שהכרטיס הזה עבר
+      // ==========================================================
+      // הסוכן סוגר את הפעולה ופותח את מקטע התקלה באותו סבב דגימה ועם אותו
+      // חותם, ולכן `end.occurred_at === error.started_at` מזהה זאת חד-משמעית
+      // (אותו כלל בדיוק כמו ב-buildActivityLog).
+      //
+      // ⚠️ נספר רק על end. פתיחה לעולם אינה נקטעת, וספירה עליה הייתה מכפילה
+      // כל תקלה.
+      //
+      // למה זה שווה: במדגם של 35 קטיעות נמצאו שלושה כרטיסים שכל אחד היה נוכח
+      // ב-3 תקלות, שניים מהם באותו אתר. זה כבר לא רעש — זה מצביע על כרטיס
+      // שהקורא מתקשה בו או על רכב שמפעיל את החיישן בעייתי. שניהם פתירים,
+      // ואי אפשר לראות אותם בלי הקישור הזה.
+      if (op.start_end === "end" && errorStartSet.has(op.occurred_at)) {
+        if (op.entry_exit === "entry") c.faultsOnEntry++; else c.faultsOnExit++;
+      }
+
       if (!c.lastAt || op.occurred_at > c.lastAt) c.lastAt = op.occurred_at;
       cards.set(op.card_number, c);
     } else {
