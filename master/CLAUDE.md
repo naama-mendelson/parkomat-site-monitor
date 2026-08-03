@@ -409,39 +409,20 @@ client-writable, the same property the role system already relies on.
 - `disable_signup` is still `false` in the project config. The database no longer cares, but
   flipping it in the Supabase dashboard would reject those requests one layer earlier.
 
-## The server restarts itself now
+## One instance only — this is a correctness rule
 
-Nothing used to start it. A reboot, a crash, or a closed window left the system silent
-until somebody remembered to run `npm start` — and that cost **15 hours** of a dashboard
-showing stale state, found by accident. (No messages were lost: HiveMQ held the queue
-thanks to the fixed `clientId` + `clean:false`, and all 240 drained on the next start.)
+`mqtt/subscriber.js` uses a **fixed** `clientId`, which is what lets HiveMQ hold the queue
+while the server is down. But MQTT requires client ids to be unique, so **two server
+processes disconnect each other in an endless loop** and neither processes anything. The
+log shows `connected → connection closed → reconnecting` forever.
 
-`tools/autostart/` registers a per-user Scheduled Task:
+Observed in production, and the symptom is misleading: it looks exactly like "the new
+server does not work" when the real problem is that the old one is still alive. This is
+also why `docker-compose.yml` forbids `replicas` / `scale`.
 
-```sh
-powershell -ExecutionPolicy Bypass -File tools\autostart\install.ps1
-```
-
-- **Two triggers**: at logon (covers reboot) and every 5 minutes (covers a crash or a
-  manual kill). The script exits immediately when the server is already up, so the
-  five-minute runs cost nothing.
-- **`launch-hidden.vbs` is not decoration.** The task fires 288 times a day; running
-  `powershell.exe` directly flashes a console window every time. `-WindowStyle Hidden`
-  does not help — it applies to what PowerShell *launches*, not to PowerShell itself.
-- **No admin, no UAC, no stored password** — same choice the agent installer makes.
-  ⚠️ The cost: a user-level task only runs while that user is **logged on**. A machine
-  that reboots to a login screen stays silent. That needs auto-logon or a real service.
-- **`.ps1` files need a UTF-8 BOM.** PowerShell 5.1 reads them as ANSI otherwise and the
-  Hebrew comments become a parser error.
-
-### The single-instance check is a correctness requirement
-
-`mqtt/subscriber.js` uses a fixed `clientId`, which is what lets HiveMQ keep the queue
-across restarts. But MQTT requires client ids to be unique, so **two server processes
-disconnect each other in an endless loop** and neither processes anything — observed in
-the log. The guard matches on the process command line rather than the listening port,
-because the port is only bound after startup finishes and that window was wide enough to
-let a second copy in.
-
-Verified: killed the server → the task revived exactly one copy; ran the task three times
-against a live server → still exactly one.
+Nothing on the server side starts the process — that is deployment's job
+(`restart: unless-stopped` in `docker-compose.yml`). When it is not running, **no
+messages are lost**: HiveMQ keeps them (`clean:false` + fixed clientId) and delivers them
+all with their original timestamps on the next start. Measured: 15 hours down, 240
+messages, zero lost. What *is* lost is knowing — the dashboard showed 15-hour-old state
+with no indication anything was wrong.
