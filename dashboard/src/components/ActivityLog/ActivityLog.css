@@ -212,6 +212,14 @@
   color: #f87171;
 }
 
+/* פעולה שנקטעה בתחזוקה. ענבר ולא אדום: זו אינה תקלה — מישהו העביר את
+   המחסום לתחזוקה בזמן שרכב עבר. עדיין קטיעה, ולכן היא מסומנת ולא שקופה. */
+.alog-badge--warn {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: #f59e0b;
+  color: #d97706;
+}
+
 @media (max-width: 640px) {
   .alog-details { white-space: normal; }
   .alog-badge { display: none; }

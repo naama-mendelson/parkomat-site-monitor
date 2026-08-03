@@ -111,25 +111,33 @@ function describe(e) {
     // באמצע נרשם כ-end רגיל. הלוג הציג "יציאת רכב הושלמה" בדיוק ברגע
     // שהרכב נתקע: היפוך משמעות, לא ניסוח לא מדויק.
     //
-    // השרת מסמן את זה ב-interrupted (ראה buildActivityLog). נמדד: 71%
-    // מהתקלות קורות תוך כדי פעולה, כלומר זה הרוב ולא מקרה קצה.
+    // השרת מסמן ב-interruptedBy את המצב שקטע (error / maintenance), או null
+    // כשהפעולה הושלמה. נמדד: 71% מהתקלות קורות תוך כדי פעולה, ותחזוקה קוטעת
+    // עוד 7 פעולות — פחות, אבל רכב שנתקע כי מישהו העביר לתחזוקה אינו "הושלם"
+    // יותר מרכב שנתקע בתקלה.
+    const cut = e.interruptedBy;
     const phase = e.startEnd === "start"
       ? "התחילה"
-      : e.interrupted ? "נקטעה בתקלה" : "הושלמה";
+      : cut === "error" ? "נקטעה בתקלה"
+      : cut === "maintenance" ? "נקטעה בתחזוקה"
+      : "הושלמה";
 
     const details = [];
     details.push(e.card ? `כרטיס ${e.card}` : "ללא כרטיס");
-    if (e.interrupted) details.push("הרכב לא סיים את המעבר");
+    if (cut) details.push("הרכב לא סיים את המעבר");
     if (e.isAnomaly) details.push("אנומליה");
 
     return {
-      // פעולה שנקטעה נצבעת בצבע התקלה — היא אירוע כשל, לא תנועה תקינה.
-      color: e.interrupted ? STATUS_COLORS.error.dot : color,
+      // פעולה שנקטעה נצבעת בצבע המצב שקטע אותה — היא אירוע כשל, לא תנועה
+      // תקינה, והצבע מספר *מה* קטע בלי לקרוא את הטקסט.
+      color: cut ? (STATUS_COLORS[cut]?.dot ?? STATUS_COLORS.error.dot) : color,
       icon: isEntry ? "↓" : "↑",
       title: `${dir} ${phase}`,
       details: details.join(" · "),
-      badge: e.startEnd === "start" ? "התחלה" : e.interrupted ? "נקטעה" : "סיום",
-      badgeTone: e.isAnomaly || e.interrupted ? "danger" : "normal",
+      badge: e.startEnd === "start" ? "התחלה" : cut ? "נקטעה" : "סיום",
+      // תחזוקה אינה תקלה, ולכן היא אינה נצבעת אדום — היא עדיין קטיעה.
+      badgeTone: e.isAnomaly || cut === "error" ? "danger"
+        : cut === "maintenance" ? "warn" : "normal",
     };
   }
 

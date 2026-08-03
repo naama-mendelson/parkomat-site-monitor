@@ -1687,9 +1687,29 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
   // ⚠️ ההשוואה על המחרוזת ולא על Date.parse: שני החותמים נולדו מאותו מקור
   // ונשמרו באותו פורמט, וסובלנות זמן כאן הייתה מסמנת בטעות גם תקלה שהתחילה
   // סמוך לסיום תקין.
-  const errorStarts = new Set();
+  //
+  // ==========================================================
+  // לא רק תקלה — כל מצב שאינו 'מוכן' קוטע
+  // ==========================================================
+  // הכלל הרחב: הפעולה מסתיימת כשה-MODE יוצא ממצב פעולה, ו**התוצאה נקבעת
+  // לפי המצב שאליו עבר**. נמדד על כל 1,018 הסגירות:
+  //
+  //     -> מוכן        945   92.8%   הושלמה
+  //     -> תקלה         35    3.4%   נקטעה
+  //     -> תחזוקה        7    0.7%   נקטעה
+  //     אין מקטע תואם   31    3.0%   ברירת מחדל: הושלמה
+  //
+  // התחזוקה קוטעת פחות, אבל היא קוטעת — ורכב שנתקע כי מישהו העביר את
+  // המחסום לתחזוקה אינו "פעולה שהושלמה" יותר משרכב שנתקע בתקלה.
+  //
+  // 31 ללא מקטע תואם נשארות "הושלמה": המצב לא עבר לתקלה ולא לתחזוקה, ולכן
+  // ברירת המחדל תואמת את ה-92.8%. סימונן כ"לא ידוע" היה מוסיף רעש בלי
+  // להוסיף מידע.
+  const interruptedBy = new Map();   // "site|timestamp" -> 'error' | 'maintenance'
   for (const s of states) {
-    if (s.status === "error") errorStarts.add(`${s.site_id}|${s.started_at}`);
+    if (s.status === "error" || s.status === "maintenance") {
+      interruptedBy.set(`${s.site_id}|${s.started_at}`, s.status);
+    }
   }
 
   const entries = [
@@ -1700,9 +1720,10 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
       entryExit: o.entry_exit,
       card: o.card_number || null,
       isAnomaly: !!o.is_anomaly,
-      // רק על end: פתיחה לעולם אינה "נקטעת".
-      interrupted: o.start_end === "end"
-        && errorStarts.has(`${o.site_id}|${o.occurred_at}`),
+      // רק על end: פתיחה לעולם אינה "נקטעת". null = הושלמה כרגיל.
+      interruptedBy: o.start_end === "end"
+        ? (interruptedBy.get(`${o.site_id}|${o.occurred_at}`) || null)
+        : null,
       state: o.state,
       siteName: o.site_name ?? null,   // מוצג רק במצב "כל האתרים"
     })),
