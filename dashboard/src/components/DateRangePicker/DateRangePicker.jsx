@@ -29,7 +29,9 @@ function rangeOf(key) {
 const OPTIONS = [
   { key: "today", label: "היום" },
   { key: "week", label: "7 הימים האחרונים" },
-  { key: "month", label: "החודש הנוכחי" },
+  // "30 הימים האחרונים" ולא "החודש הנוכחי": מאז שהשרת מחשב חלון מתגלגל
+  // (api/periods.js), התווית הישנה תיארה משהו אחר לגמרי ממה שהמסך הציג.
+  { key: "month", label: "30 הימים האחרונים" },
   { key: "quarter", label: "הרבעון הנוכחי" },
   { key: "year", label: "השנה הנוכחית" },
   { key: "lastYear", label: "שנה שעברה" },
@@ -42,9 +44,13 @@ function DateRangePicker({ value, onChange, summary, days }) {
 
   function pick(key) {
     if (key === "custom") {
-      // פותחים בטווח של החודש האחרון, כדי שלא יהיה ריק
+      // פותחים בטווח של 30 הימים האחרונים, כדי שלא יהיה ריק.
+      //
+      // ⚠️ 30 יום ולא "חודש אחורה": ל-`new Date(y, m - 1, d)` יש אורך משתנה
+      // (31 בינואר → 31 ימים, 31 במרץ → 28, כי הבקשה 31 בפברואר מתגלגלת
+      // ל-3 במרץ). אותו כלל בדיוק כמו ב-api/periods.js.
       const now = new Date();
-      const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+      const monthAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
       onChange({
         preset: "custom",
         from: value.from || iso(monthAgo),

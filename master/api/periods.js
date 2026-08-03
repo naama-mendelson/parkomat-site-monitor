@@ -17,16 +17,35 @@ function resolvePeriod(period) {
   const now = new Date();
   const iso = (d) => d.toISOString();
 
+  // ============================================================
+  // "חודש" = 30 הימים האחרונים, ולא "מה-1 בחודש"
+  // ============================================================
+  // קודם החלון התחיל ב-1 בחודש הנוכחי, וזו הייתה תקלת תצוגה אמיתית: ב-3
+  // בחודש המסך הראה **שלושה ימים** תחת הכותרת "חודש". בתחילת כל חודש כל
+  // המדדים קרסו לכמעט-אפס נתונים, ואז תפחו לאורכו — בלי שקרה שום דבר בשטח.
+  //
+  // חלון מתגלגל של 30 יום נותן תמיד את אותה כמות זמן, ולכן הוא גם בר-השוואה
+  // מול 30 הימים שלפניו. זו בדיוק הסיבה ש'שבוע' כבר מוגדר כ-7 ימים מתגלגלים
+  // ולא כ"מיום ראשון"; החודש פשוט לא יושר אליו.
+  //
+  // ⚠️ 30 קבוע ולא "חודש קלנדרי אחורה". `new Date(y, m - 1, d)` נראה נכון
+  // יותר, אבל אורך החלון שלו משתנה לפי החודש — ונמדד: 31 בינואר → 31 ימים,
+  // 31 במאי → 30, **31 במרץ → 28** (הבקשה היא 31 בפברואר, ו-JS מגלגל אותה
+  // ל-3 במרץ). כלומר החלון היה מתכווץ ומתרחב בלי סיבה, ובדיוק כמו קודם
+  // ההשוואה בין תקופות הייתה בין אורכים שונים. 30 קבוע — אין מקרי קצה.
+  //
+  // מיושר לחצות מקומית, מאותו טעם כמו בשבוע: חלון שמתחיל בשעה שרירותית
+  // יוצר ימים חלקיים בשני הקצוות ומעוות את הדליים היומיים.
   if (period === "month") {
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);       // 1 בחודש הנוכחי
-    const prevFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+    const prevFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 59);
     return {
       period: "month",
-      label: from.toLocaleDateString("he-IL", { month: "long", year: "numeric" }),
-      comparisonLabel: `לעומת ${prevFrom.toLocaleDateString("he-IL", { month: "long" })}`,
+      label: "30 הימים האחרונים",
+      comparisonLabel: "לעומת 30 הימים הקודמים",
       granularity: "day",
       range: { from: iso(from), to: iso(now) },
-      prev: { from: iso(prevFrom), to: iso(from) },   // החודש הקודם במלואו
+      prev: { from: iso(prevFrom), to: iso(from) },   // 30 הימים הקלנדריים שלפני כן
     };
   }
 
