@@ -28,7 +28,7 @@ function TierBadge({ tier }) {
   );
 }
 
-function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail }) {
+function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
   const status = site.status;
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
   const label = STATUS_LABELS[status] || status;
@@ -126,7 +126,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         className={`site-card is-expanded${stuck ? " is-stuck" : ""}`}
         data-code={site.code}
         onMouseEnter={() => onHover?.(site.code)}
-        style={{ borderInlineStartColor: colors.dot, "--c": colors.dot }}
+        // style מגיע מ-SiteGrid ומכיל מיקום מפורש כשהכרטיס בעמודה האחרונה
+        // (ראה placementFor שם). מפוזר אחרון כדי שיוכל להוסיף, ולא לדרוס צבע.
+        style={{ borderInlineStartColor: colors.dot, "--c": colors.dot, ...style }}
       >
         <div className="exp-head">
           <div className="exp-title">
