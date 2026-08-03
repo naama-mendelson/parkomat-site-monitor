@@ -21,6 +21,54 @@ async function insertSite(code, siteName, meta = {}, isNewSite = 1) {
 //   reported_at — מה שהסוכן אמר, בדיוק. **מפתח ה-dedup** (אינדקס ux_operations_dedup),
 //                 ולכן חייב להישאר מקורי: הוא מה שמזהה מסירה חוזרת של QoS-1.
 //   received_at — מתי השרת קלט בפועל. לאבחון בלבד.
+// ==========================================================
+// כרטיס שאבד בין ה-start ל-end — מושלם מהפתיחה
+// ==========================================================
+// בחלק מהבקרים רגיסטר הכרטיס מתאפס לפני שה-MODE יוצא ממצב הפעולה, וזה קורה
+// ביציאה. הסוכן אמור לשאת את הכרטיס לאורך הפעולה (OperationDetector.
+// _operationCard), אבל אתרים שטרם עודכנו מריצים גרסה שאין בה את זה.
+//
+// נמדד: exit/start נושא כרטיס ב-**100%** מהמקרים, ואילו exit/end רק ב-67%.
+// בשלושה אתרים (1399, 3501, 1343) האובדן שיטתי — 0%, 7.5% ו-8.5%. כלומר
+// המידע קיים תמיד, הוא פשוט על השורה השנייה.
+//
+// ⚠️ זה נעשה בשרת ולא רק בסוכן, בכוונה: השרת אינו יכול לכפות עדכון גרסה על
+// אתר בשטח, וכרטיס חסר הוא אובדן מידע שאין ממנו חזרה. זו אותה הכרעה כמו
+// בשאר שכבת הקליטה — מתקנים במקום שרואה את כל האתרים.
+//
+// שלוש הגנות מפני שיוך שגוי:
+//   1. חלון זמן — פעולה נמשכת דקות, ולכן start ישן מכדי להיות שייך נפסל.
+//   2. **ה-start חייב להיות פתוח**: אם כבר נסגר ב-end אחר בין לבין, הוא
+//      שייך לרכב אחר. בלי הבדיקה הזו כרטיס היה נדבק ליציאה הבאה.
+//   3. רק לכיוון הזהה (entry/exit) ולאותו אתר.
+const CARD_INHERIT_WINDOW_MS = 2 * 3600 * 1000;   // שעתיים — נדיב מאוד לפעולה
+
+async function inheritCardFromStart(siteId, entryExit, occurredAt) {
+  const since = new Date(Date.parse(occurredAt) - CARD_INHERIT_WINDOW_MS).toISOString();
+
+  const start = await db.prepare(
+    `SELECT card_number, occurred_at FROM operations
+      WHERE site_id = ? AND entry_exit = ? AND start_end = 'start'
+        AND card_number <> ''
+        AND occurred_at <= ? AND occurred_at >= ?
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT 1`
+  ).get(siteId, entryExit, occurredAt, since);
+
+  if (!start) return "";
+
+  // האם ה-start כבר נסגר? end אחר שנמצא *בין* הפתיחה לבינינו פירושו שהפעולה
+  // ההיא הסתיימה, והכרטיס שלה אינו שייך לנו.
+  const closed = await db.prepare(
+    `SELECT 1 FROM operations
+      WHERE site_id = ? AND entry_exit = ? AND start_end = 'end'
+        AND occurred_at > ? AND occurred_at < ?
+      LIMIT 1`
+  ).get(siteId, entryExit, start.occurred_at, occurredAt);
+
+  return closed ? "" : start.card_number;
+}
+
 async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
                                occurredAt, receivedAt, reportedAt = null) {
   try {
@@ -3029,6 +3077,7 @@ module.exports = {
   findSiteByCode,
   insertSite,
   insertOperation,
+  inheritCardFromStart,   // השלמת כרטיס שאבד בין start ל-end (ראה ההסבר שם)
   applyCycleCounter,
   decideCycleUpdate,   // טהורה — נבדקת ישירות ב-tests/cycle-counter.test.js
   RESET_PLAUSIBLE_MAX,

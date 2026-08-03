@@ -3,7 +3,7 @@
 const db = require("../db/db");
 const { insertOperation, applyCycleCounter, applyStateChange,
         updateLastSeenIfNewer, getOpenStatusStartedAt,
-        getActiveMaintenance } = require("../db/queries");
+        getActiveMaintenance, inheritCardFromStart } = require("../db/queries");
 const bus = require("../bus");
 
 const VALID_STATE = "operating";
@@ -55,11 +55,29 @@ async function handleOperation(site, data) {
 }
 
 async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt, opState, isAnomaly }) {
+  // ==========================================================
+  // כרטיס חסר בסגירה — משלימים מהפתיחה
+  // ==========================================================
+  // הרגיסטר מתאפס לפני שה-MODE יוצא ממצב הפעולה (קורה ביציאה). סוכן מעודכן
+  // נושא את הכרטיס בעצמו, אבל אתר עם גרסה ישנה שולח end ריק — ונמדד ש-100%
+  // מה-start נושאים כרטיס גם שם. ראה inheritCardFromStart.
+  //
+  // ⚠️ רק על end, ורק כשהשדה באמת ריק. הודעת start ריקה אומרת שהבקר לא קרא
+  // כרטיס, וזה מידע אמיתי שאסור להמציא לו ערך.
+  let cardNumber = data.user;
+  if (data.start_end === "end" && !cardNumber) {
+    cardNumber = await inheritCardFromStart(site.id, data.entry_exit, occurredAt);
+    if (cardNumber) {
+      console.log(
+        `[operation] אתר ${site.code}: כרטיס '${cardNumber}' הושלם מה-start (הסגירה הגיעה ריקה)`);
+    }
+  }
+
   const saveResult = await insertOperation(
     site.id,
     data.start_end,
     data.entry_exit,
-    data.user,
+    cardNumber,
     opState,
     isAnomaly,
     occurredAt,
@@ -165,7 +183,9 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
       code: site.code,
       startEnd: data.start_end,
       entryExit: data.entry_exit,
-      cardNumber: data.user,
+      // הכרטיס המושלם ולא data.user: אחרת הכרטיס נשמר ב-DB אבל הכרטיס
+      // בדשבורד מתעדכן בזמן אמת לערך ריק, ורק ריענון מלא היה מתקן.
+      cardNumber,
       cycleCounter: data.cycle_counter,
       cycleTotal: cycleResult ? cycleResult.total : null,
       state: opState,
