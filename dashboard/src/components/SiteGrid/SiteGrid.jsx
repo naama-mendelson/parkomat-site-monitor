@@ -135,12 +135,18 @@ function SiteGrid({ sites, onSiteClick }) {
   //
   // ⚠️ שורה *וגם* עמודה. עם עמודה בלבד, Grid מחפש את השורה הראשונה שבה שתי
   // העמודות פנויות — וזו כבר השורה הבאה, כלומר הבאג חוזר בדלת האחורית.
+  //
+  // ⚠️⚠️ ו-`span 2` חייב להיכתב כאן במפורש, בשתי הצורות המקוצרות. הגרסה
+  // הראשונה קבעה gridColumnStart בלבד — וזה **דרס** את `grid-column: span 2`
+  // שב-CSS והשאיר את הכרטיס ברוחב תא אחד, בזמן שהשכנים נמתחו לגובה כפול עם
+  // שטח ריק. הבדיקה הראשונה פספסה את זה כי היא מדדה רק את מיקום ה-y ולא את
+  // הגודל: הכרטיס אכן נשאר בשורה, אבל נפתח שבור.
   const placementFor = (index) => {
     if (cols < 2) return undefined;                  // עמודה אחת — אין מה להזיז
     if (index % cols !== cols - 1) return undefined; // לא בעמודה האחרונה
     return {
-      gridColumnStart: cols - 1,
-      gridRowStart: Math.floor(index / cols) + 1,
+      gridColumn: `${cols - 1} / span 2`,
+      gridRow: `${Math.floor(index / cols) + 1} / span 2`,
     };
   };
 
