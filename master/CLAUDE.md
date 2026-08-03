@@ -408,3 +408,40 @@ client-writable, the same property the role system already relies on.
   never does.
 - `disable_signup` is still `false` in the project config. The database no longer cares, but
   flipping it in the Supabase dashboard would reject those requests one layer earlier.
+
+## The server restarts itself now
+
+Nothing used to start it. A reboot, a crash, or a closed window left the system silent
+until somebody remembered to run `npm start` — and that cost **15 hours** of a dashboard
+showing stale state, found by accident. (No messages were lost: HiveMQ held the queue
+thanks to the fixed `clientId` + `clean:false`, and all 240 drained on the next start.)
+
+`tools/autostart/` registers a per-user Scheduled Task:
+
+```sh
+powershell -ExecutionPolicy Bypass -File tools\autostart\install.ps1
+```
+
+- **Two triggers**: at logon (covers reboot) and every 5 minutes (covers a crash or a
+  manual kill). The script exits immediately when the server is already up, so the
+  five-minute runs cost nothing.
+- **`launch-hidden.vbs` is not decoration.** The task fires 288 times a day; running
+  `powershell.exe` directly flashes a console window every time. `-WindowStyle Hidden`
+  does not help — it applies to what PowerShell *launches*, not to PowerShell itself.
+- **No admin, no UAC, no stored password** — same choice the agent installer makes.
+  ⚠️ The cost: a user-level task only runs while that user is **logged on**. A machine
+  that reboots to a login screen stays silent. That needs auto-logon or a real service.
+- **`.ps1` files need a UTF-8 BOM.** PowerShell 5.1 reads them as ANSI otherwise and the
+  Hebrew comments become a parser error.
+
+### The single-instance check is a correctness requirement
+
+`mqtt/subscriber.js` uses a fixed `clientId`, which is what lets HiveMQ keep the queue
+across restarts. But MQTT requires client ids to be unique, so **two server processes
+disconnect each other in an endless loop** and neither processes anything — observed in
+the log. The guard matches on the process command line rather than the listening port,
+because the port is only bound after startup finishes and that window was wide enough to
+let a second copy in.
+
+Verified: killed the server → the task revived exactly one copy; ran the task three times
+against a live server → still exactly one.
