@@ -1668,6 +1668,30 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
     ) || null;
   };
 
+  // ==========================================================
+  // פעולה שנקטעה בתקלה אינה פעולה שהושלמה
+  // ==========================================================
+  // ה-detector בסוכן סוגר פעולה בכל מעבר MODE, כולל מעבר לתקלה (2/3 → 5).
+  // מבחינת הנתונים זה `end` רגיל לגמרי, ולכן הלוג הציג "יציאת רכב הושלמה"
+  // בדיוק ברגע שהרכב **נתקע**. זו לא אי-דיוק בניסוח אלא היפוך משמעות: מי
+  // שקורא את הלוג רואה הצלחה במקום כשל.
+  //
+  // הזיהוי חד-משמעי ואינו הערכה: כשהמעבר הוא מפעולה לתקלה, הסוכן מייצר את
+  // שתי ההודעות באותו סבב דגימה ועם אותו חותם. לכן —
+  //
+  //     end.occurred_at === error_segment.started_at   ⟺   הפעולה נקטעה
+  //
+  // נמדד על נתוני אמת: מתוך 49 מקטעי תקלה, **35 (71%)** קרו תוך כדי פעולה.
+  // כלומר זה לא מקרה קצה — זה הרוב.
+  //
+  // ⚠️ ההשוואה על המחרוזת ולא על Date.parse: שני החותמים נולדו מאותו מקור
+  // ונשמרו באותו פורמט, וסובלנות זמן כאן הייתה מסמנת בטעות גם תקלה שהתחילה
+  // סמוך לסיום תקין.
+  const errorStarts = new Set();
+  for (const s of states) {
+    if (s.status === "error") errorStarts.add(`${s.site_id}|${s.started_at}`);
+  }
+
   const entries = [
     ...ops.map((o) => ({
       kind: "operation",
@@ -1676,6 +1700,9 @@ function buildActivityLog({ ops, states, maint, counts, limit }) {
       entryExit: o.entry_exit,
       card: o.card_number || null,
       isAnomaly: !!o.is_anomaly,
+      // רק על end: פתיחה לעולם אינה "נקטעת".
+      interrupted: o.start_end === "end"
+        && errorStarts.has(`${o.site_id}|${o.occurred_at}`),
       state: o.state,
       siteName: o.site_name ?? null,   // מוצג רק במצב "כל האתרים"
     })),

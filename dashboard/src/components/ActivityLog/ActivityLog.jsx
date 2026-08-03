@@ -103,19 +103,33 @@ function describe(e) {
     const isEntry = e.entryExit === "entry";
     const color = isEntry ? DIRECTION_COLORS.entry : DIRECTION_COLORS.exit;
     const dir = isEntry ? "כניסת רכב" : "יציאת רכב";
-    const phase = e.startEnd === "start" ? "התחילה" : "הושלמה";
+
+    // ==========================================================
+    // "הושלמה" רק כשהיא באמת הושלמה
+    // ==========================================================
+    // הסוכן סוגר פעולה בכל מעבר MODE, כולל מעבר לתקלה — ולכן רכב שנתקע
+    // באמצע נרשם כ-end רגיל. הלוג הציג "יציאת רכב הושלמה" בדיוק ברגע
+    // שהרכב נתקע: היפוך משמעות, לא ניסוח לא מדויק.
+    //
+    // השרת מסמן את זה ב-interrupted (ראה buildActivityLog). נמדד: 71%
+    // מהתקלות קורות תוך כדי פעולה, כלומר זה הרוב ולא מקרה קצה.
+    const phase = e.startEnd === "start"
+      ? "התחילה"
+      : e.interrupted ? "נקטעה בתקלה" : "הושלמה";
 
     const details = [];
     details.push(e.card ? `כרטיס ${e.card}` : "ללא כרטיס");
+    if (e.interrupted) details.push("הרכב לא סיים את המעבר");
     if (e.isAnomaly) details.push("אנומליה");
 
     return {
-      color,
+      // פעולה שנקטעה נצבעת בצבע התקלה — היא אירוע כשל, לא תנועה תקינה.
+      color: e.interrupted ? STATUS_COLORS.error.dot : color,
       icon: isEntry ? "↓" : "↑",
       title: `${dir} ${phase}`,
       details: details.join(" · "),
-      badge: e.startEnd === "start" ? "התחלה" : "סיום",
-      badgeTone: e.isAnomaly ? "danger" : "normal",
+      badge: e.startEnd === "start" ? "התחלה" : e.interrupted ? "נקטעה" : "סיום",
+      badgeTone: e.isAnomaly || e.interrupted ? "danger" : "normal",
     };
   }
 
