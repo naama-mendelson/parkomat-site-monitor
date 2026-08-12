@@ -45,15 +45,42 @@ dotnet run --project src/Parkomat.Agent.Tray
 dotnet test Parkomat.Agent.slnx
 
 # Publish for deployment — output paths MUST match what installer.iss expects
-# (publish/service, publish/tray). MUST be SELF-CONTAINED: site PCs are not
-# guaranteed to have the .NET 10 Desktop runtime installed, and a framework-
-# dependent build simply won't start there — the Tray never appears and it looks
-# identical to "install failed". A self-contained build bundles the runtime
-# (installer ~64MB; a framework-dependent one is ~5MB — that size drop is the
-# red flag). Always publish with -r win-x64 --self-contained before compiling
-# the installer.
-dotnet publish src/Parkomat.Agent.Service -c Release -r win-x64 --self-contained true -o publish/service
-dotnet publish src/Parkomat.Agent.Tray    -c Release -r win-x64 --self-contained true -o publish/tray
+# (publish/service, publish/tray).
+#
+# SelfContained + RuntimeIdentifier now live in BOTH .csproj files, so a plain
+# `dotnet publish` is already correct and the flags cannot be forgotten. That
+# move was not tidying: the flags used to exist only on the command line, one
+# publish went out without them, and the result was a build that demanded
+# ".NET 10 must be installed" on every site PC.
+#
+# ⚠️ ALWAYS wipe the output directory first. `dotnet publish` overwrites files;
+# it does NOT remove ones it no longer produces. Publishing framework-dependent
+# over a previous self-contained folder leaves the old runtime DLLs sitting
+# next to an app that now asks for the runtime from outside.
+rm -rf publish/service publish/tray
+dotnet publish src/Parkomat.Agent.Service -c Release -o publish/service
+dotnet publish src/Parkomat.Agent.Tray    -c Release -o publish/tray
+```
+
+### Verifying the build is self-contained — check the file, not the size
+
+The installer's **size does not prove it**, and that guess is what let the bad build ship. The
+stale runtime DLLs left behind by the previous publish were packaged too, so the framework-
+dependent installer still weighed ~64MB — exactly the size a correct one weighs. It looked
+right and would not start.
+
+The single authoritative check is one word in `publish/service/*.runtimeconfig.json`:
+
+| | |
+|---|---|
+| `"includedFrameworks"` | ✅ the runtime is inside — runs anywhere |
+| `"framework"` / `"frameworks"` | ❌ demands .NET 10 be installed on the site PC |
+
+Stronger still, and it takes one line — hide .NET from the process and see it start anyway:
+
+```sh
+DOTNET_ROOT=/nonexistent ./publish/service/Parkomat.Agent.Service.exe
+# expect: "Application started."   (self-contained ignores DOTNET_ROOT)
 ```
 
 Installer: **Inno Setup** compiles `installer.iss` → `installer-output/ParkomatAgentSetup.exe`.

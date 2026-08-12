@@ -199,3 +199,196 @@
   .insights-modal { padding: 16px; }
   .insights-table { font-size: 0.78em; }
 }
+
+
+/* ============================================================
+   שורת כרטיס מתקפלת — משכים לכרטיס בודד
+   ============================================================
+   נמדד שיש הבדלים אמיתיים בין כרטיסים באותו אתר (2438: ממוצע כניסה 2,096
+   שניות לכרטיס 7 מול 337 לכרטיס 6 — פי שישה). שש עמודות זמן נוספות היו
+   הופכות את הטבלה לבלתי קריאה; שורה שנפתחת מציגה אותן רק כשמבקשים. */
+.insights-table tr.is-expandable {
+  cursor: pointer;
+}
+
+.insights-table tr.is-expandable:hover {
+  background: var(--bg-hover);
+}
+
+.insights-table tr.is-open {
+  background: var(--bg-hover);
+}
+
+.row-caret {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 0.8em;
+  margin-inline-end: 4px;
+}
+
+.insights-table tr.row-detail > td {
+  padding: 0 12px 12px;
+  background: var(--bg-hover);
+}
+
+
+
+/* ============================================================
+   משך פעולה — שורה לכל כיוון
+   ============================================================
+   ברשת אחת ששת הכרטיסים נשברו 5+1, ו"הפעולה הקצרה" נשארה לבדה מנותקת
+   מהקבוצה. וגרוע מזה: הסדר ערבב כניסה ויציאה, כך שההשוואה דרשה לקפוץ.
+
+   ⚠️ שתי השורות מחזיקות **אותם ארבעה מדדים באותו סדר**, ולכן העין משווה
+   מלמעלה למטה באותה עמודה. זו הצורה היחידה שבה "כניסה ארוכה מיציאה" נקרא
+   במבט אחד — וזו כל הסיבה שהפרדנו את המדד לכיוונים מלכתחילה. */
+.duration-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.duration-row-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  font-size: 0.9em;
+}
+
+.duration-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.duration-row-note {
+  margin-inline-start: auto;
+  font-size: 0.78em;
+  color: var(--text-muted);
+}
+
+/* ⚠️ ארבע עמודות קבועות בשתי השורות — auto-fit היה מסדר כל שורה לפי
+   רוחב התוכן שלה, והעמודות היו יוצאות לא מיושרות בין הכיוונים. */
+.duration-row .insights-kpis {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 620px) {
+  .duration-row .insights-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================================
+   פירוט משכים לכרטיס — שורה לכל כיוון
+   ============================================================
+   ⚠️ אותו מבנה בדיוק כמו טבלת המשכים של האתר: שתי שורות, אותם ארבעה
+   מדדים, אותו סדר. שני מסכים שמציגים את אותו סוג מידע בשתי צורות שונות
+   מכריחים ללמוד כל אחד מחדש. */
+.card-duration-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.card-duration-row {
+  display: grid;
+  grid-template-columns: 62px repeat(4, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.cd-dir {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.card-duration {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cd-label {
+  font-size: 0.7em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.card-duration strong {
+  font-size: 0.9em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cd-samples {
+  font-size: 0.7em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* במסך צר: התווית יורדת לשורה משלה והמדדים ל-2×2 */
+@media (max-width: 620px) {
+  .card-duration-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cd-dir, .cd-samples { grid-column: 1 / -1; }
+}
+
+/* ==========================================================
+   אזהרת קטיעה — בולטת, כי היא פוסלת את כל מה שמתחתיה
+   ==========================================================
+   ⚠️ לא var(--text-muted) כמו בלוג. שם היא מוסיפה הסתייגות לרשימה; כאן היא
+   אומרת שכל מספר במסך חלקי. הודעה דהויה שמבטלת עשרה מספרים בולטים תיקרא
+   כמו הערת שוליים. */
+.insights-truncated {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+/* ==========================================================
+   סימון מאזן בלתי אפשרי
+   ==========================================================
+   ⚠️ כתום ולא אדום: אדום שמור לתקלות, וזו אינה תקלה באתר אלא **חוסר
+   בנתונים**. צביעתו באדום הייתה מוסיפה למנהל תקלה שלא קרתה. */
+.card-imbalance {
+  margin-inline-start: 5px;
+  color: var(--status-warning);
+  font-weight: 700;
+  cursor: help;
+}
+
+.insights-note.insights-warn {
+  padding: 9px 12px;
+  border-inline-start: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 9%, transparent);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+.insights-note.insights-warn span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 0.94em;
+}

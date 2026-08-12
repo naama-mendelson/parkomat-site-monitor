@@ -1,0 +1,79 @@
+/* components/SiteFilterTile/SiteFilterTile.css — ריבוע הסינון בשורת המצבים.
+ *
+ * ⚠️ בונה על .filter-btn של StatusFilters במכוון: אותו גובה, אותו רדיוס,
+ * אותה מסגרת פעילה. ריבוע שנראה אחרת בשורה אחידה קורא כמו רכיב זר, ולא
+ * כמו עוד אפשרות באותו סרגל. */
+
+.site-filter-tile {
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px;
+  min-width: 124px;
+  cursor: default;
+}
+
+/* ⚠️ מבטלים את ריחוף .filter-btn: הריבוע אינו נלחץ, והבהוב מסגרת עליו
+   מבטיח פעולה שלא קיימת. */
+.site-filter-tile:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+}
+
+.site-filter-tile.active,
+.site-filter-tile.active:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: #ffffff;
+}
+
+.sft-select {
+  width: 100%;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.22);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.sft-select:focus {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 1px;
+}
+
+/* ⚠️ הרשימה הנפתחת מצוירת בידי מערכת ההפעלה ויורשת את צבע הרקע הכהה של
+   ה-select. בלי הצבעים המפורשים כאן, טקסט לבן על רקע לבן במערכות מסוימות. */
+.sft-select option {
+  background: #1e3a8a;
+  color: #ffffff;
+}
+
+/* ==========================================================
+   שורת המשפחה — נראית ככותרת, ומתנהגת כאפשרות
+   ==========================================================
+   ⚠️ היא **חייבת** להיראות אחרת מהדגמים שתחתיה, אחרת "XY" ו-"X" נקראות
+   כשתי אפשרויות שוות ואיש לא מבין שהראשונה מכילה את השנייה.
+
+   ⚠️ ו-<option> אינו ניתן לעיצוב מלא: הרשימה הנפתחת מצוירת בידי מערכת
+   ההפעלה. רקע וצבע טקסט עוברים ב-Chrome/Edge על Windows — וזה מה שיש כאן.
+   מה שלא ניתן להשיג בעיצוב (הזחת הדגמים) נעשה ברווחים בתוך הטקסט. */
+.sft-select option.sft-group-row {
+  background: #dbe3f5;
+  color: #10225c;
+  font-weight: 800;
+}
+
+.sft-caption {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 640px) {
+  .site-filter-tile {
+    min-width: 108px;
+  }
+}

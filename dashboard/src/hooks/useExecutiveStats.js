@@ -1,6 +1,8 @@
 // hooks/useExecutiveStats.js — נתוני המנהל הכללי, עם פילטרים ו-debounce
 import { useState, useEffect, useRef } from "react";
-import { fetchExecutiveStats } from "../services/api";
+// דרך המתג: במצב ישיר הדשבורד שולף שורות גולמיות מ-Supabase ומריץ
+// עליהן את **אותה** computeExecutive שהשרת מריץ (shared/executive.mjs).
+import { fetchExecutive } from "../services/dataSource";
 
 /**
  * params  — { period | from,to, sites, statuses, minFailureRate, groupBy, granularity }
@@ -28,7 +30,7 @@ export function useExecutiveStats(params, version = 0, debounceMs = 300) {
     first.current = false;
 
     const timer = setTimeout(() => {
-      fetchExecutiveStats(JSON.parse(key))
+      fetchExecutive(JSON.parse(key))
         .then((r) => { if (!cancelled) setData(r); })
         .catch((e) => { if (!cancelled) setError(e.message); })
         .finally(() => { if (!cancelled) setLoading(false); });

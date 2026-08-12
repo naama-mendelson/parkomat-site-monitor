@@ -44,6 +44,49 @@ export async function signIn(email, password) {
   return { user: mapUser(data.user), error: null };
 }
 
+// ============================================================
+// קישור כניסה למייל (Magic Link)
+// ============================================================
+// ⚠️ **תיבת הדואר של הארגון היא ההוכחה.** כתובת @parkomat.co.il מונפקת רק
+// לעובדים, ורק מי ששולט בתיבה יכול ללחוץ על הקישור. זו בדיוק התכונה
+// ש-Google Workspace נותן — בלי OAuth, בלי Client ID, ובלי תלות בספק
+// חיצוני שצריך להגדיר ולתחזק.
+//
+// ⚠️ `shouldCreateUser: true` בכוונה: זה מה שהופך את הקישור למסלול כניסה
+// **ראשונה** ולא רק לחזרה. משתמש חדש נוצר, `enforce_user_creation` מוודא
+// שהדומיין תקין ומעניק דרגת בקר, ו-`provision_app_user` יוצר את שורת
+// app_users. כל אלה במסד, ולא כאן.
+//
+// ⚠️ ובקשה לכתובת של מישהו אחר אינה מסוכנת: הקישור נשלח **אליו**, לא
+// למבקש. מי שמזין כתובת זרה פשוט שולח לה דואר.
+//
+// ⚠️ emailRedirectTo הוא ה-origin הנוכחי ולא כתובת קבועה — אחרת פיתוח
+// (5173) היה מחזיר לפרודקשן אחרי הלחיצה על הקישור.
+export async function sendMagicLink(email) {
+  if (!isSupabaseConfigured) {
+    return { error: "האימות אינו מוגדר בדשבורד (חסר VITE_SUPABASE_URL)" };
+  }
+
+  const clean = String(email || "").trim();
+  if (!clean) return { error: "יש להזין כתובת אימייל" };
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email: clean,
+    options: { emailRedirectTo: window.location.origin, shouldCreateUser: true },
+  });
+
+  if (error) {
+    // ⚠️ חסימת קצב היא המקרה הנפוץ ביותר כאן, ו-GoTrue מנסח אותה באנגלית.
+    // "שגיאה" סתמית הייתה שולחת את המשתמש ללחוץ שוב ולהיחסם שוב.
+    return {
+      error: /rate limit|too many/i.test(error.message)
+        ? "נשלחו יותר מדי בקשות. המתן דקה ונסה שוב."
+        : error.message,
+    };
+  }
+  return { error: null };
+}
+
 export async function signOut() {
   if (!isSupabaseConfigured) return;
   await supabase.auth.signOut();

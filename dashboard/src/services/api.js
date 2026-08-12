@@ -224,7 +224,7 @@ export async function deleteSite(code) {
   return res.json();
 }
 
-// רישום אתר חדש — { code, site_name, plc_type?, plc_ip?, site_ip? }
+// רישום אתר חדש — { code, site_name, plc_type?, tier? }
 // הרישום הוא השער לקליטה: ה-Master דוחה הודעות מאתר שאינו רשום, ולכן רק
 // אחרי קריאה זו מתחיל המידע מהאתר להישמר. קוד האתר חייב להיות זהה ל-SiteId
 // שמוגדר בסוכן שרץ באתר.
@@ -260,6 +260,37 @@ export function fetchSiteInsights(code, period) {
 // אותה סטטיסטיקה מעמיקה, אך מצרפת על *כל* האתרים (מנהל כללי → "כל האתרים")
 export function fetchGlobalInsights(period) {
   return getJSON(`${BASE}/insights?period=${period}`, "שגיאה בטעינת נתוני כלל האתרים");
+}
+
+/**
+ * לוג הפעילות, עם סינון ודפדוף — מסלול נפרד מ-insights.
+ *
+ * הלוג הגיע קודם רק כחלק מחבילת ה-insights, ולכן היה תקוע על עמוד אחד: כל
+ * החלפת מסנן הייתה מושכת מחדש גם את המדדים, הגרפים וטבלת הכרטיסים. כאן
+ * מושכים רשימה בלבד.
+ *
+ * @param code קוד אתר, או null ללוג המצרף (כל האתרים)
+ * @param opts { period, filter, card, offset, limit }
+ */
+export function fetchActivityLog(code, { period = "week", filter = "all", card, offset = 0, limit = 300 } = {}) {
+  const qs = new URLSearchParams({ period, filter, offset: String(offset), limit: String(limit) });
+  // ⚠️ רק אם יש ערך: `card=` ריק היה מגיע כמחרוזת ריקה ומסנן לאפס שורות.
+  if (card) qs.set("card", card);
+
+  const url = code
+    ? `${BASE}/sites/${code}/activity?${qs}`
+    : `${BASE}/activity?${qs}`;
+  return getJSON(url, "שגיאה בטעינת לוג הפעילות");
+}
+
+/**
+ * דוח חודשי לטווח תאריכים חופשי.
+ * @param code קוד אתר, או null לכל האתרים
+ */
+export function fetchMonthlyReport(code, from, to) {
+  const qs = new URLSearchParams({ from, to });
+  if (code) qs.set("site", code);
+  return getJSON(`${BASE}/report/monthly?${qs}`, "שגיאה בהפקת הדוח");
 }
 
 // ===== ממשקי הניהול =====

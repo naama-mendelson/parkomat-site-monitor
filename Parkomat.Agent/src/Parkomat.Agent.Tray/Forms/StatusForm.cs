@@ -12,6 +12,7 @@ namespace Parkomat.Agent.Tray.Forms;
 /// </summary>
 public class StatusForm : Form
 {
+    private readonly Label _siteResult = new();
     private readonly Label _plcResult = new();
     private readonly Label _hiveResult = new();
     private readonly Button _checkAgain = new();
@@ -53,11 +54,15 @@ public class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
+            RowCount = 3,
             Padding = new Padding(12)
         };
-        content.Controls.Add(BuildCheckGroup("בדיקת PLC (בקר)", _plcResult), 0, 0);
-        content.Controls.Add(BuildCheckGroup("בדיקת HiveMQ (ענן)", _hiveResult), 0, 1);
+        // ⚠️ **זהות האתר ראשונה, ובכוונה.** היא התנאי המקדים לשתי האחרות:
+        // בלעדיה שתיהן יכולות להיות ירוקות והאתר עדיין לא יופיע בדשבורד.
+        // מי שקורא מלמעלה למטה צריך לפגוש קודם את מה שמבטל את השאר.
+        content.Controls.Add(BuildCheckGroup("זהות האתר", _siteResult), 0, 0);
+        content.Controls.Add(BuildCheckGroup("בדיקת PLC (בקר)", _plcResult), 0, 1);
+        content.Controls.Add(BuildCheckGroup("בדיקת HiveMQ (ענן)", _hiveResult), 0, 2);
 
         Controls.Add(content);
         Controls.Add(buttons);
@@ -92,6 +97,7 @@ public class StatusForm : Form
     {
         _checkAgain.Enabled = false;
 
+        SetPending(_siteResult);
         SetPending(_plcResult);
         SetPending(_hiveResult);
 
@@ -102,11 +108,19 @@ public class StatusForm : Form
         }
         catch (Exception ex)
         {
+            SetResult(_siteResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_plcResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_hiveResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             _checkAgain.Enabled = true;
             return;
         }
+
+        // ⚠️ **רצה תמיד, וגם כשהיא נכשלת השאר ממשיכות.** מפתה להפסיק כאן
+        // ולחסוך שתי בדיקות רשת, אבל טכנאי שבא לתקן מזהה ריק ירצה לדעת
+        // באותו מסך אם גם הבקר והענן תקינים — אחרת הוא יתקן, ייסע, ויגלה
+        // בעיה שנייה מחר.
+        TestResult site = ConnectionTester.TestSiteId(config);
+        SetResult(_siteResult, site.Success, site.Message);
 
         // כל בדיקה מעדכנת את התווית שלה ברגע שהיא מסתיימת — עצמאית מהשנייה.
         Task plc = ShowWhenDone(ConnectionTester.TestPlcAsync(config.Plc), _plcResult);

@@ -3,7 +3,7 @@
 // אינו מייבא supabase-js. כל האימות עובר דרך services/auth.js — ראה
 // ההסבר על ה-seam שם.
 import { useState } from "react";
-import { signIn } from "../../services/auth";
+import { signIn, sendMagicLink } from "../../services/auth";
 import "./Login.css";
 
 function Login({ onSignedIn }) {
@@ -11,6 +11,9 @@ function Login({ onSignedIn }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // ⚠️ מצב נפרד ולא שימוש ב-error: שליחה מוצלחת אינה שגיאה, והצגתה
+  // באדום הייתה נראית ככשל בדיוק כשהכול עבד.
+  const [sent, setSent] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -31,6 +34,29 @@ function Login({ onSignedIn }) {
 
     // לא מכבים busy בהצלחה: המסך מתחלף, וכיבוי היה מבליח את הכפתור לרגע.
     onSignedIn?.(user);
+  }
+
+  // ============================================================
+  // קישור כניסה — לא דורש סיסמה, ולא דורש הזמנה
+  // ============================================================
+  // ⚠️ הכפתור אינו submit ולכן אינו מפעיל את ולידציית ה-required של הטופס.
+  // בלי הבדיקה כאן, לחיצה עם שדה ריק הייתה שולחת בקשה על מחרוזת ריקה
+  // ומחזירה שגיאה מ-GoTrue במקום משפט מובן.
+  async function handleMagicLink() {
+    if (busy) return;
+    if (!email.trim()) {
+      setError("יש להזין אימייל כדי לקבל קישור כניסה");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    const { error: err } = await sendMagicLink(email);
+    setBusy(false);
+
+    if (err) { setError(err); return; }
+    setSent(true);
   }
 
   return (
@@ -74,13 +100,49 @@ function Login({ onSignedIn }) {
         {/* role="alert" כדי שקורא מסך יכריז על הכשל ולא רק יצבע אותו */}
         {error && <p className="login-error" role="alert">{error}</p>}
 
+        {/* ⚠️ הודעת ההצלחה **אינה** משתמשת ב-login-error: שליחה שהצליחה
+            אינה כשל, והצגתה באדום הייתה נראית כשגיאה בדיוק כשהכול עבד. */}
+        {sent && (
+          <p className="login-sent" role="status">
+            נשלח קישור כניסה ל-<strong>{email.trim()}</strong>.
+            <span>הקישור תקף לשעה, ופותח את המערכת בלחיצה אחת.</span>
+          </p>
+        )}
+
         <button className="login-submit" type="submit" disabled={busy}>
           {busy ? "מתחבר…" : "התחבר"}
         </button>
 
+        {/* ==========================================================
+            קישור כניסה למייל — בלי סיסמה ובלי הזמנה
+            ==========================================================
+            ⚠️ type="button" ולא submit. בתוך <form> ברירת המחדל של כפתור
+            היא submit, והכפתור הזה היה שולח את טופס הסיסמה במקום לבקש
+            קישור — כלומר "אימייל או סיסמה שגויים" על לחיצה עליו.
+
+            מוצג **מתחת** לסיסמה ולא מעליה: מי שכבר יש לו סיסמה ממשיך
+            בהרגלו, ומי שנכנס בפעם הראשונה מגיע לכאן ממילא — ואצלו שדה
+            הסיסמה ריק בכל מקרה. */}
+        <div className="login-divider"><span>או</span></div>
+
+        <button
+          className="login-magic"
+          type="button"
+          disabled={busy}
+          onClick={handleMagicLink}
+        >
+          <span className="login-magic-icon" aria-hidden="true">✉</span>
+          שלחו לי קישור כניסה
+        </button>
+
         {/* ה-session נשמר ומתחדש לבד (services/supabase.js), ולכן זו אמירה
             נכונה ולא הבטחה — במסך בקרה שפתוח ימים זה מה שמונע התנתקות. */}
-        <p className="login-note">כניסה אחת מספיקה — המסך נשאר מחובר.</p>
+        <p className="login-note">
+          כניסה אחת מספיקה — המסך נשאר מחובר.
+          {/* אמירה מפורשת ולא הסתרה: מי שמנסה כתובת פרטית יקבל שגיאה מ-GoTrue
+              בלי הסבר, ועדיף שידע מראש. הכלל נאכף במסד, לא כאן. */}
+          <br />כניסה בכתובת <strong>@parkomat.co.il</strong> בלבד.
+        </p>
       </form>
     </div>
   );

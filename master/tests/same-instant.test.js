@@ -26,7 +26,7 @@ require.cache[DB] = {
   id: DB, filename: DB, path: path.dirname(DB), loaded: true, children: [], paths: [],
   exports: { prepare: () => ({ get: async () => ({}), all: async () => [], run: async () => ({}) }) },
 };
-const { buildActivityLog } = require("../db/queries");
+const { buildTimeline } = require("../db/queries");
 
 const NOW = Date.UTC(2026, 6, 26, 9, 54, 37) ;   // 12:54:37 שעון ישראל
 const sec = (ms) => Math.floor(ms / 1000);
@@ -126,10 +126,10 @@ const op = (at, startEnd, entryExit = "entry") => ({
 const st = (at, status, endedAt = null) => ({
   site_id: undefined, status, started_at: iso(at), ended_at: endedAt ? iso(endedAt) : null,
 });
-const build = (ops, states) => buildActivityLog({
-  ops, states, maint: [], limit: 300,
-  counts: { cOperations: 0, cStatus: 0, cStatusAll: 0, cMaintWindows: 0, cMaintStatus: 0 },
-});
+// הציר ה**גולמי**, לא העמוד המסונן: buildActivityLog מסנן (ברירת מחדל "הכל")
+// ומסתיר בדיוק את שורות ה-'בפעולה' שהבדיקות כאן באות לאמת — שהחותם אומץ,
+// ושהדגל explainedByOp נקבע נכון. ראה buildTimeline ב-db/queries.js.
+const build = (ops, states) => ({ entries: buildTimeline({ ops, states, maint: [] }) });
 
 test("הזוג הפגום מ-2438: 'מוכן' ב-36 ו-'הסתיימה' ב-37 — הסדר נהיה אפשרי", () => {
   // בדיוק הנתונים שנמצאו ב-DB.

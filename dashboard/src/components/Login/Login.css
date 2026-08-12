@@ -131,3 +131,78 @@
   color: var(--text-muted);
   text-align: center;
 }
+
+/* ==========================================================
+   מפריד "או" — בין סיסמה ל-Google
+   ========================================================== */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 2px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+/* ==========================================================
+   כפתור קישור הכניסה
+   ==========================================================
+   משני ולא ראשי: מסגרת בלי מילוי. שני כפתורים מלאים זה מתחת לזה מבטלים
+   זה את זה — אף אחד מהם אינו נראה כמו הפעולה הראשית. */
+.login-magic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 11px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-magic:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.login-magic:disabled { opacity: 0.55; cursor: default; }
+.login-magic-icon { font-size: 1.05em; }
+
+/* ==========================================================
+   הודעת "נשלח" — ירוקה, לא אדומה
+   ==========================================================
+   ⚠️ הפיתוי הוא להשתמש ב-.login-error כי זה אותו מקום במסך. שליחה
+   שהצליחה שנצבעת אדום נקראת ככשל, והמשתמש ילחץ שוב ויחסום את עצמו
+   בהגבלת הקצב. */
+.login-sent {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--status-ready);
+  background: color-mix(in srgb, var(--status-ready) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.login-sent span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 0.92em;
+}

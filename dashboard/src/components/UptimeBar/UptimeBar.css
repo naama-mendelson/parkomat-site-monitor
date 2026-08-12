@@ -180,3 +180,25 @@
   border-top: 1px solid var(--border-color);
   padding-top: 8px;
 }
+
+/* ==========================================================
+   מה שהאחוז אינו אומר
+   ==========================================================
+   ⚠️ ממוקמת מיד מתחת למספר הראשי ולא בתחתית הכרטיס. מי שקורא זמינות קורא
+   את האחוז ועובר הלאה; הסתייגות שיושבת אחרי הפירוט המלא לא תיקרא, וזו
+   בדיוק ההסתייגות שבלעדיה האחוז מטעה. */
+.uptime-note {
+  margin: -4px 0 16px;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+
+.uptime-note strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}

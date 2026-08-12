@@ -306,6 +306,13 @@ const EXECUTORS = {
         dailyAverage: i.activity.dailyAverage,
       },
       durations: i.durations,
+      // ⚠️ הפילוח לפי כיוון נמסר גם הוא, ובכוונה: **המסך מציג רק אותו**.
+      // בלעדיו העוזר היה מדווח את הממוצע הכולל בזמן שהמשתמשת רואה שני
+      // מספרים אחרים — בדיוק אי-ההתאמה ש-api/periods.js קיים כדי למנוע
+      // ("משתמש שרואה 24 בדשבורד ושומע מהבוט 31 לא יאמין לאף אחד מהם").
+      //
+      // ההפרש אינו זניח: נמדד 31% בחציון, ובאתר 1348 הכיוון אף מתהפך.
+      durationsByDirection: i.durationsByDirection,
       downtime: i.downtime,           // incidents, totalHours, longestHours, longestAt
       maintenance: {
         plcReportedEntries: i.maintenance.plcEntries,

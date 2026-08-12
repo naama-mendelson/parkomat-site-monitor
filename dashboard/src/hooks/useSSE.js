@@ -21,6 +21,8 @@
 //   2. חזרה לטאב — מחשב שנרדם או טאב ברקע. שם EventSource עלול *לא*
 //      לדווח על שגיאה בכלל, והמסך פשוט מפגר בשקט.
 import { useEffect, useRef } from "react";
+import { useDirect } from "../services/dataSource";
+import { subscribeRealtime } from "../services/realtimeDirect";
 
 /**
  * @param onUpdate    נקרא לכל הודעה.
@@ -36,6 +38,32 @@ export function useSSE(onUpdate, onReconnect) {
   reconnectRef.current = onReconnect;
 
   useEffect(() => {
+    // ============================================================
+    // אותו מתג בדיוק כמו הקריאות
+    // ============================================================
+    // ⚠️ **זהו הפער האחרון שסגר את התמונה.** כל הקריאות כבר עברו ל-Supabase,
+    // אבל כאן נשאר `new EventSource("/api/stream")` — חיבור פתוח וקבוע לשרת.
+    // כל עוד הוא קיים, "הדשבורד מדבר רק עם Supabase" אינו נכון.
+    //
+    // הזרועות אינן שני מנגנונים אלא **שני קוראים של אותה טבלה**: השרת כותב
+    // כל אירוע סמנטי ל-`events` (bus.publish), ו-SSE ו-Realtime שניהם קוראים
+    // משם. לכן ההחלפה היא החלפת קורא, ולא כתיבה מחדש של המנגנון.
+    if (useDirect) {
+      const unsubscribe = subscribeRealtime(
+        (data) => callbackRef.current(data),
+        () => reconnectRef.current?.()
+      );
+      const onVisibleRt = () => {
+        if (document.visibilityState === "visible") reconnectRef.current?.();
+      };
+      document.addEventListener("visibilitychange", onVisibleRt);
+      return () => {
+        document.removeEventListener("visibilitychange", onVisibleRt);
+        unsubscribe();
+      };
+    }
+
+    // ---- זרוע ב': SSE דרך השרת. נשאר עובד, ולכן אינו נמחק. ----
     const source = new EventSource("/api/stream");
 
     // האם היה נתק מאז ההתחברות האחרונה. בלי הדגל הזה onopen הראשון (בטעינה)

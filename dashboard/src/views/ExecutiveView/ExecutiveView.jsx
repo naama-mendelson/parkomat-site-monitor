@@ -21,6 +21,7 @@ import Heatmap from "../../components/Heatmap/Heatmap";
 import Leaderboard from "../../components/Leaderboard/Leaderboard";
 import Logo from "../../components/Logo/Logo";
 import InsightsModal from "../../components/InsightsModal/InsightsModal";
+import MonthlyReport from "../../components/MonthlyReport/MonthlyReport";
 import "./ExecutiveView.css";
 
 // מפת צבעי המדדים משותפת (utils/constants) ולא מוגדרת כאן — כך אותו מדד
@@ -40,7 +41,10 @@ const DEFAULT_FILTERS = {
 const DEFAULT_DISPLAY = {
   chartType: "line",
   metrics: ["operations", "errors"],
-  showGrid: true, showValues: false,
+  // ⚠️ showValues דולק כברירת מחדל. גרף בלי מספרים מחייב לאמוד גובה מול ציר
+  // — כלומר לקרוא את התשובה במקום לראות אותה. מי שרוצה גרף נקי מכבה; מי
+  // שרוצה את המספר לא צריך לדעת שקיים תפריט שמפעיל אותו.
+  showGrid: true, showValues: true,
   sort: "desc", topN: 10,
 };
 
@@ -54,6 +58,9 @@ function ExecutiveView({ dataVersion }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [display, setDisplay] = useState(DEFAULT_DISPLAY);
   const [reportOpen, setReportOpen] = useState(false);
+  // דוח תקופתי — טווח תאריכים חופשי, פילוח חודשי. נפרד מ-reportOpen שמדפיס
+  // את התצוגה הנוכחית לפי הפילטרים.
+  const [monthlyOpen, setMonthlyOpen] = useState(false);
   const [opsMode, setOpsMode] = useState("standard");
   const [expanded, setExpanded] = useState(null);        // איזו חלונית פרושה
   const [insightsOpen, setInsightsOpen] = useState(false);       // "כל האתרים — עוד מידע"
@@ -131,8 +138,13 @@ function ExecutiveView({ dataVersion }) {
   const { kpis, trend, sitesByStatus, comparisonLabel } = data;
   // אופציונל-צ'יינינג: payload חלקי/מדורג (שרת ישן, טווח ריק) עלול להשמיט
   // תת-אובייקט של trend או את sitesByStatus — בלי ההגנה הזו המסך היה קורס ללבן.
+  // previous ו-hasComparison עוברים הלאה כדי ש-TrendIndicator יבדיל בין
+  // "אין תקופה קודמת" לבין "הייתה, והערך בה היה אפס" — ראה ההסבר שם.
   const t = (key, higherIsBetter) => ({
-    changePercent: trend?.[key]?.changePercent ?? null, higherIsBetter, comparisonLabel,
+    changePercent: trend?.[key]?.changePercent ?? null,
+    previous: trend?.[key]?.previous,
+    hasComparison: data?.hasComparison,
+    higherIsBetter, comparisonLabel,
   });
 
   const statusSlices = STATUSES
@@ -333,6 +345,19 @@ function ExecutiveView({ dataVersion }) {
           כל האתרים · עוד מידע
           <span className="ex-insights-hint">סקירה · פעילות · כרטיסים · אמינות · לוג</span>
         </button>
+
+        {/* ⚠️ נפרד מ"הפק דוח" שב-FilterBar, ובכוונה: זה מדפיס את **התצוגה
+            הנוכחית** לפי הפילטרים, וזה עונה על שאלה אחרת לגמרי — "כמה פעולות
+            ותקלות היו בכל חודש, בין שני תאריכים שאני בוחרת". טווח חופשי
+            ופילוח חודשי אינם קיימים באף מסך אחר. */}
+        <button
+          type="button"
+          className="ex-insights-btn"
+          onClick={() => setMonthlyOpen(true)}
+        >
+          דוח תקופתי
+          <span className="ex-insights-hint">טווח תאריכים חופשי · פילוח לפי חודש · ייצוא</span>
+        </button>
       </header>
 
       <FilterBar
@@ -401,6 +426,8 @@ function ExecutiveView({ dataVersion }) {
       )}
 
       {reportOpen && <ReportView data={data} onClose={() => setReportOpen(false)} />}
+
+      {monthlyOpen && <MonthlyReport onClose={() => setMonthlyOpen(false)} />}
 
       {/* "כל האתרים — עוד מידע": אותו InsightsModal, במצב מצרף כלל-מערכתי */}
       {insightsOpen && (

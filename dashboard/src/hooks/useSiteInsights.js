@@ -1,7 +1,9 @@
 // hooks/useSiteInsights.js — סטטיסטיקה מעמיקה של אתר ("עוד מידע"),
 // וגרסה מצרפת על כל האתרים (useGlobalInsights).
 import { useState, useEffect } from "react";
-import { fetchSiteInsights, fetchGlobalInsights } from "../services/api";
+// דרך המתג: במצב ישיר הדשבורד שולף שורות גולמיות מ-Supabase ומריץ
+// עליהן את **אותה** computeInsights שהשרת מריץ (shared/insights.mjs).
+import { fetchInsights } from "../services/dataSource";
 
 // enabled: שולפים רק כשהמסך פתוח, כדי לא לבזבז בקשות
 // version: מתעדכן בכל הודעה חדשה מהאתר → שליפה מחדש (סנכרון עם ה-DB)
@@ -17,7 +19,7 @@ export function useSiteInsights(code, period, { enabled = true, version = 0 } = 
     setLoading(true);
     setError(null);
 
-    fetchSiteInsights(code, period)
+    fetchInsights(code, period)
       .then((result) => {
         if (!cancelled) setData(result);
       })
@@ -48,7 +50,7 @@ export function useGlobalInsights(period, { enabled = true, version = 0 } = {}) 
     setLoading(true);
     setError(null);
 
-    fetchGlobalInsights(period)
+    fetchInsights(null, period)
       .then((result) => { if (!cancelled) setData(result); })
       .catch((err) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });

@@ -57,3 +57,28 @@
   font-size: 0.8em;
   padding: 10px 0;
 }
+
+/* ==========================================================
+   מספרי הערכים מעל העמודות
+   ==========================================================
+   אותו מנגנון מיקום כמו .spark-labels — position:relative על המכל
+   ו-left באחוזים על כל מספר, כדי שהמספר והעמודה ייגזרו מאותו cx(i).
+
+   ⚠️ direction: ltr, כמו בתוויות הציר: ה-SVG הוא LTR, וב-RTL היה left
+   ממקם את המספר בצד הנגדי — כלומר במראה הפוכה מהעמודה שלו. */
+.spark-values {
+  position: relative;
+  height: 13px;
+  direction: ltr;
+  user-select: none;
+}
+
+.spark-values span {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  color: var(--text-secondary);
+  font-size: 0.66em;
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -1,17 +1,23 @@
-// tools/backfill-cards.js — משלים כרטיסים שאבדו בסגירת פעולה, בנתונים היסטוריים.
+// tools/backfill-cards.js — מיישר כרטיסים בסגירת פעולה לפי הפתיחה, בהיסטוריה.
 //
 //   node --env-file=.env tools/backfill-cards.js          ← הרצה יבשה (ברירת מחדל)
 //   node --env-file=.env tools/backfill-cards.js --apply  ← כותב באמת
 //
 // ============================================================
-// למה זה קיים
+// שני כשלים, אותו תיקון
 // ============================================================
-// בחלק מהבקרים רגיסטר הכרטיס מתאפס לפני שה-MODE יוצא ממצב הפעולה, וזה קורה
-// ביציאה. נמדד: exit/start נושא כרטיס ב-100% מהמקרים, exit/end רק ב-67%.
-// באתרים שמריצים סוכן ישן האובדן שיטתי — 0% עד 8.5%.
+// 1. **סגירה ריקה.** בחלק מהבקרים רגיסטר הכרטיס מתאפס לפני שה-MODE יוצא
+//    ממצב הפעולה. נמדד: exit/start נשא כרטיס ב-100%, exit/end רק ב-67%.
 //
-// הקליטה כבר מתקנת את זה קדימה (inheritCardFromStart ב-queries.js). הכלי הזה
-// מטפל במה שכבר נכתב: **המידע קיים על שורת ה-start**, והוא ניתן לשחזור.
+// 2. **סגירה עם הכרטיס של הרכב הבא.** חמור יותר, כי הוא לא נראה כחסר אלא
+//    כנתון תקין — ולכן שרד. הסוכן אימץ כל כרטיס לא-ריק שנראה לאורך הפעולה,
+//    ולכן נהג שהעביר כרטיס בזמן שהפעולה הקודמת עוד רצה גנב אותה. נמדד: 86
+//    מתוך 1,013 זוגות (8.5%), ובחולדה 4 לבדה 66. התסמין בדשבורד היה מאזן
+//    בלתי אפשרי לכרטיס בודד — למשל 6 כניסות מול 3 יציאות.
+//
+// שניהם תוקנו במקור (OperationDetector בסוכן) ובקליטה (operation-handler),
+// אבל מה שכבר נכתב נשאר שגוי. הכלי הזה מטפל בו: **המידע הנכון קיים על שורת
+// ה-start**, כי היא נלכדת ברגע שהרכב התחיל לעבור.
 //
 // ============================================================
 // אותם כללים בדיוק כמו בקליטה — ולא כללים "דומים"
@@ -42,6 +48,7 @@ const MATCH = `
          e.site_id,
          e.entry_exit,
          e.occurred_at   AS end_at,
+         e.card_number   AS end_card,
          st.card_number  AS card,
          st.occurred_at  AS start_at
   FROM operations e
@@ -60,7 +67,17 @@ const MATCH = `
     LIMIT 1
   ) st ON TRUE
   WHERE e.start_end = 'end'
-    AND e.card_number = ''
+    -- ==========================================================
+    -- גם ריק וגם **שגוי**
+    -- ==========================================================
+    -- הריצה הראשונה טיפלה רק בסגירות ריקות. אחר כך התגלה כשל שני, חמור
+    -- יותר כי הוא נראה תקין: הסוכן אימץ כל כרטיס לא-ריק שנראה לאורך הפעולה,
+    -- ולכן נהג שהעביר כרטיס בזמן שהפעולה הקודמת עוד רצה — גנב אותה.
+    -- נמדד: 86 מתוך 1,013 זוגות (8.5%), ובחולדה 4 לבדה 66.
+    --
+    -- הכלל בשני המקרים זהה: **הפתיחה קובעת.** היא נלכדת ברגע שהרכב התחיל
+    -- לעבור, ואין רגע מדויק ממנו.
+    AND e.card_number IS DISTINCT FROM st.card_number
     AND e.is_anomaly = 0
     -- ה-start עדיין פתוח: אין סגירה אחרת בין לבין
     AND NOT EXISTS (
@@ -75,15 +92,12 @@ const MATCH = `
 (async () => {
   await db.init();
 
-  const before = await db.prepare(
-    "SELECT COUNT(*)::int n FROM operations WHERE start_end='end' AND card_number='' AND is_anomaly=0"
-  ).get();
-
   const matches = await db.prepare(MATCH).all();
+  const empty = matches.filter((m) => !m.end_card).length;
 
-  console.log(`שורות סגירה בלי כרטיס:        ${before.n}`);
-  console.log(`מתוכן ניתנות לשחזור:          ${matches.length}`);
-  console.log(`נשארות בלי כרטיס (אין start): ${before.n - matches.length}`);
+  console.log(`סגירות שאינן תואמות לפתיחה: ${matches.length}`);
+  console.log(`  מהן ריקות לגמרי:          ${empty}`);
+  console.log(`  מהן עם כרטיס **שגוי**:    ${matches.length - empty}`);
 
   const bySite = new Map();
   for (const m of matches) bySite.set(m.site_id, (bySite.get(m.site_id) || 0) + 1);
@@ -99,8 +113,8 @@ const MATCH = `
   for (const m of matches.slice(0, 5)) {
     const gap = Math.round((Date.parse(m.end_at) - Date.parse(m.start_at)) / 1000);
     console.log(`  ${nameOf.get(m.site_id)}  ${m.entry_exit}  ` +
-                `${m.start_at.slice(11, 19)} -> ${m.end_at.slice(11, 19)}  ` +
-                `(${gap}s)  כרטיס '${m.card}'`);
+                `${m.start_at.slice(11, 19)} -> ${m.end_at.slice(11, 19)}  (${gap}s)  ` +
+                `'${m.end_card || "(ריק)"}' -> '${m.card}'`);
   }
 
   if (!APPLY) {
@@ -115,18 +129,19 @@ const MATCH = `
       // התנאי על card_number='' נשמר גם כאן — הגנה מפני ריצה כפולה, ומפני
       // מצב שבו הקליטה החיה עדכנה את השורה בזמן שהכלי רץ.
       const r = await db.prepare(
-        "UPDATE operations SET card_number = ? WHERE id = ? AND card_number = ''"
-      ).run(m.card, m.end_id);
+        // ⚠️ התנאי הוא 'שונה מהיעד' ולא 'ריק': הריצה הזו מתקנת גם כרטיס
+        // שגוי. הוא עדיין מגן מפני ריצה כפולה ומפני עדכון מקביל מהקליטה.
+        "UPDATE operations SET card_number = ? WHERE id = ? AND card_number IS DISTINCT FROM ?"
+      ).run(m.card, m.end_id, m.card);
       if (r.changes ?? 1) updated++;
     }
   });
 
-  const after = await db.prepare(
-    "SELECT COUNT(*)::int n FROM operations WHERE start_end='end' AND card_number='' AND is_anomaly=0"
-  ).get();
+  // אימות: הרצה חוזרת של אותה שאילתה חייבת להחזיר אפס.
+  const remaining = (await db.prepare(MATCH).all()).length;
 
   console.log(`\n=== בוצע ===`);
-  console.log(`  שורות שעודכנו: ${updated}`);
-  console.log(`  לפני: ${before.n} בלי כרטיס  ->  אחרי: ${after.n}`);
+  console.log(`  שורות שעודכנו:        ${updated}`);
+  console.log(`  אי-התאמות שנותרו:     ${remaining}${remaining ? "  ⚠️" : "  ✔"}`);
   process.exit(0);
 })().catch((e) => { console.error("נכשל —", e.message); process.exit(1); });

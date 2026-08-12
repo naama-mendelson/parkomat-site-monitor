@@ -13,7 +13,15 @@ import { useEffect, useRef, useState } from "react";
 import { currentUser, signOut, changePassword, MIN_PASSWORD_LENGTH } from "../../services/auth";
 import "./AccountMenu.css";
 
-const ROLE_LABELS = { operator: "בקר", supervisor: "מנהל בקרה", executive: 'מנכ"ל' };
+// ⚠️ שתי קבוצות בלבד. supervisor/executive הן דרגות שבוטלו — הן נשארות
+// במפה כדי שאסימון ישן שעדיין נושא אותן יציג "מנהל" ולא את המחרוזת
+// הגולמית. שורה שנמחקת כאן הופכת דרגה ישנה למילה באנגלית על המסך.
+const ROLE_LABELS = {
+  operator: "בקר",
+  manager: "מנהל",
+  supervisor: "מנהל",     // בוטלה — ממופה למנהל
+  executive: "מנהל",      // בוטלה — ממופה למנהל
+};
 
 // ============================================================
 // רוחב התפריט יושב כאן ולא ב-CSS — בכוונה

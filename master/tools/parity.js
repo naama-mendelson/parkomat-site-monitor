@@ -30,8 +30,37 @@
 
 const db = require("../db/db");
 const { loadRangeData, uptimeFromData, collapseNoCommFlicker, statsFromData,
-        getAllSitesGlobals } = require("../db/queries");
+        getAllSitesGlobals, getRecentErrors } = require("../db/queries");
 const { resolvePeriod } = require("../api/periods");
+
+// ============================================================
+// שני הצדדים חייבים לקרוא את **אותו** צילום
+// ============================================================
+// ⚠️ נמדד, והשער נפל בגללו: `week/2439.operatingHours: JS=12.87 SQL=12.92`.
+// שלוש דקות הפרש, ובריצה הבאה 0 הבדלים. שום דבר בקוד לא השתנה — **רכב נסע
+// בין שתי השליפות.**
+//
+// כל השוואה מול נתוני אמת קוראת פעמיים: פעם דרך loadRangeData (צד ה-JS)
+// ופעם דרך פונקציית ה-SQL. בבידוד READ COMMITTED **כל שאילתה מקבלת צילום
+// משלה**, ולכן קליטה שכותבת מקטע ביניהן מזיזה צד אחד ולא את השני.
+//
+// המקטעים הפתוחים מחמירים את זה: הם נמדדים עד "עכשיו", וכל צד לוקח את
+// ה"עכשיו" שלו.
+//
+// REPEATABLE READ מקבע צילום אחד לכל הטרנזקציה. אותו פתרון בדיוק כמו
+// parity-activity — הוא רק לא הוחל כאן, והמקרים הזרועים (שרצים בתוך
+// transaction ממילא) הסתירו את הפער.
+//
+// ⚠️ שער שמאדים כי הנתונים זזו הוא שער שלומדים להתעלם ממנו. זה גרוע יותר
+// משער שלא קיים, כי הוא נראה כמו כיסוי.
+async function snapshot(fn) {
+  // db.transaction אינו מוסר client — הוא עוקב אחריו דרך AsyncLocalStorage,
+  // ולכן db.prepare שבתוכו רץ אוטומטית על אותו חיבור ואותה טרנזקציה.
+  return db.transaction(async () => {
+    await db.prepare("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").run();
+    return fn();
+  });
+}
 
 // ===== דיווח =====
 let checks = 0, failures = 0;
@@ -106,10 +135,10 @@ async function parityUptime() {
     const { range } = resolvePeriod(period);
     const to = new Date().toISOString();
 
-    const data = await loadRangeData(null, { from: range.from, to });
-    const sql = await db.prepare(
-      "SELECT * FROM public.site_uptime(?, ?, ?)"
-    ).all(ids, range.from, to);
+    const { data, sql } = await snapshot(async () => ({
+      data: await loadRangeData(null, { from: range.from, to }),
+      sql: await db.prepare("SELECT * FROM public.site_uptime(?, ?, ?)").all(ids, range.from, to),
+    }));
     const sqlById = new Map(sql.map((r) => [r.site_id, r]));
 
     let periodFails = 0;
@@ -130,6 +159,10 @@ async function parityUptime() {
       compare(`${period}/${code}.operatingHours`,   js.operatingHours,      s.operating_hours);
       compare(`${period}/${code}.errorHours`,       js.errorHours,          s.error_hours);
       compare(`${period}/${code}.maintenanceHours`, js.maintenanceHours,    s.maintenance_hours);
+      // הפילוח החדש. סכומם חייב להיות שווה ל-maintenanceHours בשני הצדדים,
+      // ולכן השוואה ישירה היא מה שמונע משני הצדדים לפצל אחרת ולהתקזז.
+      compare(`${period}/${code}.repairHours`,      js.repairHours,         s.repair_hours);
+      compare(`${period}/${code}.plannedHours`,     js.plannedHours,        s.planned_hours);
       compare(`${period}/${code}.noCommHours`,      js.noCommHours,         s.no_comm_hours);
       compare(`${period}/${code}.totalHours`,       js.totalHours,          s.total_hours);
       compare(`${period}/${code}.measuredHours`,    js.measuredHours,       s.measured_hours);
@@ -349,10 +382,10 @@ async function parityFlicker() {
     const { range } = resolvePeriod(period);
     const to = new Date().toISOString();
 
-    const data = await loadRangeData(null, { from: range.from, to });
-    const sql = await db.prepare(
-      "SELECT * FROM public.site_segments_collapsed(?, ?, ?)"
-    ).all(ids, range.from, to);
+    const { data, sql } = await snapshot(async () => ({
+      data: await loadRangeData(null, { from: range.from, to }),
+      sql: await db.prepare("SELECT * FROM public.site_segments_collapsed(?, ?, ?)").all(ids, range.from, to),
+    }));
 
     const sqlBySite = new Map();
     for (const r of sql) {
@@ -514,10 +547,10 @@ async function parityStats() {
     const { range } = resolvePeriod(period);
     const to = new Date().toISOString();
 
-    const data = await loadRangeData(null, { from: range.from, to });
-    const sql = await db.prepare(
-      "SELECT * FROM public.site_stats(?, ?, ?)"
-    ).all(ids, range.from, to);
+    const { data, sql } = await snapshot(async () => ({
+      data: await loadRangeData(null, { from: range.from, to }),
+      sql: await db.prepare("SELECT * FROM public.site_stats(?, ?, ?)").all(ids, range.from, to),
+    }));
     const sqlById = new Map(sql.map((r) => [r.site_id, r]));
 
     let periodFails = 0, totalOps = 0, totalErr = 0;
@@ -559,21 +592,25 @@ async function parityWeighted() {
     const { range } = resolvePeriod(period);
     const to = new Date().toISOString();
 
-    const data = await loadRangeData(null, { from: range.from, to });
+    // ⚠️ גם כאן צילום אחד. זו הייתה ההשוואה היחידה שנשארה מחוץ לו אחרי
+    // התיקון, והיא המשיכה לרצד — אותו מרוץ בדיוק, רק במקום אחר.
+    const { data, row } = await snapshot(async () => ({
+      data: await loadRangeData(null, { from: range.from, to }),
+      row: (await db.prepare(
+        `SELECT CASE WHEN SUM(operations) > 0
+                  THEN ROUND((SUM(errors)::numeric / SUM(operations)) * 100, 2)::double precision
+                  ELSE 0::double precision END AS weighted,
+                SUM(operations)::int AS ops, SUM(errors)::int AS errs
+           FROM public.site_stats(?, ?, ?)`
+      ).all(ids, range.from, to))[0],
+    }));
+
     let sumOps = 0, sumErr = 0;
     for (const id of ids) {
       const js = statsFromData(data, id, { from: range.from, to });
       sumOps += js.operations; sumErr += js.errors;
     }
     const jsWeighted = sumOps > 0 ? Math.round((sumErr / sumOps) * 10000) / 100 : 0;
-
-    const [row] = await db.prepare(
-      `SELECT CASE WHEN SUM(operations) > 0
-                THEN ROUND((SUM(errors)::numeric / SUM(operations)) * 100, 2)::double precision
-                ELSE 0::double precision END AS weighted,
-              SUM(operations)::int AS ops, SUM(errors)::int AS errs
-         FROM public.site_stats(?, ?, ?)`
-    ).all(ids, range.from, to);
 
     compare(`weighted/${period}.rate`, jsWeighted, row.weighted);
     compare(`weighted/${period}.sumOps`, sumOps, row.ops);
@@ -764,8 +801,10 @@ async function parityGlobals() {
   const byId = new Map(sites.map((s) => [s.id, s.code]));
 
   for (const [mode, arg] of [["all", null], ["explicit", ids]]) {
-    const js = await getAllSitesGlobals(arg);
-    const rows = await db.prepare("SELECT * FROM site_globals(?)").all(arg);
+    const { js, rows } = await snapshot(async () => ({
+      js: await getAllSitesGlobals(arg),
+      rows: await db.prepare("SELECT * FROM site_globals(?)").all(arg),
+    }));
     const sql = new Map(rows.map((r) => [r.site_id, r]));
 
     compare(`globals[${mode}].siteCount`, js.size, sql.size);
@@ -777,6 +816,10 @@ async function parityGlobals() {
       compare(`globals[${mode}]/${c}.lastFaultAt`,   j.lastFaultAt,   s.last_fault_at);
       compare(`globals[${mode}]/${c}.firstStatusAt`, j.firstStatusAt, s.first_status_at);
       compare(`globals[${mode}]/${c}.statusSince`,   j.statusSince,   s.status_since);
+      // ⚠️ הכלל שמאחוריו עדין: התיאור שורד את המעבר לטיפול, וההתאמה היא
+      // על ended_at = started_at בדיוק. שני צדדים שיפרשו אותו אחרת יציגו
+      // תיאור אחר לאותו אתר בשני מצבי המתג.
+      compare(`globals[${mode}]/${c}.currentFaultText`, j.currentFaultText ?? null, s.current_fault_text ?? null);
       compare(`globals[${mode}]/${c}.opsSinceError`, j.operationsSinceLastError, s.operations_since_last_error);
 
       // הפעולה האחרונה — ארבעת השדות בנפרד. השוואת האובייקט כמחרוזת הייתה
@@ -957,6 +1000,7 @@ async function parityGlobalsEdges() {
       compare("gedge[" + n + "].lastFaultAt",   js?.lastFaultAt   ?? null, sql?.last_fault_at   ?? null);
       compare("gedge[" + n + "].firstStatusAt", js?.firstStatusAt ?? null, sql?.first_status_at ?? null);
       compare("gedge[" + n + "].statusSince",   js?.statusSince   ?? null, sql?.status_since    ?? null);
+      compare("gedge[" + n + "].currentFaultText", js?.currentFaultText ?? null, sql?.current_fault_text ?? null);
       compare("gedge[" + n + "].opsSinceError", js?.operationsSinceLastError ?? null, sql?.operations_since_last_error ?? null);
       compare("gedge[" + n + "].lastOp.card",   js?.lastOperation?.card_number ?? null, sql?.last_op_card_number ?? null);
       compare("gedge[" + n + "].lastOp.at",     js?.lastOperation?.occurred_at ?? null, sql?.last_op_occurred_at ?? null);
@@ -970,6 +1014,44 @@ async function parityGlobalsEdges() {
   }
 }
 
+// ============================================================
+// recent_errors — התקלות האחרונות
+// ============================================================
+// נוספה כדי שמסך הבקרה ייקרא ישירות מהדשבורד. היא **לא** מדד מצטבר אלא
+// רשימה, ולכן ההשוואה היא על הזהות והסדר של השורות ולא על סכום — שורה
+// שנופלת מהרשימה בצד אחד היא בדיוק סוג ההבדל שסכום היה מחביא.
+//
+// ⚠️ הכלל הקריטי כאן הוא "תחזוקה גוברת": תקלה שהתחילה בתוך תחזוקה או בגבולה
+// אינה מוצגת, ושני המקורות (מקטע PLC + חלון ידני) חייבים להיבדק. אם רק אחד
+// ייבדק, אותה תקלה תיעלם ממדד אחד ותופיע במסך אחר.
+async function parityRecentErrors() {
+  console.log(`\n=== תקלות אחרונות ===`);
+
+  const { js, sql } = await snapshot(async () => ({
+    js: await getRecentErrors({ limit: 10 }),
+    sql: await db.prepare("SELECT * FROM public.recent_errors(10)").all(),
+  }));
+
+  compare("recentErrors.count", js.length, sql.length);
+
+  for (let i = 0; i < Math.min(js.length, sql.length); i++) {
+    const a = js[i], b = sql[i];
+    compare(`recentErrors[${i}].site`, a.siteCode, b.site_code);
+    compare(`recentErrors[${i}].startedAt`, a.startedAt, b.started_at);
+    compare(`recentErrors[${i}].ongoing`, a.ongoing, b.ongoing);
+
+    // תקלה שעדיין פתוחה נמדדת מול now() בשני הצדדים, בשבריר שנייה שונה.
+    // ⚠️ הסבילות חלה **רק** על תקלה פתוחה: על תקלה סגורה שני הצדדים קוראים
+    // את אותם שני חותמים, וכל הפרש שם הוא באג באריתמטיקה.
+    if (a.ongoing) {
+      const gap = Math.abs(a.durationSeconds - Math.round(b.duration_seconds));
+      compare(`recentErrors[${i}].duration~`, gap <= 2, true);
+    } else {
+      compare(`recentErrors[${i}].duration`, a.durationSeconds, Math.round(b.duration_seconds));
+    }
+  }
+}
+
 // ===== main =====
 const SUITES = {
   uptime: async () => { await parityUptime(); await parityEdgeCases(); },
@@ -977,6 +1059,7 @@ const SUITES = {
   stats: async () => { await parityStats(); await parityStatsEdges(); },
   weighted: async () => { await parityWeighted(); },
   globals: async () => { await parityGlobals(); await parityGlobalsEdges(); },
+  errors: async () => { await parityRecentErrors(); },
 };
 
 (async () => {

@@ -28,6 +28,18 @@
   --bg-card: #ffffff;
   --bg-hover: #f3f6fc;
   --border-color: #d8dee9;
+  /* אדום התקלה — זהה ל-STATUS_COLORS.error.dot ב-constants.js.
+     מוגדר כמשתנה כדי ש-CSS לא יסתמך על ערך נפילה: var(--x, #ef4444) עובד,
+     אבל הוא מסתיר את העובדה שהמשתנה חסר — וביום שמישהו ישנה את האדום
+     במקום אחד, ה-CSS יישאר עם הישן בשקט. */
+  --status-error: #ef4444;
+  /* כתום האזהרה — זהה ל-STATUS_COLORS.maintenance.dot ב-utils/constants.js.
+     מוגדר כמשתנה מאותו טעם כמו האדום שמעליו. */
+  --status-warning: #f59e0b;
+  /* ירוק התקין — זהה ל-STATUS_COLORS.ready.dot. מוגדר כמשתנה מאותו טעם
+     כמו האדום שמעליו: ערך נפילה עובד אבל מסתיר את החוסר. */
+  --status-ready: #22c55e;
+
   --text-primary: #14213d;
   --text-secondary: #4a5670;
   --text-muted: #8a94a8;
@@ -43,6 +55,11 @@
   --bg-card: #182238;
   --bg-hover: #1f2c48;
   --border-color: #243456;
+  /* אותו אדום בשתי הערכות — התקלה אינה משנה משמעות בין בהיר לכהה,
+     והוא כבר נבדק לקריאות מול שני הרקעים ב-scripts/check-colors.mjs. */
+  --status-error: #ef4444;
+  --status-warning: #f59e0b;
+  --status-ready: #22c55e;
   --text-primary: #eef2f8;
   --text-secondary: #aab4c5;
   --text-muted: #6b7894;

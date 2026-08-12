@@ -54,6 +54,82 @@
   color: #fff;
 }
 
+/* ===== חיפוש כרטיס ===== */
+.alog-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.alog-search-input {
+  flex: 1 1 180px;
+  min-width: 0;          /* בלי זה flex-item עם input לא מתכווץ ושובר את השורה */
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.85em;
+}
+
+.alog-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.alog-search-btn,
+.alog-search-clear {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.alog-search-btn:hover,
+.alog-search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* החיפוש הפעיל מסומן בצבע ההדגשה — אחרת קל לשכוח שהרשימה מסוננת ולקרוא
+   "אין אירועים" כאילו לא קרה כלום בתקופה. */
+.alog-search-clear {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ===== טען עוד ===== */
+.alog-more {
+  align-self: center;
+  padding: 8px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.alog-more:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.alog-more:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.alog-error {
+  color: var(--status-error, #ef4444);
+  font-size: 0.82em;
+}
+
 .alog-truncated,
 .alog-empty {
   color: var(--text-muted);

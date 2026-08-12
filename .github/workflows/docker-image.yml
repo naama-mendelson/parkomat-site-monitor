@@ -1,0 +1,69 @@
+# .github/workflows/docker-image.yml — בונה את תמונת ה-Docker בענן.
+#
+# ============================================================
+# למה בענן ולא במחשב
+# ============================================================
+# מחשב הפיתוח מנוהל ארגונית עם Device Guard פעיל, ובתצורה כזו WSL2 חסום —
+# כלומר מנוע ה-Docker אינו יכול לעלות שם כלל. זו מגבלת מדיניות ולא חומרה,
+# ואי אפשר לעקוף אותה מקומית.
+#
+# ⚠️ **וזה יצא לטובה.** בנייה בענן היא ממילא עדיפה: היא רצה על סביבה נקייה
+# ומוגדרת, ולא על מחשב שיש בו קובצי פיתוח, מטמון והגדרות מקומיות. תמונה
+# שנבנתה כאן תיראה זהה בכל פעם — מה שלא מובטח על מחשב אישי.
+
+name: build docker image
+
+on:
+  # ⚠️ הפעלה ידנית **בלבד**, ולא בכל דחיפה. בנייה אורכת דקות ומייצרת
+  # ארטיפקט של מאות מגה; להריץ אותה על כל commit זה בזבוז על משהו שנדרש
+  # רק כשמשחררים גרסה.
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: הכנת Node לשער
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # ⚠️ השער רץ **לפני** הבנייה. הוא תופס סוד שנכנס לתמונה או את הסוכן
+      # (Windows) שאינו אמור להיכנס — ואחרי הבנייה כבר יש תמונה עם הבעיה
+      # בפנים, שמישהו עלול להעביר לשרת.
+      - name: שער הקשר הבנייה
+        run: node tools/check-docker.js
+        working-directory: master
+
+      - name: בדיקות השרת
+        run: |
+          npm ci --omit=dev || npm install --omit=dev
+          npm test
+        working-directory: master
+
+      - name: בנייה
+        run: docker build -t parkomat:latest .
+
+      # ⚠️ `docker save` ולא דחיפה ל-registry: התמונה מכילה את קוד המוצר,
+      # ודחיפתה ל-registry ציבורי היא החלטה עסקית ולא טכנית. ארטיפקט
+      # פרטי של ה-repo נגיש רק למי שיש לו גישה למאגר ממילא.
+      - name: אריזה
+        run: |
+          docker save parkomat:latest | gzip > parkomat-image.tar.gz
+          ls -lh parkomat-image.tar.gz
+
+      - name: העלאה להורדה
+        uses: actions/upload-artifact@v4
+        with:
+          name: parkomat-image
+          # ⚠️ compose ו-.env.example נוסעים לצד התמונה: הראשון מתאר איך
+          # להריץ אותה, השני הוא התבנית לסודות. בלעדיהם יש בשרת תמונה
+          # שאי אפשר להפעיל.
+          path: |
+            parkomat-image.tar.gz
+            docker-compose.yml
+            .env.docker.example
+          retention-days: 14

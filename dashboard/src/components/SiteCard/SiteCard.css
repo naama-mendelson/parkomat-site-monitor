@@ -261,6 +261,12 @@
   font-size: 0.76rem;
 }
 
+/* ⚠️ המפריד מעומעם נוסף מהטקסט משני צדדיו: הוא סימן פיסוק ולא תוכן, ובאותה
+   בהירות הוא נקרא כמו עוד תו בקוד האתר. */
+.exp-sep {
+  opacity: 0.45;
+}
+
 .exp-status {
   display: inline-flex;
   align-items: center;
@@ -420,4 +426,113 @@
    הנקודה שומרת על צבע המצב כדי שהמקרא לא יישבר. */
 .mini-dot--stuck {
   box-shadow: 0 0 0 2px var(--stuck), 0 0 0 4px rgba(168, 85, 247, 0.28);
+}
+
+/* ==========================================================
+   סימן המגמה — צמוד לאחוז שהוא מתאר
+   ==========================================================
+   שתי גרסאות קודמות נפסלו: מספר שני ליד האחוז (שני מספרים זהים בגודל
+   ובצבע — אי אפשר לדעת מי מה), ותג עם מילה (ברור, אבל הוסיף שורת צ'יפים
+   שנייה שהתחרתה בתג המצב).
+
+   סימן יחיד יושב **על** המספר, בלי להוסיף שטח ובלי להתחרות. הוא יורש את
+   גודל הגופן של האחוז ולכן מתכווץ וגדל איתו בכל צפיפות.
+
+   ⚠️ הצבע לפי **המשמעות** ולא לפי כיוון הסימן: משולש כלפי מטה הוא ירוק,
+   כי אחוז כשל שיורד הוא שיפור. זו הנקודה היחידה שקל להפוך כאן.
+
+   ⚠️ ו-color מוגדר במפורש בכל ארבעת המצבים, כי ההורה (.detail-value) נושא
+   צבע inline לפי גובה אחוז הכשל — בלי דריסה הסימן היה יורש אותו ומאבד את
+   המשמעות שלו לגמרי. */
+.card-trend {
+  display: inline-block;
+  margin-inline-end: 4px;
+  font-size: 0.8em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 0.06em;
+  cursor: help;
+}
+
+.card-trend--improving { color: var(--status-ready); }
+.card-trend--worsening { color: var(--status-error); }
+
+/* ⚠️ 'יציב' ו'אין השוואה' **מוצגים** ולא מוסתרים: היעדר סימן אמר קודם שני
+   דברים הפוכים — "נמדד ולא זז" מול "לא היה מספיק כדי למדוד" — וזו בדיוק
+   השאלה שנשאלה על המסך. אפור דהוי עונה על "נבדק?" בלי למשוך מבט. */
+.card-trend--stable,
+.card-trend--unknown {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ==========================================================
+   תיאור התקלה על הכרטיס
+   ==========================================================
+   ⚠️ אדום, בשונה מתג "ייתכן תקוע" הסגול: זו **תקלה שדווחה מהבקר**, לא חשד
+   שאנחנו הסקנו. ההבחנה הזו היא כל ההבדל בין "המספר לא סביר" לבין "המכונה
+   אמרה מה שבור".
+
+   שורה אחת עם חיתוך ולא גלישה: הודעות מהבקר מגיעות עד 80 תווים, וכרטיס
+   שגדל לפי אורך ההודעה שובר את יישור הרשת. ההודעה המלאה בריחוף. */
+.card-fault {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border-inline-start: 3px solid var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 10%, transparent);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  cursor: help;
+}
+
+.card-fault-icon {
+  flex: none;
+  color: var(--status-error);
+  font-size: 0.9em;
+}
+
+/* ⚠️ min-width:0 על שניהם — בלעדיו flex לא מרשה לילד להתכווץ מתחת לתוכנו,
+   וה-ellipsis לא נכנס לפעולה. הכרטיס היה נמתח לרוחב ההודעה. */
+.card-fault-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+
+/* ==========================================================
+   תג סוג המתקן — לצד תג הדרגה
+   ==========================================================
+   ⚠️ **מתאר (outline) ולא מלא.** תגי המצב והדרגה מלאים; תג שלישי מלא היה
+   הופך את הכותרת לשלוש בועות צבע שמתחרות זו בזו. מסגרת + טקסט צבעוני על
+   רקע שקוף נקראים מיד כקטגוריה אחרת, וזה בדיוק מה שהם.
+
+   ⚠️ ו-margin-inline-start קטן יותר מזה של הדרגה: השניים צמודים זה לזה
+   ורחוקים מהשם, כך שהעין קוראת אותם כזוג ולא כשתי תוספות נפרדות. */
+.type-badge {
+  display: inline-block;
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.6;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  vertical-align: middle;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ⚠️ צמוד לתג הסוג ולא לשם — ראה למעלה. */
+.type-badge + .tier-badge {
+  margin-inline-start: 4px;
 }

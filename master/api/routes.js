@@ -11,7 +11,7 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getSiteUptime, getLastFaultAt, getLastOperation,
         getUptimeBreakdown, getCycleDelta, getPeriodBreakdown, getSiteAnalyticsData,
         getSiteInsights, getActivityLog,
-        getGlobalInsights, getGlobalActivityLog,
+        getGlobalInsights, getGlobalActivityLog, getMonthlyReport, getSiteReport, getSiteMonthsReport,
         getSupervisorStats, getExecutiveStats, getExecutiveStatsFiltered,
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
@@ -365,7 +365,7 @@ app.post("/api/admin/code", adminRateLimit, async (req, res) => {
 // PATCH /api/sites/:code — עדכון שם ו/או קוד האתר
 app.patch("/api/sites/:code", requireAdmin, async (req, res) => {
   try {
-    const { site_name, code: newCode, tier } = req.body || {};
+    const { site_name, code: newCode, tier, plc_type } = req.body || {};
 
     if (newCode !== undefined) {
       if (typeof newCode !== "string" || !SITE_CODE_PATTERN.test(newCode.trim())) {
@@ -384,10 +384,22 @@ app.patch("/api/sites/:code", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "דרגת אתר לא תקינה" });
     }
 
+    // ⚠️ אותה ולידציה בדיוק כמו ברישום. עריכה שמקבלת ערכים שהרישום דוחה
+    // הייתה פרצה בדלת האחורית: הרשימה הסגורה נאכפת פעם אחת ונעקפת בשנייה.
+    if (plc_type !== undefined && !isValidSiteType(plc_type)) {
+      return res.status(400).json({ error: "סוג מתקן לא תקין" });
+    }
+
+    // ⚠️ `undefined` נשמר כ-`undefined` (השדה לא נשלח → לא נוגעים בו), אבל
+    // מחרוזת ריקה **נשמרת כמחרוזת ריקה** ולא הופכת ל-undefined — היא
+    // הבקשה המפורשת לנקות את השדה. ההמרה ל-NULL קורית ב-updateSite.
+    const trimOrKeep = (v) => (typeof v === "string" ? v.trim() : undefined);
+
     const result = await updateSite(req.params.code, {
       newCode: newCode?.trim(),
       siteName: name,
       tier,
+      plcType: trimOrKeep(plc_type),
     });
 
     if (!result.ok) {
@@ -438,6 +450,11 @@ const SITE_CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 // דרגת אתר (רמת שירות) — נבחרת ברישום ונערכת בניהול. הרשימה הסגורה נאכפת כאן.
 const VALID_TIERS = ["vip", "extended", "basic"];
 
+// ⚠️ סוג המתקן מגיע מ-shared/site-types.mjs ולא מרשימה מקומית — אותה רשימה
+// בדיוק מזינה את ה-SELECT בטופס ואת התווית על הכרטיס. רשימה שנייה כאן הייתה
+// מאפשרת לטופס להציע ערך שהשרת דוחה.
+const { isValidSiteType } = require("../../shared/site-types.mjs");
+
 // עוטף אתר: המצב הוא "maintenance" אם PLC שלח maintenance או שיש תחזוקה ידנית (OR)
 async function applyMaintenanceStatus(site) {
   const manualMaintenance = await getActiveMaintenance(site.id);   // מקור 1: ידני (טבלת maintenance_windows)
@@ -462,7 +479,11 @@ app.get("/api/sites", cache(), async (req, res) => {
     // היה כאן N+1: ~6 שאילתות *לכל אתר* (מדדים, זמינות, תקלה אחרונה, פעולה
     // אחרונה, מצב נוכחי, תחזוקה). מול Postgres מרוחק זה סיבוב רשת לכל אחת.
     // getAllSitesWithMetrics עושה את אותו הדבר במספר שאילתות קבוע.
-    const sites = await getAllSitesWithMetrics({ from: weekFrom });
+    // prevFrom — השבוע שלפני, לחישוב "משתפר/מחמיר" על כל כרטיס.
+    const sites = await getAllSitesWithMetrics({
+      from: weekFrom,
+      prevFrom: resolvePeriod("week").prev.from,
+    });
 
     res.json(sites);
   } catch (err) {
@@ -476,7 +497,7 @@ app.get("/api/sites", cache(), async (req, res) => {
 // כך שרק אחרי הרישום כאן מתחיל המידע מהאתר להישמר.
 app.post("/api/sites", requireAdmin, async (req, res) => {
   try {
-    const { code, site_name, plc_type, plc_ip, site_ip, tier } = req.body;
+    const { code, site_name, plc_type, tier } = req.body;
 
     if (typeof code !== "string" || !SITE_CODE_PATTERN.test(code)) {
       return res.status(400).json({
@@ -494,6 +515,16 @@ app.post("/api/sites", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "דרגת אתר לא תקינה" });
     }
 
+    // ⚠️ הסוג **אינו חובה** — אפשר לרשום אתר בלי לדעת אותו, וזה המצב בשטח
+    // כשמתקינים בערב. מה שנדחה הוא ערך שאינו ברשימה: כלומר טעות, לא חוסר.
+    //
+    // ⚠️ ונאכף **בשרת** ולא רק ב-SELECT: הטופס אינו הדרך היחידה להגיע לכאן
+    // (יש גם כלי הוספה בשורת פקודה), ורשימה סגורה שנאכפת רק במסך אחד היא
+    // רשימה פתוחה בפועל.
+    if (!isValidSiteType(plc_type)) {
+      return res.status(400).json({ error: "סוג מתקן לא תקין" });
+    }
+
     if (await findSiteByCode(code)) {
       return res.status(409).json({ error: "אתר עם קוד זה כבר רשום", code });
     }
@@ -504,8 +535,6 @@ app.post("/api/sites", requireAdmin, async (req, res) => {
 
     await insertSite(code, name, {
       plcType: optional(plc_type),
-      plcIp: optional(plc_ip),
-      siteIp: optional(site_ip),
       tier: tier || "basic",
     });
     const site = await findSiteByCode(code);
@@ -915,6 +944,109 @@ app.get("/api/insights", cache(), async (req, res) => {
     });
   } catch (err) {
     console.error("[api] שגיאה ב-GET insights גלובלי:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// ==========================================================
+// GET /api/report/monthly?from=YYYY-MM-DD&to=YYYY-MM-DD[&site=<code>]
+// ==========================================================
+// דוח לטווח תאריכים חופשי: כמה פעולות וכמה תקלות בכל חודש.
+//
+// ⚠️ ללא cache(): טווח חופשי הוא צירוף פתוח, ומטמון שמפתחו רשימת-היתר של
+// פרמטרים היה מגיש דוח של טווח אחד תחת טווח אחר.
+app.get("/api/report/monthly", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) {
+      return res.status(400).json({ error: "נדרשים from ו-to בפורמט YYYY-MM-DD" });
+    }
+    // ⚠️ **חצות מקומית, לא חצות UTC.** כל המערכת מיושרת לשעון המקומי
+    // (api/periods.js, resolveRange), ו-`T00:00:00.000Z` היה מזיז את הגבול
+    // בשלוש שעות בישראל — כלומר מוריד מהדוח כל פעולה שקרתה בין חצות לשלוש.
+    //
+    // ⚠️ ו-to כולל את היום כולו: המשתמשת בוחרת "עד 4.8" ומתכוונת שה-4.8
+    // בפנים. בלי זה כל פעולה מאותו יום נעלמת — וזה בדיוק היום שהיא בדקה.
+    const [fy, fm, fd] = String(from).slice(0, 10).split("-").map(Number);
+    const [ty, tm, td] = String(to).slice(0, 10).split("-").map(Number);
+    if (!fy || !fm || !fd || !ty || !tm || !td) {
+      return res.status(400).json({ error: "תאריך לא תקין — נדרש YYYY-MM-DD" });
+    }
+    const fromIso = new Date(fy, fm - 1, fd, 0, 0, 0, 0).toISOString();
+    const toIso = new Date(ty, tm - 1, td, 23, 59, 59, 999).toISOString();
+    if (!(fromIso < toIso)) {
+      return res.status(400).json({ error: "טווח לא תקין — from חייב להקדים את to" });
+    }
+
+    let siteIds = null;
+    if (req.query.site) {
+      const site = await findSiteByCode(String(req.query.site));
+      if (!site) return res.status(404).json({ error: "אתר לא נמצא", code: req.query.site });
+      siteIds = [site.id];
+    }
+
+    // שני החתכים מאותו טווח, בקריאה אחת: לפי חודש ולפי אתר. הם עונים על
+    // שתי שאלות שונות ("איך זה התפתח" מול "מי בעייתי"), ומי שמפיק דוח רוצה
+    // בדרך כלל את שתיהן — שתי בקשות נפרדות היו רק סיבוב רשת מיותר.
+    const [months, sites, siteMonths] = await Promise.all([
+      getMonthlyReport({ siteIds, from: fromIso, to: toIso }),
+      getSiteReport({ siteIds, from: fromIso, to: toIso }),
+      getSiteMonthsReport({ siteIds, from: fromIso, to: toIso }),
+    ]);
+
+    res.json({ from: fromIso, to: toIso, site: req.query.site || null, months, sites, siteMonths });
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET report/monthly:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// ==========================================================
+// ===== לוג הפעילות — endpoint משלו =====
+// ==========================================================
+// הלוג היה מוטמע בתוך תשובת ה-insights בלבד, וזה חייב אותו לעמוד אחד קבוע:
+// כל לחיצה על צ'יפ, וכל "טען עוד", היו מושכים מחדש את **כל** חבילת התובנות
+// (מדדים, גרפים, טבלת כרטיסים) רק כדי להחליף רשימה.
+//
+// עכשיו יש מסלול ייעודי. ה-insights ממשיך להטמיע את העמוד הראשון, כדי
+// שהמודאל ייפתח עם תוכן ולא עם ספינר — והדפדוף מכאן ואילך זול.
+//
+// ⚠️ ללא cache(): הפרמטרים כאן (filter/card/offset) הם צירוף פתוח, ומטמון
+// שמפתחו רשימת-היתר של פרמטרים היה מגיש עמוד של מסנן אחד תחת מסנן אחר.
+const logParams = (req) => ({
+  filter: String(req.query.filter || "all"),
+  card: req.query.card ? String(req.query.card) : null,
+  offset: Math.max(0, parseInt(req.query.offset, 10) || 0),
+  // תקרה קשיחה: offset/limit מגיעים מהדפדפן, ו-limit=100000 היה מחזיר את כל
+  // התקופה בבקשה אחת.
+  limit: Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 300)),
+});
+
+// GET /api/sites/:code/activity — לוג הפעילות של אתר בודד, עם סינון ודפדוף
+app.get("/api/sites/:code/activity", async (req, res) => {
+  try {
+    const site = await findSiteByCode(req.params.code);
+    if (!site) return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
+
+    const p = resolvePeriod(req.query.period);
+    res.json(await getActivityLog(site.id, { ...p.range, ...logParams(req) }));
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET activity:", err.message);
+    res.status(500).json({ error: "שגיאת שרת" });
+  }
+});
+
+// GET /api/activity — אותו לוג, מצרף על כל האתרים.
+//
+// ⚠️ אין כאן `?site=`, בכוונה: `/api/sites/:code/activity` כבר עושה בדיוק את
+// זה. פרמטר שני לאותה יכולת היה שני מסלולים שצריך לתחזק במקביל, ואחד מהם
+// היה מתיישן בשקט.
+app.get("/api/activity", async (req, res) => {
+  try {
+    const p = resolvePeriod(req.query.period);
+    res.json(await getGlobalActivityLog({ ...p.range, ...logParams(req) }));
+  } catch (err) {
+    console.error("[api] שגיאה ב-GET activity גלובלי:", err.message);
     res.status(500).json({ error: "שגיאת שרת" });
   }
 });

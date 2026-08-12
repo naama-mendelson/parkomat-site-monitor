@@ -2,6 +2,8 @@
 import { useState } from "react";
 import { registerSite } from "../../services/api";
 import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
+// ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
+import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
 import "./AddSiteModal.css";
 
 // קוד חוקי — חייב להתאים לכלל שה-Master אוכף. הקוד נכנס כמות שהוא לנתיב ה-MQTT
@@ -13,8 +15,6 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [code, setCode] = useState("");
   const [siteName, setSiteName] = useState("");
   const [plcType, setPlcType] = useState("");
-  const [plcIp, setPlcIp] = useState("");
-  const [siteIp, setSiteIp] = useState("");
   const [tier, setTier] = useState("basic");
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -40,8 +40,6 @@ function AddSiteModal({ onClose, onSuccess }) {
         site_name: trimmedName,
         tier,
         plc_type: plcType.trim() || undefined,
-        plc_ip: plcIp.trim() || undefined,
-        site_ip: siteIp.trim() || undefined,
       });
       onSuccess();
     } catch (err) {
@@ -99,19 +97,27 @@ function AddSiteModal({ onClose, onSuccess }) {
             </select>
           </label>
 
-          <label className="addsite-field">
-            <span>סוג PLC</span>
-            <input type="text" value={plcType} onChange={(e) => setPlcType(e.target.value)} placeholder="אופציונלי" />
-          </label>
+          {/* ==========================================================
+              סוג המתקן — רשימה סגורה, לא טקסט חופשי
+              ==========================================================
+              ⚠️ כאן היה שדה חופשי, וזה נראה גמיש והיה ההפך: "XY", "xy" ו-"X.Y"
+              הם שלושה סוגים שונים מבחינת כל סינון וכל קיבוץ, וחודשיים אחרי
+              ההקלדה איש לא זוכר איזו צורה נכונה.
 
+              ⚠️ "לא הוגדר" הוא אפשרות אמיתית ולא placeholder: אפשר לרשום אתר
+              בלי לדעת את סוגו, וזה המצב בשטח כשמתקינים בערב. */}
           <label className="addsite-field">
-            <span>כתובת IP של ה-PLC</span>
-            <input type="text" value={plcIp} onChange={(e) => setPlcIp(e.target.value)} placeholder="אופציונלי" />
-          </label>
-
-          <label className="addsite-field">
-            <span>כתובת IP של האתר</span>
-            <input type="text" value={siteIp} onChange={(e) => setSiteIp(e.target.value)} placeholder="אופציונלי" />
+            <span>סוג המתקן</span>
+            <select value={plcType} onChange={(e) => setPlcType(e.target.value)}>
+              <option value="">לא הוגדר</option>
+              {SITE_TYPE_GROUPS.map((g) => (
+                <optgroup key={g.key} label={g.label}>
+                  {g.types.map((t) => (
+                    <option key={t.key} value={t.key}>{t.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </label>
 
           {error && <div className="addsite-error" role="alert">{error}</div>}

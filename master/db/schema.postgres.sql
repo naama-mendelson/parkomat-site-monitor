@@ -40,8 +40,6 @@ CREATE TABLE IF NOT EXISTS sites (
 
   -- מטא-דאטה לתצוגה בלבד (לא משתתף בקליטה)
   plc_type       TEXT,
-  plc_ip         TEXT,
-  site_ip        TEXT,
 
   -- דרגת האתר (רמת שירות) — מוצגת על הכרטיס, נערכת בניהול. ברירת מחדל: basic.
   tier           TEXT NOT NULL DEFAULT 'basic' CHECK (tier IN ('vip','extended','basic'))
@@ -191,3 +189,125 @@ CREATE TABLE IF NOT EXISTS events (
 
 -- לגריפת הרטנציה (מוחקים לפי גיל). ה-PK כבר מכסה את שאילתת ה-replay.
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+
+-- ============================================================
+-- app_users — טבלת המשתמשים **שלנו**
+-- ============================================================
+-- ⚠️ **בלי FK ל-auth.users.** זה חוק 1 בדלת היציאה, והוא לא סגנון: FK כזה
+-- קושר את גרף המשתמשים לסכמה של Supabase, ו-`pg_dump --schema=public`
+-- פשוט לא נושא אותו. `supabase_uid` הוא עמודה רגילה שניתן למלא, לרוקן
+-- ולהחליף בזהות של ספק אחר בלי לגעת בשום שורה אחרת.
+--
+-- ============================================================
+-- למה בכלל צריך אותה — הרי יש auth.users
+-- ============================================================
+-- מפני שאי אפשר לעשות JOIN מול app_metadata. הדרגה חיה שם כתביעה ב-JWT,
+-- וזה מספיק כדי *לקרוא* אותה בבקשה — אבל לא כדי לשאול "מי המנהלים",
+-- "מי צירף את מי", או "אילו אתרים משויכים למי". כל אלה דורשים טבלה.
+--
+-- ⚠️ **הדרגה נשמרת בשני מקומות, וזה מכוון**: כאן ובתביעה. הכפילות אינה
+-- סימטרית — `app_users.role` הוא **מקור האמת** לכל החלטת הרשאה, והתביעה
+-- קיימת כי הטריגר `enforce_invite_only` דורש אותה בזמן commit ואין לו
+-- גישה לטבלה הזו. מי שמשנה דרגה חייב לעדכן את שניהם (auth/admin.js).
+--
+-- ⚠️ **אין מחיקה, יש השבתה.** משתמש שנמחק לוקח איתו את השם מכל שורת
+-- ביקורת שהצביעה עליו, וההיסטוריה הופכת ל"מישהו העביר לתחזוקה". is_active
+-- שומר את העבר קריא ואת ההווה חסום.
+CREATE TABLE IF NOT EXISTS app_users (
+  id           SERIAL PRIMARY KEY,
+  email        TEXT NOT NULL UNIQUE,
+  full_name    TEXT,
+  -- ============================================================
+  -- שתי קבוצות. זהו.
+  -- ============================================================
+  -- ⚠️ היו כאן שלוש דרגות (בקר / מנהל בקרה / מנכ"ל) והוכרע לצמצם לשתיים:
+  -- **מנהלים** ו**בקרים**. דרגת ביניים שאיש אינו נמצא בה היא דרגה שאיש
+  -- לא יודע מה מותר בה, והיא מתגלה ביום שמישהו מוצב בה בטעות.
+  --
+  -- מנהל = כל מה שבקר יכול, ועוד: ניהול משתמשים, הוצאת אנשים מהמערכת,
+  -- וראייה של **כל** יומן הפעולות. בקר רואה רק את מה שבקרים עשו.
+  role         TEXT NOT NULL DEFAULT 'operator'
+                 CHECK (role IN ('operator', 'manager')),
+  is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+  supabase_uid UUID,                                -- ⚠️ בלי FK — ראה למעלה
+  created_at   TEXT NOT NULL,
+  created_by   INTEGER REFERENCES app_users(id),    -- מי צירף. FK פנימי מותר.
+  disabled_at  TEXT,
+  disabled_by  INTEGER REFERENCES app_users(id)
+);
+
+-- ============================================================
+-- מעבר משלוש דרגות לשתיים — אידמפוטנטי
+-- ============================================================
+-- ⚠️ `CREATE TABLE IF NOT EXISTS` **אינו** משנה אילוץ על טבלה קיימת. הוא
+-- no-op מלא, ולכן שינוי ה-CHECK למעלה לא היה נכנס לתוקף על שום מסד שכבר
+-- רץ — כלומר על הפרודקשן בלבד. זה סוג הפער שעובר בפיתוח נקי ונופל בייצור.
+--
+-- הסדר קריטי: **קודם ממירים את הערכים, ורק אז מחזירים את האילוץ.** אילוץ
+-- שנוסף לפני ההמרה נכשל על השורות הקיימות ומפיל את כל העלייה.
+--
+-- המיפוי: executive ו-supervisor → manager. שניהם היו "מעל בקר", ובפועל
+-- אין אף supervisor במערכת — שתי השורות הקיימות הן executive.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public' AND table_name = 'app_users') THEN
+    ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
+    UPDATE app_users SET role = 'manager' WHERE role IN ('executive', 'supervisor');
+    ALTER TABLE app_users ADD CONSTRAINT app_users_role_check
+      CHECK (role IN ('operator', 'manager'));
+  END IF;
+END
+$$;
+
+-- החיפוש החם: כל בקשה מזוהה ממירה uid → שורת משתמש.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_uid ON app_users(supabase_uid)
+  WHERE supabase_uid IS NOT NULL;
+-- כתובות אימייל אינן רגישות-רישיות בפועל; ההשוואה חייבת להיות אחידה.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email ON app_users(LOWER(email));
+
+-- ============================================================
+-- user_sites — **בוטלה**
+-- ============================================================
+-- כאן ישבה טבלת שיוך משתמש↔אתר, כדי שבקר יראה רק את האתרים שהוקצו לו.
+-- הוכרע ההפך: **בקר רואה את כל האתרים.** ההגבלה היחידה שנשארה היא על
+-- יומן הפעולות — ראה מדיניות audit_log ב-security.postgres.sql.
+--
+-- ⚠️ נמחקת ולא נשארת ריקה "ליתר ביטחון". טבלת שיוך שקיימת ואינה בשימוש
+-- מחייבת החלטה על כל שורה בה ביום שמישהו יסתכל עליה, ומדיניות שמסננת
+-- לפיה מחייבת שכל שאילתה תישא זהות — כולל הקליטה, שאין לה.
+--
+-- ⚠️ ה-DROP נשאר לצמיתות: הוא מה שמסיר את הטבלה ממופע שכבר מכיל אותה.
+-- בלעדיו הפרודקשן היה נשאר עם טבלה שאף קוד אינו מכיר.
+DROP TABLE IF EXISTS user_sites;
+
+-- ============================================================
+-- audit_log — מי עשה מה, ומתי
+-- ============================================================
+-- ⚠️ עד היום הביקורת הייתה שורות console.log. הן נכונות, והן נמחקות עם
+-- כל הפעלה מחדש — ואי אפשר לשאול אותן, לסנן אותן או להציג אותן במסך.
+--
+-- actor_name ו-actor_role **משוכפלים לשורה** ואינם JOIN. זה מכוון: שורת
+-- ביקורת חייבת לתאר את מה שהיה **ברגע שקרה**. משתמש שהועלה בדרגה או
+-- שהוחלף לו השם לא רשאי לשנות למפרע את מה שכתוב על פעולה מלפני חודש.
+--
+-- trust — 'token' | 'admin-code' | 'anonymous'. אותו שדה שכבר קיים
+-- בביקורת התחזוקה, ומאותו טעם: בלעדיו טענה אנונימית נראית כמו זהות
+-- מאומתת.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id          BIGSERIAL PRIMARY KEY,
+  at          TEXT NOT NULL,                     -- ISO 8601, כמו כל התאריכים
+  actor_id    INTEGER,                           -- app_users.id, או NULL לאנונימי
+  actor_name  TEXT NOT NULL,                     -- צילום, לא JOIN
+  actor_role  TEXT,                              -- צילום
+  trust       TEXT NOT NULL DEFAULT 'anonymous',
+  action      TEXT NOT NULL,                     -- user.invite | maintenance.start | ...
+  target_type TEXT,                              -- site | user | settings
+  target_id   TEXT,                              -- קוד אתר / מזהה משתמש
+  target_name TEXT,                              -- שם קריא, גם הוא צילום
+  details     JSONB,
+  ip          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_at    ON audit_log(at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, at DESC);

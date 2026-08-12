@@ -3,6 +3,8 @@
 const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
+// ⚠️ מודול טהור בלי תלויות — כך הוא נבדק בלי מסד. ראה fault-text.js.
+const { extractFaultText } = require("./fault-text");
 
 async function handleState(site, data) {
   const newStatus = data.state;
@@ -70,8 +72,25 @@ async function handleState(site, data) {
     return;
   }
 
-  await applyStateChange(site.id, newStatus, occurredAt);
-  console.log(`[state] אתר ${site.code}: ${site.status} → ${newStatus} (שינוי נרשם)`);
+  // ============================================================
+  // תיאור התקלה מהבקר
+  // ============================================================
+  // הסוכן קורא מחרוזת מהבקר כשהמצב משתנה לתקלה, ושולח אותה בשדה faultText.
+  // עד היום כל התקלות נראו זהות במסך — "מושבת" — ואי אפשר היה לדעת אם זו
+  // תקלת חיישן, כרטיס שלא נקרא או תקלה מכנית.
+  //
+  // ⚠️ **מתקבל רק על תקלה.** סוכן שישלח טקסט על מצב אחר אינו אמור, ושמירתו
+  // הייתה יוצרת שורות 'מוכן' עם תיאור תקלה — מידע שסותר את עצמו.
+  //
+  // ⚠️ ו-null נשמר כ-null: הוא אומר "לא נקרא" (סוכן ישן, בקר בלי התכונה),
+  // בעוד '' אומר "נקרא והיה ריק". שני דברים שונים, ובמסך הם נראים אחרת.
+  const faultText = extractFaultText(newStatus, data);
+
+  await applyStateChange(site.id, newStatus, occurredAt, faultText);
+  console.log(
+    `[state] אתר ${site.code}: ${site.status} → ${newStatus} (שינוי נרשם)` +
+    (faultText ? ` · "${faultText}"` : "")
+  );
 
   // שידור לכל מי שמאזין (SSE, ועוד בעתיד)
   bus.publish({
@@ -80,6 +99,9 @@ async function handleState(site, data) {
     oldStatus: site.status,
     newStatus: newStatus,
     occurredAt: occurredAt,
+    // ⚠️ נכלל גם כאן ולא רק ב-DB: הכרטיס במסך מתעדכן מה-SSE/Realtime בלי
+    // רענון, ובלי השדה הזה התקלה הייתה מופיעה מיד והתיאור שלה רק ברענון.
+    faultText,
   });
 }
 

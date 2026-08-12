@@ -1,6 +1,6 @@
 // hooks/useSiteAnalytics.js — שליפת נתוני האנליטיקה של אתר לפי תקופה
 import { useState, useEffect, useRef } from "react";
-import { fetchSiteAnalytics } from "../services/api";
+import { fetchAnalytics } from "../services/dataSource";
 
 // code: קוד האתר | period: 'week' | 'month' | 'year'
 // version: מונה שמתעדכן בכל הודעה חדשה מהאתר (SSE) — מאלץ שליפה מחדש,
@@ -32,7 +32,7 @@ export function useSiteAnalytics(code, period, version = 0) {
     setLoading(true);
     setError(null);
 
-    fetchSiteAnalytics(code, period)
+    fetchAnalytics(code, period)
       .then((result) => {
         if (cancelled) return;
         setData(result);

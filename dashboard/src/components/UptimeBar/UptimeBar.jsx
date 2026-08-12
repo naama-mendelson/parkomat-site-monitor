@@ -13,7 +13,8 @@ function formatHours(hours) {
 function UptimeBar({ uptime, trend }) {
   const {
     readyHours, operatingHours, errorHours,
-    maintenanceHours, noCommHours, totalHours, availabilityPercent,
+    maintenanceHours, repairHours = 0, plannedHours = 0,
+    noCommHours, totalHours, measuredHours, availabilityPercent,
   } = uptime;
 
   // אין מקטעי מצב בטווח — אין מה לחשב, ואסור להציג 0% שנראה כמו כשל.
@@ -54,7 +55,7 @@ function UptimeBar({ uptime, trend }) {
     },
     {
       key: "no_comm", hours: noCommHours, color: UPTIME_COLORS.no_comm,
-      title: `ללא תקשורת — ${formatHours(noCommHours)}`,
+      title: `ללא תקשורת — ${formatHours(noCommHours)} (מחוץ לחישוב)`,
     },
   ].filter((s) => s.hours > 0);
 
@@ -91,17 +92,57 @@ function UptimeBar({ uptime, trend }) {
       hours: errorHours,
       color: UPTIME_COLORS.error,
     },
-    {
-      key: "maintenance",
-      label: "בתחזוקה",
-      explain: "עבודות תחזוקה מתוכננות",
-      hours: maintenanceHours,
-      color: UPTIME_COLORS.maintenance,
-    },
+    // ==========================================================
+    // תחזוקה וטיפול בתקלה — מפוצל **רק כשיש מה לפצל**
+    // ==========================================================
+    // ⚠️ תחזוקה היא **החלטה** (מישהו בחר להוריד את האתר), וטיפול בתקלה הוא
+    // **תוצאה** של נפילה — מבחינת מי שרצה לחנות זו אותה השבתה שנמשכת. שורה
+    // אחת לשתיהן מייפה את התמונה: אתר שנופל שלוש פעמים בשבוע ומטופל נראה
+    // כמו אתר בתחזוקה שוטפת מסודרת.
+    //
+    // ⚠️ אבל כשקיים רק סוג אחד, שורת-אב ושורת-בת נושאות **בדיוק אותו מספר**
+    // — "0.1% בתחזוקה · 10 דקות" ומתחתיה "0.1% טיפול בתקלה · 10 דקות".
+    // זה נקרא כמו כפילות ולא כמו פילוח, והתפריט מציג עומק שאין בו מידע.
+    //
+    // לכן: שני סוגים ⟹ אב + שתי בנות. סוג אחד ⟹ **שורה אחת בשמו המדויק**,
+    // שהיא גם מדויקת יותר מ"בתחזוקה" הגנרי.
+    (() => {
+      const both = repairHours > 0 && plannedHours > 0;
+      if (both) {
+        // ⚠️ שורת האב היא **"סך התחזוקה"** ולא "בתחזוקה", מרגע שהבת נקראת
+        // "תחזוקה": אב ובת באותו שם קוראים כמו כפילות, ומי שרואה אותם זה
+        // מעל זה אינו יודע אם המספר העליון כולל את התחתון או חוזר עליו.
+        return {
+          key: "maintenance",
+          label: "סך התחזוקה",
+          explain: "אינו נכלל בחישוב הזמינות",
+          hours: maintenanceHours,
+          color: UPTIME_COLORS.maintenance,
+          children: [
+            { key: "repair", label: "טיפול בתקלה", hours: repairHours,
+              color: UPTIME_COLORS.maintenance },
+            { key: "planned", label: "תחזוקה", hours: plannedHours,
+              color: UPTIME_COLORS.maintenance },
+          ],
+        };
+      }
+      const onlyRepair = repairHours > 0;
+      return {
+        key: "maintenance",
+        label: onlyRepair ? "טיפול בתקלה" : "בתחזוקה",
+        explain: onlyRepair
+          ? "התחילה מיד אחרי תקלה — אינה נכללת בחישוב הזמינות"
+          : "אינו נכלל בחישוב הזמינות",
+        hours: maintenanceHours,
+        color: UPTIME_COLORS.maintenance,
+      };
+    })(),
     {
       key: "no_comm",
       label: "ללא תקשורת",
-      explain: "לא התקבל מידע מהאתר",
+      // ⚠️ הניסוח משתנה יחד עם ההגדרה. "לא התקבל מידע מהאתר" נכון אבל שותק
+      // בדיוק במקום שבו הקוראת צריכה לדעת ששעות אלה **אינן בתוך האחוז**.
+      explain: "לא התקבל מידע מהאתר — אינו נכלל בחישוב",
       hours: noCommHours,
       color: UPTIME_COLORS.no_comm,
     },
@@ -122,6 +163,26 @@ function UptimeBar({ uptime, trend }) {
         </span>
         {trend && <div className="uptime-hero-trend">{trend}</div>}
       </div>
+
+      {/* ==========================================================
+          מה שהאחוז **אינו** אומר
+          ==========================================================
+          ⚠️ החלטת מוצר: שעות ללא תקשורת אינן מורידות זמינות. הנימוק נכון —
+          נתק פירושו שהסוכן או הרשת אינם מדווחים, והמחסום עצמו עשוי לעבוד
+          ולשרת רכבים כל אותו זמן. אי-ידיעה אינה כשל.
+
+          ⚠️ אבל זה **מסתיר סיגנל תפעולי אמיתי**: נמדד שאתר 2439 עולה מ-72.8%
+          ל-99.3% כי הוא מנותק כרבע מהזמן. בלי השורה הזו המספר היחיד שנשאר על
+          המסך אומר "הכול תקין", והעובדה שרבע מהתקופה כלל לא נמדדה נעלמת.
+
+          לכן זו אינה הערת שוליים אלא הצד השני של ההחלטה: האחוז מדבר על מה
+          שנמדד, והשורה הזו אומרת כמה **לא** נמדד. */}
+      {noCommHours > 0 && (
+        <p className="uptime-note">
+          <strong>{formatHours(noCommHours)}</strong> ללא תקשורת אינן נכללות בחישוב —
+          האחוז מתייחס ל-<strong>{formatHours(measuredHours)}</strong> שנמדדו בפועל.
+        </p>
+      )}
 
       {/* השורה הצבעונית */}
       <div className="uptime-bar" role="img" aria-label={`זמינות ${availabilityPercent}%`}>
@@ -153,9 +214,12 @@ function UptimeBar({ uptime, trend }) {
 
             {/* שורות-משנה: אחת לכל מקטע בפס, בצבע המדויק שלו. מוצגות רק
                 כשיש בהן ממש — קטגוריה על אפס לא צריכה פירוט. */}
+            {/* ⚠️ שורת-משנה על אפס מסוננת. באתר שהייתה בו רק תחזוקה מתוכננת,
+                "טיפול בתקלה 0%" הוא רעש — ובאתר שהיה בו רק טיפול, הסינון הוא
+                מה שהופך את השורה היחידה שנשארת לאמירה. */}
             {r.children && r.hours > 0 && (
               <ul className="uptime-subrows">
-                {r.children.map((c) => (
+                {r.children.filter((c) => c.hours > 0).map((c) => (
                   <li key={c.key} className="uptime-subrow">
                     <span className="uptime-dot uptime-dot-sm" style={{ background: c.color }} />
                     <span className="uptime-subrow-label">{c.label}</span>

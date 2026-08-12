@@ -4,7 +4,7 @@
 import { STATUSES, STATUS_LABELS, STATUS_COLORS } from "../../utils/constants";
 import "./StatusFilters.css";
 
-function StatusFilters({ sites, activeFilters = [], onFilterChange }) {
+function StatusFilters({ sites, activeFilters = [], onFilterChange, trailing = null }) {
   // ספירת אתרים לפי מצב
   const counts = {};
   for (const s of STATUSES) {
@@ -61,6 +61,11 @@ function StatusFilters({ sites, activeFilters = [], onFilterChange }) {
           </button>
         );
       })}
+
+      {/* ⚠️ נוסף **בתוך** אותה שורה ולא אחריה: השורה היא flex-wrap, ולכן
+          ריבוע נוסף כאן מתקפל יחד עם השאר במסך צר במקום להיתלש לשורה
+          משלו. */}
+      {trailing}
     </div>
   );
 }

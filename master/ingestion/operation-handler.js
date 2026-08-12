@@ -3,7 +3,8 @@
 const db = require("../db/db");
 const { insertOperation, applyCycleCounter, applyStateChange,
         updateLastSeenIfNewer, getOpenStatusStartedAt,
-        getActiveMaintenance, inheritCardFromStart } = require("../db/queries");
+        getActiveMaintenance, inheritCardFromStart,
+        supersedeInterruptedAttempt, supersedeFlicker } = require("../db/queries");
 const bus = require("../bus");
 
 const VALID_STATE = "operating";
@@ -56,20 +57,39 @@ async function handleOperation(site, data) {
 
 async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt, opState, isAnomaly }) {
   // ==========================================================
-  // כרטיס חסר בסגירה — משלימים מהפתיחה
+  // הכרטיס של הפעולה נקבע ב**פתיחה**, לא בסגירה
   // ==========================================================
-  // הרגיסטר מתאפס לפני שה-MODE יוצא ממצב הפעולה (קורה ביציאה). סוכן מעודכן
-  // נושא את הכרטיס בעצמו, אבל אתר עם גרסה ישנה שולח end ריק — ונמדד ש-100%
-  // מה-start נושאים כרטיס גם שם. ראה inheritCardFromStart.
+  // שני כשלים שונים הובילו לאותה מסקנה, ושניהם נמדדו על נתוני אמת:
   //
-  // ⚠️ רק על end, ורק כשהשדה באמת ריק. הודעת start ריקה אומרת שהבקר לא קרא
-  // כרטיס, וזה מידע אמיתי שאסור להמציא לו ערך.
+  //   1. **סגירה ריקה** — בחלק מהבקרים רגיסטר הכרטיס מתאפס לפני שה-MODE
+  //      יוצא ממצב הפעולה. exit/start נשא כרטיס ב-100%, exit/end רק ב-67%.
+  //
+  //   2. **סגירה עם הכרטיס של הרכב הבא** — חמור יותר, כי הוא לא נראה כחסר
+  //      אלא כנתון תקין. נמדד: 86 מתוך 1,013 זוגות (8.5%), ובחולדה 4 לבדה 66.
+  //      הרצף בגולדברג 5 מדגים:
+  //
+  //          03:45  exit/start  כרטיס 10
+  //          03:51  exit/end    כרטיס 6     <- הכרטיס של הפעולה הבאה
+  //          04:33  exit/start  כרטיס 6
+  //          04:39  exit/end    כרטיס 7     <- ושוב
+  //
+  //      השורש בסוכן: _operationCard מאמץ **כל** כרטיס לא-ריק שנראה לאורך
+  //      הפעולה, ולכן נהג שמעביר כרטיס בזמן שהפעולה הקודמת עוד רצה — גונב
+  //      אותה. תוקן גם שם, אבל השרת אינו יכול לחכות לעדכון גרסה בשטח.
+  //
+  // הכלל: **הפתיחה קובעת.** היא נלכדת ברגע שה-MODE נכנס למצב פעולה, כלומר
+  // ברגע שהרכב הזה התחיל לעבור — אין רגע מדויק ממנו. הסגירה משמשת רק
+  // כשלפתיחה אין כרטיס כלל.
+  //
+  // ⚠️ start ריק נשאר ריק. זה אומר שהבקר לא קרא כרטיס, וזה מידע אמיתי.
   let cardNumber = data.user;
-  if (data.start_end === "end" && !cardNumber) {
-    cardNumber = await inheritCardFromStart(site.id, data.entry_exit, occurredAt);
-    if (cardNumber) {
+  if (data.start_end === "end") {
+    const fromStart = await inheritCardFromStart(site.id, data.entry_exit, occurredAt);
+    if (fromStart && fromStart !== cardNumber) {
       console.log(
-        `[operation] אתר ${site.code}: כרטיס '${cardNumber}' הושלם מה-start (הסגירה הגיעה ריקה)`);
+        `[operation] אתר ${site.code}: כרטיס תוקן ל-'${fromStart}' לפי הפתיחה` +
+        (cardNumber ? ` (הסגירה נשאה '${cardNumber}' — כנראה הרכב הבא)` : " (הסגירה הגיעה ריקה)"));
+      cardNumber = fromStart;
     }
   }
 
@@ -82,7 +102,11 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
     isAnomaly,
     occurredAt,
     receivedAt,
-    reportedAt
+    reportedAt,
+    // המונה הגולמי מהבקר — נשמר לכל פעולה כדי שיהיה אפשר לחשב מחזורים
+    // **לתקופה** ולא רק בסך הכל. ה-dispatcher כבר אימת שהוא מספר שלם על
+    // הודעות end; על start הוא עשוי להיות חסר, ואז נשמר NULL.
+    data.cycle_counter
   );
 
   // ⚠️ חייבים לצאת כאן, ומיד.
@@ -102,6 +126,46 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
 
   // פעולה שהתקבלה היא סימן חיים — מקדמים את last_seen (קדימה בלבד).
   await updateLastSeenIfNewer(site.id, occurredAt);
+
+  // ==========================================================
+  // ניסיון חוזר מאחד את הניסיון שנקטע — מעבר פיזי אחד = פעולה אחת
+  // ==========================================================
+  // רכב מתחיל כניסה, קורית תקלה תוך כדי, המצב חוזר ל'מוכן', ואותו כרטיס
+  // מנסה שוב. עד עכשיו זה נספר כשתי פעולות חניה, למרות שהרכב עבר פעם אחת.
+  //
+  // נעשה **כאן ולא בכלי בלבד**: כלי שרץ ידנית מתקן את העבר, אבל כל תקלה
+  // חדשה הייתה מוסיפה עוד ספירה כפולה עד שמישהו יזכור להריץ אותו שוב. אותו
+  // כלל, שני מסלולים — ולכן הוא נאכף בקליטה, וה-kli נשאר לתיקון ההיסטוריה.
+  //
+  // רק על start: הפתיחה החדשה היא שמצביעה אחורה על הסגירה שנקטעה.
+  if (data.start_end === "start") {
+    // ---- ריצוד MODE: אותו מעבר, נקטע ונפתח מחדש תוך שניות ----
+    // נבדק **ראשון** ובלי תנאי על הכרטיס: הריצוד קורה באמצע מעבר אחד, ולעתים
+    // הרגיסטר טרם נקרא ולכן צד אחד ריק. נמדד: 33 מקרים, כולם 1–13 שניות,
+    // ועם הטיה של פי שלושה לטובת יציאות — כלומר מקור שיטתי לתפוסה שלילית.
+    const flick = await supersedeFlicker(
+      site.id, data.entry_exit, occurredAt, saveResult.id
+    );
+    if (flick) {
+      console.log(
+        `[operation] אתר ${site.code}: ריצוד MODE — הפעולה שנקטעה (${flick}) לא תיספר בנפרד`
+      );
+    }
+
+    // ---- ניסיון חוזר אחרי תקלה: אותו כרטיס, עד 30 דקות ----
+    // רק אם לא היה ריצוד: שניהם מסמנים את אותה עמודה, ואיחוד כפול היה
+    // מנסה להחריג פעולה שכבר הוחרגה.
+    if (!flick && cardNumber) {
+      const merged = await supersedeInterruptedAttempt(
+        site.id, data.entry_exit, cardNumber, occurredAt, saveResult.id
+      );
+      if (merged) {
+        console.log(
+          `[operation] אתר ${site.code}: ניסיון חוזר — הניסיון שנקטע (${merged}) לא ייספר בנפרד`
+        );
+      }
+    }
+  }
 
   // הגנת backfill: הודעה שקרתה לפני תחילת המצב הנוכחי הגיעה מאוחר.
   const openStartedAt = await getOpenStatusStartedAt(site.id);

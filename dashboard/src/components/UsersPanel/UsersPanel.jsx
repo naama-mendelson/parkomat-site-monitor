@@ -119,6 +119,13 @@ function UsersPanel({ onClose }) {
   );
 }
 
-const ROLE_LABELS = { operator: "בקר", supervisor: "מנהל בקרה", executive: "מנכ\"ל" };
+// ⚠️ שתי קבוצות בלבד — ראה ההסבר ב-AccountMenu. הדרגות שבוטלו ממופות
+// למנהל כדי שאסימון ישן לא יציג מחרוזת גולמית.
+const ROLE_LABELS = {
+  operator: "בקר",
+  manager: "מנהל",
+  supervisor: "מנהל",
+  executive: "מנהל",
+};
 
 export default UsersPanel;

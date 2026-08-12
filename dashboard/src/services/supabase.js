@@ -23,8 +23,20 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const URL = import.meta.env.VITE_SUPABASE_URL;
-const KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// ============================================================
+// נופלים ל-process.env — כדי שהמודול יהיה ניתן לבדיקה מחוץ לדפדפן
+// ============================================================
+// ב-Vite המשתנים מגיעים מ-import.meta.env; ב-Node הוא undefined, וגישה לשדה
+// שלו זורקת. בלי הנפילה הזו אי אפשר לייבא את שכבת ה-services מ-Node כלל —
+// ובדיקה שאינה יכולה לייבא את הקוד נאלצת להחזיק **עותק** שלו, וכך היא בודקת
+// את העותק ולא את מה שרץ.
+//
+// זה בדיוק מה שאפשר ל-tools/parity-shape.js לתפוס ש-trend חסר בזרוע הישירה:
+// הוא מריץ את dataSource עצמו, לא שחזור שלו.
+const ENV = import.meta.env ?? process.env;
+
+const URL = ENV.VITE_SUPABASE_URL;
+const KEY = ENV.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 // חסרה הגדרה — כושל בקול ולא בשקט. דשבורד שמנסה לדבר עם undefined מייצר
 // שגיאות רשת מבלבלות במקום להגיד מה חסר.

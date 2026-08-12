@@ -92,16 +92,64 @@ mix them. Same for `generateMonthlySummary` / `getSystemSummary` (both sum month
 
 It used to be computed three different ways in three places, which meant the same site showed
 different uptime on different screens. There is now one function — **`availabilityFrom()` in
-`queries.js`** — and every caller goes through it:
+`shared/executive.mjs`** — and every caller goes through it:
 
 ```
-availability = (ready + operating) / (ready + operating + error + no_comm)
+availability = (ready + operating) / (ready + operating + error)
 ```
 
-**Planned maintenance is excluded from the denominator entirely** — it is neither uptime nor
-downtime. Taking a site down deliberately must not look like a failure, and must not be rewarded
-as availability either. If you need availability anywhere new, **call `availabilityFrom()`**.
-Do not re-derive it.
+**Two states are excluded from the measurement entirely** — neither numerator nor denominator:
+
+- **Maintenance.** A deliberate shutdown must not look like a failure, and must not be rewarded
+  as availability either.
+- **`no_comm`.** ⚠️ **This changed, and it was a product decision, not a calculation fix.** It
+  used to sit in the denominator, i.e. counted as the machine failing. But a disconnect means
+  the agent, the PC, or the network is not reporting — **the barrier itself may be working fine
+  and serving cars the whole time.** We do not know, and that is the point: *not knowing is not
+  a failure.*
+
+If you need availability anywhere new, **call `availabilityFrom()`**. Do not re-derive it.
+
+**The cost of excluding `no_comm`, stated plainly:** it hides a real operational signal.
+Measured — site 2439 goes from 72.8% to 99.3%, because it is disconnected roughly a quarter of
+the time. The number no longer says that. **`UptimeBar` therefore shows a mandatory note when
+`noCommHours > 0`**, naming the excluded hours and the hours actually measured. That note is not
+decoration; it is the other half of this decision, and removing it deletes the information.
+
+Side effect, and it is correct: a site disconnected for the *whole* period gets
+`measuredHours = 0` → availability `null` → the dashboard shows `—`. Nothing was measured, and
+`0%` would read as "totally broken".
+
+⚠️ **`tests/availability.test.js` pins this definition in numbers.** It exists because the
+`no_comm` change moved every screen in the system and **not one of the 196 tests failed** — the
+parity gate passed too, and correctly so: it compares JS against SQL, and both sides changed
+together. *A parity gate proves two implementations agree. It cannot prove the definition is
+right.*
+
+## A stuck machine still counts as available — and that is the product owner's call
+
+`operating` has **no upper bound**. A frozen `operating` segment of 94 hours (site 2438,
+20–27 July) reports **100.0% availability** on a week with 3 completed operations. The cause is
+that the agent is edge-triggered — it reports only on MODE *change*, so a frozen register sends
+nothing and the segment grows without limit. Measured across all data: **381 hours sit in
+`operating` segments longer than 30 minutes, against 153 hours of real operations** — 71% of
+what is counted as "operating".
+
+⚠️ **This was built and then removed at the product owner's request.** A `stuck` split at 30
+minutes was implemented in `uptimeFromData` and `site_uptime`, excluded from the measurement,
+shown as its own bar segment and legend row, and covered by 9 unit tests plus 6 seeded parity
+cases. It worked and the gates were green. It was removed because the product owner did not want
+it on screen. **Do not re-add it without asking** — the numbers above are not a discovery, they
+are a known and accepted state.
+
+Two things worth keeping from that attempt, should it ever come back:
+
+- The threshold to use is **30 minutes** — the value `dashboard/src/utils/stuck.js` already uses
+  to flag the card on screen. Two different thresholds would call the same machine "stuck" on the
+  card and "operating normally" in the metric, at the same moment.
+- The cut must come from the segment's **full `started_at`**, never the clipped window start — and
+  a mutation that got this wrong **passed 1,374 production comparisons**, because no production
+  `operating` segment currently straddles a range start. Only seeded cases caught it.
 
 **Both kinds of maintenance count**, and until recently only one did:
 

@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
 		<TargetFramework>net10.0-windows</TargetFramework>
-		<Version>1.0.15</Version>
+		<Version>1.0.20</Version>
 		<Nullable>enable</Nullable>
 		<UseWindowsForms>true</UseWindowsForms>
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -28,5 +28,30 @@
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </None>
 	</ItemGroup>
+
+
+  <!-- ============================================================
+       פרסום עצמאי — זמן הריצה נארז בפנים
+       ============================================================
+       ⚠️ בלי זה הקובץ שנוצר הוא framework-dependent: הוא **דורש ש-.NET 10
+       יהיה מותקן על המחשב**, ועל מכונה שאין בה אותו הוא עולה עם הודעה
+       "You must install .NET to run this application".
+       .NET 10 חדש מאוד, ורוב מחשבי האתרים לא ראו אותו מעולם.
+
+       הסוכן מותקן ידנית על מחשבים באתרי חניה שאיננו שולטים בהם — כל תלות
+       חיצונית שם היא ביקור טכנאי.
+
+       ⚠️ **וזה יושב כאן ולא בשורת הפקודה בכוונה.** הפרסום נעשה כבר פעם אחת
+       בלי הדגל, והתוצאה הייתה תיקייה שמערבבת זמן ריצה ישן עם אפליקציה
+       שמבקשת אותו מבחוץ — מתקין ששקט ונשבר רק אצל הלקוח.
+       דגל בשורת פקודה נשכח; שורה בקובץ הפרויקט לא.
+
+       ⚠️ ללא Trimming: גיזום מסיר טיפוסים שנטענים ברפלקציה, וזה כשל
+       שמתגלה רק בזמן ריצה — באתר. -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
 
 </Project>

@@ -39,6 +39,8 @@ function KpiCard({
           <div className="kpi-trend">
             <TrendIndicator
               changePercent={trend.changePercent}
+              previous={trend.previous}
+              hasComparison={trend.hasComparison}
               higherIsBetter={trend.higherIsBetter}
               comparisonLabel={trend.comparisonLabel}
             />

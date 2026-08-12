@@ -26,6 +26,29 @@ public static class ConnectionTester
     private const int PlcTimeoutSeconds = 5;
     private const int HiveTimeoutSeconds = 10;
 
+    // ============================================================
+    // מזהה האתר — הבדיקה שהייתה חסרה, וזו שעלתה הכי ביוקר
+    // ============================================================
+    // ⚠️ שתי הבדיקות האחרות ירוקות **גם כשהמזהה ריק.** הן בודקות רשת:
+    // האם הבקר עונה, והאם יש חיבור מוצפן ל-HiveMQ. אף אחת מהן אינה נוגעת
+    // בנושא (topic) שאליו ההודעות ישודרו — ולכן שתיהן מצליחות בכנות בזמן
+    // שההודעות הולכות ל-`sites//state` ואיש אינו מקשיב שם.
+    //
+    // זהו הכשל הגרוע ביותר במערכת הזו: **כל שכבה מדווחת הצלחה אמיתית,
+    // ואף אחת לא בודקת לאן.** בשטח הוא נראה כתעלומה ולא כתקלה — "בבקר
+    // כתוב שיש תקשורת, בדשבורד כתוב שאין".
+    //
+    // הבדיקה כאן היא סינכרונית ומיידית: אין מה לחכות לו, וזו בדיוק
+    // הסיבה שאין שום תירוץ לא להריץ אותה.
+    // ⚠️ הכלל עצמו חי ב-SiteIdRule (Core) ולא כאן — אותו כלל בדיוק משמש
+    // את השירות בעלייה ואת טופס ההגדרות. כאן רק עוטפים אותו בצורה שהחלון
+    // יודע להציג.
+    public static TestResult TestSiteId(SiteConfig config)
+    {
+        SiteIdCheck check = SiteIdRule.Check(config.SiteId);
+        return new TestResult { Success = check.IsValid, Message = check.Message };
+    }
+
     /// <summary>בודק חיבור ל-PLC: חיבור TCP + קריאת Modbus אחת, עם timeout של ~5 שניות.</summary>
     public static Task<TestResult> TestPlcAsync(PlcConfig plc)
     {

@@ -1,6 +1,8 @@
 // hooks/useSupervisorStats.js — נתוני מנהל הבקרה לפי תקופה
 import { useState, useEffect, useCallback } from "react";
-import { fetchSupervisorStats } from "../services/api";
+// דרך המתג ולא ישירות מ-api: כך אותו מסך עובד גם ישירות מול Supabase וגם
+// דרך השרת, וההחלפה היא משתנה סביבה אחד (ראה services/dataSource.js).
+import { fetchSupervisor } from "../services/dataSource";
 
 export function useSupervisorStats(period, version = 0) {
   const [data, setData] = useState(null);
@@ -15,7 +17,7 @@ export function useSupervisorStats(period, version = 0) {
     setLoading(true);
     setError(null);
 
-    fetchSupervisorStats(period)
+    fetchSupervisor(period)
       .then((r) => { if (!cancelled) setData(r); })
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });

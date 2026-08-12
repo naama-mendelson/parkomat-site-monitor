@@ -47,7 +47,7 @@ $$;
 -- ============================================================
 -- app.current_role() — התפקיד היישומי, לא תפקיד ה-Postgres
 -- ============================================================
--- בקר / מנהל בקרה / מנכ"ל. **אינו** anon/authenticated — אלה תפקידי
+-- **מנהל** או **בקר**. אינו anon/authenticated — אלה תפקידי
 -- Postgres, וההבחנה חשובה: תפקיד Postgres אומר "האם התחברת", והתפקיד
 -- היישומי אומר "מה מותר לך".
 --
@@ -66,7 +66,7 @@ $$;
 -- Custom Access Token Hook כן יכול לשטח אותה בעתיד.
 --
 -- **user_metadata אינו נקרא בכוונה**: המשתמש יכול לערוך אותו בעצמו דרך
--- updateUser, ולכן תפקיד משם היה מאפשר לכל אחד להעלות את עצמו למנכ"ל.
+-- updateUser, ולכן תפקיד משם היה מאפשר לכל אחד להעלות את עצמו למנהל.
 -- app_metadata ניתן לשינוי רק דרך ה-Admin API.
 CREATE OR REPLACE FUNCTION app.current_role()
 RETURNS text
@@ -86,7 +86,7 @@ COMMENT ON FUNCTION app.current_actor() IS
   'מזהה המשתמש: תביעת sub מה-JWT, ואם אין — ה-GUC app.user_id. NULL = אין זהות. '
   'ההפניה הזו היא מה שמאפשר לאותן מדיניות לרוץ גם על Postgres שאינו Supabase.';
 COMMENT ON FUNCTION app.current_role() IS
-  'התפקיד היישומי (בקר/מנהל/מנכ"ל), לא תפקיד ה-Postgres. ברירת מחדל anonymous.';
+  'התפקיד היישומי (מנהל/בקר), לא תפקיד ה-Postgres. ברירת מחדל anonymous.';
 
 -- ============================================================
 -- הגבלת דומיין — רק מיילים של החברה יכולים להיכנס
@@ -103,9 +103,10 @@ COMMENT ON FUNCTION app.current_role() IS
 --      נרשם, מקבל authenticated, ורואה את נתוני כל האתרים.
 --   3. ה-Admin API.
 --
--- (הייתה כאן גם דרך רביעית — התחברות עם Google, שיוצרת משתמש בכניסה
--- הראשונה. היא הוסרה מהמוצר. הטריגר היה חוסם גם אותה, ויחסום כל ספק
--- חיצוני שיתווסף בעתיד, בלי שיצטרכו לזכור להוסיף בדיקה.)
+-- (ודרך רביעית: **קישור כניסה למייל** (Magic Link) — signInWithOtp עם
+-- shouldCreateUser, שיוצר משתמש בבקשה הראשונה. גם היא אינה עוברת דרך
+-- השרת. הטריגר חוסם אותה בדיוק כמו את השאר, וגם כל ספק שיתווסף בעתיד
+-- בלי שיצטרכו לזכור להוסיף בדיקה.)
 --
 -- טריגר לפני INSERT על auth.users חוסם את כל השלוש, כולל דרכים שטרם
 -- קיימות. זה המקום היחיד שאי אפשר לעקוף.
@@ -188,6 +189,40 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
+  -- ============================================================
+  -- הדומיין **הוא** ההרשאה: תפקיד בסיסי מוענק כאן, אוטומטית
+  -- ============================================================
+  -- ⚠️ שינוי החלטה. עד כה חסם טריגר נדחה כל מי שאין לו parkomat_role,
+  -- כלומר כל מי שלא הוזמן ידנית. הוכרע ההפך: **מי שיש לו כתובת של החברה
+  -- זכאי להיכנס**, ומה שנשאר להחליט הוא רק מה מותר לו — וזו הדרגה.
+  --
+  -- כתובת @parkomat.co.il מונפקת ע"י הארגון ורק לעובדים. הזמנה ידנית
+  -- הייתה שכבה שנייה ששואלת בדיוק את אותה שאלה, ומי שנשכח בה פשוט לא
+  -- הצליח להיכנס בלי שאיש ידע למה.
+  --
+  -- ============================================================
+  -- ⚠️ למה כאן ולא בטריגר הנדחה
+  -- ============================================================
+  -- ההצעה הייתה לעדכן את app_metadata בזמן ה-commit. זה עובד, אבל פותח
+  -- שאלה שאין עליה תשובה ודאית: **האם GoTrue כבר חתם את האסימון הראשון**
+  -- כשהטריגר הנדחה רץ. אם כן, הכניסה הראשונה נושאת תביעה ריקה.
+  --
+  -- ב-BEFORE INSERT פשוט כותבים על NEW, והשורה **נולדת** עם התפקיד. אין
+  -- UPDATE על auth.users, אין תלות בסדר, ואין חלון.
+  --
+  -- ⚠️ ורק כשחסר: מסלול ההזמנה קובע דרגה בעצמו (auth/admin.js), וכתיבה
+  -- גורפת כאן הייתה דורסת מנהל שנוצר במפורש ומורידה אותו לבקר.
+  --
+  -- ⚠️ 'operator' ולא 'viewer'/'employee': יש שתי קבוצות בלבד במערכת
+  -- (ראה app_users.role), ושם דרגה שלישי שאינו קיים בשום CHECK היה יוצר
+  -- משתמש שאיש אינו יודע מה מותר לו.
+  IF NEW.raw_app_meta_data IS NULL THEN
+    NEW.raw_app_meta_data := jsonb_build_object('parkomat_role', 'operator');
+  ELSIF NEW.raw_app_meta_data ->> 'parkomat_role' IS NULL THEN
+    NEW.raw_app_meta_data :=
+      NEW.raw_app_meta_data || jsonb_build_object('parkomat_role', 'operator');
+  END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -208,86 +243,82 @@ COMMENT ON FUNCTION app.enforce_user_creation() IS
   'הלוגיקה ניידת; הטריגר על auth.users אינו.';
 
 -- ============================================================
--- רק בהזמנה. אין הרשמה עצמית.
+-- הזמנה-בלבד — **בוטל**, והטריגר הוסר
 -- ============================================================
--- /auth/v1/signup פתוח לכל אדם באינטרנט (disable_signup הוא false בפרויקט),
--- אינו עובר דרך השרת שלנו, ונמדד בפועל: הרשמה עצמית החזירה 200 ויצרה משתמש.
+-- כאן ישב `enforce_invite_only`: טריגר אילוץ נדחה שדרש parkomat_role בזמן
+-- ה-commit, כלומר חסם כל מי שלא הוזמן ידנית. הוא בוטל בהחלטת מוצר —
+-- **הדומיין הוא ההרשאה**, ותפקיד בסיסי מוענק אוטומטית ב-BEFORE INSERT
+-- שמעליו.
 --
+-- ⚠️ והוא לא רק מיותר אלא **בלתי-ניתן להגעה**: כל שורה שמגיעה לטריגר
+-- הנדחה כבר עברה את בדיקת הדומיין וכבר נושאת parkomat_role, ולכן ענף
+-- החסימה שלו לא היה נכנס לפעולה לעולם. קוד מת שנראה כמו הגנה פעילה הוא
+-- גרוע יותר מהיעדר הגנה — מישהו יסתמך עליו.
+--
+-- ⚠️ ה-DROP נשאר לצמיתות ולא נמחק: הוא מה שמסיר את הטריגר ממופע שכבר
+-- מכיל אותו. בלעדיו הפרודקשן היה ממשיך לחסום הרשמה עצמית בעוד הקוד
+-- אומר שהיא פתוחה.
+--
+-- מה שנשאר סגור: `disable_signup` בלוח הבקרה של Supabase. אם ירצו לחסום
+-- הרשמה בסיסמה ולהשאיר רק קישור למייל, זה המקום — לא כאן.
+DROP TRIGGER IF EXISTS enforce_invite_only ON auth.users;
+DROP FUNCTION IF EXISTS app.enforce_invite_only();
+
 -- ============================================================
--- למה זה טריגר **נדחה**, ולמה זה לא היה יכול להיות BEFORE INSERT
+-- כל משתמש חדש מקבל שורת app_users — אוטומטית
 -- ============================================================
--- הניסיון הראשון היה לדרוש parkomat_role ב-BEFORE INSERT, בהנחה שההזמנה
--- קובעת אותו וההרשמה העצמית לא. **זה נכשל, ונמדד:** שתי השורות זהות לחלוטין
--- ברגע ה-INSERT —
+-- ⚠️ בלי זה, משתמש שנכנס בקישור למייל מתחבר בהצלחה ורואה **מסך ריק**:
+-- app.current_app_user() מחזיר NULL, ולכן אין לו זהות יישומית. אין
+-- שגיאה, אין "אין הרשאה" — רק אפס אתרים. זה בדיוק התסמין שגורם למישהו
+-- לחשוב שהמערכת נמחקה.
 --
---     {"provider": "email", "providers": ["email"]}
+-- טריגר ולא קוד בשרת, מאותו טעם כמו הגבלת הדומיין: יש שלוש דרכים שמשתמש
+-- נוצר בהן, והשרת רואה רק אחת מהן. כניסה ראשונה בקישור למייל אינה עוברת
+-- דרכנו כלל.
 --
--- ב*שני* המסלולים. GoTrue מכניס את השורה ורק אחר כך כותב את app_metadata,
--- ולכן BEFORE INSERT פשוט אינו יכול להבחין ביניהם. זו מגבלה, לא חוסר מזל,
--- והדרישה חסמה גם את ההזמנה עצמה.
---
--- טריגר CONSTRAINT נדחה נבדק **בסוף הטרנזקציה**, אחרי שה-metadata נכתב.
--- שם ההבדל קיים, וגם זה נמדד:
---
---     הרשמה עצמית → {"provider":"email","providers":["email"]}
---     Admin API    → {..., "parkomat_role": "operator"}
---
--- ============================================================
--- למה אי אפשר לזייף את זה מדפדפן
--- ============================================================
--- **app_metadata אינו ניתן לכתיבה מהלקוח.** בקשת signup יכולה לקבוע
--- user_metadata (השדה data) אבל לא app_metadata — זו בדיוק הסיבה שהתפקיד
--- נשמר שם מלכתחילה, ואותה תכונה מגינה גם כאן. נבדק בפועל: שליחת
--- app_metadata בגוף הבקשה, וכן parkomat_role דרך data ודרך options.data,
--- כולן נחסמו.
---
--- לכן הדרישה שקולה בפועל ל"נוצר בידי מי שמחזיק את מפתח ה-Secret".
---
--- ⚠️ המשמעות: **כל** יצירת משתמש חייבת לקבוע parkomat_role, גם דרך ה-Admin
--- API. זה מכוון ולא תופעת לוואי — משתמש בלי תפקיד היה מקבל 'anonymous'
--- מ-app.current_role() ומתנהג בצורה לא צפויה.
---
--- ⚠️ ההודעה למי שמנסה להירשם אינה יפה ("Unexpected failure"): GoTrue אינו
--- מעביר שגיאות של טריגר נדחה. זה מקובל כאן — מי שמגיע לשם אינו אמור להירשם
--- מלכתחילה. מסלול ההזמנה עובר ולכן אינו רואה את זה לעולם.
-CREATE OR REPLACE FUNCTION app.enforce_invite_only()
+-- ⚠️ **ON CONFLICT מקשר בלבד ואינו נוגע בדרגה.** משתמש שמנהל הזמין וקבע לו
+-- דרגה, ואז נכנס לראשונה בקישור למייל, אינו רשאי לאבד אותה — ובוודאי
+-- לא לרדת לבקר בשקט. מה שמתעדכן הוא supabase_uid, ורק אם הוא היה ריק.
+CREATE OR REPLACE FUNCTION app.provision_app_user()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = app, pg_catalog
+SET search_path = public, app, pg_catalog
 AS $$
 DECLARE
-  meta jsonb;
+  v_role text;
 BEGIN
-  -- קוראים מהטבלה ולא מ-NEW: NEW הוא צילום מרגע ה-INSERT, ואילו העדכון
-  -- של app_metadata קרה אחריו. זו כל הנקודה של הדחייה.
-  SELECT raw_app_meta_data INTO meta FROM auth.users WHERE id = NEW.id;
-
-  -- השורה נמחקה באותה טרנזקציה — אין מה לאכוף.
-  IF NOT FOUND THEN
-    RETURN NULL;
+  -- אין אף מנהל פעיל? הראשון שנכנס נהיה מנהל. בלי זה התקנה חדשה ננעלת
+  -- על עצמה: כולם בקרים, ואין מי שימנה מנהל.
+  IF EXISTS (SELECT 1 FROM app_users WHERE role = 'manager' AND is_active) THEN
+    v_role := 'operator';
+  ELSE
+    v_role := 'manager';
   END IF;
 
-  IF meta IS NULL OR meta ->> 'parkomat_role' IS NULL THEN
-    RAISE EXCEPTION
-      'הרשמה עצמית אינה אפשרית. משתמש חדש נוצר רק בהזמנה ממשתמש קיים.'
-      USING ERRCODE = 'check_violation';
-  END IF;
+  INSERT INTO app_users (email, full_name, role, supabase_uid, created_at)
+  VALUES (
+    NEW.email,
+    NEW.raw_user_meta_data ->> 'full_name',
+    v_role,
+    NEW.id,
+    to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  )
+  ON CONFLICT (email) DO UPDATE
+    SET supabase_uid = COALESCE(app_users.supabase_uid, EXCLUDED.supabase_uid);
 
   RETURN NULL;
 END;
 $$;
 
-DROP TRIGGER IF EXISTS enforce_invite_only ON auth.users;
-CREATE CONSTRAINT TRIGGER enforce_invite_only
+DROP TRIGGER IF EXISTS provision_app_user ON auth.users;
+CREATE TRIGGER provision_app_user
   AFTER INSERT ON auth.users
-  DEFERRABLE INITIALLY DEFERRED
-  FOR EACH ROW EXECUTE FUNCTION app.enforce_invite_only();
+  FOR EACH ROW EXECUTE FUNCTION app.provision_app_user();
 
-COMMENT ON FUNCTION app.enforce_invite_only() IS
-  'חוסם הרשמה עצמית: בסוף הטרנזקציה app_metadata חייב לשאת parkomat_role, '
-  'ואותו רק ה-Admin API יכול לקבוע. נדחה בכוונה — ב-BEFORE INSERT שני '
-  'המסלולים נראים זהים לחלוטין, וזה נמדד.';
+COMMENT ON FUNCTION app.provision_app_user() IS
+  'יוצר שורת app_users לכל משתמש חדש. בלעדיה משתמש מחובר רואה מסך ריק. '
+  'אינו נוגע בדרגה של שורה קיימת — רק מקשר supabase_uid.';
 
 -- ============================================================
 -- תפקיד authenticated — נוצר אם חסר
@@ -331,6 +362,87 @@ $$;
 -- כתיבה אינה מקבלת מדיניות בכלל, כלומר אסורה. הקליטה והניהול עוברים דרך
 -- השרת שעוקף RLS, ולכן שום דבר קיים לא נשבר.
 
+-- ============================================================
+-- מי אני, ומה מותר לי לראות
+-- ============================================================
+-- ⚠️ **שלוש פונקציות, ולא תנאי משוכפל בכל מדיניות.** אותו שיקול בדיוק כמו
+-- app.current_actor(): מדיניות שכותבת את הכלל בעצמה הופכת כל שינוי בכלל
+-- לשכתוב של שבע מדיניות, ואת יום ההגירה למחקר.
+--
+-- ⚠️ SECURITY DEFINER, ו-search_path מוצמד. הן קוראות את app_users ואת
+-- app_users — טבלה שיש עליה RLS משלה. בלי DEFINER המדיניות הייתה
+-- שואלת טבלה שהמדיניות שלה שואלת את הפונקציה, וזו רקורסיה.
+--
+-- ⚠️ ואף אחת מהן אינה נוגעת ב-`sites` או ב-`audit_log` — הטבלאות שהמדיניות
+-- שלהן קוראות להן. קריאה כזו הייתה רקורסיה ישירה.
+CREATE OR REPLACE FUNCTION app.current_app_user()
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT u.id
+    FROM app_users u
+   WHERE u.supabase_uid::text = app.current_actor()
+     AND u.is_active
+   LIMIT 1
+$$;
+
+-- ============================================================
+-- הדרגה נקראת מהטבלה, לא מהתביעה
+-- ============================================================
+-- ⚠️ app.current_role() קורא את parkomat_role מתוך ה-JWT. התביעה נחתמה
+-- ברגע ההתחברות, ולכן **הורדת דרגה אינה נכנסת לתוקף עד שהמשתמש מתחבר
+-- מחדש** — חלון של שעה או יותר שבו מי שהודח עדיין מנהל.
+--
+-- app_users.role הוא מקור האמת, והוא נקרא בכל בקשה.
+--
+-- התביעה עדיין נכתבת (ב-enforce_user_creation) ואינה מיותרת: היא מה
+-- שמאפשר ל-RLS לעבוד גם בלי שאילתת טבלה, והיא הערך ההתחלתי שממנו
+-- provision_app_user יוצר את השורה. **אבל היא לעולם לא הסמכות** —
+-- אסימון בן שעה שנושא 'manager' אינו הופך בקר למנהל.
+CREATE OR REPLACE FUNCTION app.current_app_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT COALESCE(
+    (SELECT u.role FROM app_users u
+      WHERE u.supabase_uid::text = app.current_actor() AND u.is_active LIMIT 1),
+    'anonymous'
+  )
+$$;
+
+-- ⚠️ שתי קבוצות בלבד: manager ו-operator. הפונקציה נקראה is_executive
+-- כשהיו שלוש דרגות; היא נמחקת במפורש כדי שלא תישאר קריאה אליה שמחזירה
+-- false תמיד — כלומר מנהל שמאבד הרשאות בשקט.
+--
+-- ⚠️ **הדבר היחיד שנמחק כאן הוא השם הישן.** גרסה קודמת של השורה הזו כתבה
+-- בטעות `DROP ... app.is_manager()` — הפונקציה החדשה — וכל עלייה נכשלה על
+-- `cannot drop function because other objects depend on it`, כי מדיניות
+-- ה-audit_log תלויה בה. השרת פשוט לא עלה.
+--
+-- ⚠️ ו-CREATE OR REPLACE על is_manager מתחתיה **חייב** להישאר REPLACE ולא
+-- DROP: מרגע שמדיניות מצביעה על פונקציה, מחיקתה דורשת מחיקת המדיניות.
+DROP FUNCTION IF EXISTS app.is_executive();
+
+CREATE OR REPLACE FUNCTION app.is_manager()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$ SELECT app.current_app_role() = 'manager' $$;
+
+-- ============================================================
+-- can_see_site — **בוטלה**
+-- ============================================================
+-- כאן ישבה הפונקציה שהגבילה בקר לאתרים שהוקצו לו. הוכרע ההפך: **בקר
+-- רואה את כל האתרים**, וההגבלה היחידה שנשארה היא על יומן הפעולות.
+--
+-- ⚠️ ה-DROP חייב לרוץ **אחרי** שהמדיניות שהצביעו עליה שוחזרו ל-USING
+-- (true) — והן למטה בקובץ. לכן הוא אינו כאן אלא לצידן.
 -- sites
 DROP POLICY IF EXISTS sites_read_authenticated ON sites;
 CREATE POLICY sites_read_authenticated ON sites
@@ -385,3 +497,62 @@ GRANT EXECUTE ON FUNCTION public.site_segments_collapsed(integer[], text, text) 
 GRANT EXECUTE ON FUNCTION public.site_stats(integer[], text, text)              TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_actor()                                   TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_role()                                    TO authenticated;
+
+-- ============================================================
+-- הטבלאות החדשות — RLS, מדיניות והרשאות
+-- ============================================================
+-- ⚠️ Supabase מדליק RLS אוטומטית על טבלאות חדשות, אבל **רק ב-Supabase**.
+-- על Postgres רגיל הן היו נשארות פתוחות לגמרי — כלומר דלת היציאה הייתה
+-- פותחת דלת אחרת. ההדלקה כאן מפורשת ואידמפוטנטית.
+ALTER TABLE app_users  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log  ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- app_users — כולם רואים מי במערכת
+-- ============================================================
+-- זו רשימת עובדי החברה, לא סוד. והיא נדרשת כדי להציג שם ליד כל שורת
+-- ביקורת — שהוכרע שגלויה לכולם.
+--
+-- ⚠️ אין כאן מדיניות כתיבה, כלומר כתיבה **אסורה** לכל מי שאינו עוקף RLS.
+-- ניהול המשתמשים עובר דרך השרת בלבד, שם יושבת גם בדיקת הדרגה. מדיניות
+-- כתיבה כאן הייתה נותנת לדפדפן לשנות דרגות ישירות מול PostgREST.
+DROP POLICY IF EXISTS app_users_read_authenticated ON app_users;
+CREATE POLICY app_users_read_authenticated ON app_users
+  FOR SELECT TO authenticated USING (true);
+
+-- ============================================================
+-- audit_log — בקר רואה הכול, חוץ מניהול המשתמשים
+-- ============================================================
+-- הכלל עבר שתי גרסאות לפני זו, וההבדל ביניהן מהותי:
+--   1. `USING (true)` — הכול גלוי לכולם.
+--   2. בקר רואה רק פעולות של בקרים. **רחב מדי** — הוא הסתיר גם תחזוקה
+--      שמנהל הפעיל, וזה מידע תפעולי שבקר צריך.
+--   3. וזה: בקר רואה **כל** פעולה, למעט ניהול משתמשים.
+--
+-- ההיגיון: מי נכנס למערכת ומי הוצא ממנה הוא עניין של הנהלה, ולא של מי
+-- שמנטר אתרים. כל השאר — תחזוקה, רישום אתר, שינוי הגדרות — נוגע לעבודה
+-- היומיומית וגלוי לכולם.
+--
+-- ⚠️⚠️ **התחילית `user.` נושאת את כל ההרשאה.** פעולה חדשה שתיקרא
+-- `users.invite` או `invite.user` תהיה **גלויה לבקרים** — בלי שגיאה, בלי
+-- סימן, ובלי שאיש ישים לב. זו הנקודה השברירית היחידה כאן, ולכן:
+--
+--   • כל פעולת ניהול משתמשים חייבת להתחיל ב-`user.`
+--     (user.invite · user.disable · user.role)
+--   • `tools/check-scope.js` בודק בדיוק את זה — שורת user.* מוסתרת
+--     ושורת maintenance.* גלויה.
+--
+-- ⚠️ הסינון הוא על **הפעולה**, לא על דרגת הפועל. מנהל שמעביר אתר
+-- לתחזוקה מופיע אצל כולם, כי זה מה שקרה באתר.
+DROP POLICY IF EXISTS audit_log_read_authenticated ON audit_log;
+CREATE POLICY audit_log_read_authenticated ON audit_log
+  FOR SELECT TO authenticated
+  USING (app.is_manager() OR action NOT LIKE 'user.%');
+
+GRANT SELECT ON app_users, audit_log TO authenticated;
+GRANT EXECUTE ON FUNCTION app.current_app_user()      TO authenticated;
+GRANT EXECUTE ON FUNCTION app.current_app_role()      TO authenticated;
+GRANT EXECUTE ON FUNCTION app.is_manager()          TO authenticated;
+-- ⚠️ אחרי שהמדיניות שוחזרו: הפונקציה כבר אינה בשימוש ונמחקת כאן, לא
+-- למעלה. מחיקה לפני שחזור המדיניות הייתה נכשלת על תלות.
+DROP FUNCTION IF EXISTS app.can_see_site(integer);

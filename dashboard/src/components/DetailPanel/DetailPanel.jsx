@@ -154,8 +154,8 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
               לא התקבל עדכון {stuck.silentMinutes >= 60
                 ? `${Math.floor(stuck.silentMinutes / 60)} שעות`
                 : `${stuck.silentMinutes} דקות`}.
-              מצב פעיל אמור להימשך דקות — כדאי לבדוק את רגיסטר ה-MODE בבקר
-              ואת התקשורת באתר. המדדים בעמוד אינם מושפעים מהסימון הזה.
+              {stuck.noun} אמורה להימשך דקות, לא שעות. המדדים בעמוד אינם
+              מושפעים מהסימון הזה.
             </span>
           </div>
         )}
@@ -195,6 +195,8 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                   trend={
                     <TrendIndicator
                       changePercent={analytics.trend.operations.changePercent}
+                      previous={analytics.trend.operations.previous}
+                      hasComparison={analytics.hasComparison}
                       higherIsBetter
                       comparisonLabel={analytics.comparisonLabel}
                     />
@@ -207,6 +209,8 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                   trend={
                     <TrendIndicator
                       changePercent={analytics.trend.errors.changePercent}
+                      previous={analytics.trend.errors.previous}
+                      hasComparison={analytics.hasComparison}
                       higherIsBetter={false}
                       comparisonLabel={analytics.comparisonLabel}
                     />
@@ -220,6 +224,8 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                   trend={
                     <TrendIndicator
                       changePercent={analytics.trend.failureRate.changePercent}
+                      previous={analytics.trend.failureRate.previous}
+                      hasComparison={analytics.hasComparison}
                       higherIsBetter={false}
                       comparisonLabel={analytics.comparisonLabel}
                     />
@@ -233,6 +239,8 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                 trend={
                   <TrendIndicator
                     changePercent={analytics.trend.availability.changePercent}
+                      previous={analytics.trend.availability.previous}
+                      hasComparison={analytics.hasComparison}
                     higherIsBetter
                     comparisonLabel={analytics.comparisonLabel}
                   />
@@ -275,7 +283,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
               >
                 הצג עוד מידע
                 <span className="insights-open-hint">
-                  כרטיסים מובילים · שעות עומס · משכי פעולה · השבתות
+                  משתמשים מובילים · שעות עומס · משכי פעולה · השבתות
                 </span>
               </button>
             </div>

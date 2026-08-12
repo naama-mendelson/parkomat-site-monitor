@@ -25,7 +25,7 @@ const TABLES = [
     name: "sites",
     columns: ["id", "code", "site_name", "status", "last_seen", "cycle_total",
       "plc_cycle_last", "cycle_last_ts", "is_new_site", "registered_at",
-      "plc_type", "plc_ip", "site_ip"],
+      "plc_type"],
     conflict: "(id) DO NOTHING",
     hasSequence: true,
   },

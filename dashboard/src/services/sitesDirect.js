@@ -27,6 +27,7 @@
 // ולא בשגיאה.
 
 import { supabase, isSupabaseConfigured } from "./supabase";
+import { siteTrend } from "../../../shared/executive.mjs";
 
 /**
  * רשימת האתרים עם כל המדדים, ישירות מבסיס הנתונים.
@@ -36,16 +37,21 @@ import { supabase, isSupabaseConfigured } from "./supabase";
  * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
  * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
-export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()) {
+export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
   }
 
-  const [sitesRes, statsRes, uptimeRes, globalsRes] = await Promise.all([
+  // ⚠️ קריאה חמישית ולא סיבוב לכל אתר: site_stats מקבלת null ומחזירה שורה
+  // לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת.
+  const [sitesRes, statsRes, uptimeRes, globalsRes, prevRes] = await Promise.all([
     supabase.from("sites").select("*"),
     supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_globals", { p_site_ids: null }),
+    prevFromIso
+      ? supabase.rpc("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
@@ -62,6 +68,7 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   const statsById   = new Map((statsRes.data   || []).map((r) => [r.site_id, r]));
   const uptimeById  = new Map((uptimeRes.data  || []).map((r) => [r.site_id, r]));
   const globalsById = new Map((globalsRes.data || []).map((r) => [r.site_id, r]));
+  const prevById    = new Map((prevRes.data     || []).map((r) => [r.site_id, r]));
 
   return (sitesRes.data || []).map((site) => {
     const st = statsById.get(site.id);
@@ -86,7 +93,18 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהמסך יציג "—"
       // ולא "0%". "0%" נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
       uptime: up && up.measured_hours > 0 ? up.availability_percent : null,
+      // אותו כלל בדיוק כמו בשרת — siteTrend במודול המשותף.
+      trend: siteTrend(
+        { operations: st?.operations ?? 0, failureRate: st?.failure_rate ?? 0 },
+        prevById.get(site.id)
+          ? { operations: prevById.get(site.id).operations,
+              failureRate: prevById.get(site.id).failure_rate }
+          : null
+      ),
       lastFaultAt: g.last_fault_at ?? null,
+      // ⚠️ ?? ולא ||: '' הוא ערך תקף ("הבקר נשאל והחזיר ריק"), ו-|| היה
+      // הופך אותו ל-null — כלומר ל"לא נקרא". שני דברים שונים.
+      currentFaultText: g.current_fault_text ?? null,
       statusSince: g.status_since ?? null,
       // השרת מחזיר אובייקט או null — ולא אובייקט עם שדות ריקים, שהיה נראה
       // למסך כמו "יש פעולה אחרונה" עם כל השדות undefined.

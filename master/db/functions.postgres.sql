@@ -63,6 +63,16 @@
 -- אין כאן אזור זמן, וזה מכוון: הגבולות מגיעים כפרמטרים. חישוב התקופה
 -- (שבוע מתגלגל / חודש / שנה קלנדריים) הוא המקום שבו Asia/Jerusalem נחוץ,
 -- והוא עדיין ב-api/periods.js.
+-- ⚠️ DROP ולא רק CREATE OR REPLACE, ואל תסירו אותו.
+-- CREATE OR REPLACE אינו יכול לשנות את **טיפוס ההחזרה** — הוא נכשל עם
+-- "cannot change return type of existing function", ורק על מסד שכבר מכיל
+-- גרסה קודמת. כלומר: עובר בפיתוח נקי, נופל בפרודקשן.
+--
+-- זה כבר קרה כאן פעמיים בכיוונים הפוכים: עמודה נוספה ואז הוסרה. ה-DROP
+-- הופך את הקובץ לאידמפוטנטי מול **כל** גרסה קודמת, וזו בדיוק ההבטחה
+-- שהקובץ הזה נשען עליה ("הקובץ הוא מצב היעד").
+DROP FUNCTION IF EXISTS public.site_uptime(integer[], text, text);
+
 CREATE OR REPLACE FUNCTION public.site_uptime(
   p_site_ids integer[],
   p_from     text,
@@ -74,6 +84,9 @@ RETURNS TABLE (
   operating_hours      double precision,
   error_hours          double precision,
   maintenance_hours    double precision,
+  -- פילוח התחזוקה: repair + planned = maintenance, תמיד. אינו נוגע בזמינות.
+  repair_hours         double precision,
+  planned_hours        double precision,
   no_comm_hours        double precision,
   total_hours          double precision,
   measured_hours       double precision,
@@ -95,7 +108,11 @@ clipped AS (
     h.site_id,
     h.status,
     GREATEST(h.started_at::timestamptz, o.w_from::timestamptz) AS seg_start,
-    LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end
+    LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end,
+    -- ⚠️ החותם ה**גולמי**, לא החתוך. סיווג "טיפול בתקלה" נשען על התאמה
+    -- מדויקת ל-error.ended_at, ומקטע שהתחיל לפני החלון היה מקבל seg_start
+    -- = w_from ולא היה מתאים לעולם. הסיווג שייך למקטע, לא לחלון.
+    h.started_at AS raw_start
   FROM status_history h
   CROSS JOIN ok o
   WHERE o.valid
@@ -103,6 +120,29 @@ clipped AS (
     -- שתי ההשוואות על TEXT: האינדקס (site_id, started_at) נשאר בשימוש
     AND h.started_at < o.w_to
     AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
+),
+-- ============================================================
+-- תחזוקה אחרי תקלה היא **טיפול בתקלה**, לא תחזוקה מתוכננת
+-- ============================================================
+-- ⚠️ חייב להישאר זהה ל-uptimeFromData ב-shared/executive.mjs. שם מתועד
+-- הנימוק במלואו; בקצרה: מתוכננת היא **החלטה** וטיפול בתקלה הוא **תוצאה**,
+-- וערבובן גורם לאתר שנופל שלוש פעמים בשבוע להיראות כמו אתר בתחזוקה שוטפת.
+--
+-- ⚠️ **הזמן לא זז.** שניהם נשארים maintenance_s ומוחרגים מהמכנה בדיוק כמו
+-- קודם — הזמינות אינה משתנה. זה **פילוח בלבד**, ותמיד
+-- repair_hours + planned_hours = maintenance_hours.
+--
+-- אותו תנאי חפיפה כמו ב-clipped, כדי שהקבוצה תהיה זהה לזו שב-JS.
+err_ends AS (
+  SELECT DISTINCT h.site_id, h.ended_at
+  FROM status_history h
+  CROSS JOIN ok o
+  WHERE o.valid
+    AND h.status = 'error'
+    AND h.ended_at IS NOT NULL
+    AND (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+    AND h.started_at < o.w_to
+    AND h.ended_at > o.w_from
 ),
 -- ============================================================
 -- חלונות תחזוקה ידניים — נספרים כתחזוקה, ולא לפי מה שה-PLC דיווח
@@ -164,7 +204,12 @@ cov AS (
       WHERE w.site_id = c.site_id
         AND w.e > c.seg_start
         AND w.s < c.seg_end
-    ), 0) AS covered_s
+    ), 0) AS covered_s,
+    -- האם המקטע הזה הוא טיפול בתקלה: התחיל בדיוק כשתקלה נגמרה.
+    EXISTS (
+      SELECT 1 FROM err_ends e
+      WHERE e.site_id = c.site_id AND e.ended_at = c.raw_start
+    ) AS after_error
   FROM clipped c
   WHERE c.seg_end > c.seg_start
 ),
@@ -177,6 +222,13 @@ secs AS (
     -- כל הזמן המכוסה, ועוד החלק הלא-מכוסה של מקטעי תחזוקה אמיתיים
     COALESCE(SUM(v.covered_s), 0)
       + COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'maintenance'), 0) AS maintenance_s,
+    -- הפילוח. ⚠️ החלק ה**מכוסה** בחלון ידני נספר תמיד כמתוכנן: מישהו לחץ
+    -- על כפתור, וזו החלטה לפי הגדרה. רק מקטע PLC יכול להיות טיפול בתקלה.
+    COALESCE(SUM(v.dur_s - v.covered_s)
+             FILTER (WHERE v.status = 'maintenance' AND v.after_error), 0) AS repair_s,
+    COALESCE(SUM(v.covered_s), 0)
+      + COALESCE(SUM(v.dur_s - v.covered_s)
+                 FILTER (WHERE v.status = 'maintenance' AND NOT v.after_error), 0) AS planned_s,
     COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'no_comm'),   0) AS no_comm_s
   FROM cov v
   GROUP BY v.site_id
@@ -187,19 +239,29 @@ SELECT
   ROUND((COALESCE(s.operating_s,0)   / 3600.0)::numeric, 2)::double precision,
   ROUND((COALESCE(s.error_s,0)       / 3600.0)::numeric, 2)::double precision,
   ROUND((COALESCE(s.maintenance_s,0) / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.repair_s,0)      / 3600.0)::numeric, 2)::double precision,
+  ROUND((COALESCE(s.planned_s,0)     / 3600.0)::numeric, 2)::double precision,
   ROUND((COALESCE(s.no_comm_s,0)     / 3600.0)::numeric, 2)::double precision,
-  -- total כולל תחזוקה
+  -- total כולל תחזוקה ונתק — הוא כל הזמן שנמדד
   ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0) + COALESCE(s.error_s,0)
         + COALESCE(s.maintenance_s,0) + COALESCE(s.no_comm_s,0)) / 3600.0)::numeric, 2)::double precision,
-  -- measured = זמין + מושבת. **בלי תחזוקה** — זה המכנה של הזמינות.
+  -- ============================================================
+  -- measured = זמין + תקלה. **בלי תחזוקה ובלי נתק.**
+  -- ============================================================
+  -- ⚠️ חייב להישאר זהה ל-DOWN_STATUSES ב-shared/executive.mjs. שם מתועדת
+  -- הסיבה במלואה; בקצרה: נתק פירושו שהסוכן/הרשת אינם מדווחים, והמחסום עצמו
+  -- עשוי לעבוד — אי-ידיעה אינה כשל, ולכן היא יוצאת מהמדידה כמו תחזוקה.
+  --
+  -- ⚠️ אם משנים כאן בלי לשנות שם (או להפך), tools/parity.js ייפול על
+  -- availability ו-measuredHours. זה בדיוק מה שהשער הזה קיים בשבילו.
   ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
-        + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0)) / 3600.0)::numeric, 2)::double precision,
+        + COALESCE(s.error_s,0)) / 3600.0)::numeric, 2)::double precision,
   CASE
     WHEN (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
-        + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0)) > 0
+        + COALESCE(s.error_s,0)) > 0
     THEN ROUND((((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0))
                / (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
-                + COALESCE(s.error_s,0) + COALESCE(s.no_comm_s,0))) * 100)::numeric, 2)::double precision
+                + COALESCE(s.error_s,0))) * 100)::numeric, 2)::double precision
     ELSE 0::double precision
   END
 -- ============================================================
@@ -349,6 +411,8 @@ WITH ops AS (
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
+     -- מעבר פיזי אחד = פעולה אחת: ניסיון שנקטע והוחלף אינו נספר שוב
+     AND o.superseded_by IS NULL
      -- לקסיקוגרפי על TEXT — idx_operations_site_time נשאר בשימוש
      AND o.occurred_at >= p_from
      AND o.occurred_at < p_to
@@ -422,12 +486,19 @@ COMMENT ON FUNCTION public.site_stats(integer[], text, text) IS
 -- ⚠️ להבדיל משאר הפונקציות כאן, אין כאן טווח תאריכים: אלה נתונים "עד
 -- עכשיו" ולא "בטווח". לכן אין סינון לקסיקלי על started_at — אבל גם אין
 -- cast של עמודה, ולכן האינדקסים נשמרים.
+-- ⚠️ DROP: הוספת current_fault_text משנה את **טיפוס ההחזרה**, ו-CREATE OR
+-- REPLACE אינו יכול לשנות אותו. נכשל רק על מסד שכבר מכיל גרסה קודמת —
+-- כלומר עובר בפיתוח נקי ונופל בפרודקשן.
+DROP FUNCTION IF EXISTS public.site_globals(integer[]);
+
 CREATE OR REPLACE FUNCTION public.site_globals(p_site_ids integer[] DEFAULT NULL)
 RETURNS TABLE (
   site_id                     integer,
   last_fault_at               text,
   first_status_at             text,
   status_since                text,
+  -- תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה open_seg למטה.
+  current_fault_text          text,
   last_op_start_end           text,
   last_op_entry_exit          text,
   last_op_card_number         text,
@@ -459,7 +530,31 @@ faults AS (
 ),
 -- המצב הפתוח הנוכחי. DISTINCT ON = "שורה אחת לכל קבוצה" בלי N+1.
 open_seg AS (
-  SELECT DISTINCT ON (h.site_id) h.site_id, h.started_at
+  -- ============================================================
+  -- תיאור התקלה **שורד את המעבר לטיפול**
+  -- ============================================================
+  -- ⚠️ חייב להישאר זהה ל-getAllSitesGlobals ב-queries.js.
+  --
+  -- המקרה הנפוץ: הבקר נופל לתקלה, ומיד מישהו מעביר לתחזוקה כדי לטפל.
+  -- מקטע התקלה **נסגר** ונפתח מקטע תחזוקה — ואיתו נעלם התיאור, בדיוק
+  -- כשהוא הכי נחוץ: מי שרואה "בטיפול" רוצה לדעת **במה** מטפלים.
+  --
+  -- שני מקורות ב-COALESCE:
+  --   1. התיאור של המקטע הפתוח — כשהאתר בתקלה עכשיו.
+  --   2. התיאור של התקלה שנסגרה **בדיוק** כשהמקטע הזה נפתח.
+  --
+  -- ⚠️ ההתאמה על ended_at = started_at ולא על "התקלה האחרונה": הסוכן סוגר
+  -- מקטע ופותח את הבא באותו סבב דגימה ועם אותו חותם. תקלה מלפני שעתיים
+  -- אינה מה שמטפלים בו עכשיו, והצגתה הייתה שקר.
+  SELECT DISTINCT ON (h.site_id) h.site_id, h.started_at,
+         COALESCE(
+           h.fault_text,
+           (SELECT e.fault_text FROM status_history e
+             WHERE e.site_id = h.site_id
+               AND e.status = 'error'
+               AND e.ended_at = h.started_at
+             LIMIT 1)
+         ) AS fault_text
     FROM status_history h
     JOIN ids ON ids.site_id = h.site_id
    WHERE h.ended_at IS NULL
@@ -481,7 +576,7 @@ since_error AS (
     FROM operations o
     JOIN ids ON ids.site_id = o.site_id
     LEFT JOIN faults f ON f.site_id = o.site_id
-   WHERE o.is_anomaly = 0 AND o.start_end = 'end'
+   WHERE o.is_anomaly = 0 AND o.start_end = 'end' AND o.superseded_by IS NULL
      AND (f.last_fault_at IS NULL OR o.occurred_at > f.last_fault_at)
    GROUP BY o.site_id
 ),
@@ -500,6 +595,7 @@ SELECT
   f.last_fault_at,
   f.first_status_at,
   s.started_at,
+  s.fault_text,
   lo.start_end,
   lo.entry_exit,
   lo.card_number,
@@ -524,3 +620,485 @@ $$;
 COMMENT ON FUNCTION public.site_globals(integer[]) IS
   'נתונים גלובליים לכל אתר: תקלה אחרונה, מקטע ראשון, מצב פתוח, פעולה אחרונה, '
   'פעולות מאז התקלה, ותחזוקה פעילה. תרגום של getAllSitesGlobals. ללא טווח תאריכים.';
+
+-- ============================================================
+-- public.recent_errors — התקלות האחרונות בכל המערכת
+-- ============================================================
+-- תרגום של getRecentErrors. נדרש כדי שמסך הבקרה יוכל להיקרא ישירות מהדשבורד
+-- בלי לעבור דרך השרת — זה המסלול הכבד ביותר (נמדד: 1,096ms לחודש, 12 אתרים),
+-- והוא זה שחוסם את ה-event loop ואיתו את הקליטה מ-MQTT כשמספר האתרים גדל.
+--
+-- ⚠️ "תחזוקה גוברת" — תקלה שהתחילה בתוך תחזוקה או בגבולה **אינה מוצגת**,
+-- בדיוק כפי שאינה נספרת באחוז הכשל. שני המקורות נבדקים, וזה לא כפל:
+--   1. מקטע maintenance שדווח מהבקר (status_history).
+--   2. חלון תחזוקה ידני מהדשבורד (maintenance_windows).
+-- אם רק אחד מהם ייבדק, אותה תקלה תיעלם ממדד אחד ותופיע במסך אחר — וזה
+-- בדיוק סוג הסתירה שגורם לאבד אמון בשני המספרים.
+--
+-- הגבול **כולל** (<= / >=), כמו wasInMaintenanceMem ב-JS: תקלה שנרשמה בדיוק
+-- ברגע שהתחזוקה התחילה או הסתיימה שייכת לתחזוקה.
+-- ⚠️ DROP: הוספת fault_text משנה את **טיפוס ההחזרה**, ו-CREATE OR REPLACE
+-- אינו יכול לשנות אותו — הוא נכשל רק על מסד שכבר מכיל גרסה קודמת. כלומר
+-- עובר בפיתוח נקי ונופל בפרודקשן. אותה מלכודת בדיוק כמו ב-site_uptime.
+DROP FUNCTION IF EXISTS public.recent_errors(integer);
+
+CREATE OR REPLACE FUNCTION public.recent_errors(p_limit integer DEFAULT 10)
+RETURNS TABLE (
+  site_code   text,
+  site_name   text,
+  started_at  text,
+  ended_at    text,
+  ongoing     boolean,
+  duration_seconds double precision,
+  duration_minutes double precision,
+  -- ⚠️ חייב להישאר זהה ל-getRecentErrors ב-queries.js. תיאור התקלה מהבקר;
+  -- NULL = לא נקרא (תקלה היסטורית / סוכן ישן), '' = נקרא והיה ריק.
+  fault_text  text
+)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT s.code,
+         s.site_name,
+         h.started_at,
+         h.ended_at,
+         h.ended_at IS NULL AS ongoing,
+         -- המשך המדויק בשניות: רוב ההשבתות קצרות, ובדקות מעוגלות כולן
+         -- נראות "0 דק'" — כלומר ההבדל בין הבהוב של 3 שניות לתקלה של 50
+         -- שניות אובד. התצוגה בוחרת יחידה (ראה formatOutage).
+         GREATEST(0, EXTRACT(EPOCH FROM (
+           COALESCE(h.ended_at::timestamptz, now()) - h.started_at::timestamptz
+         )))::double precision AS duration_seconds,
+         ROUND(GREATEST(0, EXTRACT(EPOCH FROM (
+           COALESCE(h.ended_at::timestamptz, now()) - h.started_at::timestamptz
+         )) / 60))::double precision AS duration_minutes,
+         h.fault_text
+    FROM status_history h
+    JOIN sites s ON s.id = h.site_id
+   WHERE h.status = 'error'
+     AND NOT EXISTS (
+       SELECT 1 FROM status_history m
+        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+          AND m.started_at <= h.started_at
+          AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
+     AND NOT EXISTS (
+       SELECT 1 FROM maintenance_windows w
+        WHERE w.site_id = h.site_id
+          AND w.started_at <= h.started_at
+          AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
+   ORDER BY h.started_at DESC
+   LIMIT p_limit;
+$$;
+
+COMMENT ON FUNCTION public.recent_errors(integer) IS
+  'התקלות האחרונות בכל המערכת, ללא תקלות שהתרחשו בתחזוקה. תרגום של getRecentErrors.';
+
+-- ============================================================
+-- public.site_status_history — לוג שינויי המצב של אתר
+-- ============================================================
+-- תרגום של getStatusHistory. נדרש כדי שפאנל פרטי האתר ייקרא ישירות מהדשבורד.
+--
+-- שני כללים, ושניהם נלמדו מתקלות אמיתיות:
+--
+-- 1. **'בפעולה' מסונן — אבל רק כשיש פעולה שמסבירה אותו.** הסינון הגורף
+--    הקודם הסתיר גם מקטע 'בפעולה' *יתום*, כזה שנוצר מ-resync של הסוכן בלי
+--    שום פעולה. זה היה עיוור בדיוק לתקלה החשובה ביותר: אתר 1348 היה תקוע
+--    ב'בפעולה' 11 שעות, וזה לא הופיע בפאנל כלל.
+--    הסבילות (5 שניות) זהה ל-OP_PAIR_TOLERANCE_SECONDS: הסוכן מפרסם state
+--    ו-operation באותו סבב אך לא באותה מילישנייה.
+--
+-- 2. **"תחזוקה גוברת"** — תקלה שהתחילה בתוך תחזוקה או בגבולה אינה מוצגת,
+--    כמו שאינה נספרת. שני המקורות נבדקים (מקטע PLC + חלון ידני); בדיקת אחד
+--    בלבד הייתה מעלימה תקלה ממסך אחד ומשאירה אותה באחר.
+CREATE OR REPLACE FUNCTION public.site_status_history(
+  p_site_id integer,
+  p_limit   integer DEFAULT 10
+)
+RETURNS TABLE (status text, started_at text, ended_at text)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT h.status, h.started_at, h.ended_at
+    FROM status_history h
+   WHERE h.site_id = p_site_id
+     -- כלל 1: 'בפעולה' מוסתר רק אם יש פעולה שמסבירה אותו
+     AND (h.status <> 'operating' OR NOT EXISTS (
+           SELECT 1 FROM operations o
+            WHERE o.site_id = h.site_id
+              AND o.start_end = 'start'
+              AND abs(EXTRACT(EPOCH FROM (
+                    o.occurred_at::timestamptz - h.started_at::timestamptz))) <= 5))
+     -- כלל 2: תקלה בזמן תחזוקה אינה מוצגת. גבול כולל, כמו wasInMaintenanceMem.
+     AND NOT (h.status = 'error' AND (
+           EXISTS (SELECT 1 FROM status_history m
+                    WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+                      AND m.started_at <= h.started_at
+                      AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
+        OR EXISTS (SELECT 1 FROM maintenance_windows w
+                    WHERE w.site_id = h.site_id
+                      AND w.started_at <= h.started_at
+                      AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)))
+   ORDER BY h.started_at DESC
+   LIMIT p_limit;
+$$;
+
+COMMENT ON FUNCTION public.site_status_history(integer, integer) IS
+  'לוג שינויי המצב של אתר, בלי ''בפעולה'' מוסבר ובלי תקלות שבתחזוקה. תרגום של getStatusHistory.';
+
+-- ============================================================
+-- Realtime על טבלת events — המחליף של ה-SSE
+-- ============================================================
+-- טבלת events היא **חוזה האירועים ולא התעבורה**: השרת כותב אליה שורה לכל
+-- אירוע סמנטי, וכל קורא יכול להאזין. עד עכשיו היה קורא אחד (SSE מהשרת);
+-- מכאן הדשבורד מאזין ישירות דרך Realtime.
+--
+-- זה מה שסוגר את הפער האחרון בתמונה: כל עוד קיים EventSource לשרת,
+-- "הדשבורד מדבר רק עם Supabase" אינו נכון גם אם כל הקריאות עברו.
+--
+-- ⚠️ ההוספה לפרסום אינה מספיקה לבדה — Realtime מכבד RLS, ולכן מנוי מקבל
+-- שורה רק אם המדיניות מתירה לו לקרוא אותה. `events` כבר מעניקה SELECT
+-- ל-authenticated, וזו בדיוק ההגנה: מנוי אנונימי לא יקבל דבר.
+--
+-- ⚠️ ומדוע ה-SSE **לא נמחק**: הוא זרוע ב'. VITE_SUPABASE_DIRECT=false מחזיר
+-- אליו, ולכן הוא חייב להישאר עובד.
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.events;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;   -- כבר בפרסום
+  WHEN undefined_object THEN NULL;   -- אין פרסום (Postgres נקי, לא Supabase)
+END $$;
+
+-- ============================================================
+-- ⚠️ REPLICA IDENTITY FULL — **חובה**, ונמדד שהוא חובה
+-- ============================================================
+-- ההנחה הראשונה כאן הייתה שהוא מיותר: "מאזינים ל-INSERT בלבד, וזה מוסר את
+-- השורה החדשה גם בזהות ברירת המחדל". **זה היה שגוי, ובדיקה חיה הוכיחה זאת** —
+-- tools/smoke-realtime.js כתב אירוע אמיתי והמנוי לא קיבל אותו כלל תוך 15
+-- שניות, למרות שהטבלה בפרסום ושהמדיניות היא USING (true).
+--
+-- הסיבה: Realtime **מעריך RLS עבור כל מנוי בנפרד**, וכדי לעשות זאת הוא צריך
+-- את השורה המלאה מה-WAL. בזהות ברירת המחדל (PK בלבד) אין לו מה להעריך, והוא
+-- פשוט לא מוסר — **בלי שגיאה, בלי אזהרה, בלי כלום.**
+--
+-- וזה בדיוק הכשל המסוכן ביותר במסך ניטור: לא הודעת שגיאה ולא סמל אפור, אלא
+-- כרטיסים שקופאים על מצב ישן ונראים תקינים. זה כבר קרה כאן פעם אחת (אתר
+-- 3501 הציג "בפעולה" בזמן שהלוג הראה "מוכן").
+--
+-- המחיר — שורות WAL גדולות יותר — זניח: events נושאת רטנציה של 7 ימים.
+
+ALTER TABLE public.events REPLICA IDENTITY FULL;
+
+-- ============================================================
+-- public.report_monthly — דוח חודשי לטווח תאריכים חופשי
+-- ============================================================
+-- כמה פעולות וכמה תקלות בכל חודש, בין שני תאריכים שהמשתמשת בוחרת.
+--
+-- ⚠️ **מחושב מהנתונים החיים ולא מ-monthly_summary.** נמדד שהטבלה ההיא שגויה:
+-- יולי הראה 633 פעולות מול 806 בפועל, ואוגוסט חסר בה לגמרי. היא נבנית בעבודה
+-- יומית שלא רצה, ודוח שנשען עליה היה מדווח מספרים נמוכים מהאמת — בלי שום
+-- סימן שמשהו חסר.
+--
+-- ⚠️ **"תחזוקה גוברת"** — תקלה שהתחילה בתוך תחזוקה או בגבולה אינה נספרת, בדיוק
+-- כמו בכל מדד אחר. שני המקורות נבדקים (מקטע PLC + חלון ידני); בדיקת אחד בלבד
+-- הייתה נותנת לדוח מספר תקלות שונה ממה שמופיע על המסך לאותה תקופה.
+--
+-- ⚠️ **superseded_by מוחרג** — ניסיון שנקטע והוחלף אינו פעולה נוספת. בלעדיו
+-- הדוח היה סופר מעברים פיזיים פעמיים.
+--
+-- החודשים נגזרים מהנתונים עצמם (substr על TEXT), ולכן חודש בלי פעילות פשוט
+-- אינו מופיע — ולא מוצג כשורת אפס מטעה.
+CREATE OR REPLACE FUNCTION public.report_monthly(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  year_month  text,
+  operations  integer,
+  entries     integer,
+  exits       integer,
+  errors      integer,
+  maintenance integer,
+  sites       integer
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH ops AS (
+  SELECT substr(o.occurred_at, 1, 7) AS ym,
+         COUNT(*)::int AS operations,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits,
+         COUNT(DISTINCT o.site_id)::int AS sites
+    FROM operations o
+   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
+     AND o.is_anomaly = 0
+     AND o.superseded_by IS NULL
+     AND o.start_end = 'end'
+     -- לקסיקוגרפי על TEXT — האינדקס נשאר בשימוש
+     AND o.occurred_at >= p_from
+     AND o.occurred_at <  p_to
+   GROUP BY 1
+),
+errs AS (
+  SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
+    FROM status_history h
+   WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+     AND h.status = 'error'
+     AND h.started_at >= p_from
+     AND h.started_at <  p_to
+     AND NOT EXISTS (
+       SELECT 1 FROM status_history m
+        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+          AND m.started_at <= h.started_at
+          AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
+     AND NOT EXISTS (
+       SELECT 1 FROM maintenance_windows w
+        WHERE w.site_id = h.site_id
+          AND w.started_at <= h.started_at
+          AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
+   GROUP BY 1
+),
+maint AS (
+  SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS maintenance
+    FROM status_history h
+   WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+     AND h.status = 'maintenance'
+     AND h.started_at >= p_from
+     AND h.started_at <  p_to
+   GROUP BY 1
+),
+months AS (
+  SELECT ym FROM ops
+  UNION SELECT ym FROM errs
+  UNION SELECT ym FROM maint
+)
+SELECT m.ym,
+       COALESCE(o.operations, 0),
+       COALESCE(o.entries, 0),
+       COALESCE(o.exits, 0),
+       COALESCE(e.errors, 0),
+       COALESCE(t.maintenance, 0),
+       COALESCE(o.sites, 0)
+  FROM months m
+  LEFT JOIN ops   o ON o.ym = m.ym
+  LEFT JOIN errs  e ON e.ym = m.ym
+  LEFT JOIN maint t ON t.ym = m.ym
+ ORDER BY m.ym;
+$$;
+
+COMMENT ON FUNCTION public.report_monthly(integer[], text, text) IS
+  'דוח חודשי לטווח חופשי: פעולות, כניסות, יציאות, תקלות ותחזוקה. מחושב מהנתונים החיים ולא מ-monthly_summary.';
+
+-- ============================================================
+-- public.report_by_site — דוח לכל אתר: תקלות ומחזורים
+-- ============================================================
+-- שורה לכל אתר בטווח תאריכים חופשי. הטווח נבחר ידנית וברוב המקרים הוא
+-- כחודש — לפעמים 30 יום ולפעמים 31 — ולכן הוא פרמטר ולא תקופה קבועה.
+--
+-- ============================================================
+-- ⚠️ המחזורים זמינים רק מרגע שהעמודה נוספה
+-- ============================================================
+-- מונה הבקר הגיע בכל הודעה מאז ומתמיד, אבל **לא נשמר לכל פעולה** — רק עדכן
+-- סכום מצטבר על האתר. לכן אי אפשר לשחזר כמה מחזורים נעשו בחודש שחלף: המונה
+-- אינו נגזר מהנתונים אלא מגיע מהבקר, ומה שלא נשמר אבד.
+--
+-- `cycles_from` / `cycles_to` מוחזרים במפורש כדי שהמסך יוכל לומר **על מה
+-- המספר נשען**. כשאין קריאות בטווח שניהם NULL ו-cycles הוא NULL — ולא 0.
+-- ההבחנה קריטית: "לא נמדד" ו"לא היו מחזורים" נראים זהה במספר אחד.
+--
+-- ⚠️ המחזורים נספרים גם על פעולות שאוחדו (superseded_by) ועל אנומליות: זה
+-- **בלאי מכני** ולא ספירת פעולות חניה. המכונה זזה גם כשהמעבר לא נספר.
+-- ⚠️ DROP לפני CREATE, ולא CREATE OR REPLACE בלבד. Postgres אינו מרשה
+-- ל-REPLACE לשנות את **טיפוס ההחזרה** של פונקציה קיימת ("cannot change return
+-- type of existing function"), ולכן הוספת עמודה לטבלה המוחזרת הייתה מפילה את
+-- כל האתחול. עם DROP מקדים הקובץ נשאר מצב-יעד אידמפוטנטי גם כשהחתימה משתנה.
+DROP FUNCTION IF EXISTS public.report_by_site(integer[], text, text);
+
+CREATE OR REPLACE FUNCTION public.report_by_site(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id     integer,
+  code        text,
+  site_name   text,
+  operations  integer,
+  errors      integer,
+  error_hours double precision,
+  maintenance integer,
+  cycles       integer,
+  cycles_from  integer,
+  cycles_to    integer,
+  cycle_reads  integer
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH ids AS (
+  SELECT s.id, s.code, s.site_name
+    FROM sites s
+   WHERE p_site_ids IS NULL OR s.id = ANY(p_site_ids)
+),
+ops AS (
+  SELECT o.site_id, COUNT(*)::int AS operations
+    FROM operations o
+   WHERE o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
+     AND o.occurred_at >= p_from AND o.occurred_at < p_to
+   GROUP BY o.site_id
+),
+-- המונה נמדד על **כל** הפעולות: בלאי מכני, לא ספירת חניות.
+cyc AS (
+  SELECT o.site_id,
+         MIN(o.cycle_counter)::int AS c_from,
+         MAX(o.cycle_counter)::int AS c_to,
+         COUNT(*)::int AS readings
+    FROM operations o
+   WHERE o.cycle_counter IS NOT NULL
+     AND o.occurred_at >= p_from AND o.occurred_at < p_to
+   GROUP BY o.site_id
+  -- ⚠️ **שתי קריאות לפחות.** הפרש נדרש שתי נקודות; עם קריאה אחת
+  -- max-min הוא 0, וזה נקרא "המכונה לא זזה" בזמן שהמשמעות היא "אין מספיק
+  -- מדידות". נמדד מיד עם תחילת האיסוף: אתרים עם קריאה בודדת הציגו 0.
+  HAVING COUNT(*) >= 2
+),
+errs AS (
+  SELECT h.site_id,
+         COUNT(*)::int AS errors,
+         -- שעות ההשבתה נחתכות לגבולות הטווח; מקטע פתוח נמשך עד סופו.
+         (SUM(EXTRACT(EPOCH FROM (
+            LEAST(COALESCE(h.ended_at, p_to)::timestamptz, p_to::timestamptz)
+            - GREATEST(h.started_at::timestamptz, p_from::timestamptz)
+          ))) / 3600.0)::double precision AS error_hours
+    FROM status_history h
+   WHERE h.status = 'error'
+     AND h.started_at < p_to
+     AND (h.ended_at IS NULL OR h.ended_at > p_from)
+     -- "תחזוקה גוברת" — אותו כלל בדיוק כמו בכל מדד אחר.
+     AND NOT EXISTS (
+       SELECT 1 FROM status_history m
+        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+          AND m.started_at <= h.started_at
+          AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
+     AND NOT EXISTS (
+       SELECT 1 FROM maintenance_windows w
+        WHERE w.site_id = h.site_id
+          AND w.started_at <= h.started_at
+          AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
+   GROUP BY h.site_id
+),
+mnt AS (
+  SELECT h.site_id, COUNT(*)::int AS maintenance
+    FROM status_history h
+   WHERE h.status = 'maintenance'
+     AND h.started_at >= p_from AND h.started_at < p_to
+   GROUP BY h.site_id
+)
+SELECT ids.id, ids.code, ids.site_name,
+       COALESCE(o.operations, 0),
+       COALESCE(e.errors, 0),
+       ROUND(COALESCE(e.error_hours, 0)::numeric, 2)::double precision,
+       COALESCE(m.maintenance, 0),
+       -- NULL כשאין די קריאות מונה בטווח — ולא 0. ראה ההסבר למעלה.
+       (c.c_to - c.c_from)::int,
+       c.c_from, c.c_to, COALESCE(c.readings, 0)
+  FROM ids
+  LEFT JOIN ops  o ON o.site_id = ids.id
+  LEFT JOIN cyc  c ON c.site_id = ids.id
+  LEFT JOIN errs e ON e.site_id = ids.id
+  LEFT JOIN mnt  m ON m.site_id = ids.id
+ ORDER BY ids.code;
+$$;
+
+COMMENT ON FUNCTION public.report_by_site(integer[], text, text) IS
+  'דוח לכל אתר בטווח חופשי: פעולות, תקלות, שעות השבתה, תחזוקה ומחזורי מכונה.';
+
+-- ============================================================
+-- public.report_site_months — אתר × חודש
+-- ============================================================
+-- report_by_site מסכם את **כל** הטווח לשורה אחת לאתר. כשהטווח חוצה חודשים
+-- (וזה המקרה הרגיל — "מ-5.7 עד היום") נשאלת מיד השאלה הבאה: **כמה פעולות
+-- היו לאתר הזה בכל חודש**. הנתון קיים, הוא פשוט לא היה מפולח.
+--
+-- ⚠️ אותם כללים בדיוק כמו report_by_site ו-report_monthly: superseded_by
+-- מוחרג, אנומליות מוחרגות, ו"תחזוקה גוברת" על תקלה. שלוש הפונקציות חייבות
+-- להסכים — אחרת סכום השורות בטבלה אחת לא יתאים לשורה בטבלה שלידה.
+CREATE OR REPLACE FUNCTION public.report_site_months(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id    integer,
+  code       text,
+  year_month text,
+  operations integer,
+  entries    integer,
+  exits      integer,
+  errors     integer,
+  cycles     integer
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH ops AS (
+  SELECT o.site_id, substr(o.occurred_at, 1, 7) AS ym,
+         COUNT(*)::int AS operations,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits
+    FROM operations o
+   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
+     AND o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
+     AND o.occurred_at >= p_from AND o.occurred_at < p_to
+   GROUP BY 1, 2
+),
+-- המונה נמדד על כל הפעולות (בלאי מכני), ודורש שתי קריאות לפחות באותו חודש.
+cyc AS (
+  SELECT o.site_id, substr(o.occurred_at, 1, 7) AS ym,
+         (MAX(o.cycle_counter) - MIN(o.cycle_counter))::int AS cycles
+    FROM operations o
+   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
+     AND o.cycle_counter IS NOT NULL
+     AND o.occurred_at >= p_from AND o.occurred_at < p_to
+   GROUP BY 1, 2
+  HAVING COUNT(*) >= 2
+),
+errs AS (
+  SELECT h.site_id, substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
+    FROM status_history h
+   WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+     AND h.status = 'error'
+     AND h.started_at >= p_from AND h.started_at < p_to
+     AND NOT EXISTS (
+       SELECT 1 FROM status_history m
+        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+          AND m.started_at <= h.started_at
+          AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
+     AND NOT EXISTS (
+       SELECT 1 FROM maintenance_windows w
+        WHERE w.site_id = h.site_id
+          AND w.started_at <= h.started_at
+          AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
+   GROUP BY 1, 2
+),
+keys AS (
+  SELECT site_id, ym FROM ops
+  UNION SELECT site_id, ym FROM errs
+)
+SELECT k.site_id, s.code, k.ym,
+       COALESCE(o.operations, 0),
+       COALESCE(o.entries, 0),
+       COALESCE(o.exits, 0),
+       COALESCE(e.errors, 0),
+       c.cycles
+  FROM keys k
+  JOIN sites s ON s.id = k.site_id
+  LEFT JOIN ops  o ON o.site_id = k.site_id AND o.ym = k.ym
+  LEFT JOIN errs e ON e.site_id = k.site_id AND e.ym = k.ym
+  LEFT JOIN cyc  c ON c.site_id = k.site_id AND c.ym = k.ym
+ ORDER BY s.code, k.ym;
+$$;
+
+COMMENT ON FUNCTION public.report_site_months(integer[], text, text) IS
+  'אתר × חודש: פעולות, כניסות, יציאות, תקלות ומחזורים. פילוח של report_by_site.';

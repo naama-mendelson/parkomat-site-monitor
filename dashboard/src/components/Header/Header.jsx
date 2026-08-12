@@ -1,5 +1,6 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
 import { useState } from "react";
+import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
@@ -13,6 +14,10 @@ function Header({
   role,
   onRoleChange,
   activeFilters,
+  typeFilter,
+  onTypeFilterChange,
+  tierFilter,
+  onTierFilterChange,
   onFilterChange,
   searchQuery,
   onSearchChange,
@@ -94,6 +99,15 @@ function Header({
           sites={sites}
           activeFilters={activeFilters}
           onFilterChange={onFilterChange}
+          trailing={
+            <SiteFilterTile
+              sites={sites}
+              typeFilter={typeFilter}
+              tierFilter={tierFilter}
+              onTypeChange={onTypeFilterChange}
+              onTierChange={onTierFilterChange}
+            />
+          }
         />
       )}
     </header>

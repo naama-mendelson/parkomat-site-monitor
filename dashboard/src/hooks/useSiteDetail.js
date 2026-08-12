@@ -1,6 +1,6 @@
 // hooks/useSiteDetail.js — שליפת פרטי אתר בודד (לפאנל הפירוט)
 import { useState, useEffect, useCallback } from "react";
-import { fetchSiteDetail, fetchMaintenance } from "../services/api";
+import { fetchDetail, fetchMaintenanceState } from "../services/dataSource";
 
 export function useSiteDetail(code) {
   const [detail, setDetail] = useState(null);
@@ -30,8 +30,8 @@ export function useSiteDetail(code) {
       // הערה: /stats הוסר — הוא היה שליפה מתה (4 שאילתות) שהפאנל התעלם ממנה;
       // מדדי ה-KPI (פעולות/תקלות/אחוז כשל) מגיעים מ-analytics.stats.
       const [d, m] = await Promise.allSettled([
-        fetchSiteDetail(code),
-        fetchMaintenance(code),
+        fetchDetail(code),
+        fetchMaintenanceState(code),
       ]);
 
       if (cancelled) return;

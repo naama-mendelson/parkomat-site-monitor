@@ -6,13 +6,13 @@ async function findSiteByCode(code) {
 
 async function insertSite(code, siteName, meta = {}, isNewSite = 1) {
   const now = new Date().toISOString();
-  const { plcType = null, plcIp = null, siteIp = null, tier = "basic" } = meta;
+  const { plcType = null, tier = "basic" } = meta;
   return await db
     .prepare(
-      `INSERT INTO sites (code, site_name, registered_at, plc_type, plc_ip, site_ip, is_new_site, tier)
+      `INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(code, siteName, now, plcType, plcIp, siteIp, isNewSite ? 1 : 0, tier);
+    .run(code, siteName, now, plcType, isNewSite ? 1 : 0, tier);
 }
 
 // שלושה זמנים, ולכל אחד תפקיד אחר — אל תמזגו אותם:
@@ -69,17 +69,119 @@ async function inheritCardFromStart(siteId, entryExit, occurredAt) {
   return closed ? "" : start.card_number;
 }
 
+// ============================================================
+// ניסיון חוזר מאחד את הניסיון שנקטע
+// ============================================================
+// רכב מתחיל כניסה, קורית תקלה תוך כדי, המצב חוזר ל'מוכן', ואותו כרטיס מנסה
+// שוב. זה **מעבר פיזי אחד**, ועד עכשיו הוא נספר כשתי פעולות חניה.
+//
+// הפתיחה החדשה מצביעה אחורה על הסגירה שנקטעה: superseded_by = id של הפתיחה.
+// כל מדד מוסיף `superseded_by IS NULL`, והשורה עצמה נשארת — היא זו שבגללה
+// קרתה התקלה, ובלעדיה מאבדים את מי שהיה בפנים.
+//
+// ⚠️ שלוש הגנות, זהות לאלה שב-tools/merge-retries.js. איחוד שגוי גרוע
+// מאי-איחוד, כי הוא מעלים פעולה אמיתית מהספירה **בשקט**:
+//   1. הפעולה נקטעה בתקלה — end.occurred_at == error.started_at בדיוק.
+//      מעבר MODE אחד מייצר את שתי ההודעות באותו סבב ועם אותו חותם.
+//   2. אותו אתר, אותו כרטיס, אותו כיוון. נהג אחר אינו ניסיון חוזר.
+//   3. חלון של 30 דקות. נמדד: 5 תוך 10 דקות, 9 תוך 30, 10 תוך שעה — ואז
+//      שטוח עד 4 שעות. חלון פתוח היה מחבר כניסה של הבוקר לזו של הצהריים.
+const RETRY_MERGE_WINDOW_MS = 30 * 60 * 1000;
+
+// ============================================================
+// ריצוד MODE — פעולה שנקטעה ומיד נפתחה מחדש
+// ============================================================
+// הסוכן מזהה פעולה לפי **שינוי** ב-MODE. כשהרגיסטר יוצא ממצב הפעולה וחוזר
+// אליו תוך שניות, הוא סוגר פעולה ופותח חדשה — **מעבר פיזי אחד נרשם כשתיים.**
+//
+// ⚠️ וההטיה אינה סימטרית, וזה מה שהופך אותה לבאג ולא לרעש. נמדד על כל
+// הנתונים: בחלון של 5 שניות — 15 יציאות מול 5 כניסות. הריצוד מנפח את
+// היציאות פי שלושה, ומכאן התפוסה השלילית וכרטיס עם 10 יציאות מול 7 כניסות.
+//
+// ⚠️ **15 שניות ולא יותר, וזה נמדד.** בטווח 15–60 שניות ההטיה **מתהפכת**
+// (17 כניסות מול 10 יציאות) — כלומר שם כבר מדובר בפעולות אמיתיות שחוזרות,
+// וחלון רחב יותר היה מוחק אותן.
+const FLICKER_MERGE_WINDOW_MS = 15 * 1000;
+
+/**
+ * @returns id של הפעולה שאוחדה, או null אם לא נמצאה התאמה.
+ */
+async function supersedeInterruptedAttempt(siteId, entryExit, cardNumber, occurredAt, retryId) {
+  const since = new Date(Date.parse(occurredAt) - RETRY_MERGE_WINDOW_MS).toISOString();
+
+  const cut = await db.prepare(
+    `SELECT o.id FROM operations o
+      JOIN status_history h
+        ON h.site_id = o.site_id AND h.started_at = o.occurred_at AND h.status = 'error'
+     WHERE o.site_id = ? AND o.entry_exit = ? AND o.card_number = ?
+       AND o.start_end = 'end' AND o.is_anomaly = 0
+       AND o.superseded_by IS NULL
+       AND o.occurred_at < ? AND o.occurred_at >= ?
+     ORDER BY o.occurred_at DESC, o.id DESC
+     LIMIT 1`
+  ).get(siteId, entryExit, cardNumber, occurredAt, since);
+
+  if (!cut) return null;
+
+  await db.prepare(
+    // התנאי חוזר גם ב-UPDATE — הגנה מפני מרוץ מול הכלי שרץ במקביל.
+    "UPDATE operations SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL"
+  ).run(retryId, cut.id);
+
+  return cut.id;
+}
+
+/**
+ * פעולה שנקטעה בריצוד MODE ומיד נפתחה מחדש — מאחדים אותן.
+ *
+ * ⚠️ **בלי תנאי על הכרטיס**, ובכוונה: הריצוד קורה באמצע מעבר אחד, ובחלק
+ * מהמקרים הרגיסטר טרם נקרא ולכן אחד הצדדים ריק (נמדד: אתר 3501, כניסה בלי
+ * כרטיס). תנאי על שוויון כרטיסים היה מפספס בדיוק את המקרים האלה.
+ *
+ * החלון הקצר (15 שניות) הוא מה שמחליף את הבדיקה הזו: אין תרחיש שבו שני
+ * רכבים שונים עוברים באותו כיוון בהפרש של שניות.
+ *
+ * @returns id של הפעולה שאוחדה, או null.
+ */
+async function supersedeFlicker(siteId, entryExit, occurredAt, resumeId) {
+  const since = new Date(Date.parse(occurredAt) - FLICKER_MERGE_WINDOW_MS).toISOString();
+
+  const cut = await db.prepare(
+    `SELECT id FROM operations
+      WHERE site_id = ? AND entry_exit = ? AND start_end = 'end'
+        AND is_anomaly = 0 AND superseded_by IS NULL
+        AND occurred_at < ? AND occurred_at >= ?
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT 1`
+  ).get(siteId, entryExit, occurredAt, since);
+
+  if (!cut) return null;
+
+  await db.prepare(
+    "UPDATE operations SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL"
+  ).run(resumeId, cut.id);
+
+  return cut.id;
+}
+
 async function insertOperation(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
-                               occurredAt, receivedAt, reportedAt = null) {
+                               occurredAt, receivedAt, reportedAt = null,
+                               cycleCounter = null) {
   try {
     const result = await db
       .prepare(
-        `INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly, occurred_at, received_at, reported_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        // RETURNING id: הקליטה צריכה את המזהה כדי שפתיחה חדשה תוכל להצביע
+        // אחורה על הניסיון שנקטע (supersedeInterruptedAttempt).
+        // cycle_counter — המונה הגולמי מהבקר. נשמר לכל פעולה כדי שאפשר יהיה
+        // לחשב כמה מחזורים המכונה עשתה **בתקופה** ולא רק בסך הכל.
+        `INSERT INTO operations (site_id, start_end, entry_exit, card_number, state, is_anomaly, occurred_at, received_at, reported_at, cycle_counter)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`
       )
-      .run(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
-           occurredAt, receivedAt, reportedAt ?? occurredAt);
-    return { inserted: true, result };
+      .get(siteId, startEnd, entryExit, cardNumber, state, isAnomaly,
+           occurredAt, receivedAt, reportedAt ?? occurredAt,
+           Number.isInteger(cycleCounter) ? cycleCounter : null);
+    return { inserted: true, id: result?.id ?? null, result };
   } catch (err) {
     // 23505 = unique_violation ב-Postgres (היה SQLITE_CONSTRAINT_UNIQUE)
     if (err.code === "23505") {
@@ -198,10 +300,18 @@ async function closeOpenStatus(siteId, endedAt) {
     .run(endedAt, siteId);
 }
 
-async function insertStatusHistory(siteId, status, startedAt) {
+// faultText — תיאור התקלה מהבקר. null כשאין: מצב שאינו תקלה, סוכן ישן,
+// או בקר בלי התכונה.
+//
+// ⚠️ null ו-'' אינם אותו דבר, ואסור למזג אותם: null = **לא נקרא**,
+// '' = נקרא והיה ריק. הראשון אומר "אין לנו מידע", השני אומר "הבקר לא
+// אמר כלום" — ובמסך הם צריכים להיראות אחרת.
+async function insertStatusHistory(siteId, status, startedAt, faultText = null) {
   return await db
-    .prepare("INSERT INTO status_history (site_id, status, started_at) VALUES (?, ?, ?)")
-    .run(siteId, status, startedAt);
+    .prepare(
+      "INSERT INTO status_history (site_id, status, started_at, fault_text) VALUES (?, ?, ?, ?)"
+    )
+    .run(siteId, status, startedAt, faultText);
 }
 
 // טרנזקציה: שינוי מצב (סגירת קודם + פתיחת חדש + עדכון) כיחידה אחת.
@@ -211,7 +321,7 @@ async function insertStatusHistory(siteId, status, startedAt) {
 // שלוש הפונקציות הפנימיות ממשיכות לקרוא ל-db הגלובלי כרגיל; db.transaction
 // מנתב אותן לאותו client דרך AsyncLocalStorage (ראה db.js). לכן החתימות
 // שלהן לא השתנו.
-async function applyStateChange(siteId, newStatus, occurredAt) {
+async function applyStateChange(siteId, newStatus, occurredAt, faultText = null) {
   return db.transaction(async () => {
     // ============================================================
     // נעילת שורת האתר — זה מה שהיה חסר, וזה שיבש נתונים אמיתיים
@@ -252,7 +362,7 @@ async function applyStateChange(siteId, newStatus, occurredAt) {
     }
 
     await closeOpenStatus(siteId, occurredAt);
-    await insertStatusHistory(siteId, newStatus, occurredAt);
+    await insertStatusHistory(siteId, newStatus, occurredAt, faultText);
 
     // ניתוק אינו "צפייה" — ראה updateStatusOnly.
     if (newStatus === "no_comm") {
@@ -488,7 +598,7 @@ async function getLastOperation(siteId) {
 
 // חשב מדדים לאתר: errors (ללא אלה שבתחזוקה), operations, אחוז כשל
 async function getSiteStats(siteId, { from = null, to = null } = {}) {
-  let opsSql = "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND start_end = 'end'";
+  let opsSql = "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'";
   const opsParams = [siteId];
   if (from) { opsSql += " AND occurred_at >= ?"; opsParams.push(from); }
   if (to)   { opsSql += " AND occurred_at < ?"; opsParams.push(to); }
@@ -566,7 +676,7 @@ async function generateMonthlySummary(siteId, yearMonth) {
   // --- פעולות ואנומליות ---
   const ops = await db.prepare(
     `SELECT
-       SUM(CASE WHEN is_anomaly = 0 THEN 1 ELSE 0 END) AS operations,
+       SUM(CASE WHEN is_anomaly = 0 AND superseded_by IS NULL THEN 1 ELSE 0 END) AS operations,
        SUM(CASE WHEN is_anomaly = 1 THEN 1 ELSE 0 END) AS anomalies
      FROM operations
      WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ? AND start_end = 'end'`
@@ -720,6 +830,31 @@ async function getSystemSummary({ yearMonth = null, year = null, from = null, to
   };
 }
 
+
+// ============================================================
+// דוח חודשי לטווח חופשי — פעולות ותקלות לכל חודש
+// ============================================================
+// ⚠️ נשען על public.report_monthly ולא על monthly_summary. נמדד שהטבלה ההיא
+// שגויה (יולי 633 מול 806 בפועל, אוגוסט חסר), כי העבודה היומית שבונה אותה
+// אינה רצה. דוח שנשען עליה היה מדווח פחות ממה שקרה, בלי שום סימן.
+async function getSiteReport({ siteIds = null, from, to }) {
+  return await db.prepare(
+    'SELECT * FROM public.report_by_site(?, ?, ?)'
+  ).all(siteIds, from, to);
+}
+
+async function getSiteMonthsReport({ siteIds = null, from, to }) {
+  return await db.prepare(
+    'SELECT * FROM public.report_site_months(?, ?, ?)'
+  ).all(siteIds, from, to);
+}
+
+async function getMonthlyReport({ siteIds = null, from, to }) {
+  return await db.prepare(
+    'SELECT * FROM public.report_monthly(?, ?, ?)'
+  ).all(siteIds, from, to);
+}
+
 async function getSystemMonthlyBreakdown({ year = null, from = null, to = null } = {}) {
   let whereClause = "";
   const params = [];
@@ -781,27 +916,10 @@ async function getSystemMonthlyBreakdown({ year = null, from = null, to = null }
 // measuredHours = 0, וזה השער שדרכו הממשק מציג "—" ולא "0%".
 // ==========================================================
 
-const AVAILABLE_STATUSES = ["ready", "operating"];   // זמין לשירות
-const DOWN_STATUSES = ["error", "no_comm"];          // השבתה
-// maintenance — מחוץ למשוואה, בכוונה.
-
-/**
- * מחשב את הזמינות ממפת מילישניות לפי מצב. מקור האמת היחיד.
- * מחזיר { availabilityPercent, measuredMs } — measuredMs הוא המכנה,
- * ו-0 בו פירושו "אין נתון" (ולא "זמינות אפס").
- */
-function availabilityFrom(ms) {
-  const availableMs = AVAILABLE_STATUSES.reduce((sum, s) => sum + (ms[s] || 0), 0);
-  const downMs = DOWN_STATUSES.reduce((sum, s) => sum + (ms[s] || 0), 0);
-  const measuredMs = availableMs + downMs;
-
-  return {
-    measuredMs,
-    availabilityPercent: measuredMs > 0
-      ? Math.round((availableMs / measuredMs) * 10000) / 100
-      : 0,
-  };
-}
+const { AVAILABLE_STATUSES } = require("../../shared/executive.mjs");
+// siteTrend — הפסק "משתפר/מחמיר" לכרטיס האתר. הכלל במודול המשותף כדי
+// ששתי זרועות המתג יגיעו לאותה תשובה; ראה ההסבר שם.
+const { siteTrend } = require("../../shared/executive.mjs");
 
 /**
  * פילוח זמינות מפורט: כמה שעות האתר היה בכל מצב בטווח [from, to).
@@ -882,95 +1000,12 @@ function getCycleDelta(siteId, { from, to }) {
  * granularity: 'day' (נקודה ליום) או 'month' (נקודה לחודש).
  * מחזיר מערך רציף — גם דלי ריק מקבל נקודה עם 0, כדי שהגרף לא "יקפוץ".
  */
-// ==========================================================
-// חישוב טהור של סדרת הגרף — לוגיקת הדליים במקום אחד
-// ==========================================================
-// מקבל שלוש רשימות של חותמות-זמן (ISO): פעולות, כניסות ל-error, כניסות
-// ל-maintenance — כבר מסוננות לטווח. מופרד מ-getPeriodBreakdown כדי ש*גם*
-// המסלול ששולף מה-DB *וגם* המסלול שמחשב מנתונים שכבר נטענו (getSiteAnalyticsData)
-// יפיקו בדיוק אותה סדרה. שינוי כאן משנה את שניהם — אין שתי הגדרות.
-function buildPeriodSeries(opsIso, errIso, maintIso, { from, to, granularity }, maintSegments = []) {
-  const byMonth = granularity === "month";
-
-  // מפתח הדלי נגזר בשעון ה*מקומי*, לא מקידומת ה-ISO (שהיא UTC). גבולות התקופה
-  // קלנדריים-מקומיים, וקיבוץ לפי UTC היה משייך פעולות סמוכות-לחצות לדלי הלא נכון.
-  const keyOfDate = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    if (byMonth) return `${y}-${m}`;
-    return `${y}-${m}-${String(d.getDate()).padStart(2, "0")}`;
-  };
-
-  const tally = (isoList) => {
-    const map = new Map();
-    for (const iso of isoList) {
-      const k = keyOfDate(new Date(iso));
-      map.set(k, (map.get(k) || 0) + 1);
-    }
-    return map;
-  };
-
-  const ops = tally(opsIso);
-  const errs = tally(errIso);
-  const maints = tally(maintIso);
-
-  // מקטעי תחזוקה (start/end במילישניות) — כדי לסמן ימים שהאתר היה *בתוך*
-  // תחזוקה, גם כשלא הייתה כניסה חדשה באותו יום (תחזוקה שנמשכה מיום קודם).
-  // כך יום שכולו תחזוקה לא נראה "ריק" אלא מסומן כתחזוקה.
-  const maintSegs = maintSegments.map((s) => ({
-    start: Date.parse(s.started_at),
-    end: s.ended_at ? Date.parse(s.ended_at) : Infinity,
-  }));
-
-  // סדרה רציפה: דלי לכל יום/חודש מ-from ועד to *כולל*.
-  // הלולאה נעצרת לפי מפתח הדלי של to, ולא לפי הזמן — תנאי כמו `cursor < to`
-  // היה מפיל את הדלי של היום הנוכחי (שעדיין לא הסתיים), ואיתו כל הפעולות
-  // והתקלות שקרו היום. דלי ריק מקבל 0, כדי שהגרף לא "יקפוץ".
-  const points = [];
-  const lastKey = keyOfDate(new Date(to));
-  const cursor = new Date(from);
-
-  // עיגון לתחילת היום/החודש, כדי שהמפתחות ייפלו על גבולות קלנדריים
-  if (byMonth) cursor.setDate(1);
-  cursor.setHours(0, 0, 0, 0);
-
-  const MAX_POINTS = byMonth ? 24 : 400;   // בלם בטיחות מפני לולאה אינסופית
-
-  while (points.length < MAX_POINTS) {
-    const key = keyOfDate(cursor);
-    const bucketStart = cursor.getTime();
-    const nextCursor = new Date(cursor);
-    if (byMonth) nextCursor.setMonth(nextCursor.getMonth() + 1);
-    else nextCursor.setDate(nextCursor.getDate() + 1);
-    const bucketEnd = nextCursor.getTime();
-
-    // כמה מהדלי האתר היה בתחזוקה — חיתוך כל מקטע לגבולות הדלי. משמש לעמודת
-    // התחזוקה בגרף: יום שכולו תחזוקה = עמודה מלאה, גם בלי כניסה חדשה באותו יום.
-    let maintMs = 0;
-    for (const s of maintSegs) {
-      const os = Math.max(s.start, bucketStart);
-      const oe = Math.min(s.end, bucketEnd);
-      if (oe > os) maintMs += oe - os;
-    }
-
-    points.push({
-      label: byMonth
-        ? cursor.toLocaleDateString("he-IL", { month: "short" })
-        : `${cursor.getDate()}.${cursor.getMonth() + 1}`,
-      operations: ops.get(key) || 0,
-      errors: errs.get(key) || 0,
-      maintenance: maints.get(key) || 0,
-      maintenanceActive: maintMs > 0,
-      maintenanceHours: Math.round((maintMs / 3600000) * 10) / 10,
-      // חלק הדלי שהיה בתחזוקה (0..1) — גובה עמודת התחזוקה בגרף.
-      maintenanceFraction: Math.round((maintMs / (bucketEnd - bucketStart)) * 100) / 100,
-    });
-
-    if (key === lastKey) break;
-    cursor.setTime(bucketEnd);
-  }
-
-  return points;
+// getSiteAnalyticsData — הקריאה ל-DB כאן, החישוב ב-shared/executive.mjs.
+// ההפרדה היא מה שמאפשר לדשבורד להריץ את **אותו חישוב בדיוק** על שורות
+// שהוא שלף מ-Supabase בעצמו.
+async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
+  const data = await loadRangeData([siteId], { from: prev.from, to: range.to });
+  return computeAnalytics(data, siteId, { range, prev, granularity });
 }
 
 async function getPeriodBreakdown(siteId, { from, to, granularity }) {
@@ -981,7 +1016,7 @@ async function getPeriodBreakdown(siteId, { from, to, granularity }) {
     db.prepare(
       `SELECT occurred_at FROM operations
        WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
-         AND is_anomaly = 0 AND start_end = 'end'`
+         AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'`
     ).all(siteId, from, to),
 
     db.prepare(
@@ -1016,43 +1051,6 @@ async function getPeriodBreakdown(siteId, { from, to, granularity }) {
  * טווח-העל מכיל את שתי התקופות, ולכן כל תת-טווח מחושב ממנו בלי שליפה נוספת
  * (ראה ההוכחה בתנאי הגבול של loadRangeData). הגרף מכסה את התקופה הנוכחית בלבד.
  */
-async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
-  const data = await loadRangeData([siteId], { from: prev.from, to: range.to });
-
-  // סדרת הגרף — התקופה הנוכחית בלבד, מאותם נתונים שכבר נטענו.
-  // אותם מסננים בדיוק כמו השאילתות של getPeriodBreakdown.
-  const inRange = (t) => t >= range.from && t < range.to;
-  const segs = data.segments.get(siteId) || [];
-  const opsIso = (data.ops.get(siteId) || [])
-    .filter((o) => o.is_anomaly === 0 && o.start_end === "end" && inRange(o.occurred_at))
-    .map((o) => o.occurred_at);
-  // תקלות בזמן תחזוקה מוחרגות גם מגרף המגמה — "תחזוקה גוברת". כך הגרף עקבי
-  // עם stats.errors (שגם הוא מחריג דרך wasInMaintenanceMem) ולא מציג תקלה
-  // שאיננה נספרת. מהיום ה-ingestion ממילא לא רושם תקלות כאלה; זו הגנה על היסטוריה.
-  // אותו קיפול ריצוד כמו ב-statsFromData — אחרת הגרף היה מציג 107 תקלות
-  // בזמן שהמדד לצידו מציג אחת, ושני המספרים היו סותרים זה את זה.
-  const counted = collapseNoCommFlicker(segs);
-  const errIso = counted
-    .filter((s) => s.status === "error" && inRange(s.started_at)
-      && !wasInMaintenanceMem(data, siteId, s.started_at))
-    .map((s) => s.started_at);
-  const maintIso = counted
-    .filter((s) => s.status === "maintenance" && inRange(s.started_at))
-    .map((s) => s.started_at);
-  // *מקטעי* התחזוקה (לא רק כניסות) — כדי לסמן בגרף ימים שהאתר היה בתחזוקה
-  // מתמשכת, גם בלי כניסה חדשה באותו יום.
-  const maintSegments = segs.filter((s) => s.status === "maintenance");
-
-  return {
-    stats: statsFromData(data, siteId, range),
-    uptime: uptimeFromData(data, siteId, range),
-    prevStats: statsFromData(data, siteId, prev),
-    prevUptime: uptimeFromData(data, siteId, prev),
-    chart: buildPeriodSeries(opsIso, errIso, maintIso, {
-      from: range.from, to: range.to, granularity,
-    }, maintSegments),
-  };
-}
 
 /**
  * מתאם כרטיס↔תקלה: אחרי הפעולה של איזה מספר כרטיס האתר נכנס הכי הרבה פעמים
@@ -1113,7 +1111,17 @@ async function getCardFaultCorrelation(siteId, { from, to, windowSeconds = 600, 
   };
 }
 
-const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+// ============================================================
+// התובנות וקיפול הריצוד עברו ל-shared/insights.mjs
+// ============================================================
+// לוגיקת תצוגה שהדשבורד מריץ עכשיו בעצמו כשהוא קורא ישירות מ-Supabase.
+// **אותו קובץ בדיוק** משרת את שני הצדדים — ההסבר המלא שם.
+//
+// ⚠️ אל תעתיקו אותן לכאן בחזרה. שני עותקים של כלל תצוגה נפרדים בשינוי
+// הראשון, ואז אותה תקופה נקראת אחרת בשני מצבי המתג.
+const { WEEKDAY_LABELS, computeInsights,
+        collapseNoCommFlicker, collapseSegmentsBySite } = require("../../shared/insights.mjs");
+
 
 /**
  * סטטיסטיקה מעמיקה לאתר בטווח [from, to) — למסך "עוד מידע".
@@ -1127,7 +1135,7 @@ async function getSiteInsights(siteId, { from, to }) {
   // ידניים) בלתי-תלויות זו בזו — נשלפות במקביל, סיבוב רשת אחד במקום ארבעה.
   const [ops, segments, windows] = await Promise.all([
     db.prepare(
-      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
+      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at
        FROM operations
        WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at ASC, id ASC`
@@ -1158,12 +1166,17 @@ async function getSiteInsights(siteId, { from, to }) {
 
 // אותה סטטיסטיקה מעמיקה, אך מצרפת על *כל* האתרים (מנהל כללי → "כל האתרים").
 // מספר השאילתות קבוע ואינו גדל עם מספר האתרים — עקבי עם מדיניות ה-N+1.
-// שיוך הכרטיסים והמשכים נעשה לפי site_id, כך שאותו מספר כרטיס בשני אתרים
-// נספר נכון ולא מתערבב.
+//
+// ⚠️ **ההערה שהייתה כאן טענה שהכרטיסים משויכים לפי site_id — וזה לא היה
+// נכון.** computeInsights קיבצה לפי מספר הכרטיס בלבד, ולכן "כרטיס 4"
+// במצרפת היה 11 כרטיסים פיזיים מ-11 אתרים בשורה אחת. הערה שמבטיחה תכונה
+// שאינה קיימת גרועה מהיעדר הערה: היא מונעת מהקורא לבדוק.
+// תוקן; המפתח הוא כעת (site_id, card_number). שמות האתרים נשלפים כאן כדי
+// שהטבלה תוכל לומר לאיזה אתר כל שורה שייכת.
 async function getGlobalInsights({ from, to }) {
   const [ops, segments, windows] = await Promise.all([
     db.prepare(
-      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, occurred_at
+      `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at
        FROM operations
        WHERE occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at ASC, id ASC`
@@ -1190,247 +1203,15 @@ async function getGlobalInsights({ from, to }) {
   const errorRows = counted.filter((s) => s.status === "error");
   const maintRows = counted.filter((s) => s.status === "maintenance");
 
-  return computeInsights({ ops, errorRows, maintRows, windows, from, to });
+  // ⚠️ שאילתה אחת נוספת, קטנה וקבועה (13 שורות) — לא N+1. בלעדיה טבלת
+  // הכרטיסים במצרפת מציגה "כרטיס 4" חמש פעמים בלי שום דרך להבדיל ביניהם,
+  // וזה גרוע יותר מהמיזוג השגוי שהיא באה להחליף: שם לפחות הייתה שורה אחת.
+  const nameRows = await db.prepare("SELECT id, site_name FROM sites").all();
+  const siteNames = new Map(nameRows.map((r) => [r.id, r.site_name]));
+
+  return computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames });
 }
 
-// חישוב טהור — מקבל שורות שכבר נשלפו, ולכן משרת גם אתר בודד וגם מצרף כלל-אתרי.
-function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
-  // ===== מונים בסיסיים =====
-  let entries = 0, exits = 0, anomalies = 0, withCard = 0, withoutCard = 0;
-
-  const byHour = Array.from({ length: 24 }, () => 0);
-  const byWeekday = Array.from({ length: 7 }, () => 0);
-  const byDay = new Map();     // "2026-07-12" → מספר פעולות
-  // מספר כרטיס → { total, entries, exits, faultsOnEntry, faultsOnExit, lastAt }
-  const cards = new Map();
-
-  // חותמי הפתיחה של מקטעי התקלה, לזיהוי פעולה שנקטעה (ראה הלולאה למטה).
-  //
-  // ⚠️ errorRows כאן הן כבר **המסוננות** — תקלות שקרו בתחזוקה הוסרו לפני
-  // הקריאה (ראה counted ב-getInsights). כלומר תקלה שהתרחשה בזמן תחזוקה לא
-  // תיזקף לכרטיס, וזה נכון: היא ממילא אינה נספרת כתקלה בשום מדד אחר.
-  const errorStartSet = new Set(errorRows.map((e) => e.started_at));
-
-  // שיוך start↔end לחישוב משך פעולה. מפתח: אתר+כיוון+כרטיס (site_id חיוני
-  // למצב המצרף — בלעדיו כרטיס זהה בשני אתרים היה משתייך בטעות).
-  const openStarts = new Map();
-  const durations = [];
-
-  for (const op of ops) {
-    const when = new Date(op.occurred_at);
-    const key = `${op.site_id}|${op.entry_exit}|${op.card_number}`;
-
-    if (op.start_end === "start") {
-      openStarts.set(key, when.getTime());
-      continue;   // רק end נחשב "פעולה שהושלמה"
-    }
-
-    // --- מכאן: הודעת end ---
-    const start = openStarts.get(key);
-    if (start !== undefined) {
-      const seconds = (when.getTime() - start) / 1000;
-      // מסננים משכים לא-סבירים (שיוך שגוי / הודעה שאבדה): מעל 4 שעות
-      if (seconds > 0 && seconds < 4 * 3600) durations.push(seconds);
-      openStarts.delete(key);
-    }
-
-    if (op.is_anomaly) {
-      anomalies++;
-      continue;   // אנומליה אינה פעולת חניה תקינה — לא נספרת במדדים
-    }
-
-    if (op.entry_exit === "entry") entries++;
-    else if (op.entry_exit === "exit") exits++;
-
-    byHour[when.getHours()]++;
-    byWeekday[when.getDay()]++;
-
-    const dayKey = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
-    byDay.set(dayKey, (byDay.get(dayKey) || 0) + 1);
-
-    if (op.card_number) {
-      withCard++;
-      const c = cards.get(op.card_number)
-        || { card: op.card_number, total: 0, entries: 0, exits: 0,
-             faultsOnEntry: 0, faultsOnExit: 0, lastAt: null };
-      c.total++;
-      if (op.entry_exit === "entry") c.entries++; else c.exits++;
-
-      // ==========================================================
-      // תקלה שקרתה *בזמן* שהכרטיס הזה עבר
-      // ==========================================================
-      // הסוכן סוגר את הפעולה ופותח את מקטע התקלה באותו סבב דגימה ועם אותו
-      // חותם, ולכן `end.occurred_at === error.started_at` מזהה זאת חד-משמעית
-      // (אותו כלל בדיוק כמו ב-buildActivityLog).
-      //
-      // ⚠️ נספר רק על end. פתיחה לעולם אינה נקטעת, וספירה עליה הייתה מכפילה
-      // כל תקלה.
-      //
-      // למה זה שווה: במדגם של 35 קטיעות נמצאו שלושה כרטיסים שכל אחד היה נוכח
-      // ב-3 תקלות, שניים מהם באותו אתר. זה כבר לא רעש — זה מצביע על כרטיס
-      // שהקורא מתקשה בו או על רכב שמפעיל את החיישן בעייתי. שניהם פתירים,
-      // ואי אפשר לראות אותם בלי הקישור הזה.
-      if (op.start_end === "end" && errorStartSet.has(op.occurred_at)) {
-        if (op.entry_exit === "entry") c.faultsOnEntry++; else c.faultsOnExit++;
-      }
-
-      if (!c.lastAt || op.occurred_at > c.lastAt) c.lastAt = op.occurred_at;
-      cards.set(op.card_number, c);
-    } else {
-      withoutCard++;
-    }
-  }
-
-  const operations = entries + exits;
-
-  // ===== שיאים =====
-  let busiestDay = null;
-  for (const [date, count] of byDay) {
-    if (!busiestDay || count > busiestDay.operations) {
-      busiestDay = { date, operations: count };
-    }
-  }
-  if (busiestDay) {
-    const d = new Date(`${busiestDay.date}T12:00:00`);
-    busiestDay.label = `${d.getDate()}.${d.getMonth() + 1} (${WEEKDAY_LABELS[d.getDay()]})`;
-  }
-
-  const peakHourValue = Math.max(...byHour);
-  const busiestHour = peakHourValue > 0
-    ? { hour: byHour.indexOf(peakHourValue), operations: peakHourValue }
-    : null;
-
-  const activeDays = byDay.size;
-  const dailyAverage = activeDays > 0
-    ? Math.round((operations / activeDays) * 10) / 10
-    : 0;
-
-  // ===== משכי פעולה =====
-  const sorted = [...durations].sort((a, b) => a - b);
-  const durationStats = sorted.length > 0
-    ? {
-        samples: sorted.length,
-        averageSeconds: Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length),
-        medianSeconds: Math.round(sorted[Math.floor(sorted.length / 2)]),
-        longestSeconds: Math.round(sorted[sorted.length - 1]),
-        shortestSeconds: Math.round(sorted[0]),
-      }
-    : null;
-
-  // ===== השבתות (מקטעי error בטווח) — errorRows נשלף למעלה במקביל =====
-  const nowMs = Date.now();
-  const windowStart = Date.parse(from);
-  const windowEnd = Math.min(Date.parse(to), nowMs);
-
-  let totalDownMs = 0, longestMs = 0, longestAt = null;
-  for (const row of errorRows) {
-    const s = Math.max(Date.parse(row.started_at), windowStart);
-    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    const span = e - s;
-    if (span <= 0) continue;
-    totalDownMs += span;
-    if (span > longestMs) {
-      longestMs = span;
-      longestAt = row.started_at;
-    }
-  }
-
-  const hrs = (ms) => Math.round((ms / 3600000) * 100) / 100;
-  const incidents = errorRows.length;
-
-  // ===== תחזוקה — מתוכננת, ולכן נמדדת בנפרד מהשבתות =====
-  // שני מקורות: מצב תחזוקה שמדווח מה-PLC (maintRows), וחלונות תחזוקה ידניים
-  // שהופעלו מהדשבורד (windows). שניהם נשלפו למעלה במקביל.
-  let maintMs = 0, longestMaintMs = 0;
-  for (const row of maintRows) {
-    const s = Math.max(Date.parse(row.started_at), windowStart);
-    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    const span = e - s;
-    if (span <= 0) continue;
-    maintMs += span;
-    if (span > longestMaintMs) longestMaintMs = span;
-  }
-
-  // ספירות "שהתחילו בתקופה" — לפילוח הפעילות (כניסות/יציאות/תקלות/תחזוקה)
-  // היחידה חייבת להיות אחידה: אירועים שקרו בתקופה. זה עקבי עם *גרף המגמה*
-  // (getPeriodBreakdown סופר כניסה למצב בתוך [from,to)), בשונה מ-
-  // downtime.incidents / maintenance.plcEntries שסופרים *חפיפה* (מקטע שהתחיל
-  // לפני התקופה ונמשך לתוכה).
-  //
-  // הערה: 'errors' כאן סופר את *כל* התקלות שהתחילו בתקופה, כולל כאלה שקרו בזמן
-  // תחזוקה. זה שונה מ-analytics.stats.errors (הכרטיס), שמחריג בכוונה תקלות
-  // שקרו בחלון תחזוקה — כי לא מענישים על תקלה בהשבתה מתוכננת. לפילוח "כמה
-  // אירועים קרו" הספירה המלאה נכונה; אחוז הכשל הוא מדד אחר.
-  //
-  // errorRows/maintRows כבר מסוננים ל-started_at < to, ולכן די בסינון >= from.
-  //
-  // תקלה שהתחילה בזמן/בגבול תחזוקה (בתוך מקטע maintenance מהבקר) אינה נספרת —
-  // "תחזוקה גוברת", עקבי עם statsFromData ועם גרף המגמה. חלונות ידניים כבר
-  // נחסמים בקליטה (state-handler); כאן בדיקת ה-PLC מכסה את המקרה ההיסטורי השכיח.
-  // חפיפה לתחזוקה *של אותו אתר* (site_id) — כדי שבמצב המצרף תקלה באתר א' לא
-  // תושתק בגלל תחזוקה באתר ב'. לאתר בודד זה זהה להתנהגות הקודמת (הכול אותו אתר).
-  const inMaint = (ts, siteId) =>
-    maintRows.some((s) => s.site_id === siteId && s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts));
-  const errorsStarted = errorRows.filter(
-    (r) => r.started_at >= from && !inMaint(r.started_at, r.site_id)
-  ).length;
-  const maintenanceEvents =
-    maintRows.filter((r) => r.started_at >= from).length + windows.length;
-
-  return {
-    totals: {
-      operations,
-      entries,
-      exits,
-      anomalies,
-      activeDays,
-      errors: errorsStarted,           // כל התקלות שהתחילו בתקופה (כמו גרף המגמה)
-      maintenanceEvents,               // כניסות לתחזוקה (PLC) + חלונות ידניים, שהתחילו בתקופה
-    },
-    cards: {
-      uniqueCards: cards.size,
-      withCard,
-      withoutCard,
-      top: [...cards.values()]
-        .sort((a, b) => b.total - a.total || (a.card < b.card ? -1 : 1))
-        .slice(0, 10),
-    },
-    activity: {
-      byHour: byHour.map((operations, hour) => ({ hour, operations })),
-      byWeekday: byWeekday.map((operations, i) => ({
-        weekday: i,
-        label: WEEKDAY_LABELS[i],
-        operations,
-      })),
-      busiestDay,
-      busiestHour,
-      dailyAverage,
-    },
-    durations: durationStats,
-    downtime: {
-      incidents,
-      totalHours: hrs(totalDownMs),
-      longestHours: hrs(longestMs),
-      averageHours: incidents > 0 ? hrs(totalDownMs / incidents) : 0,
-      longestAt,
-    },
-    maintenance: {
-      plcEntries: maintRows.length,                // כמה פעמים האתר נכנס למצב תחזוקה
-      totalHours: hrs(maintMs),                    // סך הזמן בתחזוקה
-      longestHours: hrs(longestMaintMs),
-      manualWindows: windows.length,               // חלונות שהופעלו ידנית מהדשבורד
-      cancelledWindows: windows.filter((w) => w.cancelled_at).length,
-      recentWindows: windows.slice(0, 5).map((w) => ({
-        setBy: w.set_by_name,
-        reason: w.reason,
-        startedAt: w.started_at,
-        durationHours: w.duration_hours,
-        cancelled: Boolean(w.cancelled_at),
-        siteName: w.site_name ?? null,   // מוצג רק במצב "כל האתרים"
-      })),
-    },
-  };
-}
 
 // ============================================================
 // חלון ההצמדה בין הודעת state להודעת operation
@@ -1443,7 +1224,10 @@ function computeInsights({ ops, errorRows, maintRows, windows, from, to }) {
 // לספירת המונה בצ'יפ (SQL). אם השניים יסטו זה מזה, המספר על הצ'יפ יפסיק
 // להתאים למספר השורות שבאמת נפתחות — וזה בדיוק סוג התקלה שהלוג הזה אמור
 // לגלות, לא לייצר.
-const OP_PAIR_TOLERANCE_SECONDS = 5;
+// ⚠️ מיובא מ-shared ולא מוגדר כאן: הוא משמש גם את buildTimeline (בדפדפן)
+// וגם את noPairedStartSql (SQL, כאן). שני עותקים היו מפרידים את המונה שעל
+// הצ'יפ ממספר השורות שנפתחות ברגע שמישהו יכוונן אחד מהם.
+const { OP_PAIR_TOLERANCE_SECONDS } = require("../../shared/timeline.mjs");
 
 // אותה הצמדה, בניסוח SQL. מחזיר תנאי שמתקיים כשלשורת status_history בשם
 // {h} *אין* פעולה שמסבירה אותה. משמש גם למונים וגם ל-getStatusHistory.
@@ -1463,369 +1247,100 @@ const noPairedStartSql = (h) => `
  * counts הם הסכומים ה*מלאים* בתקופה, גם אם entries נחתך ל-limit —
  * כדי שה-UI יוכל לומר "מוצגות 300 מתוך 812".
  */
-async function getActivityLog(siteId, { from, to, limit = 300 }) {
-  const countIn = async (table, timeCol) =>
-    (await db.prepare(
-      `SELECT COUNT(*) AS n FROM ${table} WHERE site_id = ? AND ${timeCol} >= ? AND ${timeCol} < ?`
-    ).get(siteId, from, to)).n;
+// ============================================================
+// תקרת שליפה — לא תקרת תצוגה
+// ============================================================
+// שני המספרים היו אותו מספר, וזה היה הבאג: `limit` שימש גם כמה לשלוף מה-DB
+// וגם כמה להציג, ולכן "7 הימים האחרונים" הביא 300 שורות מתוך 3,124 ונחתך
+// לחדשות ביותר — בערך יממה. הפרדה: שולפים את התקופה, מציגים עמוד.
+//
+// 20,000 מכסה בנוחות שבוע (~3,100) וחודש (~13,000) בקצב הנוכחי. אם ייגמר,
+// `capped` חוזר ל-UI — כי "סה\"כ" שקטן מהאמת גרוע מהודעה שאומרת "חלקי".
+const LOG_FETCH_CAP = 20000;
 
-  // תחזוקה מגיעה משני מקורות: חלון ידני (maintenance_windows) *וגם* מצב
-  // תחזוקה שמדווח מה-PLC (status_history.status='maintenance'). המונים חייבים
-  // לשקף את שניהם, אחרת מסנן "תחזוקה" בלוג מציג 0 בזמן שיש תחזוקה בפועל.
-  //
-  // extra מחריג את 'operating' מספירת המצבים — בדיוק כמו מהתצוגה. בלי זה
-  // הצ'יפ "מצבים" היה מציג מספר גדול מכמות השורות שבאמת מופיעות בלוג.
-  const countStatus = async (op, extra = "") =>
-    (await db.prepare(
-      `SELECT COUNT(*) AS n FROM status_history
-       WHERE site_id = ? AND started_at >= ? AND started_at < ?
-         AND status ${op} 'maintenance' ${extra}`
-    ).get(siteId, from, to)).n;
+async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filter = "all", card = null }) {
 
-  // שמונה השאילתות (שלוש רשימות + חמישה מונים) בלתי-תלויות זו בזו —
-  // נשלפות במקביל, סיבוב רשת אחד במקום שמונה בטור. זה היה המסלול האיטי ביותר.
+  // שלוש רשימות בלתי-תלויות — נשלפות במקביל, סיבוב רשת אחד במקום שלושה בטור.
   //
   // הערה על 'operating': כל פעולת חניה מייצרת גם state=operating וגם הודעת
-  // operation, ולכן בציר הזמן המאוחד ("הכל") כל כניסת רכב הופיעה פעמיים. לכן
-  // השרת מחזיר את הכל, וה-ActivityLog מסתיר את 'operating' בכל מסנן חוץ מ-
-  // "שינויי מצב" (שם הרעש הזה הוא בדיוק התוכן). getStatusHistory (הפאנל) *כן*
-  // מסנן — שם זו תצוגה מתומצתת. שום חישוב (זמינות/אחוז כשל) לא נגזר מכאן.
-  //
-  // המונים הם הסכומים ה*מלאים* בתקופה (בלי LIMIT), גם אם entries נחתך —
-  // כדי שה-UI יוכל לומר "מוצגות 300 מתוך 812". הקטגוריות זרות זו לזו:
-  //   status    = שינויי מצב שאינם תחזוקה ו*בלי* 'בפעולה' — המונה של "הכל".
-  //   statusAll = אותו דבר, *כולל* 'בפעולה' — המונה של הצ'יפ "שינויי מצב".
-  //   maintenance = חלונות ידניים + מצב תחזוקה מה-PLC.
-  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
-         cOrphanOperating] =
-    await Promise.all([
-      db.prepare(
-        `SELECT site_id, start_end, entry_exit, card_number, is_anomaly, state, occurred_at
-         FROM operations
-         WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
-         ORDER BY occurred_at DESC LIMIT ?`
-      ).all(siteId, from, to, limit),
+  // operation, ולכן בציר המאוחד כל כניסת רכב הופיעה פעמיים. לכן נשלף הכל,
+  // ו-LOG_FILTERS מסתיר את 'operating' בכל מסנן חוץ מ-"שינויי מצב" (שם זה
+  // בדיוק התוכן). שום חישוב (זמינות/אחוז כשל) לא נגזר מכאן.
+  const [ops, states, maint] = await Promise.all([
+    db.prepare(
+      // id נשלף כי superseded_by מצביע עליו: הפתיחה שאיחדה ניסיון קודם חייבת
+      // להיעלם מהציר יחד עם הסגירה שהיא איחדה, אחרת נשארת התחלה בלי סיום.
+      `SELECT id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at
+       FROM operations
+       WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
+       ORDER BY occurred_at DESC LIMIT ?`
+    ).all(siteId, from, to, LOG_FETCH_CAP),
 
-      db.prepare(
-        // site_id נשלף גם באתר בודד: buildActivityLog מצמיד מצבים לפעולות
-        // *לפי אתר*, ואם צד אחד מחזיר site_id והשני לא — ההצמדה לא תתפוס אף
-        // פעם, וכל שינוי מצב ייראה יתום.
-        `SELECT site_id, status, started_at, ended_at FROM status_history
-         WHERE site_id = ? AND started_at >= ? AND started_at < ?
-         ORDER BY started_at DESC LIMIT ?`
-      ).all(siteId, from, to, limit),
+    db.prepare(
+      // site_id נשלף גם באתר בודד: buildActivityLog מצמיד מצבים לפעולות
+      // *לפי אתר*, ואם צד אחד מחזיר site_id והשני לא — ההצמדה לא תתפוס אף
+      // פעם, וכל שינוי מצב ייראה יתום.
+      `SELECT site_id, status, started_at, ended_at, fault_text FROM status_history
+       WHERE site_id = ? AND started_at >= ? AND started_at < ?
+       ORDER BY started_at DESC LIMIT ?`
+    ).all(siteId, from, to, LOG_FETCH_CAP),
 
-      db.prepare(
-        `SELECT set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at
-         FROM maintenance_windows
-         WHERE site_id = ? AND started_at >= ? AND started_at < ?
-         ORDER BY started_at DESC LIMIT ?`
-      ).all(siteId, from, to, limit),
-
-      countIn("operations", "occurred_at"),
-      countStatus("!=", "AND status != 'operating'"),
-      countStatus("!="),
-      countIn("maintenance_windows", "started_at"),
-      countStatus("="),
-
-      // 'בפעולה' יתום — מקטע שאין לו פעולה שמסבירה אותו. הוא **כן** מוצג
-      // ב"הכל" (ראה buildActivityLog), ולכן הוא חייב להיספר שם. בלי זה הצ'יפ
-      // מראה 13 בזמן ש-14 שורות נפתחות, וזה בדיוק חוסר האמינות שהלוג אמור
-      // למנוע.
-      (async () => (await db.prepare(
-        `SELECT COUNT(*) AS n FROM status_history h
-          WHERE h.site_id = ? AND h.started_at >= ? AND h.started_at < ?
-            AND h.status = 'operating' AND ${noPairedStartSql("h")}`
-      ).get(siteId, from, to)).n)(),
-    ]);
+    db.prepare(
+      `SELECT set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at
+       FROM maintenance_windows
+       WHERE site_id = ? AND started_at >= ? AND started_at < ?
+       ORDER BY started_at DESC LIMIT ?`
+    ).all(siteId, from, to, LOG_FETCH_CAP),
+  ]);
 
   return buildActivityLog({
-    ops, states, maint,
-    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus, cOrphanOperating },
-    limit,
+    ops, states, maint, limit, offset, filter, card,
+    capped: ops.length >= LOG_FETCH_CAP || states.length >= LOG_FETCH_CAP,
   });
 }
 
 // אותו לוג פעילות, אך מאחד את *כל* האתרים (מנהל כללי → "כל האתרים"). כל שורה
 // נושאת את שם האתר להצגה. מספר השאילתות קבוע (עקבי עם מדיניות ה-N+1).
-async function getGlobalActivityLog({ from, to, limit = 300 }) {
-  const countAll = async (table, timeCol, extra = "") =>
-    (await db.prepare(
-      `SELECT COUNT(*) AS n FROM ${table} WHERE ${timeCol} >= ? AND ${timeCol} < ? ${extra}`
-    ).get(from, to)).n;
+async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter = "all", card = null }) {
+  const [ops, states, maint] = await Promise.all([
+    db.prepare(
+      `SELECT o.id, o.site_id, s.site_name, o.start_end, o.entry_exit, o.card_number, o.is_anomaly, o.superseded_by, o.state, o.occurred_at
+       FROM operations o JOIN sites s ON o.site_id = s.id
+       WHERE o.occurred_at >= ? AND o.occurred_at < ?
+       ORDER BY o.occurred_at DESC LIMIT ?`
+    ).all(from, to, LOG_FETCH_CAP),
 
-  const [ops, states, maint, cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
-         cOrphanOperating] =
-    await Promise.all([
-      db.prepare(
-        `SELECT o.site_id, s.site_name, o.start_end, o.entry_exit, o.card_number, o.is_anomaly, o.state, o.occurred_at
-         FROM operations o JOIN sites s ON o.site_id = s.id
-         WHERE o.occurred_at >= ? AND o.occurred_at < ?
-         ORDER BY o.occurred_at DESC LIMIT ?`
-      ).all(from, to, limit),
+    db.prepare(
+      `SELECT h.site_id, s.site_name, h.status, h.started_at, h.ended_at, h.fault_text
+       FROM status_history h JOIN sites s ON h.site_id = s.id
+       WHERE h.started_at >= ? AND h.started_at < ?
+       ORDER BY h.started_at DESC LIMIT ?`
+    ).all(from, to, LOG_FETCH_CAP),
 
-      db.prepare(
-        `SELECT h.site_id, s.site_name, h.status, h.started_at, h.ended_at
-         FROM status_history h JOIN sites s ON h.site_id = s.id
-         WHERE h.started_at >= ? AND h.started_at < ?
-         ORDER BY h.started_at DESC LIMIT ?`
-      ).all(from, to, limit),
-
-      db.prepare(
-        `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at
-         FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
-         WHERE w.started_at >= ? AND w.started_at < ?
-         ORDER BY w.started_at DESC LIMIT ?`
-      ).all(from, to, limit),
-
-      countAll("operations", "occurred_at"),
-      countAll("status_history", "started_at", "AND status != 'maintenance' AND status != 'operating'"),
-      countAll("status_history", "started_at", "AND status != 'maintenance'"),
-      countAll("maintenance_windows", "started_at"),
-      countAll("status_history", "started_at", "AND status = 'maintenance'"),
-
-      // 'בפעולה' יתום — מוצג ב"הכל", ולכן נספר שם. ראה getActivityLog.
-      (async () => (await db.prepare(
-        `SELECT COUNT(*) AS n FROM status_history h
-          WHERE h.started_at >= ? AND h.started_at < ?
-            AND h.status = 'operating' AND ${noPairedStartSql("h")}`
-      ).get(from, to)).n)(),
-    ]);
+    db.prepare(
+      `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at
+       FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
+       WHERE w.started_at >= ? AND w.started_at < ?
+       ORDER BY w.started_at DESC LIMIT ?`
+    ).all(from, to, LOG_FETCH_CAP),
+  ]);
 
   return buildActivityLog({
-    ops, states, maint,
-    counts: { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus, cOrphanOperating },
-    limit,
+    ops, states, maint, limit, offset, filter, card,
+    capped: ops.length >= LOG_FETCH_CAP || states.length >= LOG_FETCH_CAP,
   });
 }
 
-// בונה את ציר הזמן המאוחד מהשורות שנשלפו (טהור) — משרת אתר בודד ומצרף כלל-אתרי.
-function buildActivityLog({ ops, states, maint, counts, limit }) {
-  const { cOperations, cStatus, cStatusAll, cMaintWindows, cMaintStatus,
-          cOrphanOperating = 0 } = counts;
-
-  const secondsBetween = (a, b) =>
-    a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null;
-
-  // ============================================================
-  // דירוג לשבירת שוויון כשכמה אירועים נושאים את *אותו* חותם זמן
-  // ============================================================
-  // סיום פעולה וחזרה ל-"מוכן" הם מעבר MODE אחד (2→1), ולכן הסוכן מייצר את
-  // שניהם באותו סבב דגימה ועם אותה שנייה בדיוק. אין ביניהם סדר אמיתי בנתונים,
-  // רק שאלה של קריאוּת.
-  //
-  // הכלל: **הפעולה נסגרת, ורק אז האתר מוכן.** הרשימה היא מהחדש לישן, ולכן
-  // "מאוחר יותר" = גבוה יותר: "המצב השתנה ל: מוכן" מופיע *מעל* "יציאת רכב
-  // הושלמה", וקריאה מלמטה למעלה היא הכרונולוגיה האמיתית.
-  //
-  // ⚠️ אל תהפכו את זה. ניסיון קודם הציב את הסיום מעל המוכן, מתוך מחשבה על
-  // קריאה מלמעלה למטה — אבל ברשימה יורדת זה אומר שהמוכן קדם לסיום, כלומר
-  // שהאתר חזר להיות מוכן בזמן שהפעולה עוד פתוחה. סדר שלא יכול לקרות.
-  //
-  // הדירוג *עולה* עם המאוחרוּת הלוגית, והמיון מציב את הגבוה למעלה:
-  //   0 בפעולה  ‹  1 התחלה  ‹  2 סיום  ‹  3 מוכן/מושבת  ‹  4 תחזוקה
-  //
-  // ובכל זאת, זה רק מפל אחרון: ב"הכל" שורת המצב שיש לה פעולה תואמת מוסתרת
-  // ממילא (ActivityLog.jsx), כי מעבר MODE אחד אינו שני אירועים. הדירוג כאן
-  // נשאר נכון עבור מה שכן מוצג יחד — למשל מקטע 'בפעולה' יתום.
-  const phaseRank = (e) => {
-    if (e.kind === "status") return e.status === "operating" ? 0 : 3;
-    if (e.kind === "operation") return e.startEnd === "start" ? 1 : 2;
-    return 4;   // תחזוקה — תמיד למעלה, היא עוטפת את השאר
-  };
-
-  // "תחזוקה גוברת" — תקלה שקרתה בזמן/בגבול תחזוקה לא מוצגת בלוג ולא נספרת.
-  // החפיפה נבדקת *לפי אתר* (site_id): מקטעי PLC (בתוך states) + חלונות ידניים
-  // (maint). באתר בודד site_id === undefined לכל השורות → דלי יחיד, זהה
-  // להתנהגות הקודמת; במצרף כל אתר נבדק מול התחזוקה שלו בלבד.
-  const maintBySite = new Map();
-  const pushMaint = (siteId, start, end) => {
-    if (!maintBySite.has(siteId)) maintBySite.set(siteId, []);
-    maintBySite.get(siteId).push({ start, end });
-  };
-  for (const s of states) if (s.status === "maintenance") pushMaint(s.site_id, s.started_at, s.ended_at);
-  for (const w of maint) pushMaint(w.site_id, w.started_at, w.cancelled_at || w.expires_at);
-  const inMaintenance = (ts, siteId) =>
-    (maintBySite.get(siteId) || []).some((m) => m.start <= ts && (m.end === null || m.end >= ts));
-
-  const isMaintError = (s) => s.status === "error" && inMaintenance(s.started_at, s.site_id);
-  const visibleStates = states.filter((s) => !isMaintError(s));
-  const hiddenErrors = states.length - visibleStates.length;
-
-  // ============================================================
-  // איזה שינוי מצב "מוסבר" על ידי פעולה — ולכן מיותר בציר המאוחד
-  // ============================================================
-  // מעבר MODE 1→2/3 מייצר גם state=operating וגם operation/start, באותה שנייה.
-  // שורת ה-'בפעולה' אינה מוסיפה דבר על "כניסת רכב התחילה" — אותו רגע, פחות
-  // מידע — ולכן היא מסומנת כמוסברת והדשבורד מסתיר אותה ב"הכל".
-  //
-  // 'מוכן' **אינו** ברשימה, למרות שגם הוא נוצר יחד עם operation/end. הוא נושא
-  // את משך ההמתנה עד הפעולה הבאה, וזו התקופה שבין הפעולות — מידע שאין לו שום
-  // מקור אחר בציר הזמן. הסתרתו השאירה פעולות צמודות כאילו האתר לא עמד ריק.
-  //
-  // תקלה, תחזוקה ונתק לעולם אינם נובעים ממעבר פעולה, ולכן לעולם אינם מוסברים.
-  //
-  // ============================================================
-  // ההצמדה משמשת לשני דברים שונים — אל תמזגו אותם
-  // ============================================================
-  // PAIRED_OP = איזו הודעת פעולה נושאת את **אותו רגע פיזי** כמו שינוי המצב.
-  //   כאן שני הכיוונים: MODE 1→2/3 מייצר operating + start, ו-MODE 2/3→1
-  //   מייצר end + ready. זה משמש ל**אימוץ חותם הזמן** (ראה למטה).
-  //
-  // REDUNDANT = ומאלה, מי גם **מיותר** בציר המאוחד. רק 'בפעולה': הוא אינו
-  //   מוסיף כלום מעל "כניסת רכב התחילה". 'מוכן' כן מוסיף — משך ההמתנה עד
-  //   הפעולה הבאה — ולכן הוא מוצג תמיד.
-  const PAIRED_OP = { operating: "start", ready: "end" };
-  const REDUNDANT = new Set(["operating"]);
-
-  // הצמדה לפי אתר: במצרף כלל-אתרי שתי רשומות מאתרים שונים באותה שנייה אינן
-  // מסבירות זו את זו. באתר בודד site_id === undefined לכל השורות → דלי יחיד.
-  const opsBySite = new Map();
-  for (const o of ops) {
-    if (!opsBySite.has(o.site_id)) opsBySite.set(o.site_id, []);
-    opsBySite.get(o.site_id).push(o);
-  }
-
-  /** הפעולה שנושאת את אותו רגע פיזי כמו שינוי המצב, או null. */
-  const pairedOpFor = (s) => {
-    const wants = PAIRED_OP[s.status];
-    if (!wants) return null;
-    const t = Date.parse(s.started_at);
-    return (opsBySite.get(s.site_id) || []).find(
-      (o) => o.start_end === wants &&
-             Math.abs(Date.parse(o.occurred_at) - t) <= OP_PAIR_TOLERANCE_SECONDS * 1000
-    ) || null;
-  };
-
-  // ==========================================================
-  // פעולה שנקטעה בתקלה אינה פעולה שהושלמה
-  // ==========================================================
-  // ה-detector בסוכן סוגר פעולה בכל מעבר MODE, כולל מעבר לתקלה (2/3 → 5).
-  // מבחינת הנתונים זה `end` רגיל לגמרי, ולכן הלוג הציג "יציאת רכב הושלמה"
-  // בדיוק ברגע שהרכב **נתקע**. זו לא אי-דיוק בניסוח אלא היפוך משמעות: מי
-  // שקורא את הלוג רואה הצלחה במקום כשל.
-  //
-  // הזיהוי חד-משמעי ואינו הערכה: כשהמעבר הוא מפעולה לתקלה, הסוכן מייצר את
-  // שתי ההודעות באותו סבב דגימה ועם אותו חותם. לכן —
-  //
-  //     end.occurred_at === error_segment.started_at   ⟺   הפעולה נקטעה
-  //
-  // נמדד על נתוני אמת: מתוך 49 מקטעי תקלה, **35 (71%)** קרו תוך כדי פעולה.
-  // כלומר זה לא מקרה קצה — זה הרוב.
-  //
-  // ⚠️ ההשוואה על המחרוזת ולא על Date.parse: שני החותמים נולדו מאותו מקור
-  // ונשמרו באותו פורמט, וסובלנות זמן כאן הייתה מסמנת בטעות גם תקלה שהתחילה
-  // סמוך לסיום תקין.
-  //
-  // ==========================================================
-  // לא רק תקלה — כל מצב שאינו 'מוכן' קוטע
-  // ==========================================================
-  // הכלל הרחב: הפעולה מסתיימת כשה-MODE יוצא ממצב פעולה, ו**התוצאה נקבעת
-  // לפי המצב שאליו עבר**. נמדד על כל 1,018 הסגירות:
-  //
-  //     -> מוכן        945   92.8%   הושלמה
-  //     -> תקלה         35    3.4%   נקטעה
-  //     -> תחזוקה        7    0.7%   נקטעה
-  //     אין מקטע תואם   31    3.0%   ברירת מחדל: הושלמה
-  //
-  // התחזוקה קוטעת פחות, אבל היא קוטעת — ורכב שנתקע כי מישהו העביר את
-  // המחסום לתחזוקה אינו "פעולה שהושלמה" יותר משרכב שנתקע בתקלה.
-  //
-  // 31 ללא מקטע תואם נשארות "הושלמה": המצב לא עבר לתקלה ולא לתחזוקה, ולכן
-  // ברירת המחדל תואמת את ה-92.8%. סימונן כ"לא ידוע" היה מוסיף רעש בלי
-  // להוסיף מידע.
-  const interruptedBy = new Map();   // "site|timestamp" -> 'error' | 'maintenance'
-  for (const s of states) {
-    if (s.status === "error" || s.status === "maintenance") {
-      interruptedBy.set(`${s.site_id}|${s.started_at}`, s.status);
-    }
-  }
-
-  const entries = [
-    ...ops.map((o) => ({
-      kind: "operation",
-      at: o.occurred_at,
-      startEnd: o.start_end,
-      entryExit: o.entry_exit,
-      card: o.card_number || null,
-      isAnomaly: !!o.is_anomaly,
-      // רק על end: פתיחה לעולם אינה "נקטעת". null = הושלמה כרגיל.
-      interruptedBy: o.start_end === "end"
-        ? (interruptedBy.get(`${o.site_id}|${o.occurred_at}`) || null)
-        : null,
-      state: o.state,
-      siteName: o.site_name ?? null,   // מוצג רק במצב "כל האתרים"
-    })),
-    ...visibleStates.map((s) => {
-      const paired = pairedOpFor(s);
-      return {
-        kind: "status",
-        // ============================================================
-        // אימוץ חותם הפעולה — התיקון שמנקה גם את ההיסטוריה
-        // ============================================================
-        // מעבר MODE אחד נרשם בשתי טבלאות, ובמשך תקופה הוא נרשם עם **שני
-        // חותמים שונים**: היישור בשרת חישב כל הודעה מול "עכשיו" שלה, והשתיים
-        // עובדו בזו אחר זו. התוצאה בשטח (19 זוגות): המצב 'מוכן' נרשם שנייה
-        // *לפני* "הפעולה הסתיימה" — כלומר האתר חזר להיות מוכן בזמן שהפעולה
-        // עוד פתוחה. סדר שלא יכול לקרות.
-        //
-        // הקליטה תוקנה (clamp-memo.js + FUTURE_CLAMP_MIN_SECONDS), אבל השורות
-        // שנכתבו כבר נשארות עם הפער. לכן שורת המצב מאמצת כאן את חותם הפעולה
-        // שהיא חולקת איתה רגע: אירוע אחד, זמן אחד. זה מיישר את כל ההיסטוריה
-        // מיד, בתצוגה, **בלי לשנות שורה אחת ב-DB** — הרישום הגולמי נשאר כפי
-        // שהוא, וההצגה מפסיקה להציג ממנו סדר בלתי אפשרי.
-        //
-        // durationSeconds מחושב מהמקטע הגולמי במכוון: הפער הוא שנייה-שתיים,
-        // זניח למשך, ואין סיבה להזיז גם אותו.
-        at: paired ? paired.occurred_at : s.started_at,
-        status: s.status,
-        endedAt: s.ended_at,
-        durationSeconds: secondsBetween(s.started_at, s.ended_at),
-        siteName: s.site_name ?? null,
-        // האם הפעולה גם הופכת את שורת המצב למיותרת (רק 'בפעולה'). מחושב **כאן
-        // ולא בדשבורד** בכוונה: זו הצטלבות בין שתי רשימות עם סבילות זמן, וכל
-        // צד שיחשב אותה בעצמו יסטה מהשני. הדשבורד רק קורא את הדגל, והמונה
-        // בצ'יפ נספר לפי אותה סבילות (ראה למטה).
-        explainedByOp: !!paired && REDUNDANT.has(s.status),
-      };
-    }),
-    ...maint.map((m) => ({
-      kind: "maintenance",
-      at: m.started_at,
-      setBy: m.set_by_name,
-      role: m.set_by_role,
-      reason: m.reason,
-      durationHours: m.duration_hours,
-      expiresAt: m.expires_at,
-      cancelledAt: m.cancelled_at,
-      siteName: m.site_name ?? null,
-    })),
-  ]
-    .sort((a, b) => {
-      if (a.at !== b.at) return a.at < b.at ? 1 : -1;   // מהחדש לישן
-      return phaseRank(b) - phaseRank(a);               // באותו רגע: המאוחר לוגית קודם
-    })
-    .slice(0, limit);
-
-  return {
-    entries,
-    truncated: entries.length >= limit,
-    counts: {
-      operations: cOperations,
-      // מפחיתים את התקלות שהוסתרו (בזמן תחזוקה) כדי שהצ'יפ יתאים למספר השורות
-      // שבאמת מוצגות. hiddenErrors נספר מתוך החלון המוגבל — מדויק למקרה השכיח.
-      // cStatus מחריג את *כל* מקטעי ה-'בפעולה', אבל היתומים שבהם כן מוצגים
-      // ב"הכל" — ולכן מוחזרים בנפרד ומתווספים למונה שם (ראה ActivityLog).
-      status: Math.max(0, cStatus - hiddenErrors),
-      orphanOperating: cOrphanOperating,
-      // הצ'יפ "שינויי מצב" מציג את *כל* שינויי המצב — כולל מעבר ל'בתחזוקה'
-      // מהבקר (cMaintStatus) — ולכן המונה כולל אותם. (הצ'יפ "תחזוקה" סופר
-      // אותם שוב, במכוון — שתי עדשות על אותו אירוע.)
-      statusAll: Math.max(0, cStatusAll + cMaintStatus - hiddenErrors),
-      maintenance: cMaintWindows + cMaintStatus,   // חלונות ידניים + מצב תחזוקה מה-PLC
-    },
-  };
-}
+// ============================================================
+// ציר הזמן של הלוג עבר ל-shared/timeline.mjs
+// ============================================================
+// זו לוגיקת תצוגה, לא הגדרת מדד, והדשבורד מריץ אותה עכשיו בעצמו כשהוא קורא
+// ישירות מ-Supabase. **אותו קובץ בדיוק** משרת את שני הצדדים: Node טוען ESM
+// דרך require() מגרסה 22.12, ו-Vite מייבא אותו כרגיל.
+//
+// ⚠️ אל תעתיקו את הפונקציות האלה לכאן בחזרה. שני עותקים של כלל תצוגה נפרדים
+// בשינוי הראשון, ואז אותה תקופה נקראת אחרת בשני מצבי המתג.
+const { LOG_FILTERS, buildTimeline, buildActivityLog } = require("../../shared/timeline.mjs");
 
 // ==========================================================
 // ===== שכבת ה-BATCH — הפתרון ל-N+1 =====
@@ -1909,7 +1424,10 @@ async function loadRangeData(siteIds, { from, to }) {
   const [ops, segments, windows] = await Promise.all([
     // כל הפעולות בטווח
     db.prepare(
-      `SELECT site_id, occurred_at, entry_exit, start_end, is_anomaly
+      // superseded_by נשלף כי statsFromData מחריג לפיו — ניסיון שנקטע והוחלף
+      // בניסיון חוזר אינו פעולה נוספת. **בלעדיו ה-JS סופר והפונקציה ב-SQL לא**,
+      // וזה בדיוק מה ש-tools/parity.js תפס: JS=1029 מול SQL=1018.
+      `SELECT site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by
        FROM operations
        WHERE ${filter} AND occurred_at >= ? AND occurred_at < ?`
     ).all(...ids, from, to),
@@ -1935,26 +1453,6 @@ async function loadRangeData(siteIds, { from, to }) {
   return { ops: group(ops), segments: sortByStartedAt(group(segments)), windows: group(windows) };
 }
 
-// האם ברגע ts האתר היה בתחזוקה — גרסת הזיכרון של wasInMaintenance.
-//
-// הגבול *כולל* בשני הקצוות (<= ... >=) *במכוון*: "מצב תחזוקה גובר על הכלל".
-// כשה-PLC עובר מתחזוקה לתקלה, applyStateChange סוגר את מקטע התחזוקה ופותח
-// את מקטע התקלה באותו חותם זמן (maintenance.ended_at === error.started_at).
-// ה-'>=' גורם לתקלה שמתחילה בדיוק כשהתחזוקה נגמרה להיחשב "בתוך תחזוקה"
-// ולכן היא מוחרגת מהספירה — בדיוק ההתנהגות הרצויה: תקלה בזמן/בגבול תחזוקה
-// אינה תקלה. (מהיום גם ה-ingestion זורק תקלות כאלה לחלוטין — ראה state-handler;
-// כאן זו הגנה על נתונים היסטוריים שכבר נרשמו.)
-function wasInMaintenanceMem(data, siteId, ts) {
-  for (const w of data.windows.get(siteId) || []) {
-    const end = w.cancelled_at || w.expires_at;
-    if (w.started_at <= ts && end >= ts) return true;
-  }
-  for (const s of data.segments.get(siteId) || []) {
-    if (s.status !== "maintenance") continue;
-    if (s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts)) return true;
-  }
-  return false;
-}
 
 /** גרסת הזיכרון של getSiteStats — מחזירה את אותו אובייקט בדיוק. */
 /**
@@ -1980,187 +1478,33 @@ function wasInMaintenanceMem(data, siteId, ts) {
  *
  * דורש רשימה **ממוינת כרונולוגית** של מקטעי אתר אחד.
  */
-function collapseNoCommFlicker(segments) {
-  const out = [];
-  let lastObserved = null;   // המצב האחרון שאינו no_comm
-
-  for (const s of segments) {
-    // נתק נשמר תמיד — הוא לא "מאפס" את המצב שקדם לו, רק מסתיר אותו.
-    if (s.status === "no_comm") {
-      out.push(s);
-      continue;
-    }
-    // חזרה לאותו מצב בדיוק = המשך, לא אירוע חדש.
-    if (s.status === lastObserved) continue;
-
-    out.push(s);
-    lastObserved = s.status;
-  }
-  return out;
-}
 
 /**
  * מחיל את קיפול-הריצוד על רשימה שעשויה לערבב כמה אתרים (המסלול המצרף).
  * הקיפול הוא **לכל אתר בנפרד** — בלעדי זה מקטע של אתר א' היה "ממשיך" מקטע
  * של אתר ב' ומבטל אותו מהספירה. מחזיר את השורות בסדר המקורי.
  */
-function collapseSegmentsBySite(segments) {
-  const bySite = new Map();
-  for (const s of segments) {
-    if (!bySite.has(s.site_id)) bySite.set(s.site_id, []);
-    bySite.get(s.site_id).push(s);
-  }
-  const kept = new Set();
-  for (const segs of bySite.values()) {
-    for (const s of collapseNoCommFlicker(segs)) kept.add(s);
-  }
-  return segments.filter((s) => kept.has(s));
-}
 
-function statsFromData(data, siteId, { from, to }) {
-  let operations = 0;
-  for (const o of data.ops.get(siteId) || []) {
-    if (o.is_anomaly === 0 && o.start_end === "end" &&
-        o.occurred_at >= from && o.occurred_at < to) operations++;
-  }
-
-  let errors = 0;
-  let errorsInMaintenance = 0;
-  // הקיפול רץ על *כל* המקטעים הטעונים ולא רק על אלה שבטווח, וזה חיוני: תקלה
-  // שהתחילה לפני ה-from, נותקה, וחזרה בתוך הטווח — היא המשך, ואסור שתיספר.
-  // בלי המקטע הקודם אי אפשר לדעת זאת.
-  for (const s of collapseNoCommFlicker(data.segments.get(siteId) || [])) {
-    if (s.status !== "error") continue;
-    if (!(s.started_at >= from && s.started_at < to)) continue;
-    if (wasInMaintenanceMem(data, siteId, s.started_at)) errorsInMaintenance++;
-    else errors++;
-  }
-
-  const failureRate = operations > 0 ? (errors / operations) * 100 : 0;
-  return {
-    operations,
-    errors,
-    errorsInMaintenance,
-    failureRate: Math.round(failureRate * 100) / 100,
-  };
-}
+// ============================================================
+// חישובי המסכים עברו ל-shared/executive.mjs
+// ============================================================
+// הדשבורד מריץ אותם עכשיו בעצמו כשהוא קורא ישירות מ-Supabase, ו**אותו קובץ
+// בדיוק** משרת את שני הצדדים.
+//
+// ⚠️ statsFromData ו-uptimeFromData הן גם צד הייחוס של tools/parity.js.
+// הן לא נמחקו — הן עברו. אל תשכפלו אותן חזרה לכאן.
+const { getBucketRanges, statsFromData, uptimeFromData, directionFromData,
+        heatmapFromData, getTopPerformers, getWorstPerformers, computeExecutive,
+        mergedWindows, coveredMs, wasInMaintenanceMem, availabilityFrom,
+        buildPeriodSeries, computeAnalytics,
+        DOWN_STATUSES } = require("../../shared/executive.mjs");
 
 /** גרסת הזיכרון של getUptimeBreakdown — אותם חיתוכים ואותם עיגולים. */
-// ==========================================================
-// איחוד חלונות התחזוקה לקטעים זרים — ולמה זה חובה
-// ==========================================================
-// שני חלונות חופפים (טכנאי שהאריך תחזוקה, או שניים שהפעילו במקביל) היו
-// נספרים פעמיים, וזמן התחזוקה היה גדול מהחלון עצמו. איחוד לקטעים זרים הופך
-// את החישוב לחסין לכך.
-//
-// נחתך מראש לגבולות החלון הנמדד, כך שהספירה בהמשך היא חיתוך פשוט.
-function mergedWindows(windows, windowStart, windowEnd) {
-  const spans = [];
-  for (const w of windows) {
-    const s = Math.max(Date.parse(w.started_at), windowStart);
-    const e = Math.min(Date.parse(w.cancelled_at || w.expires_at), windowEnd);
-    if (e > s) spans.push([s, e]);
-  }
-  spans.sort((a, b) => a[0] - b[0]);
-
-  const merged = [];
-  for (const span of spans) {
-    const last = merged[merged.length - 1];
-    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
-    else merged.push([span[0], span[1]]);
-  }
-  return merged;
-}
 
 /** כמה מ-[start,end) מכוסה בקטעים המאוחדים. */
-function coveredMs(merged, start, end) {
-  let total = 0;
-  for (const [s, e] of merged) {
-    if (e <= start) continue;
-    if (s >= end) break;              // ממוינים — אין טעם להמשיך
-    total += Math.min(e, end) - Math.max(s, start);
-  }
-  return total;
-}
 
-function uptimeFromData(data, siteId, { from, to }) {
-  // אותה צורה מלאה כמו ב-getUptimeBreakdown — ראה ההסבר שם.
-  const empty = {
-    readyHours: 0, operatingHours: 0, errorHours: 0,
-    maintenanceHours: 0, noCommHours: 0,
-    totalHours: 0, measuredHours: 0, availabilityPercent: 0,
-  };
-
-  const nowIso = new Date().toISOString();
-  const rangeEnd = to < nowIso ? to : nowIso;   // לא סופרים אל תוך העתיד
-  const windowStart = Date.parse(from);
-  const windowEnd = Date.parse(rangeEnd);
-  if (!(windowEnd > windowStart)) return empty;
-
-  const ms = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
-
-  // ==========================================================
-  // חלון תחזוקה ידני נספר כתחזוקה, ולא כמצב שה-PLC דיווח
-  // ==========================================================
-  // עד כאן רק סטטוס 'maintenance' *בהיסטוריה* הוחרג מהמכנה — כלומר תחזוקה
-  // שהבקר דיווח עליה. חלון ידני מהדשבורד לא נגע בחישוב בכלל, והזמן שבתוכו
-  // נספר לפי מה שה-PLC אמר.
-  //
-  // וזה לא היה ניטרלי אלא הפוך מהכוונה: תקלה בזמן תחזוקה נזרקת בקליטה
-  // (state-handler), ולכן מקטע ה-'ready' פשוט ממשיך — **וזמן שבור נספר
-  // כזמן זמין**. אתר שהושבת ידנית קיבל 100% זמינות. נמדד: 24 שעות שמתוכן
-  // 12 בתחזוקה ידנית החזירו maintenance_hours=0 ו-100%.
-  //
-  // שני קובצי ההנחיות אומרים את ההפך במפורש — "מוחרגת מהמכנה", "אינה
-  // uptime ואינה downtime, ואסור שתתוגמל כזמינות". זה מיישר את הקוד למפרט.
-  const cover = mergedWindows(data.windows.get(siteId) || [], windowStart, windowEnd);
-
-  for (const row of data.segments.get(siteId) || []) {
-    if (ms[row.status] === undefined) continue;
-    // אותו תנאי חפיפה כמו בשאילתה המקורית
-    if (!(row.started_at < rangeEnd && (row.ended_at === null || row.ended_at > from))) continue;
-
-    const start = Math.max(Date.parse(row.started_at), windowStart);
-    const end = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    if (!(end > start)) continue;
-
-    // החלק שנופל בתוך חלון ידני עובר ל-maintenance; היתר נשאר במצבו.
-    const covered = coveredMs(cover, start, end);
-    ms.maintenance += covered;
-    if (row.status !== "maintenance") ms[row.status] += (end - start) - covered;
-    else ms.maintenance += (end - start) - covered;
-  }
-
-  const toHours = (v) => Math.round((v / 3600000) * 100) / 100;
-  const totalMs = Object.values(ms).reduce((a, b) => a + b, 0);
-  const { measuredMs, availabilityPercent } = availabilityFrom(ms);
-
-  return {
-    readyHours: toHours(ms.ready),
-    operatingHours: toHours(ms.operating),
-    errorHours: toHours(ms.error),
-    maintenanceHours: toHours(ms.maintenance),
-    noCommHours: toHours(ms.no_comm),
-    totalHours: toHours(totalMs),          // כל הזמן שנמדד, כולל תחזוקה (לתצוגה)
-    // המכנה של הזמינות — בלי תחזוקה. 0 = אין נתון, ולא "זמינות אפס".
-    measuredHours: toHours(measuredMs),
-    availabilityPercent,
-  };
-}
 
 /** גרסת הזיכרון של getDirectionCounts (על פני קבוצת אתרים). */
-function directionFromData(data, siteIds, { from, to }) {
-  let entries = 0, exits = 0;
-  for (const id of siteIds) {
-    for (const o of data.ops.get(id) || []) {
-      if (o.is_anomaly !== 0 || o.start_end !== "end") continue;
-      if (!(o.occurred_at >= from && o.occurred_at < to)) continue;
-      if (o.entry_exit === "entry") entries++;
-      else if (o.entry_exit === "exit") exits++;
-    }
-  }
-  return { entries, exits };
-}
 
 /**
  * המדדים שאינם תלויי-טווח, לכל האתרים בבת אחת — 5 שאילתות במקום 5 לכל אתר.
@@ -2179,6 +1523,7 @@ async function getAllSitesGlobals(siteIds) {
   const blank = () => ({
     lastFaultAt: null, statusSince: null, lastOperation: null,
     operationsSinceLastError: 0, activeMaintenance: null, firstStatusAt: null,
+    currentFaultText: null,
   });
   const at = (id) => {
     if (!result.has(id)) result.set(id, blank());
@@ -2202,11 +1547,37 @@ async function getAllSitesGlobals(siteIds) {
 
     // המצב הפתוח הנוכחי. DISTINCT ON הוא הדרך של Postgres ל"שורה אחת לכל
     // קבוצה" — במקום שאילתה נפרדת עם LIMIT 1 לכל אתר.
+    //
+    // ============================================================
+    // תיאור התקלה **שורד את המעבר לטיפול**
+    // ============================================================
+    // המקרה הנפוץ ביותר: הבקר נופל לתקלה, ומיד אחריה מישהו מעביר את האתר
+    // לתחזוקה כדי לטפל בה. ברגע הזה מקטע התקלה **נסגר** ונפתח מקטע תחזוקה
+    // — ואיתו נעלם התיאור, בדיוק כשהוא הכי נחוץ: מי שרואה "בטיפול" רוצה
+    // לדעת **במה** מטפלים.
+    //
+    // ⚠️ ולכן COALESCE של שני מקורות:
+    //   1. התיאור של המקטע הפתוח עצמו — כשהאתר בתקלה עכשיו.
+    //   2. התיאור של התקלה ש**נסגרה בדיוק כשהמקטע הזה נפתח** — כשהאתר
+    //      בטיפול, וזו התקלה שבה מטפלים.
+    //
+    // ⚠️ ההתאמה על `ended_at = started_at` בדיוק, ולא על "התקלה האחרונה":
+    // הסוכן סוגר מקטע ופותח את הבא באותו סבב דגימה ועם אותו חותם. תקלה
+    // מלפני שעתיים אינה מה שמטפלים בו עכשיו, והצגתה הייתה שקר.
+    // אותו כלל בדיוק כמו פילוח "טיפול בתקלה" ב-shared/executive.mjs.
     db.prepare(
-      `SELECT DISTINCT ON (site_id) site_id, started_at
-       FROM status_history
-       WHERE ${holes} AND ended_at IS NULL
-       ORDER BY site_id, started_at DESC`
+      `SELECT DISTINCT ON (h.site_id) h.site_id, h.started_at,
+              COALESCE(
+                h.fault_text,
+                (SELECT e.fault_text FROM status_history e
+                  WHERE e.site_id = h.site_id
+                    AND e.status = 'error'
+                    AND e.ended_at = h.started_at
+                  LIMIT 1)
+              ) AS "faultText"
+       FROM status_history h
+       WHERE ${holes} AND h.ended_at IS NULL
+       ORDER BY h.site_id, h.started_at DESC`
     ).all(...ids),
 
     // הפעולה האחרונה
@@ -2230,7 +1601,7 @@ async function getAllSitesGlobals(siteIds) {
        FROM operations o
        LEFT JOIN last_fault f ON f.site_id = o.site_id
        WHERE ${holes.replace(/site_id/g, "o.site_id")}
-         AND o.is_anomaly = 0 AND o.start_end = 'end'
+         AND o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
          AND (f.t IS NULL OR o.occurred_at > f.t)
        GROUP BY o.site_id`
     ).all(...ids, ...ids),
@@ -2252,7 +1623,10 @@ async function getAllSitesGlobals(siteIds) {
     g.firstStatusAt = r.firstStatusAt;
   }
   for (const r of open) {
-    at(r.site_id).statusSince = r.started_at;
+    const g = at(r.site_id);
+    g.statusSince = r.started_at;
+    // תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה השאילתה למעלה.
+    g.currentFaultText = r.faultText ?? null;
   }
   for (const r of lastOps) {
     at(r.site_id).lastOperation = {
@@ -2296,20 +1670,26 @@ async function getAllSitesGlobals(siteIds) {
 // ⚠️ הפונקציות בזיכרון (statsFromData / uptimeFromData) **נשארות** — הן
 // עדיין משמשות מסלולים אחרים (supervisor/executive) שטרם הועברו, והן
 // נקודת ההשוואה של tools/parity.js. אין למחוק אותן לפני שגם אלה עברו.
-async function getAllSitesWithMetrics({ from }) {
+async function getAllSitesWithMetrics({ from, prevFrom = null }) {
   const now = new Date().toISOString();
 
-  // הכול במקביל — אין תלות בין שליפת האתרים לחישוב המדדים שלהם
-  const [sites, statsRows, uptimeRows, globals] = await Promise.all([
+  // ⚠️ שאילתה חמישית ולא סיבוב נוסף לכל אתר: site_stats מקבלת NULL ומחזירה
+  // שורה לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת. זה מה
+  // ששומר על "מספר שאילתות קבוע ללא תלות במספר האתרים".
+  const [sites, statsRows, uptimeRows, globals, prevRows] = await Promise.all([
     getAllSites(),
     db.prepare("SELECT * FROM public.site_stats(NULL, ?, ?)").all(from, now),
     db.prepare("SELECT * FROM public.site_uptime(NULL, ?, ?)").all(from, now),
     getAllSitesGlobals(null),
+    prevFrom
+      ? db.prepare("SELECT * FROM public.site_stats(NULL, ?, ?)").all(prevFrom, from)
+      : Promise.resolve([]),
   ]);
   if (sites.length === 0) return [];
 
   const statsById = new Map(statsRows.map((r) => [r.site_id, r]));
   const uptimeById = new Map(uptimeRows.map((r) => [r.site_id, r]));
+  const prevById = new Map(prevRows.map((r) => [r.site_id, r]));
 
   return sites.map((site) => {
     // אתר שאין לו שום היסטוריה לא יופיע בשליפות — ואז g היה undefined
@@ -2343,9 +1723,19 @@ async function getAllSitesWithMetrics({ from }) {
       // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהדשבורד יציג
       // "—" ולא "0%". אותו כלל בדיוק כמו getSiteUptime.
       uptime: up && up.measured_hours > 0 ? up.availability_percent : null,
+      // null = אין מספיק מדגם להשוואה, ולא "אין שינוי". ראה siteTrend.
+      trend: siteTrend(
+        { operations: stats.operations, failureRate: stats.failure_rate },
+        prevById.get(site.id)
+          ? { operations: prevById.get(site.id).operations,
+              failureRate: prevById.get(site.id).failure_rate }
+          : null
+      ),
       lastFaultAt: g.lastFaultAt,
       lastOperation: g.lastOperation,
       statusSince: g.statusSince,
+      // תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה getAllSitesGlobals.
+      currentFaultText: g.currentFaultText ?? null,
     };
   });
 }
@@ -2369,59 +1759,6 @@ async function getAllSitesWithMetrics({ from }) {
  * נחוץ כדי לחשב מדד *לכל דלי* (למשל זמינות ליום), מה ש-getPeriodBreakdown
  * לא מספק (הוא מחזיר ספירות בלבד).
  */
-function getBucketRanges({ from, to, granularity }) {
-  const byMonth = granularity === "month";
-  const byWeek = granularity === "week";
-
-  const keyOf = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    if (byMonth) return `${y}-${m}`;
-    // שבוע: מזוהה לפי תאריך תחילת השבוע (ראשון), כדי ששני ימים באותו
-    // שבוע ייפלו לאותו מפתח.
-    return `${y}-${m}-${String(d.getDate()).padStart(2, "0")}`;
-  };
-
-  const ranges = [];
-  const lastMs = Date.parse(to);
-  const cursor = new Date(from);
-  cursor.setHours(0, 0, 0, 0);
-  if (byMonth) cursor.setDate(1);
-  if (byWeek) cursor.setDate(cursor.getDate() - cursor.getDay());   // אחורה עד יום ראשון
-
-  const MAX = byMonth ? 36 : byWeek ? 120 : 400;
-
-  while (ranges.length < MAX) {
-    const start = new Date(cursor);
-    const next = new Date(cursor);
-    if (byMonth) next.setMonth(next.getMonth() + 1);
-    else if (byWeek) next.setDate(next.getDate() + 7);
-    else next.setDate(next.getDate() + 1);
-
-    // הדלי לא נמשך אל מעבר לקצה התקופה
-    const end = next.getTime() > lastMs ? new Date(to) : next;
-    const clippedStart = start.getTime() < Date.parse(from) ? new Date(from) : start;
-
-    const label = byMonth
-      ? start.toLocaleDateString("he-IL", { month: "short" })
-      : byWeek
-        ? `${start.getDate()}.${start.getMonth() + 1}`
-        : `${start.getDate()}.${start.getMonth() + 1}`;
-
-    ranges.push({
-      key: keyOf(start),
-      label,
-      from: clippedStart.toISOString(),
-      to: end.toISOString(),
-    });
-
-    // עוצרים כשהדלי הבא כבר מעבר לקצה
-    if (next.getTime() >= lastMs) break;
-    cursor.setTime(next.getTime());
-  }
-
-  return ranges;
-}
 
 /**
  * ספירת כניסות/יציאות עבור *קבוצת* אתרים בטווח — שאילתה אחת לכל דלי,
@@ -2436,7 +1773,7 @@ async function getDirectionCounts(siteIds, { from, to }) {
       `SELECT entry_exit, COUNT(*) AS n FROM operations
        WHERE site_id IN (${holes})
          AND occurred_at >= ? AND occurred_at < ?
-         AND is_anomaly = 0 AND start_end = 'end'
+         AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'
        GROUP BY entry_exit`
     )
     .all(...siteIds, from, to);
@@ -2455,12 +1792,12 @@ async function getOperationsSinceLastError(siteId) {
   if (!lastError) {
     // מעולם לא הייתה תקלה — סופרים את כל הפעולות
     return (await db.prepare(
-      "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND start_end = 'end'"
+      "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'"
     ).get(siteId)).n;
   }
   return (await db.prepare(
     `SELECT COUNT(*) AS n FROM operations
-     WHERE site_id = ? AND is_anomaly = 0 AND start_end = 'end' AND occurred_at > ?`
+     WHERE site_id = ? AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end' AND occurred_at > ?`
   ).get(siteId, lastError)).n;
 }
 
@@ -2553,8 +1890,12 @@ async function getSupervisorStatsWithData({ from, to }) {
 async function getRecentErrors({ limit = 10 } = {}) {
   return (await db
     .prepare(
+      // faultText — תיאור התקלה מהבקר. ⚠️ זו הרשימה שאנשים קוראים כדי
+      // להבין **מה קרה**, ובלי התיאור כל שורה בה זהה לשנייה: אתר, שעה,
+      // משך. הטקסט הוא ההבדל בין רשימת אירועים לבין רשימת תקלות.
       `SELECT s.code AS "siteCode", s.site_name AS "siteName",
-              h.started_at AS "startedAt", h.ended_at AS "endedAt"
+              h.started_at AS "startedAt", h.ended_at AS "endedAt",
+              h.fault_text AS "faultText"
        FROM status_history h
        JOIN sites s ON h.site_id = s.id
        WHERE h.status = 'error'
@@ -2608,29 +1949,7 @@ async function getActiveMaintenances() {
     .all(now);
 }
 
-// דירוג אתרים: הכי זמינים / הכי בעייתיים. מקבל את שורות ה-supervisor כדי
-// לא לחשב הכל פעמיים.
-function getTopPerformers(rows, limit = 5) {
-  return rows
-    .filter((r) => r.hasUptimeData)
-    .sort((a, b) => b.availability - a.availability || b.operations - a.operations)
-    .slice(0, limit)
-    .map((r) => ({
-      code: r.code, name: r.name,
-      availability: r.availability, operations: r.operations,
-    }));
-}
 
-function getWorstPerformers(rows, limit = 5) {
-  return rows
-    .filter((r) => r.errors > 0)
-    .sort((a, b) => b.failureRate - a.failureRate || b.errors - a.errors)
-    .slice(0, limit)
-    .map((r) => ({
-      code: r.code, name: r.name,
-      failureRate: r.failureRate, errors: r.errors,
-    }));
-}
 
 /**
  * מפת חום: שורה לכל אתר, תא לכל דלי — עוצמת הפעילות.
@@ -2639,17 +1958,6 @@ function getWorstPerformers(rows, limit = 5) {
  * אף שאילתה. הגרסה הישנה קראה ל-getPeriodBreakdown לכל אתר — כלומר
  * שאילתה לכל אתר, ובגרנולריות יומית זה הצטבר מהר.
  */
-function heatmapFromData(data, sites, buckets) {
-  const rows = sites.map((site) => ({
-    siteCode: site.code,
-    siteName: site.site_name,
-    values: buckets.map((b) =>
-      statsFromData(data, site.id, { from: b.from, to: b.to }).operations),
-  }));
-
-  const max = Math.max(0, ...rows.flatMap((r) => r.values));
-  return { labels: buckets.map((b) => b.label), rows, max };
-}
 
 /**
  * מפת חום — נשמרה לתאימות (משמשת קוד חיצוני/בדיקות). שולפת בעצמה.
@@ -2751,192 +2059,21 @@ async function getExecutiveStatsFiltered({
   from, to, siteCodes, statuses, minFailureRate = 0,
   groupBy = "site", granularity = "day",
 }) {
-  // data ו-sites מגיעים מכאן ומשמשים את *כל* החישובים שלמטה — הדליים,
-  // מפת החום והפילוחים — בלי אף שאילתה נוספת.
-  const { rows: allRows, data, sites: allSites } = await getSupervisorStatsWithData({ from, to });
-  const totalSitesInSystem = allRows.length;
-
-  // --- סינון ---
-  const codeSet = siteCodes?.length ? new Set(siteCodes) : null;
-  const statusSet = statuses?.length ? new Set(statuses) : null;
-
-  const rows = allRows.filter((r) => {
-    if (codeSet && !codeSet.has(r.code)) return false;
-    if (statusSet && !statusSet.has(r.status)) return false;
-    if (minFailureRate > 0 && r.failureRate < minFailureRate) return false;
-    return true;
-  });
-
-  const idOf = new Map(allSites.map((s) => [s.code, s.id]));
-  const selectedIds = rows.map((r) => idOf.get(r.code)).filter((x) => x !== undefined);
-
-  // --- KPIs (על המסונן בלבד) ---
-  const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0);
-  const totalOperations = sum("operations");
-  const totalErrors = sum("errors");
-
-  const withData = rows.filter((r) => r.hasUptimeData);
-  const avgAvailability = withData.length
-    ? Math.round((withData.reduce((s, r) => s + r.availability, 0) / withData.length) * 100) / 100
-    : 0;
-
-  const sitesByStatus = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
-  for (const r of rows) if (sitesByStatus[r.status] !== undefined) sitesByStatus[r.status]++;
-
-  // סך הכניסות/היציאות בכל הטווח (לאריחי הסיכום מתחת לגרף) — מהזיכרון
-  const totals = directionFromData(data, selectedIds, { from, to });
-
-  const kpis = {
-    totalSites: rows.length,
-    activeSites: sitesByStatus.ready + sitesByStatus.operating,
-    totalOperations,
-    totalEntries: totals.entries,
-    totalExits: totals.exits,
-    totalErrors,
-    // משוקלל (סך תקלות ÷ סך פעולות), ולא ממוצע של אחוזים — אחרת אתר עם
-    // 2 פעולות מקבל אותו משקל כמו אתר עם 2000.
-    avgFailureRate: totalOperations > 0
-      ? Math.round((totalErrors / totalOperations) * 10000) / 100
-      : 0,
-    avgAvailability,
-    totalMaintenanceHours: Math.round(sum("maintenanceHours") * 100) / 100,
-    totalDowntimeHours: Math.round(sum("downtimeHours") * 100) / 100,
-  };
-
-  // --- סדרת הזמן (משמשת גם לגרף וגם ל-groupBy=time) ---
-  const buckets = getBucketRanges({ from, to, granularity });
-
-  // הלולאה הזו הייתה הרוצחת: (דליים × אתרים × 3) שאילתות. חודש בגרנולריות
-  // יומית = 30 דליים; עם 200 אתרים זה היה ~18,000 סיבובי רשת. עכשיו: אפס.
-  const chart = buckets.map((b) => {
-    let ops = 0, errs = 0, maint = 0, availSum = 0, availCount = 0;
-
-    for (const id of selectedIds) {
-      const st = statsFromData(data, id, { from: b.from, to: b.to });
-      ops += st.operations;
-      errs += st.errors;
-
-      const up = uptimeFromData(data, id, { from: b.from, to: b.to });
-      maint += up.maintenanceHours;
-      if (up.measuredHours > 0) {
-        availSum += up.availabilityPercent;
-        availCount++;
-      }
-    }
-
-    const { entries, exits } = directionFromData(data, selectedIds, { from: b.from, to: b.to });
-
-    return {
-      label: b.label,
-      operations: ops,
-      entries,
-      exits,
-      errors: errs,
-      maintenanceHours: Math.round(maint * 100) / 100,
-      availability: availCount ? Math.round((availSum / availCount) * 100) / 100 : 0,
-      failureRate: ops > 0 ? Math.round((errs / ops) * 10000) / 100 : 0,
-    };
-  });
-
-  // --- מפת חום (שורה לאתר, תא לדלי) — גם היא מהזיכרון ---
-  const heatRows = rows.map((r) => {
-    const id = idOf.get(r.code);
-    return {
-      siteCode: r.code,
-      siteName: r.name,
-      values: buckets.map((b) => statsFromData(data, id, { from: b.from, to: b.to }).operations),
-    };
-  });
-  const heatmap = {
-    labels: buckets.map((b) => b.label),
-    rows: heatRows,
-    max: Math.max(0, ...heatRows.flatMap((r) => r.values)),
-  };
-
-  // --- פילוח (groupBy) ---
-  let groups;
-  if (groupBy === "status") {
-    const byStatus = new Map();
-    for (const r of rows) {
-      const g = byStatus.get(r.status) || {
-        key: r.status, label: r.status,
-        sites: 0, operations: 0, errors: 0,
-        maintenanceHours: 0, availSum: 0, availCount: 0,
-      };
-      g.sites++;
-      g.operations += r.operations;
-      g.errors += r.errors;
-      g.maintenanceHours += r.maintenanceHours || 0;
-      if (r.hasUptimeData) { g.availSum += r.availability; g.availCount++; }
-      byStatus.set(r.status, g);
-    }
-    groups = [...byStatus.values()].map((g) => ({
-      key: g.key,
-      label: g.label,
-      sites: g.sites,
-      operations: g.operations,
-      errors: g.errors,
-      maintenanceHours: Math.round(g.maintenanceHours * 100) / 100,
-      availability: g.availCount ? Math.round((g.availSum / g.availCount) * 100) / 100 : 0,
-      failureRate: g.operations > 0 ? Math.round((g.errors / g.operations) * 10000) / 100 : 0,
-    }));
-  } else if (groupBy === "time") {
-    groups = chart.map((c) => ({
-      key: c.label, label: c.label,
-      sites: rows.length,
-      operations: c.operations,
-      errors: c.errors,
-      maintenanceHours: c.maintenanceHours,
-      availability: c.availability,
-      failureRate: c.failureRate,
-    }));
-  } else {
-    groups = rows.map((r) => ({
-      key: r.code,
-      label: r.name,
-      sites: 1,
-      operations: r.operations,
-      errors: r.errors,
-      maintenanceHours: r.maintenanceHours || 0,
-      availability: r.hasUptimeData ? r.availability : 0,
-      failureRate: r.failureRate,
-    }));
-  }
-
-  // --- שורות גולמיות לייצוא CSV ---
+  // ============================================================
+  // שליפה אחת, וכל השאר חישוב טהור
+  // ============================================================
+  // data ו-sites משמשים את *כל* החישובים — הדליים, מפת החום והפילוחים —
+  // בלי אף שאילתה נוספת. זה מה שהפך את המסך הזה מ-100 שאילתות לספרה
+  // חד-ספרתית.
   //
-  // "מצב נוכחי" ולא "מצב": כל שאר העמודות מתארות את *התקופה* (פעולות, תקלות,
-  // זמינות), אבל הסטטוס הוא צילום רגע — המצב של האתר כרגע, לא בתקופה. בשם
-  // "מצב" הוא נקרא כאילו הוא נתון של התקופה, וזה מטעה.
-  // בדוח המודפס הוא לא מופיע כלל (ראה ReportView) — שם זה מסמך על תקופה.
-  const rawRows = rows.map((r) => ({
-    "קוד אתר": r.code,
-    "שם האתר": r.name,
-    "מצב נוכחי": r.status,
-    "פעולות": r.operations,
-    "תקלות": r.errors,
-    "אחוז כשל": r.failureRate,
-    "זמינות": r.hasUptimeData ? r.availability : "",
-    "שעות תחזוקה": r.maintenanceHours || 0,
-    "שעות השבתה": r.downtimeHours || 0,
-    "מונה מחזורים": r.cycleTotal,
-    "פעולות מאז התקלה": r.operationsSinceLastError,
-  }));
+  // ⚠️ ומכאן והלאה **אין גישה ל-DB**, וזה מה שמאפשר לדשבורד להריץ את אותו
+  // חישוב בעצמו על שורות שהוא שלף מ-Supabase. ראה shared/executive.mjs.
+  const { rows: allRows, data, sites: allSites } = await getSupervisorStatsWithData({ from, to });
 
-  return {
-    kpis,
-    sitesByStatus,
-    topPerformers: getTopPerformers(rows),
-    worstPerformers: getWorstPerformers(rows),
-    chart,
-    heatmap,
-    groups,
-    rawRows,
-    filteredSitesCount: rows.length,
-    totalSitesInSystem,
-    // רשימת כל האתרים במערכת — כדי שה-UI יוכל לבנות את בורר האתרים
-    allSites: allRows.map((r) => ({ code: r.code, name: r.name, status: r.status })),
-  };
+  return computeExecutive({
+    allRows, data, allSites, from, to,
+    siteCodes, statuses, minFailureRate, groupBy, granularity,
+  });
 }
 
 // ==========================================================
@@ -3050,7 +2187,7 @@ async function setAdminCode(newCode) {
  * *לאיזה אתר* משויכות ההודעות הנכנסות. ההיסטוריה הקיימת עוברת איתו (site_id
  * לא משתנה), אבל הסוכן בשטח חייב להתעדכן גם הוא, אחרת הודעותיו יידחו.
  */
-async function updateSite(currentCode, { newCode, siteName, tier }) {
+async function updateSite(currentCode, { newCode, siteName, tier, plcType }) {
   const site = await findSiteByCode(currentCode);
   if (!site) return { ok: false, reason: "not_found" };
 
@@ -3063,6 +2200,20 @@ async function updateSite(currentCode, { newCode, siteName, tier }) {
   if (newCode && newCode !== currentCode) { fields.push("code = ?"); params.push(newCode); }
   if (siteName) { fields.push("site_name = ?"); params.push(siteName); }
   if (tier) { fields.push("tier = ?"); params.push(tier); }
+
+  // ==========================================================
+  // סוג המתקן — '' פירושו **ניקוי**, ולכן נבדק undefined ולא truthy
+  // ==========================================================
+  // ⚠️ שלוש השורות מעל משתמשות בבדיקת truthy, וזה נכון עבורן: שם ריק, קוד
+  // ריק או דרגה ריקה אינם ערכים חוקיים ואין משמעות ל"נקה אותם".
+  //
+  // כאן זה הפוך. זהו שדה אופציונלי, ו"האתר הזה כבר לא דולי" היא פעולה
+  // לגיטימית שחייבת דרך לבצע. בדיקת truthy הייתה בולעת אותה בשקט: המשתמשת
+  // בוחרת "לא הוגדר", לוחצת שמור, מקבלת אישור — והערך הישן נשאר.
+  //
+  // ההבחנה: `undefined` = השדה לא נשלח בכלל (עדכון חלקי). `''` = נשלח ריק
+  // במפורש → נשמר כ-NULL, כדי שלא יהיו במסד גם '' וגם NULL לאותו מצב.
+  if (plcType !== undefined) { fields.push("plc_type = ?"); params.push(plcType || null); }
 
   if (fields.length === 0) return { ok: true, site };
 
@@ -3154,7 +2305,10 @@ module.exports = {
   findSiteByCode,
   insertSite,
   insertOperation,
-  inheritCardFromStart,   // השלמת כרטיס שאבד בין start ל-end (ראה ההסבר שם)
+  inheritCardFromStart,
+  supersedeInterruptedAttempt,   // ניסיון חוזר מאחד את הניסיון שנקטע
+  supersedeFlicker,              // ריצוד MODE — מעבר אחד שנרשם כשניים
+  RETRY_MERGE_WINDOW_MS,   // השלמת כרטיס שאבד בין start ל-end (ראה ההסבר שם)
   applyCycleCounter,
   decideCycleUpdate,   // טהורה — נבדקת ישירות ב-tests/cycle-counter.test.js
   RESET_PLAUSIBLE_MAX,
@@ -3191,6 +2345,8 @@ module.exports = {
   // מיוצא לבדיקות: פונקציה טהורה שמחליטה מה מוצג, באיזה סדר, ומה נספר.
   // זו ההחלטה שנשברה שלוש פעמים בתצוגה, ולכן היא נעולה בבדיקות.
   buildActivityLog,
+  buildTimeline,
+  LOG_FILTERS,
   OP_PAIR_TOLERANCE_SECONDS,
   getSupervisorStats,
   getExecutiveStats,
@@ -3210,6 +2366,9 @@ module.exports = {
   generateMonthlySummary,
   getSystemSummary,
   getSystemMonthlyBreakdown,
+  getSiteMonthsReport,       // אתר × חודש (report_site_months)
+  getSiteReport,             // דוח לכל אתר: תקלות ומחזורים (report_by_site)
+  getMonthlyReport,          // דוח חודשי לטווח חופשי (report_monthly)
   hasMonthlySummary,
   getRawMonthsBefore,
   deleteRawInRange,

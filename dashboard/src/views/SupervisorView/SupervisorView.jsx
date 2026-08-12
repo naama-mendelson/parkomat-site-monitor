@@ -244,6 +244,20 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                   <span className="sv-err-dot" />
                   <div className="sv-err-main">
                     <span className="sv-err-site">{e.siteName}</span>
+                    {/* ==========================================================
+                        תיאור התקלה מהבקר
+                        ==========================================================
+                        ⚠️ בלעדיו כל שורה ברשימה זהה לשנייה: אתר, שעה, משך.
+                        זו הרשימה שאנשים קוראים כדי להבין **מה קרה**, והטקסט
+                        הוא ההבדל בין רשימת אירועים לרשימת תקלות.
+
+                        מוצג בין שם האתר לשעה — מי שסורק את הרשימה קורא שם
+                        ואז סיבה, והשעה היא ההקשר. */}
+                    {e.faultText && (
+                      <span className="sv-err-text" title={e.faultText}>
+                        {e.faultText}
+                      </span>
+                    )}
                     <span className="sv-err-time">{formatDate(e.startedAt)}</span>
                   </div>
                   <span className={`sv-err-dur ${e.ongoing ? "is-ongoing" : ""}`}>

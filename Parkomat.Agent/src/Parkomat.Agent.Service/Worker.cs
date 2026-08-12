@@ -31,6 +31,49 @@ public class Worker : BackgroundService
         SiteConfig config = ConfigStore.Load();
         _logger.LogInformation("=== Parkomat Agent starting ===");
         _logger.LogInformation("Config loaded for site '{SiteId}'", config.SiteId);
+
+        // ============================================================
+        // בלי מזהה אתר אין למי לשדר — ועוצרים כאן
+        // ============================================================
+        // ⚠️ **זה הכשל השקט ביותר במערכת הזו.** בלי מזהה, הנושאים יוצאים
+        // `sites//state` ו-`sites//operation` — נושאים תקינים לחלוטין מבחינת
+        // MQTT, שהשרת אינו מנוי אליהם ולעולם לא יראה. וכל שכבה אחרת מדווחת
+        // הצלחה **אמיתית**: הבקר עונה, Mosquitto מחובר, הגשר ל-HiveMQ עולה,
+        // סמל ה-Tray צבעוני. אף אחת מהן אינה בודקת לאן.
+        //
+        // בשטח זה לא נראה כתקלה אלא כתעלומה: "בבקר כתוב שיש תקשורת,
+        // בדשבורד כתוב שאין" — וזה עולה שעות של חיפוש בכיוון הלא נכון.
+        //
+        // ⚠️ **נשארים בחיים ולא יוצאים.** יציאה הייתה גוררת את ה-Tray
+        // להפעיל מחדש בלולאה (RestartPolicy), וכל הפעלה הייתה מוחקת את
+        // ההודעה מהלוג לפני שמישהו הספיק לקרוא אותה.
+        //
+        // ⚠️ **ולא כותבים heartbeat.** זה מה שהופך את השקט לגלוי: הסמל
+        // נשאר אפור, הטכנאי פותח "בדוק חיבור", ורואה שם שורה אדומה שמסבירה
+        // בדיוק מה חסר. אילו היינו כותבים פעימות, הסמל היה ירוק ושום דבר
+        // לא היה מצביע על הבעיה.
+        //
+        // ההגדרה עצמה כבר חסומה בטופס (SettingsForm מסרב לשמור ריק), ולכן
+        // המצב הזה מגיע ממקום אחר: התקנה טרייה שאיש עוד לא פתח בה הגדרות.
+        SiteIdCheck idCheck = SiteIdRule.Check(config.SiteId);
+        if (!idCheck.IsValid)
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogCritical(
+                    "SITE ID IS INVALID — the agent is publishing NOTHING. Configured value: '{SiteId}'. " +
+                    "The MQTT topic would be 'sites/{SiteId}/state', which the server is not subscribed " +
+                    "to, so the site would look connected here and absent in the dashboard. " +
+                    "Fix: tray icon -> Settings -> site number -> Save. " +
+                    "Nothing else is broken: the PLC and the cloud connection are unaffected. {Reason}",
+                    config.SiteId, config.SiteId, idCheck.Message);
+
+                // כל 5 דקות — מספיק כדי שההודעה תהיה בלוג בכל חלון שמישהו
+                // יסתכל בו, ולא כל שנייה, שהיה הופך את הקובץ לבלתי קריא.
+                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            return;
+        }
         _logger.LogInformation(
             "PLC target: {Ip}:{Port} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
             config.Plc.IpAddress, config.Plc.Port,
@@ -138,6 +181,62 @@ public class Worker : BackgroundService
         // מונה כשלונות רצופים של ה-PLC, ודגל שמונע שידור error חוזר שוב ושוב.
         int consecutiveFailures = 0;
         bool plcErrorReported = false;
+
+        // ⚠️ אזהרת אריזת התווים נרשמת **פעם אחת לכל חיי השירות**. בלי הדגל
+        // היא הייתה חוזרת בכל תקלה ומציפה את הלוג — ואז איש לא היה קורא
+        // אותה, וזה בדיוק ההפך ממה שהיא נועדה להשיג.
+        bool faultTextPackingWarned = false;
+
+        // ============================================================
+        // תיאור התקלה — נקרא בשני מקומות, ולכן יושב בפונקציה אחת
+        // ============================================================
+        // ⚠️ **שני מסלולים שונים מגיעים לשרת עם "תקלה", ושניהם חייבים לשאת
+        // את התיאור:**
+        //
+        //   1. **שינוי מצב** — הרגיל, מה שקורה כשהמכונה נופלת.
+        //   2. **שידור מחדש (resync)** — אחרי חזרת הגשר, חזרת ה-PLC, או
+        //      עלייה מחדש של השירות.
+        //
+        // המסלול השני שידר תקלה **בלי תיאור**, וזה לא מקרה קצה: אתר בתקלה
+        // שמאבד תקשורת מסומן בשרת `no_comm`, וכשהוא חוזר ה-resync פותח
+        // **מקטע תקלה חדש** — שהיה נרשם ריק. הכרטיס היה מציג "מושבת" בלי
+        // תיאור, והשורה בלוג נשארת ריקה לתמיד. ובאתר תקול, נפילת תקשורת
+        // היא בדיוק מה שקורה.
+        //
+        // ⚠️ **קוראים מה-PLC ולא זוכרים במשתנה.** הבקר מחזיק את התיאור
+        // הנוכחי; זיכרון מקומי היה מת בכל הפעלה מחדש של השירות — כלומר
+        // דווקא במקרה שהוא נועד לכסות.
+        //
+        // מחזיר null כשאין תיאור, כדי שהשדה יושמט מה-JSON לגמרי.
+        string? ReadFaultTextOrNull(SiteState state)
+        {
+            if (state != SiteState.Error) return null;
+
+            FaultText ft = plc.ReadFaultText();
+
+            // ⚠️ אזהרה **פעם אחת בלבד**, ולא בכל תקלה: ערכים שהפענוח לא
+            // הכיר הוחלפו ב-'?'. הטקסט אז יוצא **קריא למחצה** ולא ג'יבריש
+            // מובהק, ולכן הוא נראה כמו תקלה בבקר ולא כמו טעות פענוח —
+            // וזה בדיוק מה שקרה בז'בוטינסקי 91 (`?א?? ?א???`).
+            //
+            // אין תיקון אוטומטי של הפרשנות: ניחוש שקט הוא בדיוק מה שיוצר
+            // בעיה כזו. השורה הזו היא מה שיאמר לנו לשנות את הפענוח ביודעין,
+            // והיא מדפיסה את **הערכים הגולמיים** כי בלעדיהם אי אפשר לזהות
+            // את הקידוד מרחוק.
+            if (ft.HadUnknown && !faultTextPackingWarned)
+            {
+                faultTextPackingWarned = true;
+                _logger.LogWarning(
+                    "Fault text: {Count} register value(s) were not recognised and became '?'. " +
+                    "The text is half-readable and must not be trusted. Decoded: '{Text}'",
+                    ft.UnknownChars, ft.Text);
+            }
+
+            if (string.IsNullOrEmpty(ft.Text)) return null;
+
+            _logger.LogInformation("Fault text from PLC: {Text}", ft.Text);
+            return ft.Text;
+        }
 
         // האם היינו מחוברים ל-Broker בסבב הקודם. משמש לזהות "חזרנו להתחבר"
         // כדי לשדר מחדש את המצב הנוכחי (אחרת שינוי שקרה בזמן הנתק אובד).
@@ -413,7 +512,10 @@ public class Worker : BackgroundService
                     await mqtt.PublishStateAsync(new StateMessage
                     {
                         Timestamp = clock.UnixNow(),
-                        State = resync.State
+                        State = resync.State,
+                        // ⚠️ בלי זה, אתר שנפל **ואז** איבד תקשורת חוזר לשרת
+                        // כתקלה חדשה וריקה — ראה ReadFaultTextOrNull.
+                        FaultText = ReadFaultTextOrNull(resync.State)
                     }, stoppingToken);
                     birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                 }
@@ -430,6 +532,23 @@ public class Worker : BackgroundService
                 // בחינם היא בזבוז, והיא גם מסתירה את הבעיה האמיתית במקום לתקן אותה.
                 if (result.State is not null)
                 {
+                    // ============================================================
+                    // תיאור התקלה — נקרא רק כשיש תקלה, ורק על שינוי מצב
+                    // ============================================================
+                    // עד היום כל התקלות נראו זהות במסך: "מושבת". אין דרך לדעת
+                    // אם זו תקלת חיישן, כרטיס שלא נקרא או תקלה מכנית.
+                    //
+                    // ⚠️ **התנאי הכפול חוסך פי כמה מאות בתעבורה.** 80 registers
+                    // הם קריאה גדולה בהרבה מהרגילה (3), והיא רלוונטית רק ברגע
+                    // אחד: כשהמצב משתנה לתקלה. קריאה בכל דגימה הייתה מכפילה את
+                    // העומס על הבקר בלי להוסיף מידע.
+                    //
+                    // ⚠️ וכשל בקריאה אינו מפיל את השידור: ReadFaultText מחזיר
+                    // ריק, והתקלה משודרת בלי תיאור. **התקלה עצמה חשובה יותר
+                    // מהתיאור שלה**, ובקר ישן שאין בו את הכתובת הזו חייב
+                    // להמשיך לעבוד בדיוק כמו קודם.
+                    result.State.FaultText = ReadFaultTextOrNull(result.State.State);
+
                     _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
                     await mqtt.PublishStateAsync(result.State, stoppingToken);
                     _logger.LogInformation("-> Published STATE: {State}", result.State.State);

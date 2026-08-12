@@ -9,10 +9,13 @@ const CHART_H = H - LABEL_H;
  * bars       — [{ label, value }]
  * color      — צבע העמודות
  * highlight  — ערך שיודגש (למשל השעה העמוסה)
+ * peakColor  — צבע לעמודת השיא. בלעדיו השיא נבדל רק באטימות, וזה **לא
+ *              מספיק**: 24 עמודות באותו כחול, אחת מהן מעט כהה יותר — העין
+ *              לא מוצאת אותה בלי לחפש. צבע נפרד הופך את זה למבט אחד.
  * unit       — יחידה ב-tooltip ("פעולות")
  * everyLabel — הצג תווית כל N עמודות (לצירים צפופים כמו 24 שעות)
  */
-function BarChart({ bars, color, highlight, unit = "", everyLabel = 1 }) {
+function BarChart({ bars, color, highlight, peakColor, unit = "", everyLabel = 1 }) {
   if (!bars || bars.length === 0) {
     return <p className="bc-empty">אין נתונים</p>;
   }
@@ -52,7 +55,7 @@ function BarChart({ bars, color, highlight, unit = "", everyLabel = 1 }) {
               width={barW}
               height={Math.max(b.value > 0 ? 2 : 0, h)}
               rx="1.5"
-              fill={color}
+              fill={isPeak && peakColor ? peakColor : color}
               opacity={isPeak ? 1 : 0.62}
               /* stagger — כל עמודה "צומחת" מעט אחרי קודמתה */
               style={{ animationDelay: `${i * 35}ms` }}

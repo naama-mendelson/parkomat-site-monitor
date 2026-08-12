@@ -22,6 +22,11 @@ function App() {
   // ===== State מרכזי =====
   const [role, setRole] = useState("operator");                // בקר / מנהל בקרה / מנהל כללי
   const [activeFilters, setActiveFilters] = useState([]);       // סינון לפי מצב (בקר) — בחירה מרובה
+  // ⚠️ מצב וסוג הם שני מסננים **שמצטלבים**, ולכן שני מצבים נפרדים: "מושבת"
+  // + "דולי" = כל מתקני הדולי שמושבתים כרגע. מצב אחד משותף היה מאלץ לבחור
+  // ביניהם במקום לשלב.
+  const [typeFilter, setTypeFilter] = useState("");             // סינון לפי סוג מתקן ("" = הכל)
+  const [tierFilter, setTierFilter] = useState("");             // סינון לפי רמת שירות ("" = הכל)
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
@@ -196,6 +201,8 @@ function App() {
         loading={loading}
         error={error}
         activeFilters={activeFilters}
+        typeFilter={typeFilter}
+        tierFilter={tierFilter}
         searchQuery={searchQuery}
         onSiteClick={handleSiteClick}
       />
@@ -210,6 +217,10 @@ function App() {
         onRoleChange={setRole}
         activeFilters={activeFilters}
         onFilterChange={setActiveFilters}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
+        tierFilter={tierFilter}
+        onTierFilterChange={setTierFilter}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         darkMode={darkMode}

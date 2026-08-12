@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 import { updateSite, deleteSite, changeAdminCode, storeAdminCode } from "../../services/api";
+import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
 import "./AdminPanel.css";
@@ -40,7 +41,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
 
   function startEdit(site) {
     setEditing(site.code);
-    setDraft({ name: site.site_name, code: site.code, tier: site.tier || "basic" });
+    // ⚠️ `?? ""` ולא `|| ""` — הערכים במסד הם NULL, ו-input עם value=null
+    // הופך ל"uncontrolled" ומדפיס אזהרה ב-React. וריק כאן הוא ערך תקין:
+    // הוא מה שיישלח כדי לנקות שדה.
+    setDraft({
+      name: site.site_name,
+      code: site.code,
+      tier: site.tier || "basic",
+      plcType: site.plc_type ?? "",
+    });
     setErr(null);
   }
 
@@ -56,7 +65,16 @@ function AdminPanel({ sites, onClose, onChanged }) {
     setBusy(true);
     setErr(null);
     try {
-      await updateSite(originalCode, { site_name: name, code: newCode, tier: draft.tier });
+      // ⚠️ סוג המתקן נשלח **תמיד**, גם כשהוא ריק. שליחה מותנית
+      // (רק כשיש ערך) הייתה הופכת "נקה את השדה" לפעולה בלתי אפשרית: השרת
+      // מבדיל בין שדה שלא נשלח לבין שדה שנשלח ריק, וזה בדיוק ההבדל בין
+      // "אל תיגע" לבין "מחק".
+      await updateSite(originalCode, {
+        site_name: name,
+        code: newCode,
+        tier: draft.tier,
+        plc_type: draft.plcType,
+      });
       setEditing(null);
       onChanged();
       flash(`האתר "${name}" עודכן`);
@@ -210,6 +228,20 @@ function AdminPanel({ sites, onClose, onChanged }) {
                           ))}
                         </select>
                       </label>
+                      <label>
+                        <span>סוג המתקן</span>
+                        <select value={draft.plcType}
+                          onChange={(e) => setDraft({ ...draft, plcType: e.target.value })}>
+                          <option value="">לא הוגדר</option>
+                          {SITE_TYPE_GROUPS.map((g) => (
+                            <optgroup key={g.key} label={g.label}>
+                              {g.types.map((t) => (
+                                <option key={t.key} value={t.key}>{t.label}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </label>
                       <p className="adm-warn">
                         ⚠ שינוי הקוד משנה את נתיב ה-MQTT. הסוכן באתר חייב להתעדכן גם הוא,
                         אחרת הודעותיו יידחו.
@@ -219,7 +251,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
                     <div className="adm-info">
                       <span className="adm-name">{s.site_name}</span>
                       <span className="adm-meta">
-                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · {STATUS_LABELS[s.status] || s.status}
+                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · {STATUS_LABELS[s.status] || s.status}
                       </span>
                     </div>
                   )}
