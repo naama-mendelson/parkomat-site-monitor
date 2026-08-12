@@ -23,6 +23,11 @@
 import { useEffect, useRef } from "react";
 import { useDirect } from "../services/dataSource";
 import { subscribeRealtime } from "../services/realtimeDirect";
+import { supabase } from "../services/supabase";
+// ⚠️ אותה כתובת בסיס בדיוק כמו שאר הקריאות. בפיצול לשני קונטיינרים
+// "/api/stream" היה מפנה ל-Apache, וההודעות החיות פשוט לא היו מגיעות —
+// בלי שום שגיאה על המסך.
+import { API_ROOT } from "../services/api";
 
 /**
  * @param onUpdate    נקרא לכל הודעה.
@@ -64,11 +69,33 @@ export function useSSE(onUpdate, onReconnect) {
     }
 
     // ---- זרוע ב': SSE דרך השרת. נשאר עובד, ולכן אינו נמחק. ----
-    const source = new EventSource("/api/stream");
+    //
+    // ============================================================
+    // האסימון נוסע בשאילתה — כי אין שום דרך אחרת
+    // ============================================================
+    // ⚠️ **ל-EventSource אין פרמטר headers.** זו מגבלת ה-API בדפדפן ולא
+    // בחירה: אי אפשר לשלוח Authorization בחיבור SSE, נקודה. נתיבי הקריאה
+    // בשרת מוגנים עכשיו (requireAuth), והנתיב הזה לבדו מקבל את האסימון
+    // כפרמטר — ראה requireAuthSse בשרת, שם מתועדת הפשרה במלואה.
+    //
+    // ⚠️ **וההשגה היא אסינכרונית**, ולכן החיבור נפתח רק אחרי שהאסימון בא.
+    // הדגל cancelled קיים כי ה-effect עלול להתפרק בזמן ההמתנה — בלעדיו
+    // ייפתח חיבור אחרי הפירוק, ואיש כבר לא סוגר אותו.
+    let source = null;
+    let cancelled = false;
 
     // האם היה נתק מאז ההתחברות האחרונה. בלי הדגל הזה onopen הראשון (בטעינה)
     // היה מפעיל שליפה מיותרת — הרשימה בדיוק נטענה.
     let sawDisconnect = false;
+
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (cancelled) return;
+
+      source = new EventSource(
+        token ? `${API_ROOT}/api/stream?access_token=${encodeURIComponent(token)}` : `${API_ROOT}/api/stream`
+      );
 
     source.onmessage = (event) => {
       try {
@@ -90,6 +117,7 @@ export function useSSE(onUpdate, onReconnect) {
       sawDisconnect = true;
       console.warn("SSE disconnected — reconnecting automatically...");
     };
+    })();
 
     // מחשב שנרדם או טאב ברקע: הדפדפן לא תמיד פולט error, ולכן ההסתמכות על
     // onopen לבדה משאירה מסך מיושן בלי שום סימן.
@@ -99,8 +127,10 @@ export function useSSE(onUpdate, onReconnect) {
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
+      cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
-      source.close();
+      // ⚠️ ?. — החיבור אולי טרם נפתח (ההמתנה לאסימון עדיין רצה).
+      source?.close();
     };
   }, []);
 }

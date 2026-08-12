@@ -1,0 +1,67 @@
+# Dockerfile.web — קונטיינר האחסון: Apache שמגיש את קובצי הדשבורד.
+#
+# ============================================================
+# למה קונטיינר נפרד
+# ============================================================
+# הדשבורד הוא **קבצים סטטיים בלבד** — הנתונים שלו מגיעים מ-Supabase ישירות,
+# לא מהשרת. אין לו שום סיבה לחלוק מחזור חיים עם תהליך שמחזיק חיבור MQTT
+# פתוח: הפעלה מחדש של הקליטה אינה אמורה להפיל את המסך, ולהפך.
+#
+# ⚠️ **וזו גם ההכנה למעבר לאחסון החיצוני של החברה.** ברגע שהקבצים חיים
+# בקונטיינר משלהם, ההוצאה החוצה היא העתקת תיקייה ושינוי כתובת — לא הגירה.
+
+# ============================================================
+# שלב 1 — בניית הדשבורד
+# ============================================================
+# ⚠️ זהה לשלב שב-Dockerfile הראשי, ובכוונה: אותם ARG ואותה פקודת בנייה.
+# שני שלבי בנייה שמתפצלים היו יוצרים שתי גרסאות שונות של אותו מסך.
+FROM node:24-alpine AS build
+
+WORKDIR /app
+
+# ⚠️ שלושת ה-ARG נצרבים לתוך ה-JS בזמן הבנייה — Vite מחליף אותם בטקסט.
+# לכן הם חייבים להיות כאן ולא ב-runtime, ולכן גם **אסור** שיופיע כאן
+# מפתח ה-secret: הוא היה נצרב לקובץ שכל דפדפן מוריד.
+ARG VITE_SUPABASE_URL=
+ARG VITE_SUPABASE_PUBLISHABLE_KEY=
+ARG VITE_SUPABASE_DIRECT=true
+# ⚠️ בפיצול הזה הדשבורד והשרת הם **שני origins**. הכתובת של השרת חייבת
+# להיות מוחלטת, אחרת "/api/..." יפנה ל-Apache שאין בו API.
+ARG VITE_API_BASE=
+
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY \
+    VITE_SUPABASE_DIRECT=$VITE_SUPABASE_DIRECT \
+    VITE_API_BASE=$VITE_API_BASE
+
+COPY dashboard/package*.json dashboard/
+RUN cd dashboard && npm ci
+
+# shared/ נדרש לבנייה — הדשבורד מייבא ממנו את הלוגיקה המשותפת.
+COPY shared/ shared/
+COPY dashboard/ dashboard/
+
+RUN cd dashboard && npm run build
+
+# ============================================================
+# שלב 2 — Apache
+# ============================================================
+FROM httpd:2.4-alpine
+
+# ⚠️ **רק ה-dist.** מקור הדשבורד, node_modules וכלי הבנייה נשארים בשלב
+# הראשון ונזרקים איתו. התמונה הסופית מכילה HTML/CSS/JS בלבד.
+COPY --from=build /app/dashboard/dist/ /usr/local/apache2/htdocs/
+
+COPY docker/apache-dashboard.conf /usr/local/apache2/conf/extra/dashboard.conf
+RUN echo "Include conf/extra/dashboard.conf" >> /usr/local/apache2/conf/httpd.conf \
+ && sed -i 's/^#\(LoadModule rewrite_module\)/\1/' /usr/local/apache2/conf/httpd.conf \
+ && sed -i 's/^#\(LoadModule deflate_module\)/\1/' /usr/local/apache2/conf/httpd.conf \
+ && sed -i 's/^#\(LoadModule expires_module\)/\1/' /usr/local/apache2/conf/httpd.conf \
+ && sed -i 's/^#\(LoadModule headers_module\)/\1/' /usr/local/apache2/conf/httpd.conf
+
+EXPOSE 80
+
+# ⚠️ בדיקת בריאות על index.html ולא על "/": השתיים אמנם זהות כאן, אבל
+# ברגע שמישהו יוסיף הפניה ב-"/" הבדיקה תמשיך לבדוק שהקובץ באמת קיים.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://localhost/index.html >/dev/null || exit 1

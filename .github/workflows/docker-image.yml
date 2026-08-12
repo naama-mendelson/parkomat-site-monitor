@@ -44,16 +44,26 @@ jobs:
           npm test
         working-directory: master
 
-      - name: בנייה
+      # ⚠️ **שתי תמונות, לא אחת.** הפיצול לשני קונטיינרים אומר ששכחת אחת
+      # מהן מתגלה רק בשרת — עם קונטיינר שלא עולה, או עם תמונה ישנה שנטענת
+      # בשקט מעל החדשה.
+      - name: בניית השרת
         run: docker build -t parkomat:latest .
+
+      # ⚠️ ה-ARG חייבים להיות כאן: Vite צורב אותם לתוך ה-JS בזמן הבנייה,
+      # ולכן אי אפשר להגדיר אותם בזמן ריצה. ריק = נתיב יחסי, מה שנכון רק
+      # כשהשרת מגיש גם את הקבצים — ולכן הערך האמיתי נקבע בבנייה בשרת.
+      - name: בניית שרת הקבצים (Apache)
+        run: docker build -f Dockerfile.web -t parkomat-web:latest .
 
       # ⚠️ `docker save` ולא דחיפה ל-registry: התמונה מכילה את קוד המוצר,
       # ודחיפתה ל-registry ציבורי היא החלטה עסקית ולא טכנית. ארטיפקט
       # פרטי של ה-repo נגיש רק למי שיש לו גישה למאגר ממילא.
       - name: אריזה
         run: |
-          docker save parkomat:latest | gzip > parkomat-image.tar.gz
-          ls -lh parkomat-image.tar.gz
+          docker save parkomat:latest     | gzip > parkomat-image.tar.gz
+          docker save parkomat-web:latest | gzip > parkomat-web-image.tar.gz
+          ls -lh parkomat-image.tar.gz parkomat-web-image.tar.gz
 
       - name: העלאה להורדה
         uses: actions/upload-artifact@v4
@@ -64,6 +74,8 @@ jobs:
           # שאי אפשר להפעיל.
           path: |
             parkomat-image.tar.gz
+            parkomat-web-image.tar.gz
             docker-compose.yml
+            DEPLOY.md
             .env.docker.example
           retention-days: 14

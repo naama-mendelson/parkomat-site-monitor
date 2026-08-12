@@ -12,6 +12,59 @@
 #      השחית נתונים בעבר (מקטעי מצב כפולים, משכים שליליים).
 
 services:
+
+  # ============================================================
+  # web — Apache שמגיש את קובצי הדשבורד
+  # ============================================================
+  # ⚠️ **קונטיינר נפרד בכוונה, ולא נוחות.** הדשבורד הוא קבצים סטטיים
+  # שהנתונים שלהם מגיעים מ-Supabase ישירות; אין לו סיבה לחלוק מחזור חיים
+  # עם תהליך שמחזיק חיבור MQTT פתוח. הפעלה מחדש של הקליטה לא אמורה להפיל
+  # את המסך, ולהפך.
+  #
+  # ⚠️ וזו ההכנה למעבר לאחסון החיצוני של החברה: משם ההוצאה היא העתקת
+  # תיקייה ושינוי כתובת, לא הגירה.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+        VITE_SUPABASE_DIRECT: ${VITE_SUPABASE_DIRECT:-true}
+        # ⚠️ **חייב להיות כתובת מוחלטת בפיצול הזה.** ריק פירושו נתיב יחסי
+        # ("/api/..."), שיפנה ל-Apache — שאין בו API. הכשל שקט: הדף נטען
+        # יפה והנתונים לא מגיעים.
+        VITE_API_BASE: ${VITE_API_BASE:-}
+
+    image: parkomat-web:latest
+    container_name: parkomat-web
+    restart: unless-stopped
+    init: true
+
+    ports:
+      - "8080:80"
+
+    # ⚠️ אינו תלוי ב-app: הדשבורד קורא מ-Supabase, לא מהשרת. depends_on
+    # היה יוצר תלות שאינה קיימת — ומעכב את עליית המסך בגלל תהליך שאין לו
+    # שום קשר להצגתו.
+
+    read_only: true
+    tmpfs:
+      - /usr/local/apache2/logs:size=16m
+      - /tmp:size=8m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Apache צריך להיקשר לפורט 80 בתוך הקונטיינר.
+    cap_add:
+      - NET_BIND_SERVICE
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   parkomat:
     # ============================================================
     # ⚠️ שלושת ה-VITE הם ארגומנטי **בנייה**, לא משתני ריצה

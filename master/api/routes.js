@@ -54,10 +54,24 @@ const PORT = Number(process.env.PORT) || 4000;
 // שהוא יעלה לדומיין משלו — הניהול פשוט לא יעבוד, וזה ייראה כמו באג אימות.
 const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN || "http://localhost:5173";
 
+// מסתיר ערכים רגישים מ-URL לפני כתיבתו ללוג.
+//
+// ⚠️ מוחלף ולא נמחק: "?access_token=***" אומר שהייתה שם הזדהות, בעוד
+// URL קטוע נראה כמו בקשה שגויה ומטעה את מי שמנתח לוג.
+function redactUrl(url) {
+  return String(url).replace(/([?&](?:access_token|token)=)[^&]*/gi, "$1***");
+}
+
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", DASHBOARD_ORIGIN);
   // x-admin-code היה חסר — כלומר כל בקשת ניהול הייתה נכשלת ב-preflight.
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-code");
+  //
+  // ⚠️ **ו-Authorization נוסף כאן ברגע שנתיבי הקריאה הפכו למוגנים.** בלעדיו
+  // כל קריאת נתונים חוצת-origin נופלת ב-preflight — לפני שהיא בכלל מגיעה
+  // לשרת. הכשל הזה **בלתי נראה היום**, כי הדשבורד יושב מאחורי ה-proxy של
+  // Vite ולכן same-origin; הוא מתעורר בדיוק ביום שהקבצים עוברים ל-Apache
+  // או לאחסון החיצוני, ואז הוא נראה כמו תקלת אימות ולא כמו CORS.
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-code");
   // PATCH היה חסר, למרות ש-PATCH /api/sites/:code קיים.
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
 
@@ -86,7 +100,15 @@ app.use((req, res, next) => {
     const ms = Date.now() - started;
     const queries = db.getQueryStats().queries - before.queries;
     if (ms >= SLOW_MS) {
-      console.log(`[api] איטי: ${req.method} ${req.originalUrl} — ${ms}ms, ${queries} שאילתות`);
+      // ⚠️ **האסימון מנוקה מה-URL לפני הכתיבה.** נתיב ה-SSE מקבל אותו
+      // כפרמטר שאילתה (EventSource אינו יכול לשלוח כותרות — ראה
+      // requireAuthSse), ולוג של originalUrl גולמי היה כותב אסימון תקף
+      // לקובץ בכל בקשה איטית.
+      //
+      // וזו בדיוק הסיבה שאסימון ב-URL נחות מכותרת: הוא דולף למקומות
+      // שאיש לא חשב עליהם. כאן זה נסגר; ההערה נשארת כדי שמי שיוסיף לוג
+      // נוסף יידע לעשות אותו דבר.
+      console.log(`[api] איטי: ${req.method} ${redactUrl(req.originalUrl)} — ${ms}ms, ${queries} שאילתות`);
     }
   });
 
@@ -221,9 +243,60 @@ async function identifyActor(req, res, next) {
 //
 // לכן כאן נדרש אסימון תקין, ואין מסלול חלופי של קוד מנהל: קוד מנהל הוא
 // סוד משותף בלי זהות, ואי אפשר לרשום בעזרתו *מי* הזמין.
+// ============================================================
+// למה נתיבי הקריאה מוגנים עכשיו
+// ============================================================
+// הם היו פתוחים לחלוטין, וזה היה מקובל כל עוד הכל רץ ברשת פנימית והדשבורד
+// יושב באותו origin. שתי ההנחות האלה נשברות בפיצול לשני קונטיינרים ובמעבר
+// של הקבצים לאחסון החיצוני של החברה.
+//
+// ⚠️ **ובלי זה, "דלת החירום" הייתה הופכת לחור.** VITE_SUPABASE_DIRECT=false
+// מחזיר את כל הקריאות דרך השרת — כלומר בדיוק המסלול שנשמר כדרך חזרה מ-
+// Supabase. RLS מגן על המסלול הישיר; השרת מתחבר כ-postgres עם
+// rolbypassrls, ולכן **הוא עוקף את RLS לגמרי**. מסלול פתוח כזה, חשוף
+// לאינטרנט, נותן את כל הנתונים לכל מי שיודע את הכתובת.
+//
+// אותו מנגנון זהות בדיוק כמו בשאר הפרויקט: אסימון Supabase, מאומת דרך
+// auth/provider.js — ולכן זה עובד גם בזרוע העצמאית, בלי שינוי.
+//
+// הדשבורד כבר מצרף את האסימון (services/api.js), והאפליקציה כולה חסומה
+// מאחורי AuthGate — כלומר אין משתמש בלי session, ושום מסך לא נשבר.
 async function requireAuth(req, res, next) {
   const header = req.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) return res.status(401).json({ error: "נדרשת התחברות" });
+
+  const actor = await auth.verifyToken(token);
+  if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+
+  req.actor = { userId: actor.userId, name: actor.email || actor.userId,
+                role: actor.role, trust: "token" };
+  next();
+}
+
+// ============================================================
+// אימות ל-SSE — ומדוע דווקא כאן האסימון בשאילתה
+// ============================================================
+// ⚠️ **`EventSource` אינו יכול לשלוח כותרות.** זו מגבלת ה-API בדפדפן, לא
+// בחירה: אין ל-`new EventSource(url)` פרמטר headers כלל. לכן הנתיב הזה
+// לבדו מקבל את האסימון כפרמטר שאילתה.
+//
+// ⚠️ **וזו פשרה מודעת, לא פתרון שווה ערך.** אסימון ב-URL מגיע ללוגי שרת,
+// להיסטוריית דפדפן ולכותרת Referer. הוא נחות מכותרת, והוא נבחר רק מפני
+// שהחלופות גרועות יותר:
+//   • להשאיר את הנתיב פתוח — כל זרם האירועים של כל האתרים, לכל אחד.
+//   • עוגייה — מוסיפה CSRF ושוברת בדיוק בפיצול origins שבגללו זה נעשה.
+//
+// ⚠️ **וזה זמני מעצם הגדרתו:** לזרוע הישירה כבר יש חלופה — Supabase
+// Realtime (services/realtimeDirect.js), שמאומתת דרך RLS ולא צריכה את
+// הנתיב הזה בכלל. ה-SSE הוא זרוע הגיבוי, וברגע שהיא תופעל כברירת מחדל
+// הפשרה הזו נעלמת.
+async function requireAuthSse(req, res, next) {
+  const header = req.get("authorization") || "";
+  const token = header.startsWith("Bearer ")
+    ? header.slice(7)
+    : (typeof req.query.access_token === "string" ? req.query.access_token : null);
 
   if (!token) return res.status(401).json({ error: "נדרשת התחברות" });
 
@@ -467,7 +540,7 @@ async function applyMaintenanceStatus(site) {
 }
 
 // GET /api/sites — רשימת כל האתרים עם המצב הנוכחי + מדדים (אחוז כשל, פעולות, תקלות)
-app.get("/api/sites", cache(), async (req, res) => {
+app.get("/api/sites", requireAuth, cache(), async (req, res) => {
   try {
     // אחוז כשל ופעולות מחושבים על 7 הימים האחרונים (שבועי) — *אותה* הגדרה
     // בדיוק כמו התקופה 'week' של הפאנל/הגרף (resolvePeriod): 7 ימים קלנדריים
@@ -557,7 +630,7 @@ app.post("/api/sites", requireAdmin, async (req, res) => {
 });
 
 // GET /api/sites/:code — פרטי אתר בודד + operations אחרונות
-app.get("/api/sites/:code", cache(), async (req, res) => {
+app.get("/api/sites/:code", requireAuth, cache(), async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
 
@@ -611,7 +684,7 @@ app.get("/api/sites/:code", cache(), async (req, res) => {
 });
 
 // GET /api/events — operations מסוננות (site_code, from, to, limit)
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", requireAuth, async (req, res) => {
   try {
     const { site_code, from, to, limit } = req.query;
 
@@ -630,7 +703,7 @@ app.get("/api/events", async (req, res) => {
 });
 
 // GET /api/sites/:code/stats — מדדים: אחוז כשל, errors, operations
-app.get("/api/sites/:code/stats", cache(), async (req, res) => {
+app.get("/api/sites/:code/stats", requireAuth, cache(), async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -770,7 +843,7 @@ app.delete("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
 });
 
 // GET /api/sites/:code/maintenance — בדיקת תחזוקה פעילה
-app.get("/api/sites/:code/maintenance", cache(), async (req, res) => {
+app.get("/api/sites/:code/maintenance", requireAuth, cache(), async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -790,7 +863,7 @@ app.get("/api/sites/:code/maintenance", cache(), async (req, res) => {
 });
 
 // GET /api/stats/system — סיכום מערכתי (כל האתרים) עבור המנהל הכללי
-app.get("/api/stats/system", cache(), async (req, res) => {
+app.get("/api/stats/system", requireAuth, cache(), async (req, res) => {
   try {
     const { month, year, from, to } = req.query;
 
@@ -809,7 +882,7 @@ app.get("/api/stats/system", cache(), async (req, res) => {
 });
 
 // GET /api/stats/system/monthly — פירוט חודשי (לגרף מגמות)
-app.get("/api/stats/system/monthly", cache(), async (req, res) => {
+app.get("/api/stats/system/monthly", requireAuth, cache(), async (req, res) => {
   try {
     const { year, from, to } = req.query;
 
@@ -841,7 +914,7 @@ function percentChange(current, previous) {
 }
 
 // GET /api/sites/:code/analytics?period=week|month|year
-app.get("/api/sites/:code/analytics", cache(), async (req, res) => {
+app.get("/api/sites/:code/analytics", requireAuth, cache(), async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -898,7 +971,7 @@ app.get("/api/sites/:code/analytics", cache(), async (req, res) => {
 });
 
 // GET /api/sites/:code/insights?period=week|month|year — סטטיסטיקה מעמיקה ("עוד מידע")
-app.get("/api/sites/:code/insights", cache(), async (req, res) => {
+app.get("/api/sites/:code/insights", requireAuth, cache(), async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) {
@@ -927,7 +1000,7 @@ app.get("/api/sites/:code/insights", cache(), async (req, res) => {
 
 // GET /api/insights?period=week|month|year — אותה סטטיסטיקה מעמיקה, אך *מצרפת
 // על כל האתרים* (מנהל כללי → "כל האתרים"). אין :code — זה המצרף הכלל-מערכתי.
-app.get("/api/insights", cache(), async (req, res) => {
+app.get("/api/insights", requireAuth, cache(), async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
     const [insights, log] = await Promise.all([
@@ -955,7 +1028,7 @@ app.get("/api/insights", cache(), async (req, res) => {
 //
 // ⚠️ ללא cache(): טווח חופשי הוא צירוף פתוח, ומטמון שמפתחו רשימת-היתר של
 // פרמטרים היה מגיש דוח של טווח אחד תחת טווח אחר.
-app.get("/api/report/monthly", async (req, res) => {
+app.get("/api/report/monthly", requireAuth, async (req, res) => {
   try {
     const { from, to } = req.query;
     if (!from || !to) {
@@ -1023,7 +1096,7 @@ const logParams = (req) => ({
 });
 
 // GET /api/sites/:code/activity — לוג הפעילות של אתר בודד, עם סינון ודפדוף
-app.get("/api/sites/:code/activity", async (req, res) => {
+app.get("/api/sites/:code/activity", requireAuth, async (req, res) => {
   try {
     const site = await findSiteByCode(req.params.code);
     if (!site) return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
@@ -1041,7 +1114,7 @@ app.get("/api/sites/:code/activity", async (req, res) => {
 // ⚠️ אין כאן `?site=`, בכוונה: `/api/sites/:code/activity` כבר עושה בדיוק את
 // זה. פרמטר שני לאותה יכולת היה שני מסלולים שצריך לתחזק במקביל, ואחד מהם
 // היה מתיישן בשקט.
-app.get("/api/activity", async (req, res) => {
+app.get("/api/activity", requireAuth, async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
     res.json(await getGlobalActivityLog({ ...p.range, ...logParams(req) }));
@@ -1154,7 +1227,7 @@ app.post("/api/chat", chatRateLimit, async (req, res) => {
 // ===== ממשקי הניהול =====
 
 // GET /api/stats/supervisor?period=week|month|year — נתונים תפעוליים למנהל בקרה
-app.get("/api/stats/supervisor", cache(), async (req, res) => {
+app.get("/api/stats/supervisor", requireAuth, cache(), async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
     const { sites, summary } = await getSupervisorStats(p.range);
@@ -1243,7 +1316,7 @@ const listOf = (v) =>
 //   או ?from=YYYY-MM-DD&to=YYYY-MM-DD            (טווח מותאם)
 //   &sites=A1,B2  &statuses=error,ready  &minFailureRate=5
 //   &groupBy=site|status|time  &granularity=day|week|month
-app.get("/api/stats/executive", cache(), async (req, res) => {
+app.get("/api/stats/executive", requireAuth, cache(), async (req, res) => {
   try {
     const p = resolveRange(req.query);
     if (!p) {
@@ -1310,7 +1383,7 @@ app.get("/api/stats/executive", cache(), async (req, res) => {
 });
 
 // גרסה קודמת של הנתיב — נשמרת כדי לא לשבור צרכנים קיימים
-app.get("/api/stats/executive-legacy", async (req, res) => {
+app.get("/api/stats/executive-legacy", requireAuth, async (req, res) => {
   try {
     const p = resolvePeriod(req.query.period);
     const range = { ...p.range, granularity: p.granularity };
@@ -1392,7 +1465,7 @@ app.get("/health", (req, res) => {
 const sseClients = new Set();
 
 // GET /api/stream — SSE: עדכונים בזמן אמת
-app.get("/api/stream", async (req, res) => {
+app.get("/api/stream", requireAuthSse, async (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -1438,7 +1511,7 @@ app.get("/api/stream", async (req, res) => {
 //
 // ללא after — מחזיר את הסמן הנוכחי בלבד. כך לקוח חדש יודע מאיפה להתחיל
 // בלי להוריד היסטוריה שהוא ממילא מקבל מ-/api/sites.
-app.get("/api/stream/since", async (req, res) => {
+app.get("/api/stream/since", requireAuth, async (req, res) => {
   try {
     const after = req.query.after;
     const latestId = await getLatestEventId();

@@ -53,12 +53,30 @@ WSL2 חסום — מנוע ה-Docker אינו יכול לעלות שם כלל. �
    Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
      Where-Object { $_.CommandLine -like '*master.js*' }
    ```
-2. **בשרת:**
+2. **בשרת — שתי תמונות, לא אחת:**
    ```bash
-   gunzip -c parkomat-image.tar.gz | docker load
+   gunzip -c parkomat-image.tar.gz     | docker load
+   gunzip -c parkomat-web-image.tar.gz | docker load
+
    cp .env.docker.example .env      # ולמלא את הערכים האמיתיים
    docker compose up -d
    docker compose logs -f           # לוודא: "REST server running" + subscriber אחד
+   ```
+
+   ⚠️ **שני המשתנים האלה חייבים להסכים זה עם זה**, ואם הם לא — הכשל שקט:
+   הדף נטען יפה והנתונים לא מגיעים.
+
+   ```
+   VITE_API_BASE=http://SERVER-IP:4000       # לאן הדפדפן פונה ל-API
+   DASHBOARD_ORIGIN=http://SERVER-IP:8080    # מאיזה origin השרת מקבל (CORS)
+   ```
+
+   ⚠️ `VITE_API_BASE` נצרב בזמן **הבנייה** (Vite מחליף אותו בטקסט). שינוי
+   שלו מחייב `docker compose build`, ולא `restart`.
+
+   ```
+   http://SERVER-IP:8080   ← הדשבורד
+   http://SERVER-IP:4000   ← ה-API (לא נפתח בדפדפן)
    ```
 3. **רק אחרי שהשרת החדש קולט** — לשנות ב-`master/.env` שבמחשב הפיתוח:
    ```
