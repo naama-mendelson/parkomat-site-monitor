@@ -47,7 +47,7 @@ function UptimeBar({ uptime, trend }) {
     },
     {
       key: "error", hours: errorHours, color: UPTIME_COLORS.error,
-      title: `מושבת — ${formatHours(errorHours)}`,
+      title: `בתקלה — ${formatHours(errorHours)}`,
     },
     {
       key: "maintenance", hours: maintenanceHours, color: UPTIME_COLORS.maintenance,
@@ -87,21 +87,21 @@ function UptimeBar({ uptime, trend }) {
     },
     {
       key: "error",
-      label: "מושבת",
+      label: "בתקלה",
       explain: "האתר לא יכול היה לפעול עקב תקלה",
       hours: errorHours,
       color: UPTIME_COLORS.error,
     },
     // ==========================================================
-    // תחזוקה וטיפול בתקלה — מפוצל **רק כשיש מה לפצל**
+    // תחזוקה ותפעול תקלה — מפוצל **רק כשיש מה לפצל**
     // ==========================================================
-    // ⚠️ תחזוקה היא **החלטה** (מישהו בחר להוריד את האתר), וטיפול בתקלה הוא
+    // ⚠️ תחזוקה היא **החלטה** (מישהו בחר להוריד את האתר), ותפעול תקלה הוא
     // **תוצאה** של נפילה — מבחינת מי שרצה לחנות זו אותה השבתה שנמשכת. שורה
     // אחת לשתיהן מייפה את התמונה: אתר שנופל שלוש פעמים בשבוע ומטופל נראה
     // כמו אתר בתחזוקה שוטפת מסודרת.
     //
     // ⚠️ אבל כשקיים רק סוג אחד, שורת-אב ושורת-בת נושאות **בדיוק אותו מספר**
-    // — "0.1% בתחזוקה · 10 דקות" ומתחתיה "0.1% טיפול בתקלה · 10 דקות".
+    // — "0.1% בתחזוקה · 10 דקות" ומתחתיה "0.1% תפעול תקלה · 10 דקות".
     // זה נקרא כמו כפילות ולא כמו פילוח, והתפריט מציג עומק שאין בו מידע.
     //
     // לכן: שני סוגים ⟹ אב + שתי בנות. סוג אחד ⟹ **שורה אחת בשמו המדויק**,
@@ -119,7 +119,7 @@ function UptimeBar({ uptime, trend }) {
           hours: maintenanceHours,
           color: UPTIME_COLORS.maintenance,
           children: [
-            { key: "repair", label: "טיפול בתקלה", hours: repairHours,
+            { key: "repair", label: "תפעול תקלה", hours: repairHours,
               color: UPTIME_COLORS.maintenance },
             { key: "planned", label: "תחזוקה", hours: plannedHours,
               color: UPTIME_COLORS.maintenance },
@@ -129,7 +129,7 @@ function UptimeBar({ uptime, trend }) {
       const onlyRepair = repairHours > 0;
       return {
         key: "maintenance",
-        label: onlyRepair ? "טיפול בתקלה" : "בתחזוקה",
+        label: onlyRepair ? "תפעול תקלה" : "בתחזוקה",
         explain: onlyRepair
           ? "התחילה מיד אחרי תקלה — אינה נכללת בחישוב הזמינות"
           : "אינו נכלל בחישוב הזמינות",
@@ -215,7 +215,7 @@ function UptimeBar({ uptime, trend }) {
             {/* שורות-משנה: אחת לכל מקטע בפס, בצבע המדויק שלו. מוצגות רק
                 כשיש בהן ממש — קטגוריה על אפס לא צריכה פירוט. */}
             {/* ⚠️ שורת-משנה על אפס מסוננת. באתר שהייתה בו רק תחזוקה מתוכננת,
-                "טיפול בתקלה 0%" הוא רעש — ובאתר שהיה בו רק טיפול, הסינון הוא
+                "תפעול תקלה 0%" הוא רעש — ובאתר שהיה בו רק טיפול, הסינון הוא
                 מה שהופך את השורה היחידה שנשארת לאמירה. */}
             {r.children && r.hours > 0 && (
               <ul className="uptime-subrows">

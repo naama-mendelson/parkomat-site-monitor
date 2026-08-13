@@ -75,7 +75,12 @@ function SiteFilterTile({ sites, typeFilter = "", tierFilter = "", onTypeChange,
           const single = g.types.length === 1;
           return [
             <option
-              key={g.key}
+              // ⚠️ קידומת `grp-` — **מפתח המשפחה ומפתח הדגם זהים.** "XY" הוא
+              // גם שם משפחה וגם שם דגם, וכך גם "דולי", ולכן React קיבל שני
+              // ילדים באותו key. האזהרה בקונסולה אינה קוסמטית: React מזהה
+              // ילדים לפי key, ושני ילדים באותו מפתח עלולים להתמזג או להיעלם
+              // בעדכון — כלומר אפשרות שנעלמת מהבורר בלי סיבה נראית.
+              key={`grp-${g.key}`}
               value={single ? g.types[0].key : `${GROUP_PREFIX}${g.key}`}
               className="sft-group-row"
             >

@@ -109,7 +109,7 @@ clipped AS (
     h.status,
     GREATEST(h.started_at::timestamptz, o.w_from::timestamptz) AS seg_start,
     LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end,
-    -- ⚠️ החותם ה**גולמי**, לא החתוך. סיווג "טיפול בתקלה" נשען על התאמה
+    -- ⚠️ החותם ה**גולמי**, לא החתוך. סיווג "תפעול תקלה" נשען על התאמה
     -- מדויקת ל-error.ended_at, ומקטע שהתחיל לפני החלון היה מקבל seg_start
     -- = w_from ולא היה מתאים לעולם. הסיווג שייך למקטע, לא לחלון.
     h.started_at AS raw_start
@@ -122,10 +122,10 @@ clipped AS (
     AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
 ),
 -- ============================================================
--- תחזוקה אחרי תקלה היא **טיפול בתקלה**, לא תחזוקה מתוכננת
+-- תחזוקה אחרי תקלה היא **תפעול תקלה**, לא תחזוקה מתוכננת
 -- ============================================================
 -- ⚠️ חייב להישאר זהה ל-uptimeFromData ב-shared/executive.mjs. שם מתועד
--- הנימוק במלואו; בקצרה: מתוכננת היא **החלטה** וטיפול בתקלה הוא **תוצאה**,
+-- הנימוק במלואו; בקצרה: מתוכננת היא **החלטה** ותפעול תקלה הוא **תוצאה**,
 -- וערבובן גורם לאתר שנופל שלוש פעמים בשבוע להיראות כמו אתר בתחזוקה שוטפת.
 --
 -- ⚠️ **הזמן לא זז.** שניהם נשארים maintenance_s ומוחרגים מהמכנה בדיוק כמו
@@ -205,7 +205,7 @@ cov AS (
         AND w.e > c.seg_start
         AND w.s < c.seg_end
     ), 0) AS covered_s,
-    -- האם המקטע הזה הוא טיפול בתקלה: התחיל בדיוק כשתקלה נגמרה.
+    -- האם המקטע הזה הוא תפעול תקלה: התחיל בדיוק כשתקלה נגמרה.
     EXISTS (
       SELECT 1 FROM err_ends e
       WHERE e.site_id = c.site_id AND e.ended_at = c.raw_start
@@ -223,7 +223,7 @@ secs AS (
     COALESCE(SUM(v.covered_s), 0)
       + COALESCE(SUM(v.dur_s - v.covered_s) FILTER (WHERE v.status = 'maintenance'), 0) AS maintenance_s,
     -- הפילוח. ⚠️ החלק ה**מכוסה** בחלון ידני נספר תמיד כמתוכנן: מישהו לחץ
-    -- על כפתור, וזו החלטה לפי הגדרה. רק מקטע PLC יכול להיות טיפול בתקלה.
+    -- על כפתור, וזו החלטה לפי הגדרה. רק מקטע PLC יכול להיות תפעול תקלה.
     COALESCE(SUM(v.dur_s - v.covered_s)
              FILTER (WHERE v.status = 'maintenance' AND v.after_error), 0) AS repair_s,
     COALESCE(SUM(v.covered_s), 0)

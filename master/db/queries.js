@@ -1564,7 +1564,7 @@ async function getAllSitesGlobals(siteIds) {
     // ⚠️ ההתאמה על `ended_at = started_at` בדיוק, ולא על "התקלה האחרונה":
     // הסוכן סוגר מקטע ופותח את הבא באותו סבב דגימה ועם אותו חותם. תקלה
     // מלפני שעתיים אינה מה שמטפלים בו עכשיו, והצגתה הייתה שקר.
-    // אותו כלל בדיוק כמו פילוח "טיפול בתקלה" ב-shared/executive.mjs.
+    // אותו כלל בדיוק כמו פילוח "תפעול תקלה" ב-shared/executive.mjs.
     db.prepare(
       `SELECT DISTINCT ON (h.site_id) h.site_id, h.started_at,
               COALESCE(

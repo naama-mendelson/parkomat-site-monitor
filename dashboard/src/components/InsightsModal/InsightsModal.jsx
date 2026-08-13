@@ -583,102 +583,185 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   )}
                 </section>
 
+                {/* ==========================================================
+                    שלוש קטגוריות, ולא שתי כותרות שחופפות
+                    ==========================================================
+                    קודם היו כאן שני כרטיסים — "השבתות ותקלות" ו"תחזוקה" —
+                    ואותה עובדה הופיעה בשניהם בשני שמות: "הסתיימו בתפעול"
+                    בראשון ו"תפעולי תקלה" בשני הם **אותם אירועים בדיוק**.
+                    מי שקורא אותם רואה שני מספרים ואינו יודע שהם אחד.
+
+                    שלוש קטגוריות, כל אחת נאמרת פעם אחת:
+
+                      תקלה        — המכונה נשברה.        נספר באחוז הכשל.
+                      תפעול תקלה — נפתח תפעול אחרי התקלה.  אינו נספר.
+                      תחזוקה      — מישהו בחר להוריד.    אינו נספר.
+
+                    ⚠️ וההבדל בין השורה השנייה לשלישית אינו סמנטי בלבד: הראשונה
+                    היא **תוצאה** של נפילה, והשנייה היא **החלטה**
+                    (סימן טוב). ערבובן מייפה את התמונה — אתר שנופל שלוש פעמים
+                    בשבוע נראה כמו אתר שעובר תחזוקה מסודרת. */}
                 <section className="insights-card">
-                  <h3>השבתות ותקלות</h3>
-                  {/* ==========================================================
-                      השבתה שטופלה אינה כמו השבתה שנפתרה מעצמה
-                      ==========================================================
-                      שתיהן "אירוע השבתה" באותו מספר, והן שני דברים שונים:
-                      טיפול פירושו שמישהו נסע לאתר — עלות אמיתית שחוזרת —
-                      והתאוששות עצמית היא לרוב ריצוד שהמכונה ניקתה לבד.
+                  <h3>זמן שהאתר לא שירת רכבים</h3>
 
-                      אתר עם 5 השבתות שכולן נפתרו לבד הוא סיפור אחר לגמרי
-                      מאתר עם 5 שכולן דרשו נסיעה, ובמספר אחד הם זהים. */}
-                  <p className="insights-sub">
-                    כמה זמן האתר לא היה זמין עקב תקלה, וכמה מזה דרש הגעה לאתר
-                  </p>
+                  {/* ⚠️ שורת הסיכום מציגה את שלוש הקטגוריות **זו לצד זו**,
+                      כי השאלה הראשונה שנשאלת היא היחס ביניהן: 5 שעות תקלה
+                      מול 5 שעות תחזוקה הם שני אתרים שונים לגמרי. */}
                   <div className="insights-kpis">
-                    <MetricCard label="אירועי השבתה" value={String(data.downtime.incidents)} hint="פעמים שהאתר נכנס למצב מושבת" />
                     <MetricCard
-                      label="הסתיימו בטיפול"
-                      value={String(data.downtime.handledIncidents ?? 0)}
-                      hint={(data.downtime.handledIncidents ?? 0) === 0
-                        ? "אף השבתה לא דרשה הגעה לאתר"
-                        : `${fmtHours(data.downtime.handledHours)} — נפתח מקטע תחזוקה מיד בסיומן`}
+                      label="בתקלה"
+                      value={fmtHours(data.downtime.totalHours)}
+                      hint={`${data.downtime.incidents} אירועים · נספר באחוז הכשל`}
+                      accent
                     />
                     <MetricCard
-                      label="התאוששו מעצמן"
-                      value={String(data.downtime.recoveredIncidents ?? data.downtime.incidents)}
-                      hint={(data.downtime.recoveredIncidents ?? data.downtime.incidents) === 0
-                        ? "כל ההשבתות דרשו טיפול"
-                        : `${fmtHours(data.downtime.recoveredHours ?? data.downtime.totalHours)} — האתר חזר לפעול בלי התערבות`}
-                    />
-                    <MetricCard label="סך זמן השבתה" value={fmtHours(data.downtime.totalHours)} hint="שתי הקטגוריות יחד" />
-                    <MetricCard
-                      label="ההשבתה הארוכה"
-                      value={fmtHours(data.downtime.longestHours)}
-                      hint={data.downtime.longestAt
-                        ? `החלה ב-${new Date(data.downtime.longestAt).toLocaleDateString("he-IL")}`
-                        : "לא היו השבתות"}
-                    />
-                    <MetricCard label="זמן תיקון ממוצע" value={fmtHours(data.downtime.averageHours)} hint="כמה זמן בממוצע לוקח לחזור לפעילות" />
-                  </div>
-                  {data.downtime.incidents === 0 && (
-                    <p className="insights-note insights-good">✓ לא נרשמו השבתות בתקופה זו</p>
-                  )}
-                </section>
-
-                <section className="insights-card">
-                  <h3>תחזוקה</h3>
-                  {/* ==========================================================
-                      תחזוקה וטיפול בתקלה אינם אותו דבר
-                      ==========================================================
-                      שתיהן נרשמות כמקטע 'תחזוקה' במסד, אבל הן הפוכות במשמעותן:
-                      תחזוקה היא **החלטה** (סימן טוב), וטיפול בתקלה הוא **תוצאה**
-                      של נפילה. ערבובן מייפה את התמונה — אתר שנופל שלוש פעמים
-                      בשבוע נראה כמו אתר שעובר תחזוקה שוטפת מסודרת.
-
-                      ⚠️ ההבחנה היא **מה קדם למקטע**, לא מה נרשם בו: מקטע תחזוקה
-                      שמתחיל בדיוק בשנייה שבה נגמרה תקלה הוא טיפול. כל השאר —
-                      תחזוקה. */}
-                  <p className="insights-sub">
-                    <strong>תחזוקה</strong> = מישהו בחר להוריד את האתר.{" "}
-                    <strong>טיפול בתקלה</strong> = האתר נפל ובאו לתקן.{" "}
-                    בשני המקרים הזמן אינו נספר באחוז הכשל.
-                  </p>
-                  <div className="insights-kpis">
-                    {/* ⚠️ הרמז נבנה לפי הערך ולא בשרשור קבוע. "0 — ללא תקלה
-                        שקדמה לה" נקרא כמו תקלה בעצמו: מקף בין שני אפסים,
-                        ומשפט שמתאר קטגוריה שאין בה כלום. אפס הוא תשובה
-                        לגיטימית, והוא צריך להיאמר במילים. */}
-                    <MetricCard
-                      label="טיפולי תקלה"
-                      value={String(data.maintenance.repairEntries ?? 0)}
-                      hint={(data.maintenance.repairEntries ?? 0) === 0
-                        ? "לא הייתה תחזוקה בעקבות תקלה"
-                        : `${fmtHours(data.maintenance.repairHours ?? 0)} — התחילה מיד אחרי תקלה`}
+                      label="תפעול תקלה"
+                      value={fmtHours(data.maintenance.repairHours ?? 0)}
+                      hint={`${data.maintenance.repairEntries ?? 0} תפעולים · אינו נספר`}
                     />
                     <MetricCard
                       label="תחזוקה"
+                      value={fmtHours(data.maintenance.plannedHours ?? 0)}
+                      hint={`${data.maintenance.plannedEntries ?? 0} פעמים · אינו נספר`}
+                    />
+                  </div>
+                </section>
+
+                {/* ---------- 1 · תקלה ---------- */}
+                <section className="insights-card">
+                  <h3>תקלות</h3>
+                  {/* ==========================================================
+                      תקלה שטופלה אינה כמו תקלה שנפתרה מעצמה
+                      ==========================================================
+                      שתיהן "תקלה" באותו מספר, והן שני דברים שונים: תפעול
+                      פירושו שמישהו התערב, והתאוששות עצמית היא לרוב ריצוד
+                      שהמכונה ניקתה לבד.
+
+                      ⚠️ **ומה שאיננו יודעים לא נאמר.** אין בנתונים שום דבר
+                      שמבחין בין תפעול מרחוק לבין הגעה פיזית לאתר — הסימן
+                      היחיד הוא שנפתח מקטע תחזוקה. ניסוח כמו "דרשו הגעה
+                      לאתר" היה מציג מסקנה שלא נמדדה, ובמספר שנראה מדויק.
+
+                      אתר עם 5 תקלות שכולן נפתרו לבד הוא סיפור אחר לגמרי
+                      מאתר עם 5 שכולן הצריכו תפעול, ובמספר אחד הם זהים. */}
+                  <div className="insights-kpis">
+                    <MetricCard
+                      label="כמה תקלות"
+                      value={String(data.downtime.incidents)}
+                      hint="פעמים שהאתר נכנס לתקלה"
+                    />
+                    <MetricCard
+                      label="סך זמן"
+                      value={fmtHours(data.downtime.totalHours)}
+                      hint="שתי הקטגוריות למטה יחד"
+                    />
+                    <MetricCard
+                      label="הארוכה ביותר"
+                      value={fmtHours(data.downtime.longestHours)}
+                      hint={data.downtime.longestAt
+                        ? `החלה ב-${new Date(data.downtime.longestAt).toLocaleDateString("he-IL")}`
+                        : "לא היו תקלות"}
+                    />
+                    <MetricCard
+                      label="זמן חזרה ממוצע"
+                      value={fmtHours(data.downtime.averageHours)}
+                      hint="כמה זמן בממוצע לוקח לחזור לפעילות"
+                    />
+                  </div>
+
+                  {/* ⚠️ הפילוח בשורה נפרדת ומוזח — הוא **חלוקה של המספר
+                      שמעליו**, לא שני מדדים נוספים. שורה אחת של שישה כרטיסים
+                      שווים הסתירה בדיוק את היחס הזה. */}
+                  {data.downtime.incidents > 0 && (
+                    <div className="insights-kpis insights-kpis--sub">
+                      <MetricCard
+                        label="↳ טופלו"
+                        value={String(data.downtime.handledIncidents ?? 0)}
+                        hint={(data.downtime.handledIncidents ?? 0) === 0
+                          ? "אף תקלה לא הצריכה תפעול"
+                          : `${fmtHours(data.downtime.handledHours)} — נפתח תפעול מיד בסיומן`}
+                      />
+                      <MetricCard
+                        label="↳ התאוששו מעצמן"
+                        value={String(data.downtime.recoveredIncidents ?? data.downtime.incidents)}
+                        hint={(data.downtime.recoveredIncidents ?? data.downtime.incidents) === 0
+                          ? "כל התקלות דרשו תפעול"
+                          : `${fmtHours(data.downtime.recoveredHours ?? data.downtime.totalHours)} — האתר חזר לבד`}
+                      />
+                    </div>
+                  )}
+
+                  {data.downtime.incidents === 0 && (
+                    <p className="insights-note insights-good">✓ לא נרשמו תקלות בתקופה זו</p>
+                  )}
+                </section>
+
+                {/* ---------- 2 · תפעול תקלה ---------- */}
+                <section className="insights-card">
+                  <h3>תפעול תקלה</h3>
+                  {/* ⚠️ ההבחנה היא **מה קדם למקטע**, לא מה נרשם בו: מקטע
+                      תחזוקה שמתחיל בדיוק בשנייה שבה נגמרה תקלה הוא תפעול.
+                      הזיהוי חד-משמעי ואינו הערכה. */}
+                  <p className="insights-sub">
+                    תחזוקה שהתחילה מיד עם סיום תקלה
+                  </p>
+                  <div className="insights-kpis">
+                    <MetricCard
+                      label="כמה תפעולים"
+                      value={String(data.maintenance.repairEntries ?? 0)}
+                      hint={(data.maintenance.repairEntries ?? 0) === 0
+                        ? "לא הייתה תחזוקה בעקבות תקלה"
+                        : "כל אחד מהם מתחיל בדיוק כשתקלה נגמרה"}
+                    />
+                    <MetricCard
+                      label="סך זמן"
+                      value={fmtHours(data.maintenance.repairHours ?? 0)}
+                      hint="אינו נספר באחוז הכשל"
+                    />
+                    <MetricCard
+                      label="הארוך ביותר"
+                      value={fmtHours(data.maintenance.longestRepairHours ?? 0)}
+                      hint="התפעול הארוך ביותר"
+                    />
+                  </div>
+
+                  {(data.maintenance.repairEntries ?? 0) === 0 && (
+                    <p className="insights-note insights-good">
+                      ✓ אף תקלה בתקופה זו לא הצריכה תפעול
+                    </p>
+                  )}
+                </section>
+
+                {/* ---------- 3 · תחזוקה ---------- */}
+                <section className="insights-card">
+                  <h3>תחזוקה</h3>
+                  <p className="insights-sub">
+                    מישהו בחר להוריד את האתר — החלטה, ולא תוצאה של נפילה
+                  </p>
+                  <div className="insights-kpis">
+                    <MetricCard
+                      label="כמה פעמים"
                       value={String(data.maintenance.plannedEntries ?? data.maintenance.plcEntries)}
                       hint={(data.maintenance.plannedEntries ?? data.maintenance.plcEntries) === 0
-                        ? "כל התחזוקה בתקופה הגיעה בעקבות תקלה"
-                        : `${fmtHours(data.maintenance.plannedHours ?? data.maintenance.totalHours)} — ללא תקלה שקדמה לה`}
+                        ? "לא נרשמה תחזוקה ללא תקלה שקדמה לה"
+                        : "ללא תקלה שקדמה להן"}
                     />
                     <MetricCard
-                      label="סך זמן בתחזוקה"
-                      value={fmtHours(data.maintenance.totalHours)}
-                      hint="שתי הקטגוריות יחד"
+                      label="סך זמן"
+                      value={fmtHours(data.maintenance.plannedHours ?? 0)}
+                      hint="אינו נספר באחוז הכשל"
                     />
                     <MetricCard
-                      label="התחזוקה הארוכה"
-                      value={fmtHours(data.maintenance.longestHours)}
+                      label="הארוכה ביותר"
+                      value={fmtHours(data.maintenance.longestPlannedHours ?? 0)}
                       hint="חלון התחזוקה הארוך ביותר"
                     />
+                    {/* ⚠️ החלון הידני נספר תמיד כתחזוקה ולא כתפעול: מישהו לחץ
+                        על כפתור, וזו החלטה לפי הגדרה. */}
                     <MetricCard
                       label="חלונות ידניים"
                       value={String(data.maintenance.manualWindows)}
-                      hint="תחזוקה שהופעלה מהדשבורד (השאר דווחו מהבקר)"
+                      hint="הופעלו מהדשבורד (השאר דווחו מהבקר)"
                     />
                   </div>
 

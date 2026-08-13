@@ -1,7 +1,8 @@
 // components/DetailPanel/DetailPanel.jsx — פאנל פירוט אתר (נפתח בלחיצה על כרטיס)
 import { useState } from "react";
-import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS } from "../../utils/constants";
 import { stuckInfo } from "../../utils/stuck";
+import { siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { formatDate } from "../../utils/helpers";
 import { startMaintenance, cancelMaintenance } from "../../services/api";
 import { useSiteAnalytics } from "../../hooks/useSiteAnalytics";
@@ -44,6 +45,18 @@ function formatDuration(startIso, endIso) {
 function maintenancePhase(m) {
   if (m.cancelled_at) return "בוטלה";
   return new Date(m.expires_at).getTime() > Date.now() ? "פעילה" : "הסתיימה";
+}
+
+// תאריך + שעה + "לפני כמה זמן". ⚠️ **שלושתם יחד ולא אחד מהם:** תאריך לבדו
+// מחייב לחשב בראש כמה זמן עבר, ו"לפני 3 שבועות" לבדו אינו מאפשר להצליב מול
+// אירוע אחר. בפאנל, שבו מנסים להבין מה קרה, שניהם נחוצים.
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  const ago = days <= 0 ? "היום" : days === 1 ? "אתמול" : `לפני ${days} ימים`;
+  return `${d.toLocaleDateString("he-IL")} · ${ago}`;
 }
 
 function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 }) {
@@ -172,6 +185,66 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
           </div>
         </div>
 
+        {/* ==========================================================
+            פרטי האתר — מה שקבוע בו, להבדיל ממה שקורה בו
+            ==========================================================
+            כל שאר הפאנל עונה על "מה קרה בתקופה". המקטע הזה עונה על "מה
+            האתר הזה" — נתונים שאינם משתנים לפי טווח התאריכים שנבחר, ולכן
+            הם יושבים **מעל** בורר התקופה ולא בתוכו.
+
+            ⚠️ הכל כבר מגיע בכרטיס האתר; אין כאן שום שליפה נוספת. */}
+        <div className="detail-about">
+          <h3>פרטי האתר</h3>
+          <div className="detail-info">
+            <div className="info-row">
+              <span className="info-label">נרשם במערכת</span>
+              <span>{fmtDateTime(site.registered_at)}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">סוג המתקן</span>
+              <span>{siteTypeFullLabel(site.plc_type)}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">דרגת שירות</span>
+              <span>{TIER_LABELS[site.tier] || TIER_LABELS.basic}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">נשמע לאחרונה</span>
+              <span>{fmtDateTime(site.last_seen)}</span>
+            </div>
+
+            {/* ==========================================================
+                שני מונים, ולא אחד — וההבדל ביניהם מבלבל בלי הסבר
+                ==========================================================
+                ⚠️ **מונה המערכת סופר רק מאז הרישום; מונה הבקר הוא של המכונה
+                מיום ייצורה.** אתר שנרשם אתמול יראה כאן 199 מול 4,984, ומי
+                שרואה שני מספרים בלי הסבר מניח שאחד מהם שגוי.
+
+                ההפרש אינו תקלה — הוא בדיוק הנתון: כמה עבדה המכונה **לפני**
+                שהתחלנו למדוד אותה. */}
+            <div className="info-row">
+              <span className="info-label">מחזורים שנמדדו</span>
+              <span>{(site.cycle_total ?? 0).toLocaleString()}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">מונה הבקר</span>
+              <span>
+                {site.plc_cycle_last != null ? site.plc_cycle_last.toLocaleString() : "—"}
+              </span>
+            </div>
+          </div>
+
+          {/* ⚠️ מוצג רק כשיש פער אמיתי. משפט הסבר קבוע שמופיע גם כששני
+              המספרים זהים הוא רעש שמלמד את העין לדלג עליו. */}
+          {site.plc_cycle_last != null
+            && site.plc_cycle_last > (site.cycle_total ?? 0) && (
+            <p className="detail-about-note">
+              המכונה עבדה <strong>{(site.plc_cycle_last - (site.cycle_total ?? 0)).toLocaleString()}</strong> מחזורים
+              לפני שהאתר נרשם כאן — הפרש זה אינו נספר במדדים.
+            </p>
+          )}
+        </div>
+
         {/* ===== נתוני תקופה: שבוע / חודש / שנה ===== */}
         <div className="detail-analytics">
           <PeriodTabs
@@ -205,7 +278,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                 <MetricCard
                   label="תקלות"
                   value={analytics.stats.errors.toLocaleString()}
-                  hint="פעמים שהאתר נכנס למצב מושבת"
+                  hint="פעמים שהאתר נכנס לתקלה"
                   trend={
                     <TrendIndicator
                       changePercent={analytics.trend.errors.changePercent}

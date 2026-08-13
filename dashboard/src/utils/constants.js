@@ -7,7 +7,7 @@ export const STATUSES = ["ready", "operating", "error", "maintenance", "no_comm"
 export const STATUS_LABELS = {
   ready: "מוכן",
   operating: "בפעולה",
-  error: "מושבת",
+  error: "בתקלה",
   maintenance: "בתחזוקה",
   no_comm: "אין תקשורת",
 };

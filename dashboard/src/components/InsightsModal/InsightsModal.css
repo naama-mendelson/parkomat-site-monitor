@@ -392,3 +392,20 @@
   color: var(--text-secondary);
   font-size: 0.94em;
 }
+
+/* ==========================================================
+   שורת פילוח מוזחת — חלוקה של המספר שמעליה
+   ==========================================================
+   ⚠️ הפילוח **אינו** שני מדדים נוספים אלא חלוקה של אחד. שורה אחת של
+   כרטיסים שווים הסתירה בדיוק את היחס הזה: "3 תקלות" ו-"3 התאוששו מעצמן"
+   נראו כשני עובדות נפרדות במקום כאחת שמפרשת את השנייה. */
+.insights-kpis--sub {
+  margin-top: 8px;
+  padding-inline-start: 18px;
+  border-inline-start: 2px solid var(--border-color);
+}
+
+.insights-kpis--sub .metric-card {
+  background: transparent;
+  border-style: dashed;
+}

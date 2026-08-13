@@ -316,12 +316,13 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   // תפעולית:
   //
   //   **טופלה** — מיד כשהתקלה נגמרה נפתח מקטע תחזוקה. מישהו הגיע לאתר.
-  //     זו עלות אמיתית: נסיעה, זמן טכנאי, ולרוב גם תקלה שחוזרת.
+  //     ⚠️ **מה שאיננו יודעים לא נאמר:** אין בנתונים דבר שמבחין בין
+  //     טיפול מרחוק להגעה פיזית. הסימן היחיד הוא שנפתח מקטע תחזוקה.
   //   **התאוששה מעצמה** — האתר חזר ל'מוכן' או ל'בפעולה' בלי התערבות.
   //     לרוב ריצוד או תקלה רגעית שהמכונה ניקתה בעצמה.
   //
   // אתר עם 5 השבתות שכולן נפתרו לבד הוא סיפור אחר לגמרי מאתר עם 5 השבתות
-  // שכולן דרשו נסיעה — ובכרטיס אחד הם נראים זהים.
+  // שכולן הצריכו טיפול — ובכרטיס אחד הם נראים זהים.
   //
   // ⚠️ אותו כלל זיהוי בדיוק כמו פילוח התחזוקה:
   //     error.ended_at === maintenance.started_at
@@ -361,12 +362,12 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   // שני מקורות: מצב תחזוקה שמדווח מה-PLC (maintRows), וחלונות תחזוקה ידניים
   // שהופעלו מהדשבורד (windows). שניהם נשלפו למעלה במקביל.
   // ============================================================
-  // תחזוקה שבאה אחרי תקלה היא **טיפול בתקלה**, לא תחזוקה מתוכננת
+  // תחזוקה שבאה אחרי תקלה היא **תפעול תקלה**, לא תחזוקה מתוכננת
   // ============================================================
   // שתיהן נראות זהות בטבלה — מקטע `maintenance` — אבל הן שני דברים הפוכים:
   //
   //   **מתוכננת** — מישהו בחר להוריד את האתר. זו החלטה, והיא סימן טוב.
-  //   **טיפול בתקלה** — האתר נפל, ומישהו בא לתקן. זו תוצאה, והיא זמן השבתה
+  //   **תפעול תקלה** — האתר נפל, ומישהו בא לתקן. זו תוצאה, והיא זמן השבתה
   //     לכל דבר מבחינת מי שרצה לחנות.
   //
   // ערבוב שלהן מייפה את התמונה: אתר שנופל שלוש פעמים בשבוע ומתוקן בכל פעם
@@ -376,7 +377,7 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   // ⚠️ הזיהוי חד-משמעי ואינו הערכה: `error.ended_at === maintenance.started_at`.
   // הסוכן סוגר מקטע ופותח את הבא באותו סבב דגימה, ולכן החותם משותף בדיוק.
   //
-  // ⚠️ **הזמן עצמו לא זז בין המדדים.** טיפול בתקלה נשאר תחזוקה לצורך חישוב
+  // ⚠️ **הזמן עצמו לא זז בין המדדים.** תפעול תקלה נשאר תחזוקה לצורך חישוב
   // הזמינות — הוא עדיין מוחרג מהמכנה, בדיוק כמו קודם. מה שהשתנה הוא רק
   // ה**סיווג** בתצוגה. שינוי הזמינות היה דורש parity חדש, וזו לא הבקשה.
   const errorEnds = new Set(errorRows.map((e) => e.ended_at).filter(Boolean));
@@ -384,6 +385,10 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
 
   let maintMs = 0, longestMaintMs = 0;
   let repairMs = 0, repairCount = 0;
+  // ⚠️ **הארוך ביותר נמדד בנפרד לכל קטגוריה.** מדד אחד לשתיהן היה מוצג תחת
+  // הכותרת "תחזוקה" גם כשהערך הגיע דווקא מתפעול תקלה — מספר נכון תחת שם
+  // שגוי, וזה גרוע ממספר חסר.
+  let longestRepairMs = 0, longestPlannedMs = 0;
   for (const row of maintRows) {
     const s = Math.max(Date.parse(row.started_at), windowStart);
     const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
@@ -392,7 +397,12 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
     maintMs += span;
     if (span > longestMaintMs) longestMaintMs = span;
 
-    if (isRepair(row)) { repairMs += span; repairCount++; }
+    if (isRepair(row)) {
+      repairMs += span; repairCount++;
+      if (span > longestRepairMs) longestRepairMs = span;
+    } else if (span > longestPlannedMs) {
+      longestPlannedMs = span;
+    }
   }
 
   // ספירות "שהתחילו בתקופה" — לפילוח הפעילות (כניסות/יציאות/תקלות/תחזוקה)
@@ -509,12 +519,14 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
       totalHours: hrs(maintMs),                    // סך הזמן בתחזוקה
       longestHours: hrs(longestMaintMs),
 
-      // ---- הפילוח: טיפול בתקלה מול מתוכננת ----
+      // ---- הפילוח: תפעול תקלה מול מתוכננת ----
       // repairEntries + plannedEntries === plcEntries, תמיד.
       repairEntries: repairCount,
       repairHours: hrs(repairMs),
+      longestRepairHours: hrs(longestRepairMs),
       plannedEntries: maintRows.length - repairCount,
       plannedHours: hrs(maintMs - repairMs),
+      longestPlannedHours: hrs(longestPlannedMs),
       manualWindows: windows.length,               // חלונות שהופעלו ידנית מהדשבורד
       cancelledWindows: windows.filter((w) => w.cancelled_at).length,
       recentWindows: windows.slice(0, 5).map((w) => ({

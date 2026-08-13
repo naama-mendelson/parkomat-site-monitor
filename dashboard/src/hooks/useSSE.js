@@ -83,41 +83,70 @@ export function useSSE(onUpdate, onReconnect) {
     // ייפתח חיבור אחרי הפירוק, ואיש כבר לא סוגר אותו.
     let source = null;
     let cancelled = false;
+    let retryTimer = null;
+    let attempt = 0;
 
     // האם היה נתק מאז ההתחברות האחרונה. בלי הדגל הזה onopen הראשון (בטעינה)
     // היה מפעיל שליפה מיותרת — הרשימה בדיוק נטענה.
     let sawDisconnect = false;
 
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
+    // ==========================================================
+    // מתחברים מחדש **עם אסימון טרי**, ולא נותנים ל-EventSource לנסות לבד
+    // ==========================================================
+    // ⚠️ **זה תיקון לבאג שההגנה על הנתיב יצרה.** EventSource מתחבר מחדש
+    // מעצמו — אבל תמיד **לאותו URL**, כלומר עם אותו אסימון. אסימון Supabase
+    // פג אחרי כשעה, ומאותו רגע כל ניסיון חוזר מקבל 401 והדפדפן מנסה שוב
+    // עם אותו אסימון מת, לנצח.
+    //
+    // ⚠️ והכשל שקט לחלוטין: הדף פתוח, הכרטיסים מוצגים, ופשוט מפסיקים
+    // להתעדכן. **בדיוק בתרחיש שהדשבורד נבנה בשבילו** — מסך שפתוח כל היום.
+    //
+    // לכן סוגרים ידנית ובונים חיבור חדש: getSession מרענן את האסימון
+    // אוטומטית, כך שהחיבור החדש נושא אסימון תקף.
+    const connect = async () => {
       if (cancelled) return;
 
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      const token = data.session?.access_token;
+
       source = new EventSource(
-        token ? `${API_ROOT}/api/stream?access_token=${encodeURIComponent(token)}` : `${API_ROOT}/api/stream`
+        token
+          ? `${API_ROOT}/api/stream?access_token=${encodeURIComponent(token)}`
+          : `${API_ROOT}/api/stream`
       );
 
-    source.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        callbackRef.current(data);
-      } catch (err) {
-        console.warn("SSE parse error:", err);
-      }
+      source.onmessage = (event) => {
+        try {
+          callbackRef.current(JSON.parse(event.data));
+        } catch (err) {
+          console.warn("SSE parse error:", err);
+        }
+      };
+
+      source.onopen = () => {
+        attempt = 0;                     // חיבור מוצלח מאפס את ההשהיה
+        if (!sawDisconnect) return;
+        sawDisconnect = false;
+        console.info("SSE reconnected — refetching to close the gap.");
+        reconnectRef.current?.();
+      };
+
+      source.onerror = () => {
+        sawDisconnect = true;
+        // ⚠️ **סוגרים לפני שמנסים שוב.** בלי זה נשארת גם הלולאה הפנימית של
+        // EventSource עם האסימון הישן, ושני חיבורים מתחרים על אותו נתיב.
+        source.close();
+
+        // נסיגה מעריכית עד 30 שניות: שרת שנפל לא צריך לקבל בקשה כל שנייה
+        // מכל טאב פתוח.
+        const delay = Math.min(30_000, 1000 * 2 ** attempt++);
+        console.warn(`SSE disconnected — reconnecting in ${delay}ms...`);
+        retryTimer = setTimeout(connect, delay);
+      };
     };
 
-    source.onopen = () => {
-      if (!sawDisconnect) return;
-      sawDisconnect = false;
-      console.info("SSE reconnected — refetching to close the gap.");
-      reconnectRef.current?.();
-    };
-
-    source.onerror = () => {
-      sawDisconnect = true;
-      console.warn("SSE disconnected — reconnecting automatically...");
-    };
-    })();
+    connect();
 
     // מחשב שנרדם או טאב ברקע: הדפדפן לא תמיד פולט error, ולכן ההסתמכות על
     // onopen לבדה משאירה מסך מיושן בלי שום סימן.
@@ -128,6 +157,7 @@ export function useSSE(onUpdate, onReconnect) {
 
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
       document.removeEventListener("visibilitychange", onVisible);
       // ⚠️ ?. — החיבור אולי טרם נפתח (ההמתנה לאסימון עדיין רצה).
       source?.close();

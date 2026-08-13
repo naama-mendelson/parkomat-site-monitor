@@ -103,7 +103,7 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
 
   const cards = [
     { label: "סה\"כ אתרים", value: summary.totalSites, color: "var(--accent)", hint: "רשומים במערכת" },
-    { label: "מושבתים כעת", value: summary.sitesInError ?? 0, color: STATUS_COLORS.error.dot, hint: "במצב תקלה ברגע זה" },
+    { label: "בתקלה כעת", value: summary.sitesInError ?? 0, color: STATUS_COLORS.error.dot, hint: "במצב תקלה ברגע זה" },
     { label: "בתחזוקה", value: summary.sitesInMaintenance, color: STATUS_COLORS.maintenance.dot, hint: "כעת" },
     { label: "ללא תקשורת", value: summary.sitesOffline, color: STATUS_COLORS.no_comm.dot, hint: "כעת" },
     // לא אדום (זה לא "מושבת עכשיו") ולא ענבר (זה לא תחזוקה) — גוון הכשל מהפלטה
