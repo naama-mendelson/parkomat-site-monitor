@@ -16,7 +16,7 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
         updateSite, deleteSite ,
-  getAppUserByUid, listAppUsers, setAppUserActive   , setAppUserRole } = require("../db/queries");
+  getAppUserByUid, getAppUserByEmail, listAppUsers, setAppUserActive, setAppUserRole } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
 const { canDeactivate, canChangeRole } = require("../auth/deactivation");
@@ -263,6 +263,45 @@ async function identifyActor(req, res, next) {
 //
 // הדשבורד כבר מצרף את האסימון (services/api.js), והאפליקציה כולה חסומה
 // מאחורי AuthGate — כלומר אין משתמש בלי session, ושום מסך לא נשבר.
+// ============================================================
+// ⚠️ מטמון "מי פעיל" — ובלעדיו השבתה לא השביתה כלום בזרוע הזו
+// ============================================================
+// `verifyToken` מאמת **חתימה**, ותו לא. אסימון של מי שהושבת נשאר חתום
+// כדין, ולכן הוא המשיך לקרוא הכול דרך השרת — ואף יכול היה להתחבר מחדש
+// ולקבל אסימון טרי, כי ההשבתה נוגעת ל-`app_users` ולא למשתמש ב-GoTrue.
+//
+// ⚠️ **התיקון ב-RLS (`app.is_active_user()`) כיסה רק את הזרוע הישירה.**
+// מול PostgREST המדיניות אכן חוסמת; מול השרת היא לא רצה בכלל, כי
+// `postgres` הוא `rolbypassrls`. כלומר בדיוק **דלת החירום** —
+// `VITE_SUPABASE_DIRECT=false` — נשארה פתוחה למי שהושבת. נמדד מקצה לקצה.
+//
+// ⚠️ ולמה מטמון ולא שאילתה בכל בקשה: הבדיקה יושבת לפני **כל** מסלול קריאה,
+// ופתיחת פאנל יורה כמה בקשות במקביל. שאילתה לכל אחת מוסיפה הלוך-ושוב
+// לענן לכל אחת מהן. ההשבתה בכל זאת מיידית, כי המסלול שמשבית **מנקה את
+// הרשומה** בעצמו; ה-TTL הוא רשת ביטחון לשינוי שנעשה מחוץ לשרת.
+const ACTIVE_TTL_MS = 60_000;
+const ACTIVE_MAX = 500;          // חסום, כמו api/cache.js — לא מפה שגדלה בלי גבול
+const activeCache = new Map();
+
+/** מנקה משתמש מהמטמון — נקרא מכל מסלול שמשנה סטטוס או דרגה. */
+function forgetActor(userId) {
+  if (userId != null) activeCache.delete(String(userId));
+}
+
+async function actorIsActive(userId) {
+  const key = String(userId);
+  const hit = activeCache.get(key);
+  if (hit && Date.now() - hit.at < ACTIVE_TTL_MS) return hit.active;
+
+  // getAppUserByUid כבר מסנן is_active, ולכן null = מושבת או לא קיים.
+  const user = await getAppUserByUid(userId);
+  const active = Boolean(user);
+
+  if (activeCache.size >= ACTIVE_MAX) activeCache.delete(activeCache.keys().next().value);
+  activeCache.set(key, { active, at: Date.now() });
+  return active;
+}
+
 async function requireAuth(req, res, next) {
   const header = req.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -271,6 +310,17 @@ async function requireAuth(req, res, next) {
 
   const actor = await auth.verifyToken(token);
   if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+
+  // ⚠️ כשל בבדיקה מחזיר 503 ולא 403: "אין לך הרשאה" על תקלת מסד שולח את
+  // המשתמש לחפש בעיית הרשאות שאינה קיימת. נכשלים סגור, אבל אומרים למה.
+  let active;
+  try {
+    active = await actorIsActive(actor.userId);
+  } catch (err) {
+    console.error("[auth] בדיקת פעילות נכשלה:", err.message);
+    return res.status(503).json({ error: "לא ניתן לאמת את המשתמש כרגע" });
+  }
+  if (!active) return res.status(403).json({ error: "המשתמש אינו פעיל במערכת" });
 
   req.actor = { userId: actor.userId, name: actor.email || actor.userId,
                 role: actor.role, trust: "token" };
@@ -304,6 +354,18 @@ async function requireAuthSse(req, res, next) {
 
   const actor = await auth.verifyToken(token);
   if (!actor) return res.status(401).json({ error: "אסימון לא תקין או שפג" });
+
+  // ⚠️ אותה בדיקה כמו ב-requireAuth, ודווקא כאן היא קריטית: SSE הוא חיבור
+  // **ארוך**. מי שהושבת בזמן שהזרם פתוח ממשיך לקבל כל אירוע במערכת עד
+  // שיסגור את הלשונית. הבדיקה חלה על הפתיחה; ראה גם ניקוי המטמון ב-PATCH.
+  let sseActive;
+  try {
+    sseActive = await actorIsActive(actor.userId);
+  } catch (err) {
+    console.error("[auth] בדיקת פעילות (SSE) נכשלה:", err.message);
+    return res.status(503).json({ error: "לא ניתן לאמת את המשתמש כרגע" });
+  }
+  if (!sseActive) return res.status(403).json({ error: "המשתמש אינו פעיל במערכת" });
 
   req.actor = { userId: actor.userId, name: actor.email || actor.userId,
                 role: actor.role, trust: "token" };
@@ -403,6 +465,28 @@ app.post("/api/users/invite", requireAuth, requireManager, inviteRateLimit, asyn
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
     }
+
+    // ============================================================
+    // ⚠️ הדרגה נכתבת ל-app_users **כאן** — בלי זה הזמנת מנהל יוצרת בקר
+    // ============================================================
+    // `adminUsers.createUser` קובע `parkomat_role` ב-app_metadata של
+    // Supabase בלבד. אבל `app_users` הוא הסמכות — `requireManager` קורא
+    // ממנו, וגם `app.current_app_role()` במסד.
+    //
+    // ⚠️ והטריגר `provision_app_user` **אינו יכול** לגשר: הוא AFTER INSERT
+    // ורץ **לפני** ש-GoTrue כותב את app_metadata, ולכן parkomat_role עדיין
+    // ריק כשהוא בונה את השורה. הוא נותן 'operator' לכולם — וכך מנהל שהוזמן
+    // קיבל 403 על כל פעולת ניהול. נמדד מקצה לקצה.
+    //
+    // ⚠️ נופלים חזרה לחיפוש לפי מייל: אם כבר הייתה שורת app_users עם
+    // supabase_uid ישן, ה-ON CONFLICT בטריגר אינו דורס אותו — והחיפוש לפי
+    // uid היה מחזיר ריק דווקא במקרה שבו יש מה לתקן.
+    let appUser = await getAppUserByUid(result.user.id);
+    if (!appUser) appUser = await getAppUserByEmail(result.user.email);
+    if (appUser && appUser.role !== wantRole) {
+      await setAppUserRole(appUser.id, wantRole);
+    }
+    result.user.role = wantRole;
 
     // שורת הביקורת. זה כל מה שעומד בין "נוצר חשבון" ל"אין לנו מושג מי
     // צירף אותו" — וכאן, בשונה מהתחזוקה, השם מאומת.
@@ -516,6 +600,10 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
         console.error("[api] עדכון התפקיד ב-Supabase נכשל:", e.message);
       });
 
+      // גם שינוי דרגה מנקה: המטמון מחזיק "פעיל", אבל אותו משתמש נקרא מיד
+      // אחר כך ב-requireManager, ועדיף שלא ייקרא מרשומה שהתיישנה.
+      forgetActor(target.supabase_uid);
+
       console.log(`[api] ${target.email} → ${role} בידי ${req.actor.name}`);
       return res.json({ ok: true, id, role });
     }
@@ -536,7 +624,15 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
       if (!verdict.allowed) return res.status(400).json({ error: verdict.reason });
     }
 
-    await setAppUserActive(id, is_active, req.actor.name);
+    // ⚠️ **המזהה המספרי ולא השם.** `disabled_by` הוא FK ל-app_users(id);
+    // העברת `req.actor.name` (מייל) הפילה כל השבתה על שגיאת טיפוס.
+    await setAppUserActive(id, is_active, req.actor.appUserId);
+
+    // ⚠️ **בלי זה ההשבתה נכנסת לתוקף רק בעוד דקה.** requireAuth בודק פעילות
+    // דרך מטמון קצר; המסלול שמשנה את הסטטוס הוא היחיד שיודע בוודאות שהוא
+    // התיישן, ולכן הוא זה שמנקה אותו. ה-TTL נשאר רשת ביטחון לשינוי שנעשה
+    // מחוץ לשרת, ולא המנגנון העיקרי.
+    forgetActor(target.supabase_uid);
 
     console.log(
       `[api] משתמש ${target.email} ${is_active ? "הוחזר לפעילות" : "הושבת"} ` +

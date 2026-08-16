@@ -2398,11 +2398,37 @@ async function getAppUserByUid(uid) {
     .get(String(uid));
 }
 
+/**
+ * איתור לפי מייל — **רק למסלול ההזמנה**, כדי לקבוע דרגה לשורה שהטריגר
+ * זה עתה יצר.
+ *
+ * ⚠️ בלי `is_active` בכוונה, בשונה מ-`getAppUserByUid`: כאן לא נבדקת
+ * הרשאה של אף אחד אלא מאותרת שורה שנוצרה לפני שנייה. סינון על is_active
+ * היה מחזיר ריק דווקא כשמזמינים מחדש מישהו שהושבת בעבר — כלומר משאיר
+ * אותו בדרגה הישנה בשקט.
+ */
+async function getAppUserByEmail(email) {
+  if (!email) return null;
+  return db
+    .prepare(
+      `SELECT id, email, full_name, role, is_active
+         FROM app_users
+        WHERE LOWER(email) = LOWER(?)
+        LIMIT 1`,
+    )
+    .get(String(email));
+}
+
 /** כל המשתמשים, לניהול. מושבתים כלולים — הם חלק מהתמונה. */
 async function listAppUsers() {
   return db
     .prepare(
-      `SELECT id, email, full_name, role, is_active, created_at, disabled_at
+      // ⚠️ `supabase_uid` נבחר במפורש — הוא **היה חסר**, ושני מסלולים הסתמכו
+      // עליו: עדכון הדרגה ב-app_metadata (`adminUsers.setRole`) קיבל
+      // `undefined` ונכשל **בשקט** בתוך ה-catch שלו, ולכן שינוי דרגה נכתב
+      // אצלנו ולא הגיע לאסימון — כלומר RLS המשיך לראות את הדרגה הישנה.
+      // אינו נחשף החוצה: `GET /api/users` בורר שדות בעצמו.
+      `SELECT id, email, full_name, role, is_active, created_at, disabled_at, supabase_uid
          FROM app_users ORDER BY is_active DESC, role, email`,
     )
     .all();
@@ -2415,16 +2441,26 @@ async function listAppUsers() {
  * תחזוקה שהפעיל; מחיקתו הייתה משאירה שורות עם שם שמצביע לשום מקום.
  * `is_active=false` מנתק את הגישה ומשאיר את ההיסטוריה שלמה.
  */
-async function setAppUserActive(id, active, byEmail) {
+// ⚠️ **`byAppUserId` הוא מזהה מספרי, ולא מייל — וזה היה באג שהשבית את
+// ההשבתה לחלוטין.** `disabled_by` מוגדר בסכמה כ-
+// `INTEGER REFERENCES app_users(id)`, בעוד הנתיב העביר לכאן את
+// `req.actor.name`, כלומר כתובת מייל. Postgres דחה כל קריאה עם
+//
+//     column "disabled_by" is of type integer but expression is of type text
+//
+// והנתיב החזיר 500. כלומר כפתור ההשבתה במסך **מעולם לא עבד** — והתסמין
+// היה "שגיאה בעדכון המשתמש", שנראה כמו תקלה חולפת ולא כמו יכולת חסרה.
+// שם הפרמטר הישן (`byEmail`) הוא מה שהסגיר את אי-ההתאמה.
+async function setAppUserActive(id, active, byAppUserId) {
   const r = await db
     .prepare(
       `UPDATE app_users
           SET is_active = ?,
               disabled_at = CASE WHEN ? THEN NULL ELSE ? END,
-              disabled_by = CASE WHEN ? THEN NULL ELSE ? END
+              disabled_by = CASE WHEN ? THEN NULL ELSE ?::integer END
         WHERE id = ?`,
     )
-    .run(active, active, new Date().toISOString(), active, byEmail || null, id);
+    .run(active, active, new Date().toISOString(), active, byAppUserId ?? null, id);
   return r;
 }
 
@@ -2444,3 +2480,4 @@ async function setAppUserRole(id, role) {
 }
 
 module.exports.setAppUserRole = setAppUserRole;
+module.exports.getAppUserByEmail = getAppUserByEmail;

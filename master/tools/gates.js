@@ -33,6 +33,7 @@ const GATES = [
   { name: "check-scope",       what: "מה בקר רואה ומה לא" },
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
+  { name: "check-permissions",  what: "מי מורשה למה — מקצה לקצה" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 
