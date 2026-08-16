@@ -139,6 +139,37 @@
   user-select: all;
   direction: ltr;
   text-align: left;
+  /* ⚠️ הסמן מסגיר שאפשר ללחוץ. `user-select: all` לבדו מסמן בלחיצה, אבל
+     שום דבר במראה לא אומר זאת — והמסלול הידני הוא זה שעובד תמיד. */
+  cursor: pointer;
+}
+
+/* ============================================================
+   הודעת כישלון ההעתקה — נשארת על המסך, ואומרת למה
+   ============================================================
+   ⚠️ אינה נעלמת מעצמה, בשונה מ"✓ הועתק": היא דורשת פעולה. והיא נוקבת
+   בסיבה (כתובת שאינה localhost/HTTPS) כי בלעדיה זה נראה כמו תקלה
+   אקראית — והמשתמשת תנסה שוב באותה כתובת ותיכשל שוב. */
+.users-copy-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.users-copy-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+}
+
+.users-copy-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
 }
 
 .users-copy {

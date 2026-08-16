@@ -4,8 +4,9 @@
 // invite / list / PATCH / DELETE). אין כאן בדיקת תפקיד — לא בשכחה:
 // הסתרה ב-UI אינה אבטחה. בקר שיפתח את הפאנל יקבל 403 ויראה את הסיבה,
 // וזה עדיף על תפריט שנעלם בלי הסבר.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { inviteUser, fetchUsers, setUserActive, setUserRole, deleteUser } from "../../services/api";
+import { copyText } from "../../utils/clipboard";
 import "./UsersPanel.css";
 
 function UsersPanel({ onClose }) {
@@ -24,6 +25,9 @@ function UsersPanel({ onClose }) {
   // ⚠️ ברירת המחדל היא בקר ולא מנהל: שגיאת השמטה בטופס צריכה ליפול לצד
   // המצמצם. מי שמזמין מנהל עושה זאת במודע.
   const [inviteRole, setInviteRole] = useState("operator");
+  // מצב ההעתקה: null | "ok" | "fail". שלושה מצבים ולא שניים — ראה handleCopy.
+  const [copied, setCopied] = useState(null);
+  const pwRef = useRef(null);
 
   async function load() {
     try {
@@ -45,6 +49,9 @@ function UsersPanel({ onClose }) {
     setBusy(true);
     setError(null);
     setInvited(null);
+    // ⚠️ בלי זה "✓ הועתק" מההזמנה הקודמת נשאר על המסך מעל סיסמה **חדשה**
+    // שטרם הועתקה — כלומר אישור שקרי, על הערך שאסור לטעות בו.
+    setCopied(null);
 
     try {
       const res = await inviteUser(email.trim(), inviteRole);
@@ -124,6 +131,39 @@ function UsersPanel({ onClose }) {
     }
   }
 
+  // ============================================================
+  // העתקת הסיסמה הזמנית — ומשוב, כי בלעדיו אי אפשר לדעת
+  // ============================================================
+  // ⚠️ הקוד הקודם היה `navigator.clipboard?.writeText(...)` בלי await
+  // ובלי משוב. ה-`?.` הפך אותו ל**כלום שקט** בכל כתובת שאינה localhost
+  // או HTTPS — כלומר בדיוק כשפותחים את הדשבורד ממחשב אחר ברשת. הלחיצה
+  // לא עשתה דבר, ולא היה שום סימן לכך.
+  //
+  // ⚠️ וזה קרה על הערך היחיד במערכת שמוצג פעם אחת ואינו נשמר בשום מקום.
+  // העתקה שנכשלת בשקט כאן = משתמש שנוצר ואי אפשר להתחבר אליו.
+  //
+  // שלוש מצבים מוצגים, ולא שניים: "העתק" / "✓ הועתק" / "סמנו והעתיקו".
+  // המצב השלישי הוא ההודאה שההעתקה האוטומטית לא זמינה — עם הסיבה.
+  async function handleCopy() {
+    const ok = await copyText(invited.tempPassword);
+    setCopied(ok ? "ok" : "fail");
+    // ⚠️ בכישלון מסמנים את הטקסט **בשבילה**, כדי שנשארה רק הקשה אחת.
+    if (!ok) selectPassword();
+    // ההודעה נעלמת מעצמה רק בהצלחה. כישלון נשאר על המסך — הוא דורש פעולה.
+    if (ok) setTimeout(() => setCopied(null), 2500);
+  }
+
+  /** מסמן את הסיסמה במלואה — המסלול הידני, שעובד תמיד. */
+  function selectPassword() {
+    const el = pwRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
   return (
     <div className="users-overlay" onClick={onClose}>
       <div className="users-panel" onClick={(e) => e.stopPropagation()}>
@@ -175,14 +215,33 @@ function UsersPanel({ onClose }) {
           <div className="users-invited" role="status">
             <strong>נוצר משתמש {invited.email}</strong>
             <p>העבירו לו את הסיסמה הזמנית. היא מוצגת <u>פעם אחת בלבד</u> ואינה נשמרת:</p>
-            <code className="users-temp-pw">{invited.tempPassword}</code>
+            {/* ⚠️ לחיצה על הסיסמה מסמנת אותה במלואה. זה המסלול שעובד
+                **תמיד**, גם כשההעתקה האוטומטית נחסמה — ולכן הוא קיים ולא
+                רק הכפתור. */}
+            <code
+              className="users-temp-pw"
+              ref={pwRef}
+              onClick={selectPassword}
+              title="לחיצה מסמנת את הסיסמה"
+            >
+              {invited.tempPassword}
+            </code>
             <button
               className="users-copy"
               type="button"
-              onClick={() => navigator.clipboard?.writeText(invited.tempPassword)}
+              onClick={handleCopy}
             >
-              העתק
+              {copied === "ok" ? "✓ הועתק" : copied === "fail" ? "סמנו והעתיקו" : "העתק"}
             </button>
+            {/* ⚠️ כשההעתקה נכשלת אומרים **למה**, ולא רק "נכשל": בלי הסיבה
+                זה נראה כמו תקלה אקראית, והמשתמשת תנסה שוב באותה כתובת
+                ותיכשל שוב. */}
+            {copied === "fail" && (
+              <p className="users-copy-hint">
+                הדפדפן חסם העתקה אוטומטית (קורה כשהכתובת אינה <code>localhost</code> או HTTPS).
+                הסיסמה כבר מסומנת — <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+              </p>
+            )}
           </div>
         )}
 
