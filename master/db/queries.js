@@ -1524,6 +1524,7 @@ async function getAllSitesGlobals(siteIds) {
     lastFaultAt: null, statusSince: null, lastOperation: null,
     operationsSinceLastError: 0, activeMaintenance: null, firstStatusAt: null,
     currentFaultText: null,
+    currentAfterError: false,
   });
   const at = (id) => {
     if (!result.has(id)) result.set(id, blank());
@@ -1574,7 +1575,13 @@ async function getAllSitesGlobals(siteIds) {
                     AND e.status = 'error'
                     AND e.ended_at = h.started_at
                   LIMIT 1)
-              ) AS "faultText"
+              ) AS "faultText",
+              EXISTS (
+                SELECT 1 FROM status_history e
+                 WHERE e.site_id = h.site_id
+                   AND e.status = 'error'
+                   AND e.ended_at = h.started_at
+              ) AS "afterError"
        FROM status_history h
        WHERE ${holes} AND h.ended_at IS NULL
        ORDER BY h.site_id, h.started_at DESC`
@@ -1627,6 +1634,8 @@ async function getAllSitesGlobals(siteIds) {
     g.statusSince = r.started_at;
     // תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה השאילתה למעלה.
     g.currentFaultText = r.faultText ?? null;
+    // ⚠️ האם המקטע הפתוח הוא תפעול תקלה. אותו כלל, אותה שאילתה — בכוונה.
+    g.currentAfterError = r.afterError === true;
   }
   for (const r of lastOps) {
     at(r.site_id).lastOperation = {
@@ -1736,6 +1745,7 @@ async function getAllSitesWithMetrics({ from, prevFrom = null }) {
       statusSince: g.statusSince,
       // תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה getAllSitesGlobals.
       currentFaultText: g.currentFaultText ?? null,
+      currentAfterError: g.currentAfterError === true,
     };
   });
 }

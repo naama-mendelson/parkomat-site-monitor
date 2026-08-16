@@ -232,6 +232,31 @@
   color: var(--text-secondary);
 }
 
+/* ============================================================
+   סוגי התקלות — תת-קבוצה בתוך הפירוט של האתר
+   ============================================================
+   ⚠️ כותרת משלה ולא רשימה שמתחילה פתאום: מתחת לשורות החודשים, שורה של
+   "מיטה 3 — תקלת חיישנים" הייתה נקראת כמו עוד חודש. הכותרת היא מה שאומר
+   שהעמודה שמשמאל החליפה משמעות. */
+.report-table tr.row-kinds-head th {
+  padding-inline-start: 26px;
+  font-weight: 600;
+  font-size: 0.72em;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-transform: none;
+}
+
+/* ⚠️ תיאור התקלה מגיע מהבקר ואינו מוגבל באורך — הוא נחתך ולא עוטף,
+   אחרת שורה אחת ארוכה מפרקת את יישור הטבלה כולה. הטקסט המלא ב-title. */
+.report-table tr.row-kind th {
+  padding-inline-start: 38px;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .report-table tr.is-expandable {
   cursor: pointer;
 }

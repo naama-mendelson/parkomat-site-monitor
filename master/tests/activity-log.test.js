@@ -499,28 +499,51 @@ const insightsOf = (ops) => computeInsights({
   from: "2026-07-01T00:00:00.000Z", to: "2026-08-01T00:00:00.000Z",
 });
 
-test("busiestDays מחזיר את שני הימים העמוסים, בסדר יורד", () => {
+// ============================================================
+// ⚠️ רק השיא — ולא "שני העליונים"
+// ============================================================
+// קודם הוחזרו שני הימים העליונים, והשני הוצג ככרטיס "השני בעומסו". זה
+// קרא כאילו שניהם ימי שיא, בעוד שאחד מהם פשוט הבא בתור.
+//
+// הכלל עכשיו זהה לזה של busiestHours: נכנס יום אם ורק אם מספר הפעולות
+// בו **שווה למקסימום**.
+test("⚠️ יום שיא בודד — השני בעומסו אינו נכנס", () => {
   const ops = [
     ...[..."abc"].map((_, i) => cop("20", String(10 + i).padStart(2, "0"))),   // 3
-    ...[..."abcde"].map((_, i) => cop("21", String(10 + i).padStart(2, "0"))), // 5
+    ...[..."abcd"].map((_, i) => cop("21", String(10 + i).padStart(2, "0"))),  // 4
     ...[..."ab"].map((_, i) => cop("22", String(10 + i).padStart(2, "0"))),    // 2
   ];
   const days = insightsOf(ops).activity.busiestDays;
 
-  assert.equal(days.length, 2);
-  assert.equal(days[0].operations, 5);
-  assert.equal(days[1].operations, 3);
+  assert.equal(days.length, 1, "4 מול 3 — רק היום עם 4");
+  assert.equal(days[0].operations, 4);
   assert.ok(days[0].label.includes("21."));
 });
 
-test("שוויון נשבר לפי התאריך המוקדם — לא לפי סדר השורות", () => {
+test("⚠️ שוויון בשיא — **כל** הימים השווים נכנסים", () => {
+  // שלושה ימים עם 4 פעולות ואחד עם 2. שלושת הראשונים הם השיא.
+  const ops = [
+    ...[..."abcd"].map((_, i) => cop("20", String(10 + i).padStart(2, "0"))),
+    ...[..."abcd"].map((_, i) => cop("21", String(10 + i).padStart(2, "0"))),
+    ...[..."abcd"].map((_, i) => cop("22", String(10 + i).padStart(2, "0"))),
+    ...[..."ab"].map((_, i) => cop("23", String(10 + i).padStart(2, "0"))),
+  ];
+  const days = insightsOf(ops).activity.busiestDays;
+
+  assert.equal(days.length, 3, "שלושה ימים שווים — שלושתם");
+  assert.ok(days.every((d) => d.operations === 4));
+  // ⚠️ קיצוב קשיח לשניים היה מחזיר 2 כאן — בדיוק הבאג שהוסר.
+  assert.deepEqual(days.map((d) => d.label.split(".")[0]), ["20", "21", "22"]);
+});
+
+test("שוויון ממוין לפי התאריך המוקדם — לא לפי סדר השורות", () => {
   // ⚠️ אותם נתונים בשני סדרי הגעה חייבים להחזיר את אותה תשובה.
   const a = [cop("21", "10"), cop("21", "11"), cop("20", "10"), cop("20", "11")];
   const b = [...a].reverse();
 
   for (const ops of [a, b]) {
     const days = insightsOf(ops).activity.busiestDays;
-    assert.equal(days[0].operations, 2);
+    assert.equal(days.length, 2, "שוויון — שניהם");
     assert.ok(days[0].label.includes("20."), `ציפינו ל-20 בראש, התקבל ${days[0].label}`);
   }
 });

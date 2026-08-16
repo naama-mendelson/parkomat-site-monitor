@@ -105,6 +105,8 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // ⚠️ ?? ולא ||: '' הוא ערך תקף ("הבקר נשאל והחזיר ריק"), ו-|| היה
       // הופך אותו ל-null — כלומר ל"לא נקרא". שני דברים שונים.
       currentFaultText: g.current_fault_text ?? null,
+      // ⚠️ חייב להיות זהה לזרוע השרת — check-switch מוודא בדיוק את זה.
+      currentAfterError: g.current_after_error === true,
       statusSince: g.status_since ?? null,
       // השרת מחזיר אובייקט או null — ולא אובייקט עם שדות ריקים, שהיה נראה
       // למסך כמו "יש פעולה אחרונה" עם כל השדות undefined.

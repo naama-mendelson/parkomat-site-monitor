@@ -1,6 +1,6 @@
 // components/DetailPanel/DetailPanel.jsx — פאנל פירוט אתר (נפתח בלחיצה על כרטיס)
 import { useState } from "react";
-import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS } from "../../utils/constants";
+import { STATUS_LABELS, siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS } from "../../utils/constants";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { formatDate } from "../../utils/helpers";
@@ -80,7 +80,10 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
   const { site, statusHistory, maintenanceHistory, operations } = detail;
   const status = site.status;
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
-  const label = STATUS_LABELS[status] || status;
+  // ⚠️ אותו עוזר כמו בכרטיס, ולא STATUS_LABELS ישירות: כותרת שאומרת
+  // "בתחזוקה" בזמן שהכרטיס שממנו נפתחה אומרת "תפעול תקלה" היא סתירה
+  // שהמשתמשת רואה בשתי לחיצות.
+  const label = siteStatusLabel(site);
   const isInMaintenance = maintenance?.inMaintenance;
   const stuck = stuckInfo(site);
 

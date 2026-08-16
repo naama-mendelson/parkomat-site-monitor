@@ -72,13 +72,39 @@ function MonthlyReport({ site = null, onClose }) {
     const siteHead = ["אתר", "קוד", "פעולות", "תקלות"];
     const siteRows = sites.map((s) => [s.site_name, s.code, s.operations, s.errors]);
 
+    // ⚠️ חתך רביעי בקובץ — סוגי התקלות. בטבלה הם שורות מקוננות, ובקובץ
+    // שטוח הם חייבים להיות טבלה משלהם: דחיסתם לתא אחד ("סוג×3; סוג×2")
+    // הופכת אותם לטקסט שאי אפשר לסנן או לסכם ב-Excel, כלומר לחסרי ערך
+    // בדיוק בכלי שבשבילו מייצאים.
+    const kindHead = ["אתר", "קוד", "סוג תקלה", "כמה"];
+    const kindRows = sites.flatMap((s) =>
+      (s.fault_types || []).map((k) => [s.site_name, s.code, k.text, k.count]));
+
     const smHead = ["אתר", "חודש", "פעולות", "תקלות"];
     const smRows = siteMonths.map((m) => [
       m.code, monthLabel(m.year_month), m.operations, m.errors,
     ]);
 
-    const csv = "﻿" + [head, ...rows, [], siteHead, ...siteRows, [], smHead, ...smRows]
-      .map((r) => r.join(",")).join("\r\n");
+    // ============================================================
+    // ⚠️ ציטוט CSV — והוא **תיקון באג קיים**, לא הידור
+    // ============================================================
+    // כאן היה `r.join(",")` בלי שום ציטוט, ושמות האתרים מכילים פסיקים
+    // בפועל: `עמנואל הרומי 10 , ת"א`. כלומר כל שורה כזו נשברה לשתי
+    // עמודות ב-Excel והזיזה את כל הטור שאחריה — **בלי שום הודעת שגיאה**.
+    // זה בדיוק סוג הכשל שמתגלה רק כשמישהו מסכם עמודה ומקבל שטות.
+    //
+    // ⚠️ ותיאורי התקלה מחריפים אותו: הם טקסט חופשי מהבקר, ולכן יכולים
+    // להכיל פסיק, מרכאות, ואפילו שורה חדשה.
+    //
+    // הכלל התקני: עוטפים במרכאות כשיש פסיק / מרכאה / שורה חדשה, ומרכאה
+    // פנימית מוכפלת.
+    const cell = (v) => {
+      const t = String(v ?? "");
+      return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+
+    const csv = "﻿" + [head, ...rows, [], siteHead, ...siteRows, [], kindHead, ...kindRows, [], smHead, ...smRows]
+      .map((r) => r.map(cell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
@@ -181,6 +207,15 @@ function MonthlyReport({ site = null, onClose }) {
               <tbody>
                 {sites.map((s) => {
                   const ms = siteMonths.filter((m) => m.site_id === s.site_id);
+                  // ⚠️ **הפילוח לפי סוג תקלה מגיע מ-report_by_site**, מאותן
+                  // שורות בדיוק שמהן נספר `errors` — ולכן הסכום שלו שווה לו
+                  // תמיד. שתי שאילתות נפרדות היו מתפצלות בשקט בשינוי הבא,
+                  // והמסך היה מציג פילוח שאינו מסתכם למספר שלידו.
+                  const kinds = s.fault_types || [];
+                  // ⚠️ נפתח גם כשיש חודש אחד בלבד: קודם התנאי היה מספר
+                  // החודשים בלבד, ולכן אתר עם תקלות בחודש יחיד לא היה נפתח
+                  // כלל — כלומר הפילוח שלו היה בלתי נגיש.
+                  const canOpen = ms.length > 1 || kinds.length > 0;
                   const open = openSite === s.site_id;
                   return (
                   <Fragment key={s.site_id}>
@@ -194,12 +229,12 @@ function MonthlyReport({ site = null, onClose }) {
                       ⚠️ סכום שורות החודש שווה בדיוק לשורת האתר — נבדק על כל
                       12 האתרים. אם השניים ייפרדו, אחד מהם משקר. */}
                   <tr
-                    className={`${ms.length > 1 ? "is-expandable" : ""} ${open ? "is-open" : ""}`}
-                    onClick={ms.length > 1 ? () => setOpenSite(open ? null : s.site_id) : undefined}
-                    title={ms.length > 1 ? "לחצי לפילוח לפי חודש" : undefined}
+                    className={`${canOpen ? "is-expandable" : ""} ${open ? "is-open" : ""}`}
+                    onClick={canOpen ? () => setOpenSite(open ? null : s.site_id) : undefined}
+                    title={canOpen ? "לחצי לפילוח לפי חודש וסוג תקלה" : undefined}
                   >
                     <th scope="row">
-                      {ms.length > 1 && <span className="row-caret">{open ? "▾" : "▸"}</span>}
+                      {canOpen && <span className="row-caret">{open ? "▾" : "▸"}</span>}
                       {s.site_name}
                       <span className="report-code">{s.code}</span>
                     </th>
@@ -207,11 +242,34 @@ function MonthlyReport({ site = null, onClose }) {
                     <td className={s.errors > 0 ? "is-error" : "muted"}>{s.errors}</td>
                   </tr>
 
-                  {open && ms.map((m) => (
+                  {open && ms.length > 1 && ms.map((m) => (
                     <tr key={`${s.site_id}-${m.year_month}`} className="row-month">
                       <th scope="row">{monthLabel(m.year_month)}</th>
                       <td>{m.operations.toLocaleString()}</td>
                       <td className={m.errors > 0 ? "is-error" : "muted"}>{m.errors}</td>
+                    </tr>
+                  ))}
+
+                  {/* ==========================================================
+                      אילו תקלות היו, וכמה מכל אחת
+                      ==========================================================
+                      "13 תקלות" אינו אומר אם מדובר בתקלה אחת שחוזרת 13 פעם —
+                      כלומר משהו אחד שבור — או ב-13 תקלות שונות. אלו שתי
+                      מסקנות תחזוקה הפוכות מאותו מספר.
+
+                      ⚠️ "ללא תיאור" מוצג ואינו מושמט: הבקר מדווח תיאור רק
+                      בגרסאות סוכן חדשות, ומקטעים ישנים ריקים. השמטתם הייתה
+                      גורמת לפילוח לא להסתכם למספר התקלות שלידו. */}
+                  {open && kinds.length > 0 && (
+                    <tr className="row-month row-kinds-head">
+                      <th scope="row" colSpan={3}>סוגי התקלות</th>
+                    </tr>
+                  )}
+                  {open && kinds.map((k) => (
+                    <tr key={`${s.site_id}-k-${k.text}`} className="row-month row-kind">
+                      <th scope="row" title={k.text}>{k.text}</th>
+                      <td className="muted">—</td>
+                      <td className="is-error">{k.count}</td>
                     </tr>
                   ))}
                   </Fragment>

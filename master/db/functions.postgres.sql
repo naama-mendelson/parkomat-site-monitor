@@ -499,6 +499,10 @@ RETURNS TABLE (
   status_since                text,
   -- תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה open_seg למטה.
   current_fault_text          text,
+  -- ⚠️ האם המקטע הפתוח הוא **תפעול תקלה** ולא תחזוקה מתוכננת. אותו כלל
+  -- בדיוק כמו fault_text מעליו (ended_at = started_at), ולכן הוא מחושב
+  -- באותו CTE — שני מקורות אמת לאותה שאלה היו מתפצלים בשקט.
+  current_after_error         boolean,
   last_op_start_end           text,
   last_op_entry_exit          text,
   last_op_card_number         text,
@@ -554,7 +558,13 @@ open_seg AS (
                AND e.status = 'error'
                AND e.ended_at = h.started_at
              LIMIT 1)
-         ) AS fault_text
+         ) AS fault_text,
+         EXISTS (
+           SELECT 1 FROM status_history e
+            WHERE e.site_id = h.site_id
+              AND e.status = 'error'
+              AND e.ended_at = h.started_at
+         ) AS after_error
     FROM status_history h
     JOIN ids ON ids.site_id = h.site_id
    WHERE h.ended_at IS NULL
@@ -596,6 +606,9 @@ SELECT
   f.first_status_at,
   s.started_at,
   s.fault_text,
+  -- COALESCE: אתר בלי מקטע פתוח מקבל NULL מה-LEFT JOIN, והדשבורד מצפה
+  -- לבוליאני. false = "לא תפעול תקלה", וזו התשובה הנכונה במקרה הזה.
+  COALESCE(s.after_error, false),
   lo.start_end,
   lo.entry_exit,
   lo.card_number,
@@ -931,7 +944,10 @@ RETURNS TABLE (
   cycles       integer,
   cycles_from  integer,
   cycles_to    integer,
-  cycle_reads  integer
+  cycle_reads  integer,
+  -- ⚠️ פילוח התקלות לפי סוג: מערך jsonb של {text, count}, ממוין מהשכיח
+  -- לנדיר. ראה fault_kinds למטה — ובעיקר למה הוא נגזר מאותן שורות בדיוק.
+  fault_types  jsonb
 )
 LANGUAGE sql
 STABLE
@@ -963,14 +979,15 @@ cyc AS (
   -- מדידות". נמדד מיד עם תחילת האיסוף: אתרים עם קריאה בודדת הציגו 0.
   HAVING COUNT(*) >= 2
 ),
-errs AS (
-  SELECT h.site_id,
-         COUNT(*)::int AS errors,
-         -- שעות ההשבתה נחתכות לגבולות הטווח; מקטע פתוח נמשך עד סופו.
-         (SUM(EXTRACT(EPOCH FROM (
-            LEAST(COALESCE(h.ended_at, p_to)::timestamptz, p_to::timestamptz)
-            - GREATEST(h.started_at::timestamptz, p_from::timestamptz)
-          ))) / 3600.0)::double precision AS error_hours
+-- ============================================================
+-- ⚠️ שורות התקלה נבחרות **פעם אחת**, ושני המדדים נגזרים מהן
+-- ============================================================
+-- הספירה, שעות ההשבתה והפילוח לפי סוג חייבים לתאר את אותה קבוצת שורות.
+-- שכפול תנאי ה-WHERE לשתי שאילתות נפרדות עובד ביום שכותבים אותו ומתפצל
+-- בשקט בשינוי הבא — והתוצאה על המסך היא פילוח שאינו מסתכם למספר התקלות
+-- שלידו. דוח שסותר את עצמו גרוע מדוח בלי פילוח.
+err_rows AS (
+  SELECT h.site_id, h.fault_text, h.started_at, h.ended_at
     FROM status_history h
    WHERE h.status = 'error'
      AND h.started_at < p_to
@@ -986,6 +1003,39 @@ errs AS (
         WHERE w.site_id = h.site_id
           AND w.started_at <= h.started_at
           AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
+),
+-- ============================================================
+-- פילוח לפי סוג התקלה
+-- ============================================================
+-- ⚠️ תיאור חסר מקובץ תחת שם מפורש ולא מושמט. 'fault_text' מגיע מהבקר,
+-- והוא ריק במקטעים ישנים ובגרסאות סוכן שקדמו לו. השמטתם הייתה גורמת
+-- לפילוח לא להסתכם למספר התקלות — בדיוק הסתירה שהמבנה הזה נועד למנוע.
+fault_kinds AS (
+  SELECT site_id,
+         jsonb_agg(
+           jsonb_build_object('text', kind, 'count', n)
+           ORDER BY n DESC, kind
+         ) AS fault_types
+    FROM (
+      SELECT site_id,
+             COALESCE(NULLIF(TRIM(fault_text), ''), 'ללא תיאור') AS kind,
+             COUNT(*)::int AS n
+        FROM err_rows
+       GROUP BY site_id, COALESCE(NULLIF(TRIM(fault_text), ''), 'ללא תיאור')
+    ) k
+   GROUP BY site_id
+),
+errs AS (
+  -- ⚠️ מ-err_rows ולא מ-status_history: הספירה והפילוח **חייבים** לתאר
+  -- את אותן שורות. זו הנקודה היחידה שמבטיחה שהם יסתכמו זה לזה.
+  SELECT h.site_id,
+         COUNT(*)::int AS errors,
+         -- שעות ההשבתה נחתכות לגבולות הטווח; מקטע פתוח נמשך עד סופו.
+         (SUM(EXTRACT(EPOCH FROM (
+            LEAST(COALESCE(h.ended_at, p_to)::timestamptz, p_to::timestamptz)
+            - GREATEST(h.started_at::timestamptz, p_from::timestamptz)
+          ))) / 3600.0)::double precision AS error_hours
+    FROM err_rows h
    GROUP BY h.site_id
 ),
 mnt AS (
@@ -1002,12 +1052,16 @@ SELECT ids.id, ids.code, ids.site_name,
        COALESCE(m.maintenance, 0),
        -- NULL כשאין די קריאות מונה בטווח — ולא 0. ראה ההסבר למעלה.
        (c.c_to - c.c_from)::int,
-       c.c_from, c.c_to, COALESCE(c.readings, 0)
+       c.c_from, c.c_to, COALESCE(c.readings, 0),
+       -- '[]' ולא NULL: אתר בלי תקלות מקבל רשימה ריקה, והמסך אינו
+       -- צריך לטפל בשני מצבים שמשמעותם זהה.
+       COALESCE(fk.fault_types, '[]'::jsonb)
   FROM ids
   LEFT JOIN ops  o ON o.site_id = ids.id
   LEFT JOIN cyc  c ON c.site_id = ids.id
   LEFT JOIN errs e ON e.site_id = ids.id
   LEFT JOIN mnt  m ON m.site_id = ids.id
+  LEFT JOIN fault_kinds fk ON fk.site_id = ids.id
  ORDER BY ids.code;
 $$;
 

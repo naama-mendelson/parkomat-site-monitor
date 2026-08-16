@@ -231,27 +231,33 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <h3>שיאים וקצב</h3>
                   <div className="insights-kpis">
                     {/* ==========================================================
-                        שני הימים העמוסים — ולא אחד
+                        ⚠️ רק השיא — וכל מי ששווה לו
                         ==========================================================
-                        יום שיא בודד אינו אומר אם הוא חריג או שגרה: 17 פעולות
-                        הוא סיפור אחר לגמרי כשהשני הוא 16 (זה הקצב) מאשר כשהוא
-                        7 (זה אירוע). השני נותן את קנה המידה בלי כרטיס נוסף.
+                        כאן הוצגו שני הימים העליונים, והשני נשא את הכותרת
+                        "השני בעומסו". זה קרא כאילו שניהם ימי שיא, בעוד
+                        שאחד מהם פשוט הבא בתור: 4 פעולות מול 3.
+
+                        עכשיו נכנס יום אם ורק אם מספר הפעולות בו **שווה
+                        למקסימום**. שלושה ימים עם 4 → שלושתם; יום אחד עם 4
+                        והשאר 3 → רק הוא. אותו כלל בדיוק שחל על השעות.
 
                         ⚠️ נפילה חזרה ל-busiestDay כשהמערך חסר: זרוע השרת
                         וזרוע Supabase מריצות את אותו מודול, אבל תגובה שנשמרה
                         במטמון מלפני השינוי עדיין מחזירה את הצורה הישנה. */}
-                    {(data.activity.busiestDays?.length
-                      ? data.activity.busiestDays
-                      : [data.activity.busiestDay].filter(Boolean)
-                     ).map((d, i) => (
-                      <MetricCard
-                        key={d.date}
-                        label={i === 0 ? "היום העמוס ביותר" : "השני בעומסו"}
-                        value={String(d.operations)}
-                        hint={`${d.label} — פעולות ביום זה`}
-                        peak={i === 0}
-                      />
-                    ))}
+                    {(() => {
+                      const days = data.activity.busiestDays?.length
+                        ? data.activity.busiestDays
+                        : [data.activity.busiestDay].filter(Boolean);
+                      if (!days.length) return null;
+                      return (
+                        <MetricCard
+                          label={days.length > 1 ? "הימים העמוסים ביותר" : "היום העמוס ביותר"}
+                          value={String(days[0].operations)}
+                          hint={`${days.map((d) => d.label).join(" · ")} — פעולות ביום`}
+                          peak
+                        />
+                      );
+                    })()}
                     {!data.activity.busiestDay && (
                       <MetricCard label="היום העמוס ביותר" value="—" hint="אין פעילות בתקופה" peak />
                     )}

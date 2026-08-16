@@ -170,9 +170,29 @@ async function createAuthUser(email, id, invitedRole = null) {
   //
   // ההגנה **אינה** תלויה במתג: שני הטריגרים במסד חוסמים גם בלעדיו, וזה
   // מה שהבדיקות למעלה מודדות. המתג רק דוחה מוקדם יותר ועם הודעה ברורה.
+  // ⚠️ **סוכן חד-פעמי, ולא ה-fetch הגלובלי.** undici מחזיק מאגר חיבורים
+  // פתוח אחרי הבקשה, ו-`process.exit()` בסוף השער סוגר אותו באמצע —
+  // libuv נופל על "UV_HANDLE_CLOSING" והתהליך יוצא בקוד 127.
+  //
+  // ⚠️ והתסמין היה מטעה במיוחד: השער הדפיס "✅ הכניסה למערכת מתנהגת
+  // כמתוכנן" ו-gates.js דיווח עליו **❌**, כי הוא קורא את קוד היציאה.
+  // כלומר בדיוק אותה תקלה ש-gates.js כבר מתעד — הפעם היא נוצרה כאן.
+  //
+  // `Agent` עם keepAlive=false נסגר עם התשובה, ולא נשאר מאחור.
+  const https = require("node:https");
+  const getJson = (url) => new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { apikey: ANON_KEY }, agent: new https.Agent({ keepAlive: false }) },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => { body += c; });
+        res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+      });
+    req.on("error", reject);
+    req.setTimeout(10_000, () => req.destroy(new Error("timeout")));
+  });
+
   try {
-    const settings = await fetch(`${process.env.SUPABASE_URL}/auth/v1/settings`,
-      { headers: { apikey: ANON_KEY } }).then((r) => r.json());
+    const settings = await getJson(`${process.env.SUPABASE_URL}/auth/v1/settings`);
     console.log(
       settings.disable_signup
         ? "\nℹ️  Supabase: הרשמה עצמית חסומה גם ברמת GoTrue ✅"

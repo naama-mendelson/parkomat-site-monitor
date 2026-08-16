@@ -1,7 +1,7 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
+import { siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
@@ -66,7 +66,9 @@ function TypeBadge({ type }) {
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
   const status = site.status;
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
-  const label = STATUS_LABELS[status] || status;
+  // ⚠️ לא STATUS_LABELS ישירות: תחזוקה שנפתחה אחרי תקלה נקראת "תפעול
+  // תקלה". ראה ההסבר המלא ב-utils/constants.js.
+  const label = siteStatusLabel(site);
   const isMini = density === "mini";
   const isNormal = density === "normal";
 
