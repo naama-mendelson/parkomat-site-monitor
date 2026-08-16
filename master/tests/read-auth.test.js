@@ -218,3 +218,142 @@ test("⚠️ נתיב הצ'אט ספציפית — הוא זה שנשבר", () =
   assert.match(m[0], /authHeaders\(\)/,
     "askAssistant אינה עוברת ב-getJSON, ולכן היא חייבת לצרף כותרות בעצמה");
 });
+
+// ============================================================
+// ניהול משתמשים — מותר למנהלים בלבד
+// ============================================================
+// ⚠️ עד עכשיו שני הנתיבים נשאו `requireAuth` בלבד, כלומר **כל מי שמחובר**
+// — גם בקר — יכול היה להזמין ולהסיר אנשים. ההפרדה בין הקבוצות הייתה
+// קיימת בנתונים ולא באכיפה.
+//
+// זה לא הורגש כי שני המשתמשים היחידים הם מנהלים, והוא היה מתגלה ביום
+// שבו נוסף הבקר הראשון — כלומר בדיוק כשההפרדה מתחילה להיות משמעותית.
+test("⚠️ כל נתיבי ניהול המשתמשים דורשים מנהל", () => {
+  const lines = ROUTES.split(/\r?\n/).filter((l) => /^app\.\w+\("\/api\/users/.test(l));
+  assert.ok(lines.length >= 3, `נמצאו ${lines.length} נתיבים`);
+
+  for (const l of lines) {
+    assert.match(l, /requireAuth/, l.slice(0, 50));
+    assert.match(l, /requireManager/, l.slice(0, 50));
+  }
+});
+
+test("⚠️ requireAuth קודם ל-requireManager", () => {
+  // הסדר מפריד בין "מי אתה" (401) לבין "אינך רשאי" (403). הפוך, בקשה בלי
+  // אסימון הייתה מגיעה לבדיקת התפקיד עם actor ריק ומקבלת 403 — תשובה
+  // שאומרת למי שאינו מחובר שהוא "לא רשאי", ומטעה גם בלוג.
+  const lines = ROUTES.split(/\r?\n/).filter((l) => /^app\.\w+\("\/api\/users/.test(l));
+  for (const l of lines) {
+    assert.ok(l.indexOf("requireAuth") < l.indexOf("requireManager"), l.slice(0, 50));
+  }
+});
+
+test("⚠️ התפקיד נקרא מהטבלה ולא מהאסימון", () => {
+  // `parkomat_role` באסימון נכתב פעם אחת ותקף שעה. מנהל שהושבת ממשיך
+  // לשאת 'manager' עד שיפוג — שעה שלמה של הרשאה שגויה.
+  const m = ROUTES.match(/async function requireManager[\s\S]*?\n\}/);
+  assert.ok(m, "requireManager קיימת");
+  assert.match(m[0], /getAppUserByUid/, "חייבת לקרוא את הטבלה");
+  assert.doesNotMatch(m[0], /req\.actor\.role\s*===/, "אסור להכריע לפי האסימון");
+});
+
+test("⚠️ נתיב ההשבתה מאציל את הכלל למודול הטהור", () => {
+  // ⚠️ **הבדיקה הקודמת כאן חיפשה את שם המשתנה `activeManagers` בקוד
+  // הנתיב, ומוטציה שכיבתה את התנאי ל-`if (false)` שרדה אותה** — השם
+  // נשאר. זו בדיוק הסיבה שהכלל עבר ל-auth/deactivation.js ונבדק שם
+  // כהתנהגות ולא כנוכחות.
+  //
+  // מה שנשאר לבדוק כאן הוא רק החיווט: שהנתיב באמת מאציל אליו.
+  const i = ROUTES.indexOf('app.patch("/api/users/:id"');
+  assert.ok(i > 0, "נתיב ההשבתה קיים");
+  const body = ROUTES.slice(i, i + 2000);
+  assert.ok(body.includes("canDeactivate("), "הנתיב חייב להאציל את ההחלטה");
+  assert.ok(body.includes("verdict.allowed"), "ולכבד את התשובה");
+});
+
+test("⚠️ השבתה ולא מחיקה", () => {
+  // למשתמש יש עקבות בטבלת הביקורת ובכל חלון תחזוקה שהפעיל. מחיקה הייתה
+  // משאירה שורות היסטוריה שמצביעות לשום מקום — ובדיוק הביקורת אמורה לשרוד.
+  assert.doesNotMatch(ROUTES, /app\.delete\("\/api\/users/,
+    "אין נתיב מחיקה — ההשבתה היא PATCH על is_active");
+});
+
+// ============================================================
+// כלל ההשבתה — נבדק כהתנהגות, לא כנוכחות
+// ============================================================
+// ⚠️ הגרסה הראשונה של הבדיקה חיפשה את שם המשתנה `activeManagers` בקוד
+// הנתיב. מוטציה שכיבתה את התנאי ל-`if (false)` **שרדה** — השם נשאר.
+// זו בדיוק הסיבה שכלל צריך לחיות בפונקציה טהורה.
+const { canDeactivate } = require("../auth/deactivation");
+
+const U = (id, role, active = true) => ({ id, role, is_active: active });
+
+test("בקר רגיל ניתן להשבתה", () => {
+  const users = [U(1, "manager"), U(2, "operator")];
+  assert.equal(canDeactivate(users, 2, 1).allowed, true);
+});
+
+test("⚠️ מנהל אינו משבית את עצמו", () => {
+  // אם הוא האחרון, אין מי שיחזיר אותו.
+  const users = [U(1, "manager"), U(2, "manager")];
+  const v = canDeactivate(users, 1, 1);
+  assert.equal(v.allowed, false);
+  assert.match(v.reason, /את עצמך/);
+});
+
+test("⚠️ המנהל הפעיל האחרון אינו ניתן להשבתה", () => {
+  // בלי זה המערכת נשארת בלי אף מנהל — ואי אפשר להזמין, להחזיר או לתקן
+  // כלום מהמסך. השחזור היחיד הוא ידני במסד.
+  const users = [U(1, "manager"), U(2, "operator"), U(3, "manager", false)];
+  const v = canDeactivate(users, 1, 2);
+  assert.equal(v.allowed, false, "מנהל פעיל יחיד — חסום");
+  assert.match(v.reason, /האחרון/);
+});
+
+test("מנהל אחד מתוך שניים פעילים — מותר", () => {
+  const users = [U(1, "manager"), U(2, "manager")];
+  assert.equal(canDeactivate(users, 2, 1).allowed, true);
+});
+
+test("⚠️ מנהל מושבת אינו נספר כמנהל פעיל", () => {
+  // הספירה חייבת לסנן is_active — אחרת שני מנהלים שאחד מהם כבר מושבת
+  // ייראו כשניים, והאחרון יושבת גם הוא.
+  const users = [U(1, "manager"), U(2, "manager", false), U(3, "operator")];
+  assert.equal(canDeactivate(users, 1, 3).allowed, false);
+});
+
+test("משתמש שאינו קיים", () => {
+  assert.equal(canDeactivate([U(1, "manager")], 99, 1).allowed, false);
+});
+
+// ============================================================
+// רשימת המשתמשים נבנית מ-app_users, לא מ-auth.users
+// ============================================================
+// ⚠️ הגרסה הקודמת שלפה ישירות מ-Supabase Admin, ויצרה שלוש אי-התאמות:
+// `id` היה UUID בעוד PATCH מצפה למזהה מספרי; `role` הגיע מ-app_metadata
+// — המקור שאינו הסמכות; ו-`is_active` לא היה קיים כלל.
+//
+// שלושתן שקטות: המסך היה נראה תקין, כפתור ההשבתה היה שולח מזהה שגוי,
+// ומנהל שהורד לבקר היה מוצג כמנהל עד שאסימונו יפוג.
+test("⚠️ GET /api/users נבנה מ-app_users", () => {
+  const i = ROUTES.indexOf('app.get("/api/users", requireAuth, requireManager');
+  assert.ok(i > 0, "הנתיב קיים");
+  const body = ROUTES.slice(i, i + 2000);
+
+  assert.ok(body.includes("listAppUsers()"), "הבסיס הוא הטבלה");
+  assert.ok(body.includes("is_active"), "המסך חייב לדעת מי מושבת");
+});
+
+test("⚠️ כשל בשליפת זמני הכניסה אינו מפיל את הרשימה", () => {
+  // זמן הכניסה מגיע מ-Supabase והוא מידע נוסף. הרשימה עצמה — מי קיים ומי
+  // מושבת — חשובה יותר, ואסור שתיעלם כי שירות חיצוני לא ענה.
+  const i = ROUTES.indexOf('app.get("/api/users", requireAuth, requireManager');
+  const body = ROUTES.slice(i, i + 2000);
+  const admin = body.indexOf("adminUsers.listUsers()");
+  assert.ok(admin > 0, "הקריאה קיימת");
+
+  // חייבת להיות עטופה ב-try משלה, לא רק ב-try החיצוני של ה-handler.
+  const before = body.slice(0, admin);
+  const tries = (before.match(/try \{/g) || []).length;
+  assert.ok(tries >= 2, "הקריאה החיצונית עטופה ב-try נפרד");
+});

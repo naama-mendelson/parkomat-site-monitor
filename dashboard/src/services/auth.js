@@ -167,12 +167,20 @@ export function onAuthChange(callback) {
 }
 
 // ============================================================
-// התפקיד נקרא מ-app_metadata, ובאותו סדר כמו בשרת וב-SQL
+// התפקיד כאן הוא **רמז לתצוגה**, ולא הכרעה
 // ============================================================
-// Supabase מקנן את app_metadata ואינו משטח אותו לתביעה עליונה. שלוש
-// השכבות — הדשבורד, auth/providers/supabase.js, ו-app.current_role() —
-// חייבות לקרוא באותו סדר, אחרת אותו משתמש מקבל תפקיד אחד במסך ותפקיד אחר
-// במדיניות ה-RLS. אי-התאמה כזו מתגלה רק כשמישהו רואה מה שאינו אמור.
+// ⚠️ **השרת אינו קורא מכאן.** הוא מכריע לפי app_users בטבלה
+// (requireManager ב-api/routes.js, ו-app.current_app_role() ב-SQL),
+// כי `parkomat_role` באסימון נכתב פעם אחת ותקף שעה: מנהל שהושבת או
+// שהורד לבקר ממשיך לשאת את התביעה הישנה עד שהאסימון יפוג.
+//
+// ⚠️ ולכן ייתכן פער של עד שעה שבו המסך מציג כפתור שהשרת ידחה. זה
+// **מכוון ובטוח**: ההכרעה במקום אחד, והמסך מציג את הסיבה שחוזרת.
+// הסתרת כפתור אינה אבטחה — ומסך ששותק במקום להסביר גרוע יותר מכפתור
+// שמחזיר "הפעולה מותרת למנהלים בלבד".
+//
+// Supabase מקנן את app_metadata ואינו משטח אותו לתביעה עליונה, ולכן
+// שני המקומות נבדקים.
 //
 // user_metadata אינו נקרא: המשתמש יכול לערוך אותו בעצמו.
 function mapUser(u) {
@@ -182,4 +190,81 @@ function mapUser(u) {
     u.parkomat_role ||
     "operator";                    // ברירת מחדל שמרנית: צפייה בלבד
   return { id: u.id, email: u.email ?? null, role };
+}
+
+// ============================================================
+// איפוס סיסמה — המסלול היחיד למי ששכח
+// ============================================================
+// ⚠️ **changePassword דורשת את הסיסמה הנוכחית**, וזה נכון: הדשבורד רץ
+// על מסך משותף בחדר בקרה, ובלי אימות כל מי שעובר ליד יכול לנעל בחוץ
+// את בעל החשבון.
+//
+// אבל זה משאיר את מי ש**שכח** בלי שום דרך — הוא זקוק למישהו עם מפתח
+// ה-Secret של הפרויקט. זה קרה בפועל, וזו הסיבה שהמסלול הזה נוסף.
+//
+// ⚠️ **התשובה זהה גם לכתובת שאינה קיימת**, ובכוונה: הודעה שמבחינה
+// ביניהן הופכת את הטופס לכלי שמגלה מי רשום במערכת.
+export async function requestPasswordReset(email) {
+  if (!isSupabaseConfigured) {
+    return { error: "האימות אינו מוגדר בדשבורד" };
+  }
+
+  const clean = String(email || "").trim();
+  if (!clean) return { error: "יש להזין כתובת אימייל" };
+
+  const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+    redirectTo: window.location.origin,
+  });
+
+  if (error) {
+    // ⚠️ חסימת קצב היא המקרה הנפוץ ביותר — ה-SMTP המובנה של Supabase
+    // מוגבל למספר מיילים בשעה. "שגיאה" סתמית הייתה שולחת ללחוץ שוב
+    // ולהיחסם שוב.
+    return {
+      error: /rate limit|too many/i.test(error.message)
+        ? "נשלחו יותר מדי בקשות. המתן דקה ונסה שוב."
+        : error.message,
+    };
+  }
+  return { error: null };
+}
+
+// ============================================================
+// קביעת סיסמה חדשה אחרי איפוס — **בלי הנוכחית**
+// ============================================================
+// ⚠️ זו הפונקציה היחידה שמדלגת על אימות הסיסמה הנוכחית, וזה מכוון:
+// היא נקראת רק כשה-session הגיע מקישור איפוס שנשלח לתיבת המייל של
+// המשתמש — כלומר ההוכחה שהוא הוא היא הגישה למייל, לא הסיסמה הישנה.
+//
+// ⚠️ ולכן היא **חייבת** להיקרא רק ממסך השחזור. קריאה שלה ממקום אחר
+// הייתה מחזירה בדיוק את הפרצה ש-changePassword נועדה לסגור.
+export async function setNewPassword(nextPassword) {
+  if (!isSupabaseConfigured) return { error: "האימות אינו מוגדר" };
+
+  const next = String(nextPassword || "");
+  if (next.length < MIN_PASSWORD_LENGTH) {
+    return { error: `הסיסמה צריכה ${MIN_PASSWORD_LENGTH} תווים לפחות` };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: next });
+  if (error) {
+    return /should be different|same as the old/i.test(error.message)
+      ? { error: "הסיסמה החדשה זהה לקודמת" }
+      : { error: error.message };
+  }
+  return { error: null };
+}
+
+// ============================================================
+// האם ה-session הנוכחי הגיע מקישור איפוס
+// ============================================================
+// Supabase פולט PASSWORD_RECOVERY כשהקישור נפתח. ⚠️ האירוע נפלט **פעם
+// אחת** ולפני שרכיבים נטענים, ולכן ההאזנה חייבת לרוץ מוקדם והתשובה
+// להישמר — אחרת המשתמש מגיע למסך רגיל בלי שום דרך לקבוע סיסמה.
+export function onPasswordRecovery(callback) {
+  if (!isSupabaseConfigured) return () => {};
+  const { data } = supabase.auth.onAuthStateChange((event) => {
+    if (event === "PASSWORD_RECOVERY") callback();
+  });
+  return () => data.subscription.unsubscribe();
 }

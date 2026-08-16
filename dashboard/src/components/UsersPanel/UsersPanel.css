@@ -210,3 +210,44 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* ==========================================================
+   השבתה והחזרה לפעילות
+   ==========================================================
+   ⚠️ **המושבת נשאר ברשימה ורק מעומעם.** הסתרתו הייתה גורמת למי שמחפש
+   אותו — למשל אחרי שראה את שמו בשורת ביקורת — להסיק שהוא נמחק. הוא לא;
+   הוא בדיוק מה שההשבתה נועדה לשמר. */
+.users-list li.is-disabled .users-email,
+.users-list li.is-disabled .users-role {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.users-list li.is-disabled .users-seen {
+  color: var(--danger, #dc2626);
+  font-weight: 600;
+}
+
+/* ⚠️ כפתור מרוסן ולא אדום: השבתה היא פעולה הפיכה, ואדום שמור לבלתי הפיך.
+   אדום כאן היה מלמד להסס לפני פעולה שאפשר לבטל בלחיצה. */
+.users-toggle {
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.users-toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.users-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -3,7 +3,7 @@
 // אינו מייבא supabase-js. כל האימות עובר דרך services/auth.js — ראה
 // ההסבר על ה-seam שם.
 import { useState } from "react";
-import { signIn, sendMagicLink } from "../../services/auth";
+import { signIn, sendMagicLink, requestPasswordReset } from "../../services/auth";
 import "./Login.css";
 
 function Login({ onSignedIn }) {
@@ -14,6 +14,10 @@ function Login({ onSignedIn }) {
   // ⚠️ מצב נפרד ולא שימוש ב-error: שליחה מוצלחת אינה שגיאה, והצגתה
   // באדום הייתה נראית ככשל בדיוק כשהכול עבד.
   const [sent, setSent] = useState(false);
+  // ⚠️ מצב נפרד מ-sent: שתי הפעולות שולחות מייל, אבל ההודעה שונה —
+  // "קישור כניסה" מול "קישור לאיפוס סיסמה". הודעה אחת לשתיהן הייתה
+  // משאירה את המשתמשת לא בטוחה מה בדיוק נשלח לה.
+  const [resetSent, setResetSent] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -59,6 +63,19 @@ function Login({ onSignedIn }) {
     setSent(true);
   }
 
+  // ⚠️ שולח קישור **איפוס** ולא קישור כניסה. ההבדל מהותי: קישור כניסה
+  // מחבר ומשאיר את הסיסמה הישנה — כלומר מי ששכח אותה יישאר תקוע באותו
+  // מקום בפעם הבאה. קישור איפוס פותח את מסך קביעת הסיסמה.
+  async function handleForgot() {
+    setError(null);
+    setSent(false);
+    setBusy(true);
+    const { error: err } = await requestPasswordReset(email);
+    setBusy(false);
+    if (err) return setError(err);
+    setResetSent(true);
+  }
+
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
@@ -102,6 +119,13 @@ function Login({ onSignedIn }) {
 
         {/* ⚠️ הודעת ההצלחה **אינה** משתמשת ב-login-error: שליחה שהצליחה
             אינה כשל, והצגתה באדום הייתה נראית כשגיאה בדיוק כשהכול עבד. */}
+        {resetSent && (
+          <p className="login-sent" role="status">
+            נשלח קישור לאיפוס סיסמה ל-<strong>{email.trim()}</strong>.
+            <span>הקישור תקף לשעה, ופותח מסך לבחירת סיסמה חדשה.</span>
+          </p>
+        )}
+
         {sent && (
           <p className="login-sent" role="status">
             נשלח קישור כניסה ל-<strong>{email.trim()}</strong>.
@@ -133,6 +157,18 @@ function Login({ onSignedIn }) {
         >
           <span className="login-magic-icon" aria-hidden="true">✉</span>
           שלחו לי קישור כניסה
+        </button>
+
+        {/* ⚠️ **זה היה חסר לגמרי.** שינוי סיסמה רגיל דורש את הנוכחית,
+            ולכן מי ששכח אותה היה נעול בחוץ וזקוק למישהו עם מפתח ה-Secret
+            של הפרויקט. זה קרה בפועל. */}
+        <button
+          className="login-forgot"
+          type="button"
+          disabled={busy}
+          onClick={handleForgot}
+        >
+          שכחתי את הסיסמה
         </button>
 
         {/* ה-session נשמר ומתחדש לבד (services/supabase.js), ולכן זו אמירה

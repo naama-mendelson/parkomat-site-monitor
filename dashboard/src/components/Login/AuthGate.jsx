@@ -20,9 +20,25 @@
 import { useAuth } from "../../hooks/useAuth";
 import { isSupabaseConfigured } from "../../services/supabase";
 import Login from "./Login";
+import ResetPassword from "./ResetPassword";
+import { onPasswordRecovery } from "../../services/auth";
+import { useEffect, useState } from "react";
 
 function AuthGate({ children }) {
   const { user, loading } = useAuth();
+
+  // ============================================================
+  // מצב שחזור — נקבע פעם אחת ואינו מתאפס לבד
+  // ============================================================
+  // ⚠️ Supabase פולט PASSWORD_RECOVERY **פעם אחת**, מיד כשהקישור נפתח.
+  // ההאזנה יושבת כאן — בשער — ולא בתוך מסך, כי ברגע שהאירוע נפלט
+  // המשתמש כבר מחובר, ו-AuthGate היה מציג לו את הדשבורד הרגיל.
+  //
+  // ⚠️ והוא נשאר דלוק עד שהסיסמה נקבעת בפועל: מסך שאפשר לדלג ממנו
+  // משאיר משתמש מחובר עם סיסמה שאינו יודע — כלומר בדיוק המצב שהקישור
+  // בא לפתור.
+  const [recovering, setRecovering] = useState(false);
+  useEffect(() => onPasswordRecovery(() => setRecovering(true)), []);
 
   // הגדרה חסרה — אומרים מה חסר, ולא נותנים טופס שלא יכול לעבוד.
   if (!isSupabaseConfigured) {
@@ -44,6 +60,10 @@ function AuthGate({ children }) {
   }
 
   if (!user) return <Login />;
+
+  // אחרי user ולפני children: הגעה מקישור איפוס חוסמת את הדשבורד עד
+  // שנקבעת סיסמה.
+  if (recovering) return <ResetPassword onDone={() => setRecovering(false)} />;
 
   return children;
 }

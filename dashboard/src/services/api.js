@@ -139,6 +139,24 @@ export async function fetchUsers() {
   return res.json();
 }
 
+// ============================================================
+// השבתה והחזרה לפעילות — למנהלים בלבד (השרת אוכף)
+// ============================================================
+// ⚠️ **השבתה ולא מחיקה.** למשתמש יש עקבות בכל שורת ביקורת ובכל חלון
+// תחזוקה שהפעיל; מחיקה הייתה משאירה היסטוריה שמצביעה לשום מקום.
+//
+// ⚠️ והשרת מסרב להשבית את המנהל הפעיל האחרון ואת המבצע עצמו — ראה
+// auth/deactivation.js. הכפתור כאן אינו מסתיר את המקרים האלה, הוא
+// מציג את הסיבה שחוזרת: הסתרה ב-UI מלמדת שהכלל אינו קיים.
+export async function setUserActive(id, isActive) {
+  const res = await fetch(`${BASE}/users/${id}`, {
+    method: "PATCH",
+    headers: await authHeaders(),
+    body: JSON.stringify({ is_active: isActive }),
+  });
+  if (!res.ok) await parseError(res, "עדכון המשתמש נכשל");
+  return res.json();
+}
 function adminHeaders() {
   const code = getAdminCode();
   return {

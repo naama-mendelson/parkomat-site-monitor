@@ -4,7 +4,7 @@
 // הסתרה ב-UI אינה אבטחה, והשרת הוא זה שאוכף (requireAuth ב-routes.js).
 // אם ההחלטה תשתנה, המקום לשנות אותה הוא השרת, וכאן רק התצוגה תעקוב.
 import { useEffect, useState } from "react";
-import { inviteUser, fetchUsers } from "../../services/api";
+import { inviteUser, fetchUsers, setUserActive } from "../../services/api";
 import "./UsersPanel.css";
 
 function UsersPanel({ onClose }) {
@@ -17,6 +17,9 @@ function UsersPanel({ onClose }) {
   // הסיסמה הזמנית של ההזמנה האחרונה. מוצגת עד שסוגרים אותה — היא מוחזרת
   // פעם אחת בלבד ולא נשמרת בשום מקום, ולכן רענון מאבד אותה לתמיד.
   const [invited, setInvited] = useState(null);
+  // איזה משתמש בתהליך עדכון — כדי לחסום לחיצה כפולה על אותה שורה בלבד,
+  // ולא על כל הרשימה.
+  const [updatingId, setUpdatingId] = useState(null);
 
   async function load() {
     try {
@@ -48,6 +51,26 @@ function UsersPanel({ onClose }) {
       setError(e.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // ============================================================
+  // השבתה והחזרה — והשגיאה מוצגת כפי שהיא
+  // ============================================================
+  // ⚠️ השרת מסרב להשבית את המנהל הפעיל האחרון ואת המבצע עצמו, ומחזיר
+  // סיבה בעברית. **הכפתור אינו מנסה לחזות את המקרים האלה ולהסתיר את
+  // עצמו** — הסתרה מלמדת שהכלל אינו קיים, והמשתמשת לא תדע למה.
+  // הכלל חי במקום אחד (auth/deactivation.js), וכאן רק מציגים את תשובתו.
+  async function handleToggle(user) {
+    setUpdatingId(user.id);
+    setError(null);
+    try {
+      await setUserActive(user.id, !user.is_active);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingId(null);
     }
   }
 
@@ -105,12 +128,25 @@ function UsersPanel({ onClose }) {
 
         <ul className="users-list">
           {users.map((u) => (
-            <li key={u.id}>
+            <li key={u.id} className={u.is_active === false ? "is-disabled" : ""}>
               <span className="users-email">{u.email}</span>
               <span className={`users-role users-role--${u.role}`}>{ROLE_LABELS[u.role] || u.role}</span>
               <span className="users-seen">
-                {u.lastSignInAt ? `נכנס ${new Date(u.lastSignInAt).toLocaleDateString("he-IL")}` : "טרם נכנס"}
+                {/* ⚠️ משתמש מושבת מסומן במפורש ולא נעלם מהרשימה: הוא עדיין
+                    מופיע בכל שורת ביקורת, ומי שמחפש אותו צריך למצוא אותו. */}
+                {u.is_active === false
+                  ? "מושבת"
+                  : u.lastSignInAt
+                    ? `נכנס ${new Date(u.lastSignInAt).toLocaleDateString("he-IL")}`
+                    : "טרם נכנס"}
               </span>
+              <button
+                className="users-toggle"
+                onClick={() => handleToggle(u)}
+                disabled={updatingId === u.id}
+              >
+                {updatingId === u.id ? "…" : u.is_active === false ? "החזר" : "השבת"}
+              </button>
             </li>
           ))}
         </ul>

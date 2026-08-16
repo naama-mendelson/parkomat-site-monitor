@@ -2374,3 +2374,60 @@ module.exports = {
   deleteRawInRange,
   backupDatabase,
 };
+// ============================================================
+// תפקיד המשתמש — **מהטבלה, לא מהאסימון**
+// ============================================================
+// ⚠️ `parkomat_role` באסימון נכתב פעם אחת בהרשמה ותקף שעה. בקר שקודם
+// למנהל, או מנהל שהושבת, ממשיך לשאת את התביעה הישנה עד שהאסימון יפוג —
+// כלומר עד שעה שלמה של הרשאה שגויה, לשני הכיוונים.
+//
+// לכן `app_users` הוא מקור האמת, בדיוק כפי שקובעת `app.current_app_role()`
+// במסד. שאילתה אחת לבקשה, ורק על נתיבי ניהול המשתמשים — נדירים ממילא.
+//
+// ⚠️ `is_active` נבדק כאן ולא רק התפקיד: משתמש שהושבת אינו "בקר", הוא
+// אינו כלום. בלי התנאי הזה, השבתה הייתה מסירה הרשאות ניהול ומשאירה גישה.
+async function getAppUserByUid(uid) {
+  if (!uid) return null;
+  return db
+    .prepare(
+      `SELECT id, email, full_name, role, is_active
+         FROM app_users
+        WHERE supabase_uid::text = ? AND is_active
+        LIMIT 1`,
+    )
+    .get(String(uid));
+}
+
+/** כל המשתמשים, לניהול. מושבתים כלולים — הם חלק מהתמונה. */
+async function listAppUsers() {
+  return db
+    .prepare(
+      `SELECT id, email, full_name, role, is_active, created_at, disabled_at
+         FROM app_users ORDER BY is_active DESC, role, email`,
+    )
+    .all();
+}
+
+/**
+ * השבתה או החזרה לפעילות.
+ *
+ * ⚠️ **השבתה ולא מחיקה.** למשתמש יש עקבות בכל טבלת הביקורת ובכל חלון
+ * תחזוקה שהפעיל; מחיקתו הייתה משאירה שורות עם שם שמצביע לשום מקום.
+ * `is_active=false` מנתק את הגישה ומשאיר את ההיסטוריה שלמה.
+ */
+async function setAppUserActive(id, active, byEmail) {
+  const r = await db
+    .prepare(
+      `UPDATE app_users
+          SET is_active = ?,
+              disabled_at = CASE WHEN ? THEN NULL ELSE ? END,
+              disabled_by = CASE WHEN ? THEN NULL ELSE ? END
+        WHERE id = ?`,
+    )
+    .run(active, active, new Date().toISOString(), active, byEmail || null, id);
+  return r;
+}
+
+module.exports.getAppUserByUid = getAppUserByUid;
+module.exports.listAppUsers = listAppUsers;
+module.exports.setAppUserActive = setAppUserActive;

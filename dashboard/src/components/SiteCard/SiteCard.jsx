@@ -1,10 +1,10 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, SITE_TYPE_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
+import { STATUS_LABELS, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
-import { siteTypeLabel, siteTypeFullLabel, siteTypeGroup } from "../../../../shared/site-types.mjs";
+import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import "./SiteCard.css";
 
 // צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
@@ -42,17 +42,22 @@ function TierBadge({ tier }) {
 //
 // ⚠️ **בלי סוג אין תג.** תג "לא הוגדר" על כרטיס אינו מידע תפעולי אלא מטלת
 // הזנה, ומקומה בניהול האתרים ובמסנן — לא ברשת שמנטרים בה. שם הוא כבר גלוי.
+//
+// ============================================================
+// צבע אחד לכולם, ומופיע רק בריחוף
+// ============================================================
+// ⚠️ **גוון לכל משפחה נוסה ונפסל.** על רשת של 13 כרטיסים הוא הוסיף ארבעה
+// צבעים שהתחרו עם נקודות המצב ועם תגי הדרגה — שלוש מערכות צבע על אותו
+// כרטיס, ואף אחת מהן לא בולטת יותר. הצבע הוא המשאב הכי יקר במסך הזה,
+// והוא שייך למה שדורש תגובה: המצב.
+//
+// ⚠️ **והתג מופיע רק בריחוף — אבל שומר על מקומו.** הסתרה עם display:none
+// הייתה גורמת לכותרת "לקפוץ" בכל מעבר עכבר. opacity משאירה את השטח תפוס,
+// כך שהתג נחשף בלי שדבר זז.
 function TypeBadge({ type }) {
   if (!type) return null;
-  const family = siteTypeGroup(type);
-  const c = SITE_TYPE_COLORS[family] || { text: "var(--text-muted)", border: "var(--border-color)" };
-  const full = siteTypeFullLabel(type);
   return (
-    <span
-      className="type-badge"
-      style={{ color: c.text, borderColor: c.border }}
-      title={`סוג המתקן: ${full}`}
-    >
+    <span className="type-badge" title={`סוג המתקן: ${siteTypeFullLabel(type)}`}>
       {siteTypeLabel(type)}
     </span>
   );

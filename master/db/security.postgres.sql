@@ -443,35 +443,63 @@ AS $$ SELECT app.current_app_role() = 'manager' $$;
 --
 -- ⚠️ ה-DROP חייב לרוץ **אחרי** שהמדיניות שהצביעו עליה שוחזרו ל-USING
 -- (true) — והן למטה בקובץ. לכן הוא אינו כאן אלא לצידן.
+-- ============================================================
+-- app.is_active_user() — האם למאומת הזה יש שורה **פעילה** אצלנו
+-- ============================================================
+-- ⚠️ **`authenticated` אינו שווה ל"רשאי".** משתמש שהושבת מחזיק אסימון
+-- Supabase תקף עד שיפוג, וכל המדיניות היו `USING (true)` — כלומר
+-- ההשבתה הסירה את גישתו **לשרת בלבד**, בעוד הדשבורד קורא ישירות מ-
+-- PostgREST והמשיך להחזיר לו את כל הנתונים.
+--
+-- זה נוצר ברגע שנוספה ההשבתה: קודם לא הייתה דרך להשבית, ולכן ההבחנה
+-- לא הייתה קיימת. הכפתור אמר "הושבת" ולא השבית.
+--
+-- ⚠️ ועובר דרך app.current_actor() ולא דרך auth.uid() — אותו כלל
+-- שמאפשר למדיניות הזו לרוץ גם על Postgres רגיל.
+CREATE OR REPLACE FUNCTION app.is_active_user()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM app_users u
+     WHERE u.supabase_uid::text = app.current_actor()
+       AND u.is_active
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION app.is_active_user() TO authenticated;
 -- sites
 DROP POLICY IF EXISTS sites_read_authenticated ON sites;
 CREATE POLICY sites_read_authenticated ON sites
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- status_history
 DROP POLICY IF EXISTS status_history_read_authenticated ON status_history;
 CREATE POLICY status_history_read_authenticated ON status_history
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- operations
 DROP POLICY IF EXISTS operations_read_authenticated ON operations;
 CREATE POLICY operations_read_authenticated ON operations
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- maintenance_windows
 DROP POLICY IF EXISTS maintenance_windows_read_authenticated ON maintenance_windows;
 CREATE POLICY maintenance_windows_read_authenticated ON maintenance_windows
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- monthly_summary
 DROP POLICY IF EXISTS monthly_summary_read_authenticated ON monthly_summary;
 CREATE POLICY monthly_summary_read_authenticated ON monthly_summary
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- events — הדשבורד מאזין לזה (Realtime / replay), ולכן קריאה נדרשת
 DROP POLICY IF EXISTS events_read_authenticated ON events;
 CREATE POLICY events_read_authenticated ON events
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- ============================================================
 -- settings — **אין מדיניות, וזה מכוון**
@@ -518,7 +546,7 @@ ALTER TABLE audit_log  ENABLE ROW LEVEL SECURITY;
 -- כתיבה כאן הייתה נותנת לדפדפן לשנות דרגות ישירות מול PostgREST.
 DROP POLICY IF EXISTS app_users_read_authenticated ON app_users;
 CREATE POLICY app_users_read_authenticated ON app_users
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- ============================================================
 -- audit_log — בקר רואה הכול, חוץ מניהול המשתמשים

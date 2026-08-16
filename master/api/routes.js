@@ -15,9 +15,11 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getSupervisorStats, getExecutiveStats, getExecutiveStatsFiltered,
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
-        updateSite, deleteSite } = require("../db/queries");
+        updateSite, deleteSite ,
+  getAppUserByUid, listAppUsers, setAppUserActive } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
+const { canDeactivate } = require("../auth/deactivation");
 // שכבת האימות. מאחורי seam — ראה auth/provider.js. היום היא מאמתת בלבד
 // (verifyToken) ואינה מנפיקה: ההנפקה במצב Supabase קורית בדפדפן.
 const auth = require("../auth/provider");
@@ -309,6 +311,41 @@ async function requireAuthSse(req, res, next) {
 }
 
 // ============================================================
+// requireManager — ההפרדה בין מנהלים לבקרים, נאכפת
+// ============================================================
+// ⚠️ עד עכשיו שני נתיבי ניהול המשתמשים נשאו `requireAuth` בלבד, כלומר
+// **כל מי שמחובר** — גם בקר — יכול היה להזמין ולהסיר אנשים. ההפרדה
+// הייתה קיימת בנתונים ולא באכיפה.
+//
+// זה לא הורגש כי שני המשתמשים היחידים הם מנהלים. הוא היה מתגלה ביום
+// שבו נוסף הבקר הראשון — כלומר בדיוק כשההפרדה מתחילה להיות משמעותית.
+//
+// ⚠️ **התפקיד נקרא מהטבלה ולא מהאסימון.** `parkomat_role` נכתב פעם אחת
+// בהרשמה ותקף שעה: מנהל שהושבת ממשיך לשאת 'manager' עד שיפוג. אותו כלל
+// בדיוק שקובעת app.current_app_role() במסד — הטבלה היא הסמכות.
+//
+// ⚠️ ורץ **אחרי** requireAuth ולא במקומו: שרשור שני השומרים מפריד בין
+// "מי אתה" (401) לבין "אינך רשאי" (403), ושתי התשובות אינן אותו דבר —
+// לא למשתמש ולא למי שקורא לוג.
+async function requireManager(req, res, next) {
+  const user = await getAppUserByUid(req.actor?.userId);
+
+  if (!user) {
+    // מאומת מול Supabase אבל אין לו שורה פעילה אצלנו — הושבת, או נוצר
+    // בדרך שלא עברה ב-provision_app_user.
+    return res.status(403).json({ error: "המשתמש אינו פעיל במערכת" });
+  }
+  if (user.role !== "manager") {
+    return res.status(403).json({ error: "הפעולה מותרת למנהלים בלבד" });
+  }
+
+  // התפקיד האמיתי גובר על מה שהאסימון טען.
+  req.actor.role = user.role;
+  req.actor.appUserId = user.id;
+  return next();
+}
+
+// ============================================================
 // מגביל קצב להזמנות
 // ============================================================
 // ההזמנה פתוחה לכל מחובר, ולכן חשבון אחד שנפרץ או משתמש אחד לא זהיר יכול
@@ -356,7 +393,7 @@ function inviteRateLimit(req, res, next) {
 // להזמין הלאה, ולכן חשבון אחד מספיק כדי לצרף את העולם — בשרשרת ולא
 // בקריאה אחת. התפקיד שנוצר הוא תמיד operator (ראה auth/admin.js), ולכן
 // אין הסלמת הרשאות; אבל operator רואה את כל נתוני האתרים.
-app.post("/api/users/invite", requireAuth, inviteRateLimit, async (req, res) => {
+app.post("/api/users/invite", requireAuth, requireManager, inviteRateLimit, async (req, res) => {
   try {
     const result = await adminUsers.createUser(req.body?.email);
 
@@ -386,14 +423,96 @@ app.post("/api/users/invite", requireAuth, inviteRateLimit, async (req, res) => 
 
 // GET /api/users — מי כבר במערכת. פתוח לכל מחובר, כמו ההזמנה עצמה:
 // מי שיכול לצרף צריך לדעת את מי כבר צירפו, אחרת הוא מזמין כפולים.
-app.get("/api/users", requireAuth, async (req, res) => {
+// ============================================================
+// GET /api/users — **מ-app_users, לא מ-auth.users**
+// ============================================================
+// ⚠️ הגרסה הקודמת שלפה ישירות מ-Supabase Admin, וזה יצר שלוש אי-התאמות
+// שכל אחת מהן שוברת משהו אחר:
+//
+//   • `id` היה ה-UUID של Supabase, בעוד PATCH /api/users/:id מצפה
+//     למזהה המספרי של app_users. כפתור ההשבתה היה שולח מזהה שגוי.
+//   • `role` הגיע מ-app_metadata — **בדיוק המקור שאינו הסמכות.** מנהל
+//     שהורד לבקר היה מוצג כמנהל עד שהאסימון שלו יפוג.
+//   • `is_active` לא היה קיים כלל, ולכן אי אפשר היה לדעת מי מושבת.
+//
+// עכשיו app_users הוא הבסיס — הוא מקור האמת — ו-Supabase מוסיף רק את
+// מה שאין בו: מתי המשתמש נכנס לאחרונה.
+//
+// ⚠️ וכשל בשליפה מ-Supabase **אינו מפיל את הרשימה**: זמן הכניסה הוא
+// מידע נוסף, והרשימה עצמה חשובה יותר ממנו.
+app.get("/api/users", requireAuth, requireManager, async (req, res) => {
   try {
-    const result = await adminUsers.listUsers();
-    if (!result.ok) return res.status(result.status).json({ error: result.error });
-    res.json({ users: result.users });
+    const rows = await listAppUsers();
+
+    let signIns = new Map();
+    try {
+      const result = await adminUsers.listUsers();
+      if (result.ok) {
+        signIns = new Map(result.users.map((u) => [String(u.email).toLowerCase(), u.lastSignInAt]));
+      }
+    } catch { /* זמן כניסה הוא מידע נוסף — לא מפילים עליו את הרשימה */ }
+
+    res.json({
+      users: rows.map((u) => ({
+        id: u.id,
+        email: u.email,
+        fullName: u.full_name,
+        role: u.role,
+        is_active: u.is_active,
+        createdAt: u.created_at,
+        disabledAt: u.disabled_at,
+        lastSignInAt: signIns.get(String(u.email).toLowerCase()) ?? null,
+      })),
+    });
   } catch (err) {
-    console.error("[api] שגיאה ב-GET /api/users:", err.message);
-    res.status(500).json({ error: "שגיאת שרת" });
+    console.error("[api] שגיאה ב-GET users:", err.message);
+    res.status(500).json({ error: "שגיאה בטעינת המשתמשים" });
+  }
+});
+
+// ============================================================
+// PATCH /api/users/:id — השבתה והחזרה לפעילות
+// ============================================================
+// ⚠️ **השבתה ולא מחיקה.** למשתמש יש עקבות בטבלת הביקורת ובכל חלון תחזוקה
+// שהפעיל. מחיקה הייתה משאירה שורות היסטוריה שמצביעות לשום מקום — ובדיוק
+// הביקורת היא מה שאמור לשרוד.
+//
+// ⚠️ וההשבתה מנתקת גישה **מיידית**, למרות שהאסימון שבידי המשתמש עדיין
+// תקף: כל בדיקת תפקיד עוברת ב-getAppUserByUid, שמסנן `is_active`.
+// אילו התפקיד היה נקרא מהאסימון, המושבת היה ממשיך לעבוד עד שעה.
+app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "מזהה משתמש לא תקין" });
+    }
+
+    const { is_active } = req.body || {};
+    if (typeof is_active !== "boolean") {
+      return res.status(400).json({ error: "is_active חייב להיות true או false" });
+    }
+
+    const users = await listAppUsers();
+    const target = users.find((u) => u.id === id);
+    if (!target) return res.status(404).json({ error: "משתמש לא נמצא" });
+
+    // ⚠️ הכלל עצמו חי ב-auth/deactivation.js ונבדק שם כהתנהגות. הוא היה
+    // כאן כתנאי inline, ומוטציה ששברה אותו שרדה את הבדיקות.
+    if (is_active === false) {
+      const verdict = canDeactivate(users, id, req.actor.appUserId);
+      if (!verdict.allowed) return res.status(400).json({ error: verdict.reason });
+    }
+
+    await setAppUserActive(id, is_active, req.actor.name);
+
+    console.log(
+      `[api] משתמש ${target.email} ${is_active ? "הוחזר לפעילות" : "הושבת"} ` +
+      `בידי ${req.actor.name}`,
+    );
+    res.json({ ok: true, id, is_active });
+  } catch (err) {
+    console.error("[api] שגיאה ב-PATCH user:", err.message);
+    res.status(500).json({ error: "שגיאה בעדכון המשתמש" });
   }
 });
 

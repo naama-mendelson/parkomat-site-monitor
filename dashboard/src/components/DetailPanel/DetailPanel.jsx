@@ -356,7 +356,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
               >
                 הצג עוד מידע
                 <span className="insights-open-hint">
-                  משתמשים מובילים · שעות עומס · משכי פעולה · השבתות
+                  משתמשים מובילים · שעות עומס · זמני פעולה · תקלות
                 </span>
               </button>
             </div>

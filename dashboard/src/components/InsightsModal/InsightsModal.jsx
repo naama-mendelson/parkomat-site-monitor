@@ -17,7 +17,7 @@ const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יצי�
 // אותו אדום של תקלה בכל המערכת — כדי שהעין תקשר מיד, בלי לקרוא כותרת.
 const FAULT_COLOR = METRIC_COLORS.errors;
 
-// שני הכיוונים, בסדר קבוע ובצבעי הכיוון — משמש בטבלת המשכים.
+// שני הכיוונים, בסדר קבוע ובצבעי הכיוון — משמש בטבלת זמני הפעולה.
 const DIRECTIONS = [
   { key: "entry", label: "כניסה", color: ENTRY_COLOR },
   { key: "exit",  label: "יציאה", color: EXIT_COLOR },
@@ -119,7 +119,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
           <div key={section} className={`insights-body ${loading ? "is-refreshing" : ""}`}>
 
             {/* ⚠️ מעל כל לשונית, לא בתוך אחת מהן: הקטיעה חלה על **כל** המספרים
-                במסך הזה — שיאים, משכים, כרטיסים, אמינות — כי כולם נגזרים
+                במסך הזה — שיאים, זמני פעולה, כרטיסים, אמינות — כי כולם נגזרים
                 מאותה שליפה. אזהרה שיושבת בלשונית אחת נעלמת ברגע שעוברים. */}
             {data.capped && (
               <p className="insights-truncated">
@@ -388,7 +388,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                           return (
                           <Fragment key={rowKey}>
                           {/* ==========================================================
-                              לחיצה על שורה פותחת את המשכים של אותו כרטיס
+                              לחיצה על שורה פותחת את זמני הפעולה של אותו כרטיס
                               ==========================================================
                               הטבלה עונה "מי הכי פעיל". השאלה הבאה היא תמיד "ולמה
                               דווקא הוא איטי" — ונמדד שיש הבדלים אמיתיים בין
@@ -401,7 +401,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                           <tr
                             className={`is-expandable ${openCard === rowKey ? "is-open" : ""}`}
                             onClick={() => setOpenCard(openCard === rowKey ? null : rowKey)}
-                            title="לחצי לפירוט משכים"
+                            title="לחצי לראות כמה זמן לוקחת לו כניסה ויציאה"
                           >
                             <td className="rank">{i + 1}</td>
                             <td className="card-num">
@@ -474,7 +474,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                                     })}
                                   </div>
                                 ) : (
-                                  <p className="insights-note">אין משכים מדודים לכרטיס זה בתקופה</p>
+                                  <p className="insights-note">לא נמדדו זמני פעולה לכרטיס זה בתקופה</p>
                                 )}
                               </td>
                             </tr>

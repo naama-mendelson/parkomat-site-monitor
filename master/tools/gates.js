@@ -52,7 +52,19 @@ for (const g of GATES) {
   });
 
   // השורה האחרונה שאינה ריקה היא השורה המסכמת של כל שער.
-  const out = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n").filter(Boolean);
+  //
+  // ⚠️ **חוץ מרעש של זמן הריצה.** `process.exit()` בזמן שחיבורי pg או
+  // Supabase עדיין פתוחים מפיל את libuv עם
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" — והשורה הזו
+  // נכתבת **אחרי** הודעת השגיאה האמיתית, ולכן היא שנתפסה כסיכום.
+  //
+  // התוצאה בפועל: השער דיווח על קריסה פנימית של Node במקום על
+  // "התחברות נכשלה: invalid_credentials" — כלומר הוסתרה בדיוק הסיבה
+  // שאפשר לתקן. הכשל עצמו אמיתי; מה שנשבר היה הדיווח עליו.
+  const RUNTIME_NOISE = /Assertion failed:|UV_HANDLE|node:internal|^\s+at /;
+  const out = `${r.stdout || ""}${r.stderr || ""}`
+    .trim().split("\n").filter(Boolean)
+    .filter((l) => !RUNTIME_NOISE.test(l));
   const summary = out[out.length - 1] || "(אין פלט)";
 
   if (r.status === 0) {

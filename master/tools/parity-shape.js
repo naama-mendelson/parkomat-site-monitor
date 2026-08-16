@@ -133,8 +133,24 @@ function compareShape(label, server, direct) {
   const codeRes = await sbMod.supabase.from("sites").select("code").limit(1).single();
   const code = codeRes.data.code;
 
+  // ============================================================
+  // ⚠️ האסימון מצורף — נתיבי הקריאה בשרת מוגנים
+  // ============================================================
+  // עד היום הם היו פתוחים, והשער קרא להם בלי כותרות. ברגע שנוסף
+  // requireAuth **כל עשרת המסלולים** כאן חזרו 401 — כלומר השער הפסיק
+  // להשוות מבנה והתחיל לדווח על אימות.
+  //
+  // ⚠️ וזה נתפס רק עכשיו כי השער דורש התחברות, ולא רץ מעולם. שער שאינו
+  // רץ אינו מגן — הוא רק נראה כאילו.
+  //
+  // ה-session כבר קיים: signInWithPassword למעלה יצר אותו בשביל הזרוע
+  // הישירה. כאן רק שולפים ממנו את האסימון.
   const get = async (p) => {
-    const r = await fetch(`${API}${p}`);
+    const { data } = await sbMod.supabase.auth.getSession();
+    const token = data.session?.access_token;
+    const r = await fetch(`${API}${p}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (!r.ok) throw new Error(`${p} -> ${r.status}`);
     return r.json();
   };
