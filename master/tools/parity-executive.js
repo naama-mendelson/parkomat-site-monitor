@@ -23,6 +23,7 @@
 // שורות ומתעלם מ-limit.
 
 const fs = require("node:fs");
+const { fetchRetry } = require("./lib/fetch-retry");
 const path = require("node:path");
 const db = require("../db/db");
 const { getExecutiveStatsFiltered } = require("../db/queries");
@@ -51,7 +52,7 @@ const PAGE = 1000;
 async function rest(q) {
   const rows = [];
   for (let off = 0; ; off += PAGE) {
-    const res = await fetch(`${SB_URL}/rest/v1/${q}`, {
+    const res = await fetchRetry(`${SB_URL}/rest/v1/${q}`, {
       headers: { apikey: SB_KEY, Authorization: `Bearer ${TOKEN}`,
                  Accept: "application/json", Range: `${off}-${off + PAGE - 1}` },
     });
@@ -62,7 +63,7 @@ async function rest(q) {
   }
 }
 async function rpc(fn, args) {
-  const res = await fetch(`${SB_URL}/rest/v1/rpc/${fn}`, {
+  const res = await fetchRetry(`${SB_URL}/rest/v1/rpc/${fn}`, {
     method: "POST",
     headers: { apikey: SB_KEY, Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(args),
@@ -140,7 +141,7 @@ async function viaPostgrest(from, to, filters) {
     console.log("\n⚠️  אין PARITY_EMAIL / PARITY_PASSWORD — PostgREST לא נבדק, ולכן אין מה לדווח.");
     process.exit(2);
   }
-  const auth = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
+  const auth = await fetchRetry(`${SB_URL}/auth/v1/token?grant_type=password`, {
     method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });

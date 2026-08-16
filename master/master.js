@@ -4,6 +4,7 @@ const bus = require("./bus");
 const db = require("./db/db");
 const { handleMessage } = require("./ingestion/dispatcher");
 const { startApiServer, closeSseClients } = require("./api/routes");
+const { acquireSingleInstanceLock } = require("./db/single-instance");
 
 // תחזוקה יומית: גיבוי → סיכום → ניקוי (בודק כל 24 שעות)
 const { runBackup } = require("./tools/backup-db");
@@ -113,6 +114,7 @@ async function drainQueues(deadlineMs = 8000) {
 const SHUTDOWN_DEADLINE_MS = 12_000;
 let shuttingDown = false;
 let httpServer = null;
+let releaseLock = null;   // ראה db/single-instance.js
 
 async function shutdown(signal) {
   if (shuttingDown) return;      // SIGTERM כפול לא מפעיל שני כיבויים
@@ -148,6 +150,16 @@ async function shutdown(signal) {
       console.log("master: שרת ה-HTTP נסגר.");
     }
 
+    // ⚠️ לפני db.close ולא אחריו: זה חיבור נפרד משלו, ואם ה-pool ייסגר
+    // קודם עדיין אין מי שיסגור אותו — הנעילה הייתה משתחררת רק כשהתהליך מת.
+    // בפועל זה עובד גם כך, אבל שחרור מפורש הופך "לא הצלחתי לעלות" לתשובה
+    // מיידית במקום להמתנה עד ש-Postgres יבחין שה-session מת.
+    if (releaseLock) {
+      await releaseLock();
+      releaseLock = null;
+      console.log("master: נעילת המופע היחיד שוחררה.");
+    }
+
     await db.close();
     console.log("master: ה-pool של ה-DB נסגר.");
 
@@ -167,6 +179,12 @@ async function main() {
   // הסכמה חייבת להיות מוכנה *לפני* שמאזינים ל-MQTT — אחרת ההודעה הראשונה
   // תגיע לטבלה שעדיין לא נוצרה.
   await db.init();
+
+  // ⚠️ **לפני ה-subscriber, ואחרי db.init — הסדר הזה הוא כל התועלת.**
+  // אחרי init כי הנעילה צריכה מסד שעונה; לפני ה-subscriber כי מרגע שהוא
+  // עולה שני התהליכים כבר מנתקים זה את זה. נעילה שנתפסת אחריו הייתה מדווחת
+  // על הבעיה אחרי שכבר נגרמה.
+  releaseLock = await acquireSingleInstanceLock(process.env.DATABASE_URL);
 
   require("./mqtt/subscriber");   // מתחבר רק אחרי שה-DB מוכן
 

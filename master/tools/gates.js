@@ -32,6 +32,7 @@ const GATES = [
   { name: "check-switch",      what: "שתי זרועות המתג שלמות",    noEnv: true },
   { name: "check-scope",       what: "מה בקר רואה ומה לא" },
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
+  { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 
@@ -61,11 +62,31 @@ for (const g of GATES) {
   // התוצאה בפועל: השער דיווח על קריסה פנימית של Node במקום על
   // "התחברות נכשלה: invalid_credentials" — כלומר הוסתרה בדיוק הסיבה
   // שאפשר לתקן. הכשל עצמו אמיתי; מה שנשבר היה הדיווח עליו.
+  // ⚠️ **stdout ו-stderr נבדקים בנפרד, ומיזוגם היה הבאג.** spawnSync מחזיר
+  // שני מחרוזות שלמות, ולכן שרשור שלהן מציב את **כל** stderr אחרי **כל**
+  // stdout — בלי קשר לסדר האמיתי. מספיקה הודעת retry אחת של db.js כדי
+  // שהשורה האחרונה תהיה היא, וכל שער היה מדווח
+  // "נכשל בניתוק חולף — ניסיון 1/5" במקום הסיכום שלו. גם שערים שעברו.
+  //
+  // כלומר בדיוק אותה תקלה שההערה למעלה מתארת, מכיוון אחר: לא רעש שנכתב
+  // אחרי השגיאה, אלא ערוץ שלם שנדחף לסוף.
+  //
+  // לכן: הסיכום נלקח מ-stdout, ומ-stderr רק כשאין stdout כלל (קריסה).
   const RUNTIME_NOISE = /Assertion failed:|UV_HANDLE|node:internal|^\s+at /;
-  const out = `${r.stdout || ""}${r.stderr || ""}`
-    .trim().split("\n").filter(Boolean)
-    .filter((l) => !RUNTIME_NOISE.test(l));
-  const summary = out[out.length - 1] || "(אין פלט)";
+  const clean = (s) => (s || "").trim().split("\n")
+    .filter(Boolean).filter((l) => !RUNTIME_NOISE.test(l));
+
+  const outLines = clean(r.stdout);
+  const errLines = clean(r.stderr);
+  const summary = outLines[outLines.length - 1]
+    || errLines[errLines.length - 1]
+    || "(אין פלט)";
+
+  // ⚠️ בכשל מציגים גם את stderr: כשהשער קרס לפני שהספיק להדפיס טבלה, כל
+  // המידע נמצא שם — וזה בדיוק המצב שבו הכי צריך אותו.
+  if (r.status !== 0 && errLines.length) {
+    for (const l of errLines.slice(-6)) console.log(`     │ ${l}`);
+  }
 
   if (r.status === 0) {
     results.push({ ...g, state: "pass", why: summary });

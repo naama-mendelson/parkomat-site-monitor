@@ -32,6 +32,7 @@
 // ומעבר על כולן היה מייצר אלפי השוואות זהות.
 
 const fs = require("node:fs");
+const { fetchRetry } = require("./lib/fetch-retry");
 const path = require("node:path");
 
 const API = process.env.PARITY_API || "http://localhost:4000";
@@ -148,7 +149,7 @@ function compareShape(label, server, direct) {
   const get = async (p) => {
     const { data } = await sbMod.supabase.auth.getSession();
     const token = data.session?.access_token;
-    const r = await fetch(`${API}${p}`, {
+    const r = await fetchRetry(`${API}${p}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!r.ok) throw new Error(`${p} -> ${r.status}`);

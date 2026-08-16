@@ -489,6 +489,29 @@ Observed in production, and the symptom is misleading: it looks exactly like "th
 server does not work" when the real problem is that the old one is still alive. This is
 also why `docker-compose.yml` forbids `replicas` / `scale`.
 
+**It is now enforced, not just documented** (`db/single-instance.js`). A second process
+refuses to start, names the holder and its start time, and exits **before the MQTT
+subscriber connects** — so the reconnect loop never begins.
+
+- **A Postgres session advisory lock, not a lock file or a port bind.** Those catch only
+  a duplicate on the *same machine*. The real hazard crosses machines: the office server
+  in Docker and a manual run on a workstation talk to the **same** database and the same
+  HiveMQ, and neither can see the other. The database is where they actually meet.
+- **Released automatically when the session ends** — including `kill -9`. There is no
+  stale lock to clear by hand, which is what makes a lock file a nuisance after a crash.
+- ⚠️ **It catches the worse case too.** Two processes with *different* `MASTER_CLIENT_ID`
+  do not fight over MQTT at all — both ingest, both write, and the data corrupts silently
+  with nothing in the log. The lock does not depend on MQTT, so it still refuses.
+- **Session connection (5432), never the transaction pooler.** A session-level advisory
+  lock lives as long as the session; through the pooler each query may land on a different
+  backend, so the lock would be taken and dropped instantly — passing always, protecting
+  nothing. Same reason the schema runs on 5432.
+- **Connecting retries; the lock itself does not.** Measured: the session pooler resets
+  connections on its own (attempt 1 `ECONNRESET`, attempt 2 fine). Without the retry the
+  guard would refuse to boot on a random network blip — the protection becoming the
+  outage. But `pg_try_advisory_lock` returning `false` is the *correct answer*, not a
+  transient fault, so retrying it would turn "another server is running" into a blind wait.
+
 Nothing on the server side starts the process — that is deployment's job
 (`restart: unless-stopped` in `docker-compose.yml`). When it is not running, **no
 messages are lost**: HiveMQ keeps them (`clean:false` + fixed clientId) and delivers them

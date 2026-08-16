@@ -31,6 +31,7 @@
 // חייבים להיבדק שם לפני שחרור.
 
 const fs = require("node:fs");
+const { fetchRetry } = require("./lib/fetch-retry");
 const path = require("node:path");
 const db = require("../db/db");
 const { computeInsights, collapseSegmentsBySite } = require("../../shared/insights.mjs");
@@ -73,7 +74,7 @@ async function signIn() {
   const password = process.env.PARITY_PASSWORD;
   if (!email || !password) return false;
 
-  const res = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
+  const res = await fetchRetry(`${SB_URL}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { apikey: SB_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -105,7 +106,7 @@ const PAGE = 1000;
 async function rest(pathAndQuery) {
   const rows = [];
   for (let off = 0; ; off += PAGE) {
-    const res = await fetch(`${SB_URL}/rest/v1/${pathAndQuery}`, {
+    const res = await fetchRetry(`${SB_URL}/rest/v1/${pathAndQuery}`, {
       headers: {
         apikey: SB_KEY,
         Authorization: `Bearer ${TOKEN || SB_KEY}`,
