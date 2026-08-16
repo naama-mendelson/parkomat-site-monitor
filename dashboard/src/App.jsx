@@ -14,6 +14,9 @@ import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
 import { needsRefetch } from "./utils/sitePatch";
 import { useFaultAlerts } from "./hooks/useFaultAlerts";
+// ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
+// להציג אתרים גם אם איש לא נגע בו.
+import AlertUnlockBar from "./components/AlertBell/AlertUnlockBar";
 import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
@@ -211,6 +214,7 @@ function App() {
 
   return (
     <div className="app">
+      <AlertUnlockBar />
       <Header
         sites={sites}
         role={role}

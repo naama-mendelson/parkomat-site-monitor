@@ -1,0 +1,57 @@
+/* ============================================================
+   פס שחרור הקול — בולט, ולא חוסם
+   ============================================================
+   ⚠️ הוא יושב **מתחת** לכותרת ודוחף את התוכן למטה במקום לרחף מעליו.
+   פס מרחף היה מכסה את השורה הראשונה של הכרטיסים — כלומר מסתיר בדיוק את
+   מה שהוא מבקש מהמפעיל להסתכל עליו.
+
+   ⚠️ ואין כאן אנימציית הבהוב: על מסך קיר שפתוח כל היום הבהוב מתמיד הופך
+   לרעש רקע שהעין מסננת, והוא גם מה שגורם לאנשים לכסות את הפס בפתק. פס
+   כתום יציב ברוחב המסך בולט מספיק. */
+.alert-unlock-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  border-block-end: 1px solid #f59e0b;
+  background: #b45309;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.95rem;
+  text-align: start;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.alert-unlock-bar:hover {
+  background: #92400e;
+}
+
+.alert-unlock-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.alert-unlock-main {
+  font-weight: 700;
+}
+
+/* ⚠️ ההסבר קטן יותר אבל **אינו** בשקיפות נמוכה: על מסך קיר שנצפה ממטרים
+   טקסט דהוי פשוט אינו נקרא, וההבחנה בהיררכיה נעשית בגודל ובמשקל. */
+.alert-unlock-sub {
+  font-size: 0.82rem;
+  color: #fde68a;
+}
+
+/* במסך צר השורה השנייה יורדת מתחת ולא נחתכת. */
+@media (max-width: 720px) {
+  .alert-unlock-bar {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .alert-unlock-sub {
+    flex-basis: 100%;
+  }
+}
