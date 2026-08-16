@@ -39,6 +39,14 @@ let unsupported = false;
 let everRunning = false;      // האם הצלחנו אי-פעם להגיע ל-'running'
 let muted = readStored();
 let windowUntil = 0;
+// ============================================================
+// ⚠️ תקלה שהגיעה בזמן שהאודיו חסום — נשמרת ומצלצלת בשחרור
+// ============================================================
+// קודם היא פשוט אבדה: notifyFaults החזיר "blocked", פתח את חלון הקיבוץ,
+// וזהו. כלומר **כל תקלה שקרתה לפני המחווה הראשונה מעולם לא נשמעה** —
+// וזה בדיוק "לפעמים לא נשמע צליל" שדווח מהשטח. במסך קיר שאיש לא נוגע בו
+// זה לא מקרה קצה אלא ברירת המחדל.
+let pendingBlocked = false;
 let ringCount = 0;
 let watchdog = null;
 const listeners = new Set();
@@ -62,6 +70,21 @@ function writeStored(value) {
 }
 
 // ===== מנוי על המצב (עבור ה-UI) =====
+/**
+ * נקרא כשה-context הגיע ל-'running'. אם תקלה חיכתה בזמן החסימה — היא
+ * מצלצלת עכשיו, פעם אחת.
+ *
+ * ⚠️ **פעם אחת ובלי קשר לכמה תקלות הצטברו.** הצליל אומר "משהו קרה, תסתכל",
+ * ולא סופר. שרשרת צלצולים על סערה שכבר נגמרה הייתה מאמנת להתעלם ממנו.
+ */
+function flushPendingChime() {
+  if (!pendingBlocked) return;
+  pendingBlocked = false;
+  // החלון מאופס: הצלצול הזה הוא אירוע חדש מבחינת הקיבוץ.
+  windowUntil = 0;
+  playChime();
+}
+
 function notify() {
   for (const listener of listeners) listener();
 }
@@ -129,7 +152,10 @@ function ensureContext() {
     // הדפדפן משעה מיוזמתו (טאב ברקע, חיסכון בסוללה). זה המקור האמין ביותר
     // לדעת שהמצב השתנה, ובלעדיו המחוון על המסך היה משקר.
     ctx.onstatechange = () => {
-      if (ctx && ctx.state === "running") everRunning = true;
+      if (ctx && ctx.state === "running") {
+        everRunning = true;
+        flushPendingChime();
+      }
       notify();
     };
   } catch {
@@ -147,26 +173,51 @@ function ensureContext() {
  * שמנסה להתאושש כל 15 שניות זה זרם קבוע של שגיאות בקונסול, שמסתיר שגיאות
  * אמיתיות.
  *
- * @param fromGesture האם הקריאה מגיעה ממחווה אמיתית של המשתמש. לפני המחווה
- *   הראשונה אין טעם לקרוא ל-resume — הדפדפן ידחה אותה בוודאות — ולכן ה-
- *   watchdog לא מנסה עד שהצלחנו לפחות פעם אחת.
+ * @param fromGesture האם הקריאה מגיעה ממחווה אמיתית של המשתמש.
+ *
+ * ============================================================
+ * ⚠️ **מנסים פעם אחת גם בלי מחווה — וזה תיקון של הנחה שגויה**
+ * ============================================================
+ * כאן נכתב שלפני המחווה הראשונה "הדפדפן ידחה בוודאות", ולכן לא נעשה שום
+ * ניסיון. **זה לא נכון.** Chrome מתיר אודיו בלי מחווה בשלושה מקרים:
+ *
+ *   • לאתר יש Media Engagement גבוה (ביקורים חוזרים — בדיוק מסך קיר).
+ *   • המשתמש נתן לאתר הרשאת **Sound** בהגדרות האתר.
+ *   • האתר מותקן כ-PWA.
+ *
+ * בכל אלה `resume()` היה מצליח — ופשוט לא נקרא. כלומר ההנחה הזו היא מה
+ * שהכריח לחיצה על מסך שאמור להתריע לבד.
+ *
+ * ⚠️ **פעם אחת בלבד, ולא בכל טיק של ה-watchdog** — וזו הסיבה שהשומר הזה
+ * נכתב מלכתחילה: `resume()` דוחה promise כשהמדיניות חוסמת, וניסיון כל 15
+ * שניות היה מייצר זרם קבוע של שגיאות בקונסול שמסתיר שגיאות אמיתיות.
+ * ניסיון בודד בעלייה עולה דחייה אחת, שנתפסת.
  */
+let initialAttempted = false;
+
 export function unlockAudio(fromGesture = false) {
   const c = ensureContext();
   if (!c) return;
 
   if (c.state === "running") {
     everRunning = true;
+    flushPendingChime();
     notify();
     return;
   }
 
-  if (!fromGesture && !everRunning) return;
+  // ניסיון פתיחה יחיד בעלייה: אם הדפדפן מתיר, אין צורך לגעת בכלום.
+  if (!fromGesture && !everRunning) {
+    if (initialAttempted) return;
+    initialAttempted = true;
+  }
 
   try {
     const result = c.resume();
     if (result && typeof result.then === "function") {
-      result.then(notify).catch(() => notify());
+      // ⚠️ מנקזים גם כאן ולא רק ב-onstatechange: לא כל דפדפן יורה את
+      // האירוע, והפונקציה מוגנת בדגל ולכן קריאה כפולה אינה מצלצלת פעמיים.
+      result.then(() => { flushPendingChime(); notify(); }).catch(() => notify());
     } else {
       notify();
     }
@@ -287,7 +338,12 @@ export function notifyFaults(codes) {
   // זהה גם כשהאודיו חסום — אחרת שחרור החסימה באמצע סערת תקלות היה מתפרץ.
   windowUntil = now + COALESCE_MS;
 
-  return playChime() ? "rang" : "blocked";
+  if (playChime()) return "rang";
+
+  // ⚠️ **נשמר ולא נזרק.** התקלה קרתה; מה שחסר הוא רק הרשאת הדפדפן. ברגע
+  // שהאודיו ישוחרר — במחווה, או בהרשאה שכבר קיימת — היא תצלצל פעם אחת.
+  pendingBlocked = true;
+  return "blocked";
 }
 
 /** לבדיקות ידניות מהקונסול. */
