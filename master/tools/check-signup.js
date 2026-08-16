@@ -29,6 +29,13 @@
 // API החזיר 500. גרסה שכותבת את התפקיד כבר ב-INSERT הייתה עוברת את הבדיקה
 // הזו בשלמות ונשברת בפרודקשן.
 const db = require("../db/db");
+const path = require("node:path");
+
+// המפתח הציבורי — לקריאת הגדרות GoTrue בסוף. נלקח מ-dashboard/.env, כמו
+// בשאר השערים, כדי שלא יהיה עותק שני שיתיישן.
+const ANON_KEY = (require("node:fs")
+  .readFileSync(path.resolve(__dirname, "../../dashboard/.env"), "utf8")
+  .match(/^VITE_SUPABASE_PUBLISHABLE_KEY=(.*)$/m) || [])[1]?.trim();
 
 const SEED = "signupcheck";
 const uuid = (n) => `00000000-0000-0000-0000-0000000000c${n}`;
@@ -150,6 +157,33 @@ async function createAuthUser(email, id, invitedRole = null) {
   }
 
   await cleanup();
+  // ============================================================
+  // ⚠️ מדווח, ולא מכשיל — ובכוונה
+  // ============================================================
+  // `disable_signup` הוא הגדרה בלוח הבקרה של Supabase, לא קוד במאגר הזה.
+  // שער שנופל עליה היה נופל אצל כל מי שמריץ מול פרויקט בדיקה, ואי אפשר
+  // לתקן אותה מכאן — היא דורשת מפתח ניהול (sbp_) שאין בסביבה.
+  //
+  // ⚠️ אבל **שתיקה עליה כבר עלתה פעמיים**: המתג נלחץ, המסך הראה אותו
+  // כבוי, ובפועל GoTrue המשיך לדווח `false`. בלי השורה הזו אין שום מקום
+  // שבו ההפרש הזה מתגלה — עד שמישהו ינסה להירשם ויצליח.
+  //
+  // ההגנה **אינה** תלויה במתג: שני הטריגרים במסד חוסמים גם בלעדיו, וזה
+  // מה שהבדיקות למעלה מודדות. המתג רק דוחה מוקדם יותר ועם הודעה ברורה.
+  try {
+    const settings = await fetch(`${process.env.SUPABASE_URL}/auth/v1/settings`,
+      { headers: { apikey: ANON_KEY } }).then((r) => r.json());
+    console.log(
+      settings.disable_signup
+        ? "\nℹ️  Supabase: הרשמה עצמית חסומה גם ברמת GoTrue ✅"
+        : "\nℹ️  Supabase: `Allow new users to sign up` עדיין **פתוח** — " +
+          "המסד חוסם, אבל שכבת GoTrue לא.\n" +
+          "   Authentication → Sign In / Providers → Email → כבו ו**שמרו**."
+    );
+  } catch {
+    console.log("\nℹ️  לא ניתן היה לקרוא את הגדרות GoTrue — אין ידיעה על המתג.");
+  }
+
   console.log(bad === 0 ? "\n✅ הכניסה למערכת מתנהגת כמתוכנן" : `\n❌ ${bad} כשלים`);
   process.exit(bad === 0 ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });
