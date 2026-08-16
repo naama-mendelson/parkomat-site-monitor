@@ -1,10 +1,11 @@
-// components/UsersPanel/UsersPanel.jsx — הזמנת משתמשים.
+// components/UsersPanel/UsersPanel.jsx — ניהול משתמשים.
 //
-// פתוח לכל מי שמחובר, לפי החלטת מוצר. אין כאן בדיקת תפקיד — לא בשכחה:
-// הסתרה ב-UI אינה אבטחה, והשרת הוא זה שאוכף (requireAuth ב-routes.js).
-// אם ההחלטה תשתנה, המקום לשנות אותה הוא השרת, וכאן רק התצוגה תעקוב.
+// ⚠️ **למנהלים בלבד**, והשרת הוא שאוכף (`requireManager` ב-routes.js על
+// invite / list / PATCH / DELETE). אין כאן בדיקת תפקיד — לא בשכחה:
+// הסתרה ב-UI אינה אבטחה. בקר שיפתח את הפאנל יקבל 403 ויראה את הסיבה,
+// וזה עדיף על תפריט שנעלם בלי הסבר.
 import { useEffect, useState } from "react";
-import { inviteUser, fetchUsers, setUserActive, setUserRole } from "../../services/api";
+import { inviteUser, fetchUsers, setUserActive, setUserRole, deleteUser } from "../../services/api";
 import "./UsersPanel.css";
 
 function UsersPanel({ onClose }) {
@@ -92,6 +93,37 @@ function UsersPanel({ onClose }) {
     }
   }
 
+  // ============================================================
+  // מחיקה — ואישור, כי אין ממנה חזרה
+  // ============================================================
+  // ⚠️ **זה המקום היחיד בפאנל שמבקש אישור, וזה מכוון.** השבתה, החזרה
+  // ושינוי דרגה כולן הפיכות בלחיצה אחת, ואישור עליהן היה הופך לרעש שלוחצים
+  // עליו אוטומטית — ואז גם האישור הזה יאבד את משמעותו.
+  //
+  // ⚠️ והאישור נוקב ב**כתובת**, לא ב"האם למחוק?": ברשימה של כמה שורות
+  // דומות, אישור גנרי אינו מאפשר לוודא שנלחצה השורה הנכונה. וזו בדיוק
+  // הטעות שאי אפשר לתקן כאן.
+  async function handleDelete(user) {
+    const ok = window.confirm(
+      `למחוק לצמיתות את ${user.email}?\n\n` +
+      "המשתמש יימחק גם מ-Supabase ולא יוכל להתחבר. אין דרך לבטל — " +
+      "החזרה אפשרית רק בהזמנה מחדש.\n\n" +
+      "להשבתה זמנית והפיכה יש להשתמש בכפתור \"השבת\"."
+    );
+    if (!ok) return;
+
+    setUpdatingId(user.id);
+    setError(null);
+    try {
+      await deleteUser(user.id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   return (
     <div className="users-overlay" onClick={onClose}>
       <div className="users-panel" onClick={(e) => e.stopPropagation()}>
@@ -101,7 +133,8 @@ function UsersPanel({ onClose }) {
         </header>
 
         <p className="users-hint">
-          כל מי שמחובר יכול לצרף משתמש נוסף. המשתמש החדש נוצר בתפקיד <strong>בקר</strong>.
+          מנהל בלבד יכול לצרף, לשנות דרגה, להשבית ולמחוק. אין הרשמה עצמית —
+          משתמש נכנס רק אם צירפו אותו, ורק בכתובת <strong>@parkomat.co.il</strong>.
         </p>
 
         <form className="users-invite" onSubmit={handleInvite}>
@@ -187,6 +220,18 @@ function UsersPanel({ onClose }) {
                 disabled={updatingId === u.id}
               >
                 {updatingId === u.id ? "…" : u.is_active === false ? "החזר" : "השבת"}
+              </button>
+              {/* ⚠️ **מחיקה נפרדת ויזואלית מהשבתה, ולא כפתור נוסף באותו משקל.**
+                  השבתה הפיכה בלחיצה; מחיקה מסירה גם את המשתמש ב-Supabase ואין
+                  ממנה חזרה. שני כפתורים זהים זה לצד זה מזמינים בדיוק את הלחיצה
+                  הלא נכונה. */}
+              <button
+                className="users-delete"
+                onClick={() => handleDelete(u)}
+                disabled={updatingId === u.id}
+                title={`מחיקה מוחלטת של ${u.email} — אין דרך חזרה`}
+              >
+                {updatingId === u.id ? "…" : "מחק"}
               </button>
             </li>
           ))}

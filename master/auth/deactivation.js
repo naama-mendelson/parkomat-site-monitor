@@ -83,4 +83,42 @@ function canChangeRole(users, targetId, actorId, nextRole) {
 
   return { allowed: true };
 }
-module.exports = { canDeactivate, canChangeRole };
+/**
+ * האם מותר **למחוק** משתמש לגמרי.
+ *
+ * ============================================================
+ * ⚠️ מחיקה אינה השבתה חזקה יותר — היא פעולה אחרת
+ * ============================================================
+ * השבתה מנתקת גישה ומשאירה את השורה: מי היה, מתי צורף, ומי השבית אותו.
+ * מחיקה מסירה את השורה **ואת המשתמש ב-Supabase**, ולכן:
+ *
+ *   • אי אפשר להחזיר אותו — רק להזמין מחדש, כמשתמש חדש לגמרי.
+ *   • כל מה שנשאר ממנו הוא ה**צילומים**: `audit_log.actor_name` ו-
+ *     `maintenance_windows.set_by_name` הם טקסט בלי FK, ולכן שורדים.
+ *     זה לא מקרי — ככה הן תוכננו.
+ *
+ * ⚠️ **ולכן אותם שני מגני הנעילה חלים כאן במלואם, ואף ביתר שאת:** מנהל
+ * שהשבית את עצמו בטעות ניתן להחזרה בידי מנהל אחר; מנהל שמחק את עצמו
+ * ואין אחר — אין דרך חזרה מהמסך בכלל.
+ */
+function canDelete(users, targetId, actorId) {
+  const target = (users || []).find((u) => u.id === targetId);
+  if (!target) return { allowed: false, reason: "משתמש לא נמצא" };
+
+  if (targetId === actorId) {
+    return { allowed: false, reason: "אי אפשר למחוק את עצמך" };
+  }
+
+  // ⚠️ נספרים מנהלים **פעילים**, כמו בשאר הכללים — מנהל מושבת אינו מי
+  // שיציל את המערכת. מחיקת המנהל הפעיל היחיד משאירה מערכת בלי ניהול.
+  if (target.role === "manager") {
+    const activeManagers = users.filter((u) => u.role === "manager" && u.is_active).length;
+    if (activeManagers <= 1) {
+      return { allowed: false, reason: "לא ניתן למחוק את המנהל הפעיל האחרון" };
+    }
+  }
+
+  return { allowed: true };
+}
+
+module.exports = { canDeactivate, canChangeRole, canDelete };

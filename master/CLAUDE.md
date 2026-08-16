@@ -427,6 +427,40 @@ production this costs nothing** — queries inside a transaction are serial anyw
 and it removes the hazard from any future code that runs `Promise.all` in a
 transaction. The pool path is untouched.
 
+## Removing a user: deactivate *and* delete — two different operations
+
+Both exist, and keeping them distinct is the point.
+
+- **`PATCH /api/users/:id { is_active: false }`** — reversible. Access is cut, the row
+  stays, and any manager can restore it.
+- **`DELETE /api/users/:id`** — irreversible. Removes the `app_users` row **and** the
+  Supabase auth user. Coming back means a fresh invitation with a new id.
+
+⚠️ **Deletion used to be forbidden, and the reason turned out to be wrong.** The rule was
+"a user has traces in the audit log and in every maintenance window they opened; deleting
+them would leave history pointing nowhere." But no historical row *points* at a user —
+`audit_log.actor_name` and `maintenance_windows.set_by_name` are **text snapshots with no
+FK**, deliberately. An audit line still says who did what after the user is gone.
+
+What *did* point were the two FKs inside `app_users` itself (`created_by`, `disabled_by`).
+They now carry **`ON DELETE SET NULL`**, added as idempotent DDL in `schema.postgres.sql`.
+
+- **`SET NULL`, never `CASCADE`.** These are self-referencing FKs — `CASCADE` would delete
+  everyone the deleted user ever invited, so removing one manager could wipe half the table.
+- **Without the clause, deletion fails on exactly the wrong people.** The default is
+  `NO ACTION`, so anyone who had ever invited or deactivated someone could not be deleted —
+  i.e. the long-serving accounts, which are precisely the ones anyone wants to remove.
+  Verified by mutation: dropping the clause turns the delete into a `500` and leaves an
+  orphan pointer.
+- **Order in the route: Supabase first, our table second.** The reverse leaves, on failure,
+  a user who can still sign in with no `app_users` row — authenticated, with no identity,
+  and `provision_app_user` will never rebuild it because there is no new INSERT. This order
+  is pinned by a test, not just a comment.
+- **The same two locks as deactivation apply, and matter more here** (`canDelete` in
+  `auth/deactivation.js`): nobody deletes themselves, and the last *active* manager cannot
+  be deleted. A manager who deactivates themselves can be restored by another; one who
+  deletes themselves with no other manager leaves no route back from the UI at all.
+
 ## Users are created by invitation only — enforced in the database
 
 Two triggers on `auth.users`, at different stages, for a reason.

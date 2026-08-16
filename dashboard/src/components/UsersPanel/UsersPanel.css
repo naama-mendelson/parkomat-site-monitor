@@ -251,3 +251,33 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ============================================================
+   מחיקה — נבדלת בשקט, לא צועקת
+   ============================================================
+   ⚠️ **אותה צורה כמו "השבת", וצבע אחר בלבד.** כפתור אדום מלא היה מושך
+   את העין דווקא לפעולה הבלתי הפיכה ומזמין לחיצה. וכפתור זהה לחלוטין
+   היה הופך את שתי הפעולות למחליפות — וההבדל ביניהן הוא בדיוק העניין.
+   לכן: מתגלה כאדום רק במגע, כשכבר בחרו בו. */
+.users-delete {
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.users-delete:hover:not(:disabled) {
+  background: var(--danger-bg, rgba(220, 38, 38, 0.12));
+  border-color: var(--danger, #dc2626);
+  color: var(--danger, #dc2626);
+}
+
+.users-delete:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

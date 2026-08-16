@@ -2437,9 +2437,9 @@ async function listAppUsers() {
 /**
  * השבתה או החזרה לפעילות.
  *
- * ⚠️ **השבתה ולא מחיקה.** למשתמש יש עקבות בכל טבלת הביקורת ובכל חלון
- * תחזוקה שהפעיל; מחיקתו הייתה משאירה שורות עם שם שמצביע לשום מקום.
- * `is_active=false` מנתק את הגישה ומשאיר את ההיסטוריה שלמה.
+ * ⚠️ **הפעולה ההפיכה מבין השתיים.** `is_active=false` מנתק את הגישה
+ * ומשאיר את השורה, כך שאפשר להחזיר. `deleteAppUser` מסיר אותה לגמרי
+ * ואי אפשר לחזור ממנו — ראה שם.
  */
 // ⚠️ **`byAppUserId` הוא מזהה מספרי, ולא מייל — וזה היה באג שהשבית את
 // ההשבתה לחלוטין.** `disabled_by` מוגדר בסכמה כ-
@@ -2481,3 +2481,24 @@ async function setAppUserRole(id, role) {
 
 module.exports.setAppUserRole = setAppUserRole;
 module.exports.getAppUserByEmail = getAppUserByEmail;
+
+/**
+ * מחיקה מלאה של שורת המשתמש.
+ *
+ * ⚠️ **מה ששורד את המחיקה, ולמה זה לא מקרי.** `audit_log.actor_name` ו-
+ * `maintenance_windows.set_by_name` הם **צילומי טקסט בלי FK** — כלומר
+ * שורת ביקורת ממשיכה לומר מי עשה מה גם כשהמשתמש כבר לא קיים. שתי
+ * ההצבעות הפנימיות (`created_by`, `disabled_by`) מתאפסות ל-NULL דרך
+ * ON DELETE SET NULL בסכמה.
+ *
+ * ⚠️ מחזיר את השורה שנמחקה: הנתיב צריך את `supabase_uid` כדי למחוק גם
+ * בצד Supabase, ואת המייל לשורת הביקורת — ואחרי המחיקה אי אפשר לשלוף
+ * אותם יותר.
+ */
+async function deleteAppUser(id) {
+  return db
+    .prepare("DELETE FROM app_users WHERE id = ? RETURNING id, email, role, supabase_uid")
+    .get(id);
+}
+
+module.exports.deleteAppUser = deleteAppUser;

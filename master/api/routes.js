@@ -16,10 +16,11 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
         updateSite, deleteSite ,
-  getAppUserByUid, getAppUserByEmail, listAppUsers, setAppUserActive, setAppUserRole } = require("../db/queries");
+  getAppUserByUid, getAppUserByEmail, listAppUsers, setAppUserActive, setAppUserRole,
+  deleteAppUser } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
-const { canDeactivate, canChangeRole } = require("../auth/deactivation");
+const { canDeactivate, canChangeRole, canDelete } = require("../auth/deactivation");
 // שכבת האימות. מאחורי seam — ראה auth/provider.js. היום היא מאמתת בלבד
 // (verifyToken) ואינה מנפיקה: ההנפקה במצב Supabase קורית בדפדפן.
 const auth = require("../auth/provider");
@@ -560,9 +561,9 @@ app.get("/api/users", requireAuth, requireManager, async (req, res) => {
 // ============================================================
 // PATCH /api/users/:id — השבתה והחזרה לפעילות
 // ============================================================
-// ⚠️ **השבתה ולא מחיקה.** למשתמש יש עקבות בטבלת הביקורת ובכל חלון תחזוקה
-// שהפעיל. מחיקה הייתה משאירה שורות היסטוריה שמצביעות לשום מקום — ובדיוק
-// הביקורת היא מה שאמור לשרוד.
+// ⚠️ **השבתה היא הפעולה ההפיכה, ולכן היא ברירת המחדל.** היא מנתקת גישה
+// ומשאירה את השורה — מי היה, מתי צורף, ומי השבית אותו — ואפשר להחזיר
+// ממנה בלחיצה. למחיקה מוחלטת יש נתיב נפרד (DELETE למטה), והיא אינה הפיכה.
 //
 // ⚠️ וההשבתה מנתקת גישה **מיידית**, למרות שהאסימון שבידי המשתמש עדיין
 // תקף: כל בדיקת תפקיד עוברת ב-getAppUserByUid, שמסנן `is_active`.
@@ -642,6 +643,59 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
   } catch (err) {
     console.error("[api] שגיאה ב-PATCH user:", err.message);
     res.status(500).json({ error: "שגיאה בעדכון המשתמש" });
+  }
+});
+
+// ============================================================
+// DELETE /api/users/:id — מחיקה מלאה
+// ============================================================
+// ⚠️ **מחיקה אינה השבתה חזקה יותר — היא פעולה אחרת, ובלתי הפיכה.**
+// השבתה משאירה את השורה ואפשר להחזיר ממנה; מחיקה מסירה גם את המשתמש
+// ב-Supabase, ולכן החזרה פירושה הזמנה מחדש כמשתמש חדש לגמרי.
+//
+// ⚠️ **מה שנשאר אחריה, וזה הרציונל שאִפשר אותה בכלל:** `audit_log.
+// actor_name` ו-`maintenance_windows.set_by_name` הם צילומי טקסט בלי FK.
+// שורת ביקורת ממשיכה לומר מי עשה מה גם כשהמשתמש כבר אינו קיים. ההתנגדות
+// המקורית למחיקה ("נשארות שורות שמצביעות לשום מקום") לא חלה, מפני שאף
+// שורה היסטורית אינה מצביעה — כולן מצלמות.
+//
+// ⚠️ **הסדר: Supabase קודם, המסד אחריו.** הכיוון ההפוך משאיר, בכשל,
+// משתמש שיכול להתחבר ואין לו שורה — מאומת, בלי זהות, ו-provision_app_user
+// לא ירוץ עליו כי אין INSERT חדש. בסדר הזה כשל משאיר את המצב הקודם
+// **בשלמותו**, וזה מצב שאפשר לנסות ממנו שוב.
+app.delete("/api/users/:id", requireAuth, requireManager, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "מזהה משתמש לא תקין" });
+    }
+
+    const users = await listAppUsers();
+    const target = users.find((u) => u.id === id);
+    if (!target) return res.status(404).json({ error: "משתמש לא נמצא" });
+
+    // ⚠️ הכלל חי ב-auth/deactivation.js ונבדק שם כהתנהגות — לא כתנאי inline,
+    // מאותה סיבה בדיוק שהכלל של ההשבתה הוצא לשם.
+    const verdict = canDelete(users, id, req.actor.appUserId);
+    if (!verdict.allowed) return res.status(400).json({ error: verdict.reason });
+
+    try {
+      await adminUsers.deleteUser(target.supabase_uid);
+    } catch (e) {
+      console.error("[api] מחיקת המשתמש ב-Supabase נכשלה:", e.message);
+      return res.status(502).json({
+        error: "המחיקה ב-Supabase נכשלה — המשתמש לא נמחק. נסו שוב.",
+      });
+    }
+
+    const removed = await deleteAppUser(id);
+    forgetActor(target.supabase_uid);
+
+    console.log(`[api] משתמש ${target.email} **נמחק** בידי ${req.actor.name}`);
+    res.json({ ok: true, id, email: removed?.email ?? target.email });
+  } catch (err) {
+    console.error("[api] שגיאה ב-DELETE user:", err.message);
+    res.status(500).json({ error: "שגיאה במחיקת המשתמש" });
   }
 });
 

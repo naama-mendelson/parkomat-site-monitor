@@ -191,6 +191,53 @@ async function cleanup() {
   await call(mgrTok, "PATCH", `/api/users/${victimAppId}`, { is_active: false });
   add("⚠️ ואחרי השבתה — אותו אסימון נחסם", await call(victimTok, "GET", "/api/sites"), 403);
 
+  // ============================================================
+  // מחיקה — ולא רק שהיא מחזירה 200
+  // ============================================================
+  const victim2 = `${STAMP}.del@parkomat.co.il`;
+  await createUser(victim2, "operator");
+  const victim2AppId = await appId(victim2);
+  const victim2Tok = await signIn(victim2);
+
+  add("⚠️ בקר אינו מוחק אף אחד", await call(oprFresh, "DELETE", `/api/users/${victim2AppId}`), 403);
+  add("מנהל מוחק בקר",          await call(mgrTok, "DELETE", `/api/users/${victim2AppId}`), 200);
+
+  // ⚠️ "200" אינו מוכיח מחיקה. שלוש בדיקות נפרדות, כי המחיקה נוגעת בשלושה
+  // מקומות ואפשר להצליח בחלקם.
+  const stillHere = await db.prepare("SELECT id FROM app_users WHERE id = ?").get(victim2AppId);
+  add("...והשורה נעלמה מ-app_users", Boolean(stillHere), false);
+
+  // ⚠️ **וגם מ-Supabase — אחרת הוא עדיין יכול להתחבר.** מחיקה חלקית משאירה
+  // משתמש מאומת בלי שורה, כלומר בלי זהות במערכת.
+  const gone = await f(`${SB_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: victim2, password: PW }),
+  });
+  add("...ואינו יכול להתחבר יותר", gone.ok, false);
+
+  // והאסימון שכבר היה בידו מת גם הוא.
+  add("...והאסימון הישן שלו נחסם", await call(victim2Tok, "GET", "/api/sites"), 403);
+
+  // ---- ⚠️ ומחיקת מי שכבר צירף אחרים — המקרה שנופל בלי ON DELETE SET NULL ----
+  // `created_by` ו-`disabled_by` הם FK פנימיים בתוך app_users. בלי הסעיף
+  // הזה Postgres דוחה את המחיקה על הפרת אילוץ — כלומר דווקא הוותיקים,
+  // שהם בדיוק מי שירצו למחוק, אינם ניתנים למחיקה.
+  const inviter = `${STAMP}.inviter@parkomat.co.il`;
+  await createUser(inviter, "operator");
+  const inviterAppId = await appId(inviter);
+  const invitee = `${STAMP}.invitee@parkomat.co.il`;
+  await createUser(invitee, "operator");
+  await db.prepare("UPDATE app_users SET created_by = ? WHERE LOWER(email) = LOWER(?)")
+    .run(inviterAppId, invitee);
+
+  add("⚠️ מי שצירף אחרים ניתן למחיקה", await call(mgrTok, "DELETE", `/api/users/${inviterAppId}`), 200);
+  const orphan = await db
+    .prepare("SELECT created_by FROM app_users WHERE LOWER(email) = LOWER(?)").get(invitee);
+  add("...וההצבעה אליו התאפסה ל-NULL", orphan?.created_by, null);
+
+  // ---- ⚠️ המנהל הפעיל האחרון אינו ניתן למחיקה ----
+  add("⚠️ מנהל אינו מוחק את עצמו", await call(mgrTok, "DELETE", `/api/users/${mgrAppId}`), 400);
+
   console.log("בדיקה                                          בפועל     צפוי");
   let bad = 0;
   for (const [name, got, want] of checks) {

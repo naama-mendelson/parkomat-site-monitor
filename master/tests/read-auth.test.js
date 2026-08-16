@@ -273,11 +273,25 @@ test("⚠️ נתיב ההשבתה מאציל את הכלל למודול הטה�
   assert.ok(body.includes("verdict.allowed"), "ולכבד את התשובה");
 });
 
-test("⚠️ השבתה ולא מחיקה", () => {
-  // למשתמש יש עקבות בטבלת הביקורת ובכל חלון תחזוקה שהפעיל. מחיקה הייתה
-  // משאירה שורות היסטוריה שמצביעות לשום מקום — ובדיוק הביקורת אמורה לשרוד.
-  assert.doesNotMatch(ROUTES, /app\.delete\("\/api\/users/,
-    "אין נתיב מחיקה — ההשבתה היא PATCH על is_active");
+// ============================================================
+// ⚠️ **שתי הפעולות קיימות — וההחלטה הזו התהפכה**
+// ============================================================
+// כאן ישבה בדיקה שאסרה נתיב מחיקה: "למשתמש יש עקבות בטבלת הביקורת ובכל
+// חלון תחזוקה שהפעיל, ומחיקה הייתה משאירה שורות שמצביעות לשום מקום."
+//
+// ⚠️ **הנימוק התברר כלא נכון, וזו הסיבה שאפשר היה להפוך את ההחלטה.** אף
+// שורה היסטורית אינה **מצביעה** על משתמש: `audit_log.actor_name` ו-
+// `maintenance_windows.set_by_name` הם **צילומי טקסט בלי FK**. שורת
+// ביקורת ממשיכה לומר מי עשה מה גם אחרי שהמשתמש נמחק.
+//
+// מה שכן היה מצביע — `created_by` ו-`disabled_by` — הם FK **פנימיים**
+// בתוך app_users, וקיבלו ON DELETE SET NULL בסכמה.
+//
+// לכן נבדק עכשיו ההפך: ששתי הפעולות קיימות, ושהן נשארות **נבדלות**.
+// מחיקה שמחליפה את ההשבתה הייתה מסירה את הפעולה ההפיכה היחידה.
+test("⚠️ גם השבתה וגם מחיקה — ושתיהן נבדלות", () => {
+  assert.match(ROUTES, /app\.patch\("\/api\/users\/:id"/, "השבתה — הפעולה ההפיכה");
+  assert.match(ROUTES, /app\.delete\("\/api\/users\/:id"/, "מחיקה — הבלתי הפיכה");
 });
 
 // ============================================================
@@ -430,4 +444,70 @@ test("⚠️ PATCH מקבל is_active או role — לא שניהם", () => {
   const body = ROUTES.slice(i, i + 2500);
   assert.ok(body.includes("canChangeRole("), "מאציל את הכלל");
   assert.ok(body.includes("לא שניהם"), "דוחה שליחה כפולה");
+});
+
+// ============================================================
+// מחיקה — אותם מגנים כמו השבתה, ומסיבה חזקה יותר
+// ============================================================
+// ⚠️ מנהל שהשבית את עצמו בטעות ניתן להחזרה בידי מנהל אחר. מנהל שמחק את
+// עצמו ואין אחר — אין דרך חזרה מהמסך **בכלל**, כי גם המשתמש ב-Supabase
+// נעלם. לכן הכללים כאן זהים, ולא מקלים.
+const { canDelete } = require("../auth/deactivation");
+
+test("בקר רגיל ניתן למחיקה", () => {
+  const users = [U(1, "manager"), U(2, "operator")];
+  assert.equal(canDelete(users, 2, 1).allowed, true);
+});
+
+test("⚠️ מנהל אינו מוחק את עצמו", () => {
+  const users = [U(1, "manager"), U(2, "manager")];
+  const v = canDelete(users, 1, 1);
+  assert.equal(v.allowed, false);
+  assert.match(v.reason, /את עצמך/);
+});
+
+test("⚠️ המנהל הפעיל האחרון אינו ניתן למחיקה", () => {
+  const users = [U(1, "manager"), U(2, "operator"), U(3, "manager", false)];
+  const v = canDelete(users, 1, 2);
+  assert.equal(v.allowed, false, "מנהל פעיל יחיד — חסום");
+  assert.match(v.reason, /האחרון/);
+});
+
+test("⚠️ מנהל מושבת אינו נספר כמנהל פעיל — גם במחיקה", () => {
+  // אותה מלכודת בדיוק כמו בהשבתה: שני מנהלים שאחד מהם מושבת נראים כשניים.
+  const users = [U(1, "manager"), U(2, "manager", false), U(3, "operator")];
+  assert.equal(canDelete(users, 1, 3).allowed, false);
+});
+
+test("מנהל אחד מתוך שניים פעילים — ניתן למחיקה", () => {
+  const users = [U(1, "manager"), U(2, "manager")];
+  assert.equal(canDelete(users, 2, 1).allowed, true);
+});
+
+test("משתמש שאינו קיים — אין מה למחוק", () => {
+  assert.equal(canDelete([U(1, "manager")], 99, 1).allowed, false);
+});
+
+// ⚠️ הנתיב חייב **להאציל** את ההחלטה ולא לשכפל אותה. תנאי inline שמעתיק
+// את הכלל מתיישן בשקט ברגע שהכלל משתנה — וזו בדיוק הסיבה שהכללים הוצאו
+// ל-auth/deactivation.js מלכתחילה.
+test("⚠️ DELETE /api/users מאציל ל-canDelete", () => {
+  const src = fs.readFileSync(require.resolve("../api/routes.js"), "utf8");
+  const start = src.indexOf('app.delete("/api/users/:id"');
+  assert.ok(start > 0, "הנתיב חייב להתקיים");
+  const body = src.slice(start, start + 2500);
+  assert.ok(body.includes("canDelete("), "הנתיב חייב להאציל את ההחלטה");
+  assert.ok(body.includes("requireManager"), "מחיקה למנהלים בלבד");
+});
+
+// ⚠️ **הסדר נבדק כהתנהגות ולא כהערה.** מחיקה במסד לפני Supabase משאירה,
+// בכשל, משתמש שיכול להתחבר ואין לו שורה — מאומת ובלי זהות.
+test("⚠️ המחיקה ב-Supabase קודמת למחיקה במסד", () => {
+  const src = fs.readFileSync(require.resolve("../api/routes.js"), "utf8");
+  const start = src.indexOf('app.delete("/api/users/:id"');
+  const body = src.slice(start, start + 2500);
+  const sb = body.indexOf("adminUsers.deleteUser");
+  const local = body.indexOf("deleteAppUser(");
+  assert.ok(sb > 0 && local > 0, "שני הצדדים חייבים להימחק");
+  assert.ok(sb < local, "Supabase קודם — אחרת כשל משאיר משתמש בלי שורה");
 });

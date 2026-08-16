@@ -182,4 +182,22 @@ async function setRole(supabaseUid, role) {
   });
   if (!ok) throw new Error(`Supabase החזיר ${status}`);
 }
-module.exports = { isConfigured, createUser, listUsers, setRole };
+/**
+ * מוחק את המשתמש מ-Supabase.
+ *
+ * ⚠️ **בלי זה המחיקה חלקית ומסוכנת.** מחיקת שורת `app_users` בלבד מסירה
+ * את ההרשאות — אבל המשתמש נשאר ב-GoTrue ויכול עדיין **להתחבר**. ואז
+ * `provision_app_user` (טריגר על INSERT) לא ירוץ, כי אין INSERT חדש,
+ * ולכן הוא יישאר בלי שורה: מחובר, מאומת, ובלי זהות במערכת.
+ *
+ * ⚠️ ו-`404` נחשב הצלחה: המשתמש כבר לא שם, וזה בדיוק המצב שאליו רצינו
+ * להגיע. כישלון עליו היה הופך ניקוי חוזר לשגיאה.
+ */
+async function deleteUser(supabaseUid) {
+  if (!isConfigured()) throw new Error("ניהול משתמשים אינו מוגדר בשרת");
+  if (!supabaseUid) return;   // שורה שמעולם לא קושרה ל-Supabase
+  const { ok, status } = await adminFetch(`/admin/users/${supabaseUid}`, { method: "DELETE" });
+  if (!ok && status !== 404) throw new Error(`Supabase החזיר ${status}`);
+}
+
+module.exports = { isConfigured, createUser, listUsers, setRole, deleteUser };

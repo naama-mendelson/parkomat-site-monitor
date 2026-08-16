@@ -260,6 +260,36 @@ BEGIN
 END
 $$;
 
+-- ============================================================
+-- ⚠️ ON DELETE SET NULL על שני ה-FK הפנימיים — בלעדיו אין מחיקה
+-- ============================================================
+-- `created_by` ו-`disabled_by` מצביעים ל-`app_users(id)` **בתוך אותה
+-- טבלה**, ובלי סעיף ON DELETE ברירת המחדל היא NO ACTION. כלומר מחיקת מי
+-- שאי פעם צירף מישהו, או השבית מישהו, נדחית על הפרה של אילוץ — והמחיקה
+-- נכשלת דווקא על המשתמשים הוותיקים, שהם בדיוק אלה שירצו למחוק.
+--
+-- ⚠️ **וזו הסיבה ש-SET NULL ולא CASCADE.** CASCADE על FK כזה היה מוחק
+-- בשרשרת את כל מי שהמשתמש הזה צירף — כלומר מחיקת מנהל אחד הייתה מוחקת
+-- חצי מהמערכת. SET NULL מוחק את מי שביקשו, ומאבד רק את ההצבעה.
+--
+-- ומה שלא הולך לאיבוד: `audit_log.actor_name` ו-`maintenance_windows.
+-- set_by_name` הם **צילומי טקסט בלי FK**, ולכן שורת הביקורת ממשיכה לומר
+-- מי עשה מה גם אחרי שהמשתמש נמחק. ככה הן תוכננו מלכתחילה.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public' AND table_name = 'app_users') THEN
+    ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_created_by_fkey;
+    ALTER TABLE app_users ADD CONSTRAINT app_users_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE SET NULL;
+
+    ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_disabled_by_fkey;
+    ALTER TABLE app_users ADD CONSTRAINT app_users_disabled_by_fkey
+      FOREIGN KEY (disabled_by) REFERENCES app_users(id) ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
 -- החיפוש החם: כל בקשה מזוהה ממירה uid → שורת משתמש.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_uid ON app_users(supabase_uid)
   WHERE supabase_uid IS NOT NULL;
