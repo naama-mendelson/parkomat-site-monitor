@@ -192,6 +192,32 @@ async function cleanup() {
   add("⚠️ ואחרי השבתה — אותו אסימון נחסם", await call(victimTok, "GET", "/api/sites"), 403);
 
   // ============================================================
+  // ⚠️ השרשרת האמיתית: הזמנה → סיסמה זמנית → **כניסה בפועל**
+  // ============================================================
+  // כל שאר הבדיקות כאן יוצרות משתמשים עם סיסמה שאנחנו קובעים, ולכן אף
+  // אחת מהן לא נוגעת בחוליה שבאמת משמשת: הסיסמה ש-`auth/admin.js`
+  // **מייצר** ומחזיר פעם אחת, ושמישהו מקליד בפועל.
+  //
+  // ⚠️ אם `createUser` יפסיק להחזיר `tempPassword`, או יחזיר סיסמה שאינה
+  // זו שנקבעה, או ישכח `email_confirm` — כל הבדיקות האחרות יישארו ירוקות
+  // והמסך ימשיך להציג סיסמה. היא פשוט לא תעבוד, ואיש לא יידע עד שמישהו
+  // ינסה להיכנס איתה.
+  const fresh = `${STAMP}.flow@parkomat.co.il`;
+  const invRes = await f(`${API}/api/users/invite`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${mgrTok}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: fresh, role: "operator" }),
+  });
+  const invBody = await invRes.json().catch(() => ({}));
+  add("הזמנה מחזירה סיסמה זמנית", Boolean(invBody.tempPassword), true);
+
+  const freshLogin = await f(`${SB_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: fresh, password: invBody.tempPassword }),
+  });
+  add("⚠️ והמשתמש נכנס איתה בפועל", freshLogin.ok, true);
+
+  // ============================================================
   // מחיקה — ולא רק שהיא מחזירה 200
   // ============================================================
   const victim2 = `${STAMP}.del@parkomat.co.il`;
