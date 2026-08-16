@@ -17,9 +17,17 @@
 // ============================================================
 // מה נבדק
 // ============================================================
-//   1. @parkomat.co.il נכנס — **בלי הזמנה** — ומקבל 'operator' אוטומטית.
-//   2. דומיין זר נחסם.
-//   3. שורת app_users נוצרת לבד, ודרגה קיימת אינה נדרסת.
+//   1. מוזמן (parkomat_role נכתב **אחרי** ה-INSERT) נוצר — זה המקרה שחייב לעבור.
+//   2. הרשמה עצמית — אותה כתובת בדיוק, בלי תפקיד — נחסמת.
+//   3. דומיין זר נחסם.
+//   4. שורת app_users נוצרת, ודרגה קיימת אינה נדרסת.
+//
+// ⚠️ **מקרה 1 מדמה UPDATE אחרי INSERT ולא INSERT עם תפקיד, וזה מכוון.**
+// הגרסה הראשונה של הטריגר הנדחה קראה את `NEW`, ו-`NEW` הוא צילום של השורה
+// **בזמן ה-INSERT** — הוא אינו נקרא מחדש ב-commit. GoTrue כותב את
+// app_metadata ב-UPDATE שאחרי, ולכן הטריגר חסם **גם את ההזמנה**: ה-Admin
+// API החזיר 500. גרסה שכותבת את התפקיד כבר ב-INSERT הייתה עוברת את הבדיקה
+// הזו בשלמות ונשברת בפרודקשן.
 const db = require("../db/db");
 
 const SEED = "signupcheck";
@@ -30,14 +38,32 @@ async function cleanup() {
   await db.prepare(`DELETE FROM auth.users WHERE email LIKE '${SEED}%'`).run();
 }
 
-/** מדמה יצירת משתמש כפי ש-GoTrue עושה: INSERT ישיר ל-auth.users. */
-async function createAuthUser(email, id, appMeta = null) {
-  await db.prepare(
-    `INSERT INTO auth.users (id, instance_id, aud, role, email, raw_app_meta_data,
-                             raw_user_meta_data, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000000', 'authenticated',
-             'authenticated', ?, ?::jsonb, '{}'::jsonb, now(), now())`
-  ).run(id, email, appMeta ? JSON.stringify(appMeta) : null);
+// מה ש-GoTrue שולח ב-INSERT — **בשתי הדרכים**. נמדד בגשש על המופע האמיתי:
+// גם הרשמה עצמית וגם Admin API מייצרות בדיוק את זה, בלי parkomat_role.
+const GOTRUE_INSERT_META = { provider: "email", providers: ["email"] };
+
+/**
+ * מדמה יצירת משתמש כפי ש-GoTrue עושה.
+ * `invitedRole` — התפקיד שה-Admin API כותב ב-**UPDATE שאחרי** ה-INSERT.
+ *                 null = הרשמה עצמית, שאין אחריה UPDATE כזה.
+ */
+async function createAuthUser(email, id, invitedRole = null) {
+  await db.transaction(async () => {
+    await db.prepare(
+      `INSERT INTO auth.users (id, instance_id, aud, role, email, raw_app_meta_data,
+                               raw_user_meta_data, created_at, updated_at)
+       VALUES (?, '00000000-0000-0000-0000-000000000000', 'authenticated',
+               'authenticated', ?, ?::jsonb, '{}'::jsonb, now(), now())`
+    ).run(id, email, JSON.stringify(GOTRUE_INSERT_META));
+
+    if (invitedRole) {
+      await db.prepare(
+        `UPDATE auth.users
+            SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object('parkomat_role', ?::text)
+          WHERE id = ?`
+      ).run(invitedRole, id);
+    }
+  });
 }
 
 (async () => {
@@ -47,22 +73,22 @@ async function createAuthUser(email, id, appMeta = null) {
   const checks = [];
   const add = (name, got, want) => checks.push([name, got, want]);
 
-  // ---- 1. דומיין החברה, בלי הזמנה ----
+  // ---- 1. מוזמן ע"י מנהל — **חייב לעבור** ----
   const emailOk = `${SEED}-a@parkomat.co.il`;
   let created = true;
   try {
-    await createAuthUser(emailOk, uuid(1));
+    await createAuthUser(emailOk, uuid(1), "operator");
   } catch (e) {
     created = false;
     console.error("   יצירה נכשלה:", e.message);
   }
-  add("@parkomat.co.il נוצר בלי הזמנה", created, true);
+  add("מוזמן ע\"י מנהל נוצר", created, true);
 
   if (created) {
     const meta = await db.prepare(
       "SELECT raw_app_meta_data->>'parkomat_role' AS role FROM auth.users WHERE id = ?"
     ).get(uuid(1));
-    add("...וקיבל תפקיד אוטומטי", meta && meta.role, "operator");
+    add("...והתפקיד נשמר", meta && meta.role, "operator");
 
     const row = await db.prepare(
       "SELECT role, supabase_uid FROM app_users WHERE LOWER(email) = LOWER(?)"
@@ -72,22 +98,42 @@ async function createAuthUser(email, id, appMeta = null) {
     add("...ומקושרת ל-uid", row && row.supabase_uid, uuid(1));
   }
 
-  // ---- 2. דומיין זר ----
+  // ---- 2. הרשמה עצמית — **חייבת להיחסם** ----
+  // ⚠️ אותו דומיין בדיוק כמו מקרה 1. ההבדל היחיד הוא ההזמנה, וזו הנקודה:
+  // כתובת של החברה היא תנאי הכרחי ולא מספיק.
+  let selfBlocked = false;
+  try {
+    await createAuthUser(`${SEED}-self@parkomat.co.il`, uuid(4));
+  } catch {
+    selfBlocked = true;
+  }
+  add("הרשמה עצמית נחסמה", selfBlocked, true);
+
+  // ---- 3. דומיין זר ----
   let blocked = false;
   try {
-    await createAuthUser(`${SEED}-b@gmail.com`, uuid(2));
+    await createAuthUser(`${SEED}-b@gmail.com`, uuid(2), "operator");
   } catch {
     blocked = true;
   }
   add("דומיין זר נחסם", blocked, true);
 
-  // ---- 3. דרגה קיימת אינה נדרסת ----
+  // ---- 4. דרגה קיימת אינה נדרסת ----
   // מנהל שהוזמן מראש, ורק אחר כך נכנס בפעם הראשונה.
   const emailMgr = `${SEED}-c@parkomat.co.il`;
   await db.prepare(
     `INSERT INTO app_users (email, role, created_at) VALUES (?, 'manager', ?)`
   ).run(emailMgr, new Date().toISOString());
-  await createAuthUser(emailMgr, uuid(3));
+  // ⚠️ עטוף ב-try: כשהטריגר נשבר, יצירה שאמורה להצליח זורקת — ובלי העטיפה
+  // השער קורס עם stack trace במקום להדפיס ❌ על המקרה שנפל.
+  let mgrCreated = true;
+  try {
+    await createAuthUser(emailMgr, uuid(3), "manager");
+  } catch (e) {
+    mgrCreated = false;
+    console.error("   יצירת מנהל נכשלה:", e.message);
+  }
+  add("מנהל שהוזמן נוצר", mgrCreated, true);
 
   const mgr = await db.prepare(
     "SELECT role, supabase_uid FROM app_users WHERE LOWER(email) = LOWER(?)"

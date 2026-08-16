@@ -310,11 +310,17 @@ the table.
 
 ## Only company email addresses can be created
 
-A `BEFORE INSERT` trigger on `auth.users` calls `app.enforce_email_domain()` and rejects any
-address outside `app.allowed_email_domains()`. **Two domains are allowed on purpose** —
-`parkomat.co.il` and `parkomat.com` are both in real use, and allowing only one would have
-locked out the owner of the other. To change the list, edit the array in
-`db/security.postgres.sql` and restart; the file is the target state.
+A `BEFORE INSERT` trigger on `auth.users` calls `app.enforce_user_creation()` and rejects any
+address outside `app.allowed_email_domains()` — today **`parkomat.co.il` alone**. To change
+the list, edit the array in `db/security.postgres.sql` and restart; the file is the target
+state.
+
+⚠️ **The domain is a necessary condition, not a sufficient one.** It used to be sufficient:
+this same trigger injected `parkomat_role = 'operator'` into any row that arrived without
+one, so anyone with a company address could self-register and land as an operator. That was
+reversed — an operator now exists only because a manager added them — and the injection is
+gone. See *Users are created by invitation only* below; the two rules are one mechanism and
+reading either alone gives the wrong answer.
 
 It is a **database** trigger and not a check in `POST /api/users/invite`, because there are
 three ways a user gets created and the invite route is only one of them. The one that matters:
@@ -444,6 +450,21 @@ measured**: at INSERT time both paths produce a byte-identical row —
 GoTrue inserts the row and writes `app_metadata` *afterwards*, so BEFORE INSERT cannot tell
 self-signup from an Admin-API create — the requirement blocked the invite path too. A
 deferred constraint trigger runs at commit, where the difference does exist.
+
+⚠️ **And deferring alone is not enough — the trigger must `SELECT` the row, not read `NEW`.**
+`NEW` in a deferred trigger is a snapshot taken *at the INSERT*; Postgres does not re-read it
+at commit. So the version that deferred correctly and still checked `NEW` saw the same empty
+`app_metadata` as BEFORE INSERT and **blocked the invite path exactly as before** — the Admin
+API returned `500` with our own message. The working body is:
+
+```sql
+SELECT raw_app_meta_data ->> 'parkomat_role' INTO v_role
+  FROM auth.users WHERE id = NEW.id;
+```
+
+This is the whole reason `check-signup.js` case 1 writes the role in an `UPDATE` *after* the
+`INSERT` instead of inline. A gate that inserts the role directly passes against both the
+correct and the broken trigger, and the break only shows up in production.
 
 Forgery was tested, not assumed: `app_metadata` in the signup body, `parkomat_role` via
 `data`, via `options.data`, and `role`/`aud` overrides — all rejected. `app_metadata` is not
