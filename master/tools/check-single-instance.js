@@ -97,6 +97,53 @@ const TEST_KEYS = [0x74657374, 0x6c6f636b];   // "test" "lock"
   await lockClient.end().catch(() => {});
   add("...ו-backend יציב בין שאילתות", pidStable, true);
 
+  // ---- 5. ⚠️ ניתוק של חיבור הנעילה אינו מפיל את התהליך ----
+  // ============================================================
+  // באג אמיתי שהיה כאן, ולכן הבדיקה
+  // ============================================================
+  // `Client` של pg הוא EventEmitter. ניתוק בלי מאזין ל-'error' מפיל את **כל
+  // התהליך** על unhandled error. בגרסה הראשונה המאזין נרשם רק **אחרי**
+  // שאילתת הנעילה, כלומר כל ניתוק בזמנה הרג את השרת — מנגנון ההגנה כסיבת
+  // הקריסה.
+  //
+  // כאן זה נבדק בכוח: תופסים נעילה, הורגים את ה-backend שלה מבחוץ
+  // (`pg_terminate_backend`), וממתינים. אם המאזין חסר, התהליך הזה מת כאן
+  // ומעולם לא יגיע לטבלת התוצאות.
+  let survived = false;
+  const lock5 = await acquireSingleInstanceLock(URL_, TEST_KEYS).catch(() => null);
+  if (lock5) {
+    const killer = new Client({ connectionString: sessionUrlFor(URL_), ssl: { rejectUnauthorized: false } });
+    try {
+      await killer.connect();
+      // ⚠️ **מצומצם למפתח הבדיקה, ולא ל-application_name.** הגרסה הראשונה
+      // הרגה כל חיבור עם השם הזה — כלומר גם את הנעילה של **השרת החי**, בשקט,
+      // והשאירה את הפרודקשן בלי הגנה עד ההפעלה הבאה. בדיקה שמנטרלת את מה
+      // שהיא בודקת היא גרועה מאין בדיקה.
+      const killed = await killer.query(
+        `SELECT pg_terminate_backend(l.pid) AS ok
+           FROM pg_locks l
+          WHERE l.locktype = 'advisory' AND l.granted
+            AND l.classid = $1 AND l.objid = $2
+            AND l.pid <> pg_backend_pid()`, TEST_KEYS
+      );
+
+      // ⚠️ **אם לא נהרג כלום, המקרה נכשל ולא עובר.** הגרסה הראשונה סיננה לפי
+      // application_name — שנמחק ע"י ה-pooler ל-"Supavisor" — ולכן לא הרגה
+      // דבר, והבדיקה "עברה" בלי לבדוק שום דבר. זו בדיוק בדיקה שלילית שעוברת
+      // מהסיבה הלא נכונה, ובלי התנאי הזה אין שום דרך להבחין.
+      if (killed.rows.length === 0) {
+        console.error("   לא נהרג אף backend — הבדיקה לא בדקה כלום");
+      } else {
+        // שהות לאירוע ה-'error' להגיע ולהתפוצץ, אם אין מי שיתפוס אותו.
+        await new Promise((r) => setTimeout(r, 1500));
+        survived = true;
+      }
+    } catch { /* נשאר false */ }
+    await killer.end().catch(() => {});
+    await lock5().catch(() => {});
+  }
+  add("⚠️ ניתוק חיבור הנעילה אינו מפיל את התהליך", survived, true);
+
   console.log("בדיקה                                      בפועל       צפוי");
   let bad = 0;
   for (const [name, got, want] of checks) {
