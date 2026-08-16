@@ -4,7 +4,7 @@
 // הסתרה ב-UI אינה אבטחה, והשרת הוא זה שאוכף (requireAuth ב-routes.js).
 // אם ההחלטה תשתנה, המקום לשנות אותה הוא השרת, וכאן רק התצוגה תעקוב.
 import { useEffect, useState } from "react";
-import { inviteUser, fetchUsers, setUserActive } from "../../services/api";
+import { inviteUser, fetchUsers, setUserActive, setUserRole } from "../../services/api";
 import "./UsersPanel.css";
 
 function UsersPanel({ onClose }) {
@@ -20,6 +20,9 @@ function UsersPanel({ onClose }) {
   // איזה משתמש בתהליך עדכון — כדי לחסום לחיצה כפולה על אותה שורה בלבד,
   // ולא על כל הרשימה.
   const [updatingId, setUpdatingId] = useState(null);
+  // ⚠️ ברירת המחדל היא בקר ולא מנהל: שגיאת השמטה בטופס צריכה ליפול לצד
+  // המצמצם. מי שמזמין מנהל עושה זאת במודע.
+  const [inviteRole, setInviteRole] = useState("operator");
 
   async function load() {
     try {
@@ -43,7 +46,7 @@ function UsersPanel({ onClose }) {
     setInvited(null);
 
     try {
-      const res = await inviteUser(email.trim());
+      const res = await inviteUser(email.trim(), inviteRole);
       setInvited({ email: res.user.email, tempPassword: res.tempPassword });
       setEmail("");
       await load();
@@ -66,6 +69,21 @@ function UsersPanel({ onClose }) {
     setError(null);
     try {
       await setUserActive(user.id, !user.is_active);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  // ⚠️ השרת מסרב להוריד את המנהל הפעיל האחרון ואת המבצע עצמו, ומחזיר
+  // סיבה. הכפתור אינו מנסה לחזות זאת — הסתרה מלמדת שהכלל אינו קיים.
+  async function handleRole(user) {
+    setUpdatingId(user.id);
+    setError(null);
+    try {
+      await setUserRole(user.id, user.role === "manager" ? "operator" : "manager");
       await load();
     } catch (err) {
       setError(err.message);
@@ -98,6 +116,19 @@ function UsersPanel({ onClose }) {
           <button type="submit" disabled={busy || !email.trim()}>
             {busy ? "מצרף…" : "צרף"}
           </button>
+          {/* ⚠️ בורר ולא תיבת סימון: "מנהל" ו"בקר" הם שתי אפשרויות שוות
+              במשקל, ותיבה מסומנת/לא-מסומנת הייתה מציגה אחת מהן כברירת מחדל
+              שקופה. כאן שתיהן נאמרות. */}
+          <select
+            className="users-role-select"
+            value={inviteRole}
+            onChange={(e) => setInviteRole(e.target.value)}
+            disabled={busy}
+            aria-label="תפקיד המשתמש החדש"
+          >
+            <option value="operator">בקר</option>
+            <option value="manager">מנהל</option>
+          </select>
         </form>
 
         {error && <p className="users-error" role="alert">{error}</p>}
@@ -140,6 +171,16 @@ function UsersPanel({ onClose }) {
                     ? `נכנס ${new Date(u.lastSignInAt).toLocaleDateString("he-IL")}`
                     : "טרם נכנס"}
               </span>
+              <button
+                className="users-toggle"
+                onClick={() => handleRole(u)}
+                disabled={updatingId === u.id || u.is_active === false}
+                title={u.is_active === false
+                  ? "משתמש מושבת — יש להחזיר אותו לפעילות תחילה"
+                  : u.role === "manager" ? "הורד לבקר" : "העלה למנהל"}
+              >
+                {u.role === "manager" ? "↓ בקר" : "↑ מנהל"}
+              </button>
               <button
                 className="users-toggle"
                 onClick={() => handleToggle(u)}

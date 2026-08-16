@@ -2431,3 +2431,16 @@ async function setAppUserActive(id, active, byEmail) {
 module.exports.getAppUserByUid = getAppUserByUid;
 module.exports.listAppUsers = listAppUsers;
 module.exports.setAppUserActive = setAppUserActive;
+
+/**
+ * שינוי תפקיד. app_users הוא הסמכות — requireManager קורא ממנו,
+ * ו-app.current_app_role() במסד קורא ממנו.
+ *
+ * ⚠️ הכלל **מי** מותר לשנות חי ב-auth/deactivation.js ונבדק שם
+ * כהתנהגות. כאן רק הכתיבה.
+ */
+async function setAppUserRole(id, role) {
+  return db.prepare("UPDATE app_users SET role = ? WHERE id = ?").run(role, id);
+}
+
+module.exports.setAppUserRole = setAppUserRole;

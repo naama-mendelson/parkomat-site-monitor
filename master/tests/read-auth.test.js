@@ -266,7 +266,9 @@ test("⚠️ נתיב ההשבתה מאציל את הכלל למודול הטה�
   // מה שנשאר לבדוק כאן הוא רק החיווט: שהנתיב באמת מאציל אליו.
   const i = ROUTES.indexOf('app.patch("/api/users/:id"');
   assert.ok(i > 0, "נתיב ההשבתה קיים");
-  const body = ROUTES.slice(i, i + 2000);
+  // ⚠️ החלון רחב מספיק לשני הענפים. הוא היה 2000, וענף שינוי התפקיד
+  // שנוסף לפניו דחף את canDeactivate החוצה — הבדיקה נכשלה על קוד תקין.
+  const body = ROUTES.slice(i, i + 4000);
   assert.ok(body.includes("canDeactivate("), "הנתיב חייב להאציל את ההחלטה");
   assert.ok(body.includes("verdict.allowed"), "ולכבד את התשובה");
 });
@@ -356,4 +358,76 @@ test("⚠️ כשל בשליפת זמני הכניסה אינו מפיל את ה
   const before = body.slice(0, admin);
   const tries = (before.match(/try \{/g) || []).length;
   assert.ok(tries >= 2, "הקריאה החיצונית עטופה ב-try נפרד");
+});
+
+// ============================================================
+// שינוי תפקיד — אותה סכנה כמו השבתה, ולכן אותם שומרים
+// ============================================================
+// ⚠️ **הורדת מנהל לבקר מסירה את יכולת הניהול בדיוק כמו השבתה.** כלל שמגן
+// רק על ההשבתה משאיר דלת פתוחה: מורידים את המנהל האחרון לבקר, והמערכת
+// נשארת בלי אף אחד שיכול להחזיר — בדיוק המצב שהשומר השני נבנה למנוע.
+const { canChangeRole } = require("../auth/deactivation");
+
+const R = (id, role, active = true) => ({ id, role, is_active: active });
+
+test("העלאה לתפקיד מנהל תמיד מותרת", () => {
+  // היא אינה מפחיתה הרשאות מאיש.
+  assert.equal(canChangeRole([R(1, "manager"), R(2, "operator")], 2, 1, "manager").allowed, true);
+});
+
+test("⚠️ אי אפשר להוריד את המנהל הפעיל האחרון", () => {
+  const v = canChangeRole([R(1, "manager"), R(2, "operator")], 1, 2, "operator");
+  assert.equal(v.allowed, false);
+  assert.match(v.reason, /האחרון/);
+});
+
+test("⚠️ מנהל אינו מוריד את עצמו", () => {
+  const v = canChangeRole([R(1, "manager"), R(2, "manager")], 1, 1, "operator");
+  assert.equal(v.allowed, false);
+  assert.match(v.reason, /עצמך/);
+});
+
+test("מנהל אחד מתוך שניים ניתן להורדה", () => {
+  assert.equal(canChangeRole([R(1, "manager"), R(2, "manager")], 2, 1, "operator").allowed, true);
+});
+
+test("⚠️ מנהל מושבת אינו נספר כמנהל פעיל", () => {
+  // אחרת שני מנהלים שאחד מהם מושבת נראים כשניים, והאחרון יורד גם הוא.
+  const users = [R(1, "manager"), R(2, "manager", false), R(3, "operator")];
+  assert.equal(canChangeRole(users, 1, 3, "operator").allowed, false);
+});
+
+test("תפקיד שאינו ברשימה נדחה", () => {
+  // ⚠️ תפקיד שאינו ב-CHECK של app_users היה יוצר משתמש
+  // ש-app.current_app_role() אינה מזהה — מישהו שאיש לא יודע מה מותר לו.
+  for (const bad of ["admin", "supervisor", "", null]) {
+    assert.equal(canChangeRole([R(1, "manager"), R(2, "operator")], 2, 1, bad).allowed, false);
+  }
+});
+
+test("שינוי לתפקיד שכבר קיים נדחה", () => {
+  assert.equal(canChangeRole([R(1, "manager"), R(2, "operator")], 2, 1, "operator").allowed, false);
+});
+
+test("⚠️ ההזמנה מעבירה תפקיד, וברירת המחדל היא בקר", () => {
+  // ⚠️ **הגרסה הראשונה של הבדיקה הזו חיפשה /role/ באותיות קטנות**, והקוד
+  // משתמש ב-wantRole. היא נכשלה על קוד תקין — הבדיקה הייתה שגויה, לא
+  // המימוש. בדיקה שנשענת על שם משתנה מסוים שברירית מטבעה.
+  //
+  // מה שחשוב הוא ההתנהגות: התפקיד עובר, וכל ערך שאינו manager נופל לבקר.
+  const i = ROUTES.indexOf('adminUsers.createUser(');
+  assert.ok(i > 0, "הקריאה קיימת");
+
+  const around = ROUTES.slice(Math.max(0, i - 400), i + 200);
+  assert.ok(around.includes('"manager" ? "manager" : "operator"')
+    || around.includes("=== \"manager\""),
+    "התפקיד נגזר מהבקשה מול רשימה סגורה");
+  assert.ok(around.includes('"operator"'), "ברירת המחדל היא בקר");
+});
+test("⚠️ PATCH מקבל is_active או role — לא שניהם", () => {
+  // חצי עדכון (התפקיד השתנה וההשבתה נדחתה) הוא מצב שאיש לא ביקש.
+  const i = ROUTES.indexOf('app.patch("/api/users/:id"');
+  const body = ROUTES.slice(i, i + 2500);
+  assert.ok(body.includes("canChangeRole("), "מאציל את הכלל");
+  assert.ok(body.includes("לא שניהם"), "דוחה שליחה כפולה");
 });

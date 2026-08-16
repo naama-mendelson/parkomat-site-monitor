@@ -53,16 +53,22 @@ function tempPassword() {
  * יוצר משתמש חדש.
  *
  * ============================================================
- * התפקיד תמיד operator — וזו הגנה, לא ברירת מחדל
+ * התפקיד נקבע בהזמנה — וההגנה שהייתה כאן עברה מקום
  * ============================================================
- * ההזמנה פתוחה לכל משתמש מחובר (החלטת מוצר). אם המזמין היה יכול לקבוע
- * תפקיד, כל בקר היה יכול ליצור לעצמו חשבון שני בתפקיד מנהל ולעלות בדרגה
- * — הסלמת הרשאות בלחיצה אחת. קביעת תפקיד נשארת ב-Admin API של Supabase,
- * כלומר דורשת את המפתח ידנית.
+ * ⚠️ קודם התפקיד היה **תמיד** operator, והנימוק היה מדויק לזמנו:
+ * ההזמנה הייתה פתוחה לכל משתמש מחובר, ולכן בחירת תפקיד הייתה מאפשרת
+ * לכל בקר ליצור לעצמו חשבון שני בתפקיד מנהל — הסלמת הרשאות בלחיצה.
+ *
+ * ⚠️ **הנחת היסוד הזו כבר אינה נכונה.** הנתיב נושא היום `requireManager`,
+ * כלומר רק מנהל מגיע לכאן מלכתחילה. ההגנה לא הוסרה — היא עברה לשומר
+ * שאוכף אותה במקום אחד במקום להיות מקודדת בערך קבוע.
+ *
+ * ⚠️ ברירת המחדל נשארת operator: הזמנה בלי תפקיד מפורש יוצרת בקר, לא
+ * מנהל. שגיאת השמטה צריכה ליפול לצד המצמצם.
  *
  * @returns {{ok: true, user, tempPassword} | {ok: false, error, status}}
  */
-async function createUser(email) {
+async function createUser(email, role = "operator") {
   if (!isConfigured()) {
     return { ok: false, status: 503, error: "ניהול משתמשים אינו מוגדר בשרת" };
   }
@@ -81,7 +87,10 @@ async function createUser(email) {
       email: clean,
       password,
       email_confirm: true,          // אין SMTP אמין — ראה ההסבר בראש הקובץ
-      app_metadata: { parkomat_role: "operator" },
+      // ⚠️ רשימה סגורה ולא הערך כפי שהתקבל: תפקיד שאינו קיים ב-CHECK של
+      // app_users היה יוצר משתמש ש-app.current_app_role() אינה מזהה,
+      // כלומר מישהו שאיש אינו יודע מה מותר לו.
+      app_metadata: { parkomat_role: role === "manager" ? "manager" : "operator" },
     }),
   });
 
@@ -154,4 +163,23 @@ async function listUsers() {
   return { ok: true, users };
 }
 
-module.exports = { isConfigured, createUser, listUsers };
+
+/**
+ * מעדכן את התפקיד ב-app_metadata של Supabase.
+ *
+ * ⚠️ **זה מה שנכנס לאסימון הבא**, וממנו RLS קורא את התפקיד. app_users
+ * לבדו אינו מספיק: הוא מה שהשרת בודק, אבל מדיניות שרצה ב-PostgREST
+ * רואה רק את התביעה.
+ *
+ * ⚠️ ולכן הפער נסגר רק כשהאסימון מתחדש — עד שעה. זה מקובל בכיוון
+ * **העלאה** (מנהל חדש ימתין), ולכן הורדה נאכפת בשרת מיד דרך app_users.
+ */
+async function setRole(supabaseUid, role) {
+  if (!isConfigured()) throw new Error("ניהול משתמשים אינו מוגדר בשרת");
+  const { ok, status } = await adminFetch(`/admin/users/${supabaseUid}`, {
+    method: "PUT",
+    body: JSON.stringify({ app_metadata: { parkomat_role: role } }),
+  });
+  if (!ok) throw new Error(`Supabase החזיר ${status}`);
+}
+module.exports = { isConfigured, createUser, listUsers, setRole };

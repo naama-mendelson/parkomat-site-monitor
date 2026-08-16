@@ -44,4 +44,43 @@ function canDeactivate(users, targetId, actorId) {
   return { allowed: true };
 }
 
-module.exports = { canDeactivate };
+
+/**
+ * האם מותר לשנות תפקיד.
+ *
+ * ⚠️ **הורדת מנהל לבקר היא בדיוק אותה סכנה כמו השבתתו** — שתיהן מסירות
+ * את יכולת הניהול. כלל שמגן רק על ההשבתה משאיר דלת פתוחה: מורידים את
+ * המנהל האחרון לבקר, והמערכת נשארת בלי אף אחד שיכול להחזיר.
+ *
+ * ⚠️ והורדה **עצמית** חסומה מאותה סיבה שהשבתה עצמית חסומה: אין מי
+ * שיחזיר.
+ *
+ * העלאה לתפקיד מנהל תמיד מותרת — היא אינה מפחיתה הרשאות מאיש.
+ */
+function canChangeRole(users, targetId, actorId, nextRole) {
+  const target = (users || []).find((u) => u.id === targetId);
+  if (!target) return { allowed: false, reason: "משתמש לא נמצא" };
+
+  if (nextRole !== "operator" && nextRole !== "manager") {
+    return { allowed: false, reason: "תפקיד לא תקין" };
+  }
+  if (target.role === nextRole) {
+    return { allowed: false, reason: "זה כבר התפקיד שלו" };
+  }
+
+  // העלאה — תמיד מותרת.
+  if (nextRole === "manager") return { allowed: true };
+
+  // מכאן: הורדה ממנהל לבקר.
+  if (targetId === actorId) {
+    return { allowed: false, reason: "אי אפשר להוריד את עצמך מתפקיד מנהל" };
+  }
+
+  const activeManagers = users.filter((u) => u.role === "manager" && u.is_active).length;
+  if (activeManagers <= 1) {
+    return { allowed: false, reason: "לא ניתן להוריד את המנהל הפעיל האחרון" };
+  }
+
+  return { allowed: true };
+}
+module.exports = { canDeactivate, canChangeRole };

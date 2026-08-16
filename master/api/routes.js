@@ -16,10 +16,10 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         getRecentErrors, getActiveMaintenances,
         ensureAdminCode, verifyAdminCode, setAdminCode,
         updateSite, deleteSite ,
-  getAppUserByUid, listAppUsers, setAppUserActive } = require("../db/queries");
+  getAppUserByUid, listAppUsers, setAppUserActive   , setAppUserRole } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
-const { canDeactivate } = require("../auth/deactivation");
+const { canDeactivate, canChangeRole } = require("../auth/deactivation");
 // שכבת האימות. מאחורי seam — ראה auth/provider.js. היום היא מאמתת בלבד
 // (verifyToken) ואינה מנפיקה: ההנפקה במצב Supabase קורית בדפדפן.
 const auth = require("../auth/provider");
@@ -395,7 +395,10 @@ function inviteRateLimit(req, res, next) {
 // אין הסלמת הרשאות; אבל operator רואה את כל נתוני האתרים.
 app.post("/api/users/invite", requireAuth, requireManager, inviteRateLimit, async (req, res) => {
   try {
-    const result = await adminUsers.createUser(req.body?.email);
+    // ⚠️ ברירת המחדל היא בקר, וכל ערך שאינו "manager" נופל אליה. שגיאת
+        // השמטה או הקלדה בטופס צריכה ליפול לצד המצמצם — לא ליצור מנהל.
+        const wantRole = req.body?.role === "manager" ? "manager" : "operator";
+        const result = await adminUsers.createUser(req.body?.email, wantRole);
 
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
@@ -487,7 +490,37 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
       return res.status(400).json({ error: "מזהה משתמש לא תקין" });
     }
 
-    const { is_active } = req.body || {};
+    const { is_active, role } = req.body || {};
+
+    // ⚠️ **שדה אחד לכל בקשה.** שליחת שניהם הייתה מחייבת להחליט מה קורה
+    // כששינוי אחד מותר והשני נדחה — חצי עדכון שאיש לא ביקש. שתי פעולות
+    // נפרדות הן גם מה שהמסך עושה בפועל.
+    if (is_active !== undefined && role !== undefined) {
+      return res.status(400).json({ error: "יש לשלוח is_active או role, לא שניהם" });
+    }
+    // ---- שינוי תפקיד ----
+    if (role !== undefined) {
+      const users = await listAppUsers();
+      const verdict = canChangeRole(users, id, req.actor.appUserId, role);
+      if (!verdict.allowed) return res.status(400).json({ error: verdict.reason });
+
+      // ⚠️ **שני מקומות, ובסדר הזה.** app_users הוא הסמכות (requireManager
+      // קורא ממנו), ו-app_metadata הוא מה שנכנס לאסימון הבא ומזין את RLS.
+      // עדכון של אחד בלבד היה יוצר משתמש שהשרת והמסד חלוקים עליו.
+      await setAppUserRole(id, role);
+      const target = users.find((u) => u.id === id);
+      await adminUsers.setRole(target.supabase_uid, role).catch((e) => {
+        // ⚠️ נכשל ב-Supabase אבל הצליח אצלנו: השרת כבר אוכף נכון, ו-RLS
+        // יתיישר באסימון הבא. נרשם ואינו מפיל — היפוך הסדר היה משאיר
+        // את המצב ההפוך, הגרוע יותר.
+        console.error("[api] עדכון התפקיד ב-Supabase נכשל:", e.message);
+      });
+
+      console.log(`[api] ${target.email} → ${role} בידי ${req.actor.name}`);
+      return res.json({ ok: true, id, role });
+    }
+
+    // ---- השבתה / החזרה ----
     if (typeof is_active !== "boolean") {
       return res.status(400).json({ error: "is_active חייב להיות true או false" });
     }

@@ -122,11 +122,11 @@ async function authHeaders() {
  * Supabase בברירת מחדל מוגבל לבודדים לשעה, ולעיתים רק לחברי הצוות — כלומר
  * מייל שנשלח ולא מגיע, בלי שגיאה. ראה master/auth/admin.js.
  */
-export async function inviteUser(email) {
+export async function inviteUser(email, role = "operator") {
   const res = await fetch(`${BASE}/users/invite`, {
     method: "POST",
     headers: await authHeaders(),
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, role }),
   });
   if (!res.ok) await parseError(res, "הזמנת המשתמש נכשלה");
   return res.json();
@@ -155,6 +155,18 @@ export async function setUserActive(id, isActive) {
     body: JSON.stringify({ is_active: isActive }),
   });
   if (!res.ok) await parseError(res, "עדכון המשתמש נכשל");
+  return res.json();
+}
+
+// ⚠️ שדה אחד לכל בקשה — השרת דוחה שליחה של שניהם. חצי עדכון (התפקיד
+// השתנה וההשבתה נדחתה) הוא מצב שאיש לא ביקש ואי אפשר להסביר.
+export async function setUserRole(id, role) {
+  const res = await fetch(`${BASE}/users/${id}`, {
+    method: "PATCH",
+    headers: await authHeaders(),
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) await parseError(res, "שינוי התפקיד נכשל");
   return res.json();
 }
 function adminHeaders() {
