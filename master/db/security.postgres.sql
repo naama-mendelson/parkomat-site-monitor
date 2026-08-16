@@ -528,6 +528,17 @@ CREATE POLICY events_read_authenticated ON events
   FOR SELECT TO authenticated USING (app.is_active_user());
 
 -- ============================================================
+-- suppressed_faults — תקלות שהושמטו בזמן תחזוקה
+-- ============================================================
+-- ⚠️ **בלי המדיניות הזו הזרוע הישירה מציגה לוג קצר יותר — בשקט.** Supabase
+-- מפעיל RLS על כל טבלה חדשה אוטומטית (rls_auto_enable), וטבלה עם RLS ובלי
+-- מדיניות מחזירה **אפס שורות** ולא שגיאה. השרת אינו מושפע (postgres הוא
+-- rolbypassrls), ולכן הפער היה מתגלה רק ביום שמישהו הופך את המתג.
+DROP POLICY IF EXISTS suppressed_faults_read_authenticated ON suppressed_faults;
+CREATE POLICY suppressed_faults_read_authenticated ON suppressed_faults
+  FOR SELECT TO authenticated USING (app.is_active_user());
+
+-- ============================================================
 -- settings — **אין מדיניות, וזה מכוון**
 -- ============================================================
 -- הטבלה מחזיקה את גיבוב קוד המנהל (ADMIN_KEY). קריאה שלה ע"י הדשבורד
@@ -541,8 +552,12 @@ CREATE POLICY events_read_authenticated ON events
 -- מותר לגשת לטבלה בכלל. בלי זה התוצאה היא permission denied ולא אפס שורות.
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA app TO authenticated;
+-- ⚠️ suppressed_faults ברשימה: GRANT ו-POLICY הם שני שלבים נפרדים, ובלי
+-- ה-GRANT התוצאה היא permission denied ולא אפס שורות — כלומר הלוג הישיר
+-- נופל כולו, ולא רק מחסיר שורות.
 GRANT SELECT ON sites, status_history, operations,
-                maintenance_windows, monthly_summary, events TO authenticated;
+                maintenance_windows, monthly_summary, events,
+                suppressed_faults TO authenticated;
 
 -- פונקציות המדדים — הדשבורד יקרא להן ישירות דרך PostgREST.
 -- הן STABLE ולא נוגעות ב-auth.*, ולכן הן רצות תחת המדיניות שלמעלה.

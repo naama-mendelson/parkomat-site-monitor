@@ -915,3 +915,70 @@ test("⚠️ המשכים אינם מתערבבים בין אתרים בעלי �
   assert.equal(bySite[1].durations.entry.averageSeconds, 100, "האיטי נשאר איטי");
   assert.equal(bySite[2].durations.entry.averageSeconds, 10, "והמהיר נשאר מהיר");
 });
+
+// ============================================================
+// תקלות שהושמטו בזמן תחזוקה — נראות בלוג, ולא נספרות בשום מדד
+// ============================================================
+// ⚠️ עד היום הן נזרקו בקליטה ולא נרשמו בשום מקום: מי שהיה בשטח וראה
+// תקלה חיפש אותה בלוג ולא מצא כלום. "לא נספרת" ו"לא קרתה" אינם אותו
+// דבר, והמסך הציג את השני.
+const SUPPRESSED = [
+  { site_id: 1, occurred_at: "2026-07-20T10:00:00.000Z", fault_text: "מיטה 3 - חיישן", reason: "plc" },
+  { site_id: 1, occurred_at: "2026-07-20T11:00:00.000Z", fault_text: null, reason: "window" },
+];
+
+test("⚠️ תקלה בזמן תחזוקה מופיעה בלוג", () => {
+  const log = buildActivityLog({
+    ops: [], states: [], maint: [], suppressed: SUPPRESSED, limit: 50,
+  });
+  const rows = log.entries.filter((e) => e.kind === "suppressedFault");
+  assert.equal(rows.length, 2, "שתיהן חייבות להופיע");
+  assert.equal(rows[0].faultText, null, "החדשה ראשונה — מהחדש לישן");
+  assert.equal(rows[0].reason, "window");
+});
+
+test("⚠️ אבל **אינה** נספרת במסנן התקלות", () => {
+  // זו הבדיקה המרכזית: מונה שסופר אותן היה מציג מספר שסותר את אחוז הכשל
+  // שלידו — בדיוק הסתירה שהפרדת הטבלאות נועדה למנוע.
+  const log = buildActivityLog({
+    ops: [], states: [], maint: [], suppressed: SUPPRESSED,
+    limit: 50, filter: "error",
+  });
+  assert.equal(log.entries.length, 0, "מסנן 'תקלות' לא רואה אותן");
+});
+
+test("⚠️ ואינה נספרת גם במסנני התחזוקה", () => {
+  // הן קרו **בזמן** תחזוקה, אבל אינן אירוע תחזוקה. צירופן לשם היה מנפח
+  // את "כמה פעמים טיפלו" במשהו שאיש לא עשה.
+  for (const filter of ["maintenance", "repair"]) {
+    const log = buildActivityLog({
+      ops: [], states: [], maint: [], suppressed: SUPPRESSED, limit: 50, filter,
+    });
+    assert.equal(log.entries.length, 0, `מסנן ${filter} לא רואה אותן`);
+  }
+});
+
+test("⚠️ למסנן שלהן — וכל השאר נשאר בחוץ", () => {
+  const log = buildActivityLog({
+    ops: [], states: [], maint: [],
+    suppressed: SUPPRESSED,
+    limit: 50, filter: "suppressed",
+  });
+  assert.equal(log.entries.length, 2);
+  assert.ok(log.entries.every((e) => e.kind === "suppressedFault"));
+});
+
+test("⚠️ ואינן משנות את התובנות — לא פעולות, לא תקלות", () => {
+  // computeInsights אינו מקבל אותן כלל. הבדיקה מוודאת שהחתימה לא השתנתה
+  // בטעות: אם מישהו יחווט אותן לשם, אחוז הכשל יזוז בלי שאיש יבחין.
+  const a = insightsOf([cop("20", "10"), cop("20", "11")]);
+  const b = insightsOf([cop("20", "10"), cop("20", "11")]);
+  assert.deepEqual(a.activity, b.activity);
+  assert.equal(a.errors?.total ?? 0, b.errors?.total ?? 0);
+});
+
+test("בלי תקלות מושמטות — הלוג מתנהג כמו קודם", () => {
+  // ⚠️ ברירת המחדל היא [], כי כל הקוראים הקיימים אינם מעבירים את השדה.
+  const log = buildActivityLog({ ops: [], states: [], maint: [], limit: 50 });
+  assert.equal(log.entries.length, 0);
+});

@@ -1266,7 +1266,7 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
   // operation, ולכן בציר המאוחד כל כניסת רכב הופיעה פעמיים. לכן נשלף הכל,
   // ו-LOG_FILTERS מסתיר את 'operating' בכל מסנן חוץ מ-"שינויי מצב" (שם זה
   // בדיוק התוכן). שום חישוב (זמינות/אחוז כשל) לא נגזר מכאן.
-  const [ops, states, maint] = await Promise.all([
+  const [ops, states, maint, suppressed] = await Promise.all([
     db.prepare(
       // id נשלף כי superseded_by מצביע עליו: הפתיחה שאיחדה ניסיון קודם חייבת
       // להיעלם מהציר יחד עם הסגירה שהיא איחדה, אחרת נשארת התחלה בלי סיום.
@@ -1291,10 +1291,19 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
        WHERE site_id = ? AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC LIMIT ?`
     ).all(siteId, from, to, LOG_FETCH_CAP),
+
+    // ⚠️ תקלות שהושמטו מהמדדים בזמן תחזוקה. הן **אינן** ב-status_history
+    // בכוונה, ולכן הן חייבות שליפה נפרדת — ואף מדד אינו קורא מהטבלה הזו,
+    // כך שאחוז הכשל אינו יכול להשתנות מהן.
+    db.prepare(
+      `SELECT site_id, occurred_at, fault_text, reason FROM suppressed_faults
+       WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
+       ORDER BY occurred_at DESC LIMIT ?`
+    ).all(siteId, from, to, LOG_FETCH_CAP),
   ]);
 
   return buildActivityLog({
-    ops, states, maint, limit, offset, filter, card,
+    ops, states, maint, suppressed, limit, offset, filter, card,
     capped: ops.length >= LOG_FETCH_CAP || states.length >= LOG_FETCH_CAP,
   });
 }
@@ -1302,7 +1311,7 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
 // אותו לוג פעילות, אך מאחד את *כל* האתרים (מנהל כללי → "כל האתרים"). כל שורה
 // נושאת את שם האתר להצגה. מספר השאילתות קבוע (עקבי עם מדיניות ה-N+1).
 async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter = "all", card = null }) {
-  const [ops, states, maint] = await Promise.all([
+  const [ops, states, maint, suppressed] = await Promise.all([
     db.prepare(
       `SELECT o.id, o.site_id, s.site_name, o.start_end, o.entry_exit, o.card_number, o.is_anomaly, o.superseded_by, o.state, o.occurred_at
        FROM operations o JOIN sites s ON o.site_id = s.id
@@ -1323,10 +1332,18 @@ async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter 
        WHERE w.started_at >= ? AND w.started_at < ?
        ORDER BY w.started_at DESC LIMIT ?`
     ).all(from, to, LOG_FETCH_CAP),
+
+    // ראה ההערה ב-getActivityLog: טבלה נפרדת, ואף מדד אינו קורא ממנה.
+    db.prepare(
+      `SELECT f.site_id, s.site_name, f.occurred_at, f.fault_text, f.reason
+       FROM suppressed_faults f JOIN sites s ON f.site_id = s.id
+       WHERE f.occurred_at >= ? AND f.occurred_at < ?
+       ORDER BY f.occurred_at DESC LIMIT ?`
+    ).all(from, to, LOG_FETCH_CAP),
   ]);
 
   return buildActivityLog({
-    ops, states, maint, limit, offset, filter, card,
+    ops, states, maint, suppressed, limit, offset, filter, card,
     capped: ops.length >= LOG_FETCH_CAP || states.length >= LOG_FETCH_CAP,
   });
 }
@@ -2512,3 +2529,44 @@ async function deleteAppUser(id) {
 }
 
 module.exports.deleteAppUser = deleteAppUser;
+
+// ============================================================
+// תקלות שהושמטו בזמן תחזוקה
+// ============================================================
+// ⚠️ **אף מדד אינו קורא מהטבלה הזו, וזו התכונה המרכזית שלה.** אחוז הכשל,
+// הזמינות והפילוחים לא יכולים להשתנות ממנה — לא היום ולא בשינוי עתידי
+// שמישהו ישכח לסנן בו. היא נקראת אך ורק בלוג הפעילות.
+//
+// ראה ההסבר המלא ב-schema.postgres.sql.
+
+/**
+ * רושם תקלה שהגיעה בזמן תחזוקה ולכן הושמטה מהמדדים.
+ *
+ * ⚠️ `ON CONFLICT DO NOTHING` ולא UPSERT: מסירה חוזרת של QoS-1 היא מקרה
+ * רגיל ב-MQTT. עדכון היה יכול לדרוס תיאור תקין בתיאור ריק ממסירה שנייה.
+ */
+async function insertSuppressedFault({ siteId, occurredAt, faultText, reason }) {
+  return db.prepare(
+    `INSERT INTO suppressed_faults (site_id, occurred_at, fault_text, reason, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (site_id, occurred_at) DO NOTHING`
+  ).run(siteId, occurredAt, faultText ?? null, reason, new Date().toISOString());
+}
+
+/** תקלות מושמטות בטווח — ללוג הפעילות בלבד. */
+async function getSuppressedFaults(siteIds, { from, to }) {
+  const all = siteIds === null;
+  const holes = all ? "TRUE" : `site_id IN (${siteIds.map(() => "?").join(",")})`;
+  const params = all ? [] : siteIds;
+
+  return db.prepare(
+    `SELECT f.site_id, f.occurred_at, f.fault_text, f.reason, s.site_name
+       FROM suppressed_faults f
+       JOIN sites s ON s.id = f.site_id
+      WHERE ${holes} AND f.occurred_at >= ? AND f.occurred_at < ?
+      ORDER BY f.occurred_at ASC`
+  ).all(...params, from, to);
+}
+
+module.exports.insertSuppressedFault = insertSuppressedFault;
+module.exports.getSuppressedFaults = getSuppressedFaults;

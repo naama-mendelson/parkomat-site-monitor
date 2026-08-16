@@ -85,7 +85,18 @@ function compare(label, server, direct) {
 
   for (const period of ["week", "month", "year"]) {
     const { range } = resolvePeriod(period);
-    const to = new Date().toISOString();
+    // ============================================================
+    // ⚠️ חלון **סגור**, ולא "עד עכשיו" — וזה תיקון של הפכפכות אמיתית
+    // ============================================================
+    // שתי הזרועות נקראות ברצף, ולכן הודעה שנכנסת בין הקריאה הראשונה
+    // לשנייה נראית רק לשנייה מהן. נמדד: 83 מול 82 בהרצה אחת, ואפס
+    // הבדלים בשתי ההרצות שאחריה — על אותו קוד בדיוק.
+    //
+    // שער שנופל באקראי מלמד להתעלם ממנו, וזה גרוע משער שאינו קיים.
+    // לכן הקצה נסגר כמה שניות אחורה: פעולות שנקלטות ממש עכשיו נושאות
+    // occurred_at של עכשיו, ומחוץ לחלון שתי הזרועות רואות בדיוק אותו דבר.
+    const PARITY_LAG_MS = 15_000;
+    const to = new Date(Date.now() - PARITY_LAG_MS).toISOString();
     const from = range.from;
 
     console.log(`\n=== מסך הבקרה — ${period} ===`);
@@ -110,7 +121,7 @@ function compare(label, server, direct) {
              FROM maintenance_windows m JOIN sites s ON s.id = m.site_id
             WHERE m.cancelled_at IS NULL AND m.expires_at > ?
             ORDER BY m.expires_at ASC`
-        ).all(new Date().toISOString()),
+        ).all(to),
       ]);
 
     const dir = toSupervisorShape({

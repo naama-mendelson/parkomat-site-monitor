@@ -124,6 +124,16 @@ export const LOG_FILTERS = {
     (e.kind === "status" && e.status === "error") ||
     (e.kind === "operation" && e.interruptedBy === "error"),
 
+  // ==========================================================
+  // ⚠️ תקלות בזמן תחזוקה — מסנן משלהן, ולא חלק מ"תקלות"
+  // ==========================================================
+  // הן אינן נספרות בשום מדד, ולכן הכללתן במונה ה"תקלות" הייתה מציגה
+  // מספר שסותר את אחוז הכשל שלידו. ומצד שני הן אינן אירוע תחזוקה —
+  // איש לא **עשה** כלום — ולכן גם המסננים ההם אינם מקום להן.
+  //
+  // מי ששואל "מה קרה בזמן שהמתקן היה בתחזוקה" שואל שאלה שלישית, ומגיע לכאן.
+  suppressed: (e) => e.kind === "suppressedFault",
+
   // ניתוקים — אירוע תפעולי בפני עצמו, ובלוג המצרף הוא נבלע בין אלפי פעולות.
   no_comm: (e) => e.kind === "status" && e.status === "no_comm",
 
@@ -139,7 +149,7 @@ export const LOG_FILTERS = {
 // תופסת, דירוג הפוך, חותם שלא אומץ) נראית זהה לנתון חסר. הבדיקות אוחזות
 // בציר הגולמי ובודקות אותו ישירות, כי מסנן שרץ ביניהן היה מסתיר בדיוק את
 // השורות שהן באות לאמת.
-export function buildTimeline({ ops, states, maint }) {
+export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   const secondsBetween = (a, b) =>
     a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null;
 
@@ -455,6 +465,25 @@ export function buildTimeline({ ops, states, maint }) {
         explainedByOp: !!paired && REDUNDANT.has(s.status),
       };
     }),
+    // ============================================================
+    // ⚠️ תקלות שהושמטו בזמן תחזוקה — נראות, ולא נספרות
+    // ============================================================
+    // הן אינן ב-status_history בכוונה: שורת error שם הייתה סוגרת את מקטע
+    // התחזוקה ומשנה את הזמינות. הן מגיעות מטבלה נפרדת שאף מדד אינו קורא
+    // ממנה, ולכן **אחוז הכשל אינו יכול להשתנות מהן**.
+    //
+    // ⚠️ ו-kind נפרד ולא status:"error": מסנן ה"תקלות" סופר אירועים,
+    // והכללתן שם הייתה מציגה מספר שסותר את אחוז הכשל שלידו — בדיוק
+    // הסתירה שהפרדת הטבלאות נועדה למנוע.
+    ...suppressed.map((f) => ({
+      kind: "suppressedFault",
+      at: f.occurred_at,
+      faultText: f.fault_text ?? null,
+      // 'window' = מישהו לחץ על הכפתור · 'plc' = הבקר לא באוטומט.
+      // שתי מסקנות שונות, ולכן הלוג אומר איזו מהן.
+      reason: f.reason,
+      siteName: f.site_name ?? null,
+    })),
     ...maint.map((m) => ({
       kind: "maintenance",
       at: m.started_at,
@@ -476,10 +505,10 @@ export function buildTimeline({ ops, states, maint }) {
  * הציר המלא → עמוד מסונן + מונים. זו השכבה שה-API מחזיר.
  */
 export function buildActivityLog({
-  ops, states, maint, limit,
+  ops, states, maint, suppressed = [], limit,
   offset = 0, filter = "all", card = null, capped = false,
 }) {
-  const all = buildTimeline({ ops, states, maint });
+  const all = buildTimeline({ ops, states, maint, suppressed });
 
   // ============================================================
   // הסינון עבר לכאן — והחיתוך חייב לבוא *אחריו*

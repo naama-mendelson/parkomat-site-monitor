@@ -1,6 +1,7 @@
 // ingestion/state-handler.js — מטפל בהודעת state: מעדכן מצב נוכחי + היסטוריה
 
-const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance } = require("../db/queries");
+const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance,
+        insertSuppressedFault } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
 // ⚠️ מודול טהור בלי תלויות — כך הוא נבדק בלי מסד. ראה fault-text.js.
@@ -35,19 +36,50 @@ async function handleState(site, data) {
   }
 
   // ==========================================================
-  // מצב תחזוקה גובר על הכל — תקלה בזמן תחזוקה מושמטת לחלוטין
+  // מצב תחזוקה גובר על הכל — מהמדדים. **לא מהידיעה.**
   // ==========================================================
   // אם האתר בתחזוקה — חלון ידני פעיל (מה-dashboard) *או* מצב תחזוקה שדווח
-  // מהבקר (site.status === 'maintenance') — הודעת error נזרקת כאן ולא ממשיכה:
-  // לא נרשמת ב-status_history, לא משנה את המצב (נשאר "תחזוקה"), ולא משודרת
-  // ב-SSE. כך התקלה לא נספרת (אין שורת error), לא נראית בכרטיס/בגרפים, ואין
-  // עליה התראה. זו החלטה מפורשת: "מצב תחזוקה גובר על הכלל".
+  // מהבקר (site.status === 'maintenance') — הודעת error אינה ממשיכה במסלול
+  // הרגיל: היא **אינה** נרשמת ב-status_history, אינה משנה את המצב (נשאר
+  // תחזוקה), ואינה משודרת ב-SSE. כך היא אינה נספרת באחוז הכשל, אינה
+  // משנה זמינות, ואין עליה התראה. זו החלטה מפורשת.
+  //
+  // ⚠️ **מה שכן השתנה: היא נרשמת ב-suppressed_faults.** קודם היא נעלמה
+  // לגמרי, ומי שראה תקלה בשטח לא מצא לה זכר בלוג. ראה למטה.
+  //
   // עדיין מעדכנים last_seen — האתר תקשר, ולכן הוא "נשמע".
   if (newStatus === "error") {
     const manualMaintenance = await getActiveMaintenance(site.id);
     if (manualMaintenance || site.status === "maintenance") {
       await updateLastSeenIfNewer(site.id, occurredAt);
-      console.log(`[state] אתר ${site.code}: תקלה בזמן תחזוקה — הושמטה (המצב נשאר תחזוקה)`);
+
+      // ============================================================
+      // ⚠️ מושמטת מהמדדים — אבל **נרשמת**, וזה לא אותו דבר
+      // ============================================================
+      // עד כאן היה רק console.log, ולכן התקלה נעלמה לחלוטין: מי שהיה
+      // בשטח וראה אותה חיפש אותה בלוג ולא מצא כלום. "לא נספרת" ו"לא
+      // קרתה" הם שני דברים שונים, והמסך הציג את השני.
+      //
+      // ⚠️ הרישום הוא לטבלה **נפרדת** ולא ל-status_history: שורת error
+      // שם הייתה סוגרת את מקטע התחזוקה ופותחת מקטע תקלה — כלומר משנה
+      // את מצב האתר ואת הזמינות, בדיוק הכלל שההשמטה נועדה לשמר.
+      // אף מדד אינו קורא מ-suppressed_faults, ולכן אחוז הכשל אינו יכול
+      // להשתנות ממנה. ראה ההסבר המלא ב-schema.postgres.sql.
+      //
+      // ⚠️ והכישלון כאן **אינו מפיל את הקליטה**: זהו רישום לתצוגה, ולא
+      // נתון שמשהו נשען עליו. איבוד ההודעה כולה בגללו היה גרוע יותר.
+      try {
+        await insertSuppressedFault({
+          siteId: site.id,
+          occurredAt,
+          faultText: extractFaultText(newStatus, data),
+          reason: manualMaintenance ? "window" : "plc",
+        });
+      } catch (err) {
+        console.error(`[state] אתר ${site.code}: רישום התקלה המושמטת נכשל —`, err.message);
+      }
+
+      console.log(`[state] אתר ${site.code}: תקלה בזמן תחזוקה — הושמטה מהמדדים ונרשמה ללוג`);
       return;
     }
   }

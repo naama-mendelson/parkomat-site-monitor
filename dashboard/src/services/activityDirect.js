@@ -56,7 +56,7 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
 
   const scoped = (q) => (siteId ? q.eq("site_id", siteId) : q);
 
-  const [opsPage, statesPage, maintPage] = await Promise.all([
+  const [opsPage, statesPage, maintPage, supPage] = await Promise.all([
     pageAll((a, b) => scoped(
       supabase
         .from("operations")
@@ -84,6 +84,18 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
         .order("started_at", { ascending: false })
         .range(a, b)
     ), FETCH_CAP),
+
+    // ⚠️ תקלות שהושמטו מהמדדים בזמן תחזוקה. הן **חייבות** להיטען גם כאן:
+    // שתי הזרועות מריצות את אותה buildActivityLog, ולכן זרוע שאינה טוענת
+    // אותן הייתה מציגה לוג קצר יותר — בלי שום שגיאה, ורק כשהמתג מוחלף.
+    pageAll((a, b) => scoped(
+      supabase
+        .from("suppressed_faults")
+        .select("site_id, occurred_at, fault_text, reason, sites(site_name)")
+        .gte("occurred_at", from).lt("occurred_at", to)
+        .order("occurred_at", { ascending: false })
+        .range(a, b)
+    ), FETCH_CAP),
   ]);
 
   // ⚠️ PostgREST מחזיר את הטבלה המקושרת כאובייקט מקונן (sites.site_name),
@@ -96,7 +108,8 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
     ops: flat(opsPage.rows),
     states: flat(statesPage.rows),
     maint: flat(maintPage.rows),
+    suppressed: flat(supPage.rows),
     limit, offset, filter, card,
-    capped: opsPage.capped || statesPage.capped || maintPage.capped,
+    capped: opsPage.capped || statesPage.capped || maintPage.capped || supPage.capped,
   });
 }
