@@ -511,3 +511,55 @@ test("⚠️ המחיקה ב-Supabase קודמת למחיקה במסד", () => {
   assert.ok(sb > 0 && local > 0, "שני הצדדים חייבים להימחק");
   assert.ok(sb < local, "Supabase קודם — אחרת כשל משאיר משתמש בלי שורה");
 });
+
+// ============================================================
+// אין כניסה במייל — החלטת מוצר, ונבדקת ככזו
+// ============================================================
+// ⚠️ שתי האפשרויות (קישור כניסה, איפוס סיסמה) הוסרו במלואן. הן היו
+// בנויות ועבדו, ולכן קל מאוד להחזיר אחת מהן בטעות — למשל בשחזור מ-git,
+// או במי שיראה את `setNewPassword` ויניח שהבקשה חסרה בשגגה.
+//
+// ⚠️ והנימוק נמדד ולא משוער: בלי SMTP מוגדר, Supabase נופל למיילר המובנה
+// שלו ומחזיר `429 over_email_send_rate_limit` על הבקשה הראשונה. כלומר
+// הכפתורים הבטיחו מייל שלא היה מגיע.
+const LOGIN_JSX = fs.readFileSync(
+  path.join(__dirname, "..", "..", "dashboard", "src", "components", "Login", "Login.jsx"), "utf8");
+const AUTH_JS = fs.readFileSync(
+  path.join(__dirname, "..", "..", "dashboard", "src", "services", "auth.js"), "utf8");
+
+// ⚠️ ההערות מוסרות: שני הקבצים **מתעדים** את ההסרה ולכן מזכירים את השמות.
+// בדיקת-מקור אינה מבחינה בין קוד לתיאור שלו — זה כבר הפיל בדיקה אחת כאן.
+const stripComments = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^\s*\/\/.*$/gm, "");
+
+test("⚠️ מסך ההתחברות אינו מציע מייל בשום צורה", () => {
+  const code = stripComments(LOGIN_JSX);
+  assert.doesNotMatch(code, /sendMagicLink/, "קישור כניסה הוסר");
+  assert.doesNotMatch(code, /requestPasswordReset/, "בקשת איפוס הוסרה");
+  assert.doesNotMatch(code, /שכחתי את הסיסמה/, "הכפתור הוסר");
+});
+
+test("⚠️ ושתי הפונקציות אינן קיימות ב-seam", () => {
+  const code = stripComments(AUTH_JS);
+  assert.doesNotMatch(code, /export async function sendMagicLink/);
+  assert.doesNotMatch(code, /export async function requestPasswordReset/);
+});
+
+// ⚠️ **וזה החצי שקל לשכוח.** לוח הבקרה של Supabase עדיין מציע
+// "Send password recovery" לכל משתמש. קישור כזה פותח את הדשבורד במצב
+// שחזור — ובלי המסך שמקבל אותו, המשתמש נכנס מחובר **ובלי שום דרך לקבוע
+// סיסמה**. הסרת הבקשה אינה מצדיקה הסרת הקבלה.
+test("⚠️ אבל מסך קביעת הסיסמה נשאר — הקישור עדיין יכול להגיע", () => {
+  const code = stripComments(AUTH_JS);
+  assert.match(code, /export async function setNewPassword/, "הקבלה חייבת להישאר");
+  assert.match(code, /export function onPasswordRecovery/, "והזיהוי של מצב השחזור");
+  assert.ok(fs.existsSync(path.join(__dirname, "..", "..", "dashboard",
+    "src", "components", "Login", "ResetPassword.jsx")), "והמסך עצמו");
+});
+
+// מסך שמסיר אפשרות חייב לומר מה בא במקומה — אחרת מי ששכח סיסמה
+// פשוט ינסה שוב ושוב בלי לדעת שיש דרך אחרת.
+test("⚠️ והמסך אומר מה כן לעשות במקום", () => {
+  assert.match(LOGIN_JSX, /פנו למנהל/, "חייב להיות מסלול התאוששות כתוב");
+});
