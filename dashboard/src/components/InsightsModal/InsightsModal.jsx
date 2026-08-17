@@ -44,7 +44,9 @@ function fmtHours(h) {
 }
 
 function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false }) {
-  const [section, setSection] = useState(initialSection);
+  // ⚠️ `requested` ולא `section`: הרשימה תלויה ב-allSites (ראה sections
+  // למטה), ולכן שונית שהתבקשה עשויה לא להתקיים. הערך האפקטיבי נגזר שם.
+  const [requested, setSection] = useState(initialSection);
   // איזו שורה בטבלת הכרטיסים פתוחה. אחת בכל רגע — פתיחת כולן הופכת את
   // הטבלה לרשימה ארוכה ומאבדת את ההשוואה שהיא באה לתת.
   const [openCard, setOpenCard] = useState(null);
@@ -78,15 +80,35 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
   // `all` הוא בדיוק מה שהצ'יפ "הכל" מציג, ולכן השונית והצ'יפ מסכימים בהגדרה.
   const logCount = data?.log?.counts?.all ?? null;
 
+  // ============================================================
+  // ⚠️ "משתמשים" אינו מוצג במבט המצרף — החלטת מוצר
+  // ============================================================
+  // המבט של מנהל כללי מסכם **מערכת**, ולא אנשים. פילוח של מחזיקי כרטיסים
+  // בודדים הוא פרט תפעולי בגובה הלא נכון שם, והוא גם חושף פעילות של אנשים
+  // מזוהים במסך שנועד למספרים.
+  //
+  // ⚠️ ובאתר בודד הוא **נשאר** ומועיל: שם "מי הכי פעיל" ו"מי נתקל בתקלות"
+  // הן שאלות תפעוליות אמיתיות, וכל השורות מאותו אתר.
+  //
+  // ⚠️ ובדרך זה מסיר גם תקלה: העמודה "אתר" בטבלה ההיא מוצגת **רק** במצרפת,
+  // והיא הייתה ריקה תמיד — `siteNames` מועבר ל-computeInsights רק בזרוע
+  // השרת (db/queries.js) ולא בזרוע הישירה. הפער עצמו נשאר בנתונים; מה
+  // שנעלם הוא המקום היחיד שהציג אותו.
   const sections = [
     { key: "overview", label: "סקירה" },
     { key: "activity", label: "פעילות" },
     // ⚠️ "משתמשים" ולא "כרטיסים": הכרטיס הוא **האמצעי**, לא מה שנספר.
     // המספר על השונית הוא כמה אנשים שונים השתמשו באתר.
-    { key: "cards", label: "משתמשים", badge: data?.cards.uniqueCards },
+    ...(allSites ? [] : [{ key: "cards", label: "משתמשים", badge: data?.cards.uniqueCards }]),
     { key: "reliability", label: "אמינות" },
     { key: "log", label: "לוג", badge: logCount },
   ];
+
+  // ⚠️ שונית שאינה קיימת נופלת ל"סקירה", ולא נשארת פתוחה בלי שונית.
+  // הפרופ `initialSection` מאפשר לפתוח ישר על "משתמשים"; אף קורא אינו
+  // עושה זאת היום, אבל במצרפת השונית הזו אינה קיימת — ואז הפאנל היה
+  // מוצג **בלי שום שונית מסומנת שתוציא ממנו**.
+  const section = sections.some((s) => s.key === requested) ? requested : "overview";
 
   return (
     <div className="insights-overlay" onClick={onClose}>
@@ -135,8 +157,14 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <MetricCard label="כניסות" value={data.totals.entries.toLocaleString()} hint="רכבים שנכנסו לחניון" />
                   <MetricCard label="יציאות" value={data.totals.exits.toLocaleString()} hint="רכבים שיצאו מהחניון" />
                   {/* "כרטיסים ייחודיים" הוא שם טכני — הכרטיס הוא האמצעי, לא
-                      מה שנספר. מה שמעניין הוא **כמה אנשים** השתמשו באתר. */}
-                  <MetricCard label="משתמשים" value={data.cards.uniqueCards.toLocaleString()} hint="כמה משתמשים שונים פעלו באתר בתקופה" />
+                      מה שנספר. מה שמעניין הוא **כמה אנשים** השתמשו באתר.
+
+                      ⚠️ ואינו מוצג במצרפת, מאותו טעם כמו השונית: המבט של
+                      מנהל כללי מסכם מערכת ולא אנשים. גם ה-hint היה שגוי שם
+                      — "פעלו **באתר**" בתצוגה שאינה של אתר. */}
+                  {!allSites && (
+                    <MetricCard label="משתמשים" value={data.cards.uniqueCards.toLocaleString()} hint="כמה משתמשים שונים פעלו באתר בתקופה" />
+                  )}
                   <MetricCard label="ימי פעילות" value={data.totals.activeDays.toLocaleString()} hint="ימים שבהם נרשמה פעולה" />
                 </div>
 
