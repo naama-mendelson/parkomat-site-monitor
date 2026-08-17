@@ -222,8 +222,24 @@ is in the open source, and it has never been rotated. It is enforced **on the se
 is the one thing it gets right: hiding a button in the dashboard is not security. If you add a
 server write endpoint, it gets `requireAdmin`.
 
-**The dashboard has moved off it.** All five write paths now go to Postgres directly (below).
-The routes stay because they are the exit door, so `requireAdmin` stays with them.
+**The dashboard has moved off it.** All five write paths now go to Postgres directly (below),
+and `useAdmin` gates the management screen on the **verified role** instead. The routes stay
+because they are the exit door, so `requireAdmin` stays with them — `useAdmin` still uses the
+code in the server arm of the switch, which is exactly where it is still the mechanism.
+
+Two reasons the code was not kept "as well, for safety" in direct mode — it subtracts safety:
+
+- **It locks out a real manager.** The default `admin123` is in the open source. The day it is
+  rotated, every manager is shut out of a screen they are entitled to, and nobody will
+  remember that the database stopped looking at that code.
+- **It promises a permission it does not carry.** An operator who knows the code would enter
+  the screen, press "delete site", and get a `403` from Postgres. Safe — but a screen that
+  offers actions it cannot perform is the reliable way to make someone conclude the system is
+  broken.
+
+`tests/admin-gate.test.js` pins the wiring (3 tests, all three mutations caught). It is a
+**structural** test, not a behavioural one — there is no DOM here, so it proves the wiring, not
+the rendering.
 
 ## Writes live in SQL too — `db/writes.postgres.sql`
 

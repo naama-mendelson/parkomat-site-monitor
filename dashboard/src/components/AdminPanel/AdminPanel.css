@@ -82,9 +82,26 @@
 
 .adm-lock input:focus { outline: none; border-color: var(--accent); }
 
+/* התפקיד — בולט, כי זו התשובה לשאלה "למה אני חסומה" */
+.adm-lock-role {
+  margin-top: 10px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary) !important;
+  font-weight: 600;
+}
+
+.adm-lock-hint { margin-top: 6px; font-size: 0.76rem !important; }
+
 .adm-lock-actions {
   display: flex;
   gap: 8px;
+  /* ⚠️ במסך שאין בו טופס, `margin-top` של הטופס לא קיים — ובלעדיו הכפתור
+     נדבק לטקסט. */
+  margin-top: 14px;
+  width: 100%;
 }
 
 .adm-lock-actions button { flex: 1; }

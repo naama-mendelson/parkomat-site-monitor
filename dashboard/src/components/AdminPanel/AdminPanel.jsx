@@ -15,7 +15,7 @@ import Logo from "../Logo/Logo";
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function AdminPanel({ sites, onClose, onChanged }) {
-  const { unlocked, unlock, lock, checking, error: unlockError } = useAdmin();
+  const { unlocked, unlock, lock, checking, error: unlockError, roleGated, role } = useAdmin();
 
   const [code, setCode] = useState("");
   const [editing, setEditing] = useState(null);       // קוד האתר שנערך
@@ -128,7 +128,38 @@ function AdminPanel({ sites, onClose, onChanged }) {
     }
   }
 
-  // ===== מסך נעילה =====
+  // ============================================================
+  // ⚠️ מסך נעילה — ושתי גרסאות שונות, לא אחת עם טקסט אחר
+  // ============================================================
+  // כשההרשאה נגזרת מהתפקיד, **אין מה להקליד**. טופס קוד כאן היה מזמין
+  // בקר לנסות שוב ושוב משהו שלא יעבוד לעולם, ולהסיק שהוא הקליד שגוי.
+  if (!unlocked && roleGated) {
+    return (
+      <div className="adm-overlay" onClick={onClose}>
+        <div className="adm-lock" onClick={(e) => e.stopPropagation()}>
+          <div className="adm-lock-icon"><Logo size={40} /></div>
+          <h2>ניהול אתרים</h2>
+          {checking ? (
+            <p>בודק הרשאות…</p>
+          ) : (
+            <>
+              <p>הוספה, עריכה ומחיקה של אתרים מותרות למנהלים בלבד.</p>
+              {/* ⚠️ מוצג במפורש: בלי זה המסך אומר "אין לך הרשאה" ומשתמשת
+                  שיודעת שהיא מנהלת אינה יכולה לדעת שהתפקיד שלה במסד שונה
+                  ממה שהיא חושבת — וזה בדיוק המצב שקרה בפועל. */}
+              <p className="adm-lock-role">התפקיד שלך: {role === "manager" ? "מנהל" : "בקר"}</p>
+              <p className="adm-lock-hint">לשינוי התפקיד — יש לפנות למנהל אחר.</p>
+            </>
+          )}
+          <div className="adm-lock-actions">
+            <button type="button" className="adm-btn" onClick={onClose}>סגור</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== מסך נעילה — זרוע השרת, קוד משותף =====
   if (!unlocked) {
     return (
       <div className="adm-overlay" onClick={onClose}>
@@ -169,9 +200,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
           </div>
           <div className="adm-head-actions">
             <button className="adm-btn" onClick={() => setAddOpen(true)}>+ הוסף אתר</button>
-            <button className="adm-btn-ghost" onClick={() => setPwOpen((o) => !o)}>
-              שנה קוד מנהל
-            </button>
+            {/* ⚠️ מוסתר במצב ישיר, כי הוא משנה סוד שאף כתיבה כאן אינה
+                שולחת יותר. כפתור שנראה כמו "שנה סיסמת ניהול" ובפועל
+                משנה מנגנון רדום הוא הטעיה — למי שילחץ עליו ייראה שהוא
+                החמיר אבטחה, ולא שינה כלום. */}
+            {!roleGated && (
+              <button className="adm-btn-ghost" onClick={() => setPwOpen((o) => !o)}>
+                שנה קוד מנהל
+              </button>
+            )}
             <button className="adm-btn-ghost" onClick={() => { lock(); onClose(); }}>נעל</button>
             <button className="adm-close" onClick={onClose} aria-label="סגירה">✕</button>
           </div>
