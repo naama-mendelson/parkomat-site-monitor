@@ -286,3 +286,256 @@ REVOKE ALL ON FUNCTION public.cancel_maintenance(text)               FROM PUBLIC
 
 GRANT EXECUTE ON FUNCTION public.start_maintenance(text, numeric, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.cancel_maintenance(text)               TO authenticated;
+
+-- ============================================================
+-- כתיבת אתרים — למנהלים בלבד
+-- ============================================================
+-- ⚠️ **וכאן, בשונה מתחזוקה, כן נדרש תפקיד.** רישום ומחיקה של אתר משנים
+-- את מפת המערכת: `code` הוא ה-{code} בנתיב ה-MQTT, ולכן שינויו קובע
+-- **לאיזה אתר** משויכות ההודעות הנכנסות. מחיקה מוחקת היסטוריה.
+--
+-- עד כה זה היה מוגן ב-`x-admin-code` — סוד משותף אחד, שערכו `admin123`
+-- מופיע בקוד הפתוח (DEFAULT_ADMIN_CODE ב-queries.js) ומעולם לא הוחלף.
+-- `app.is_manager()` הוא תפקיד מאומת ואינו ניתן לזיוף מהלקוח.
+--
+-- ============================================================
+-- ⚠️ ובאג שתוקן בדרך: insertSite ב-JS **מעולם לא עבד**
+-- ============================================================
+-- ה-INSERT שם מפרט שש עמודות ומספק שמונה מקומות:
+--
+--     INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier)
+--     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+--
+-- נמדד מול המסד: "INSERT has more expressions than target columns". כלומר
+-- POST /api/sites החזיר 500 על **כל** רישום אתר. זה לא נתפס באף בדיקה
+-- כי אין שער שרושם אתר — 12 האתרים הקיימים נוספו דרך tools/add-test-site.js.
+
+-- מי רשאי: תפקיד מנהל, ופעיל.
+CREATE OR REPLACE FUNCTION app.require_manager()
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_name text;
+BEGIN
+  v_name := app.actor_display_name();
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  -- ⚠️ is_manager() קורא מ-app_users ולא מהאסימון. תפקיד שהורד נכנס
+  -- לתוקף **מיד**, ולא כשהאסימון יפוג.
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN v_name;
+END;
+$fn$;
+
+-- ============================================================
+-- public.register_site
+-- ============================================================
+DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean);
+
+CREATE OR REPLACE FUNCTION public.register_site(
+  p_code      text,
+  p_site_name text,
+  p_plc_type  text    DEFAULT NULL,
+  p_tier      text    DEFAULT 'basic',
+  p_is_new    boolean DEFAULT true
+)
+RETURNS TABLE (id integer, code text, site_name text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_name  text := NULLIF(TRIM(COALESCE(p_site_name, '')), '');
+  v_tier  text := COALESCE(NULLIF(TRIM(COALESCE(p_tier, '')), ''), 'basic');
+  v_plc   text := NULLIF(TRIM(COALESCE(p_plc_type, '')), '');
+  v_id    integer;
+BEGIN
+  -- ⚠️ אותה תבנית בדיוק כמו SITE_CODE_PATTERN בשרת. הקוד נכנס לנתיב MQTT,
+  -- ותו כמו '/' או '+' שם הוא תו-בקרה של הפרוטוקול.
+  IF p_code IS NULL OR p_code !~ '^[A-Za-z0-9_-]{1,64}$' THEN
+    RAISE EXCEPTION 'קוד אתר לא תקין — אותיות, ספרות, מקף וקו תחתון בלבד'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION 'חסר שם אתר' USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_tier NOT IN ('vip', 'extended', 'basic') THEN
+    RAISE EXCEPTION 'דרגת אתר לא תקינה' USING ERRCODE = 'check_violation';
+  END IF;
+  -- ⚠️ אותה רשימה כמו SITE_TYPE_KEYS ב-shared/site-types.mjs. NULL מותר —
+  -- אתר בלי סוג מוגדר הוא מצב תקין (כך 12 האתרים הקיימים).
+  IF v_plc IS NOT NULL AND v_plc NOT IN
+     ('doli','matzbet-x','matzbet-y','xy','x','y','shuttle-y','shuttle-x') THEN
+    RAISE EXCEPTION 'סוג מתקן לא תקין' USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM sites s WHERE s.code = p_code) THEN
+    -- PT409 → HTTP 409. "כבר קיים" אינו שגיאת קלט ואינו תקלת שרת.
+    RAISE EXCEPTION 'אתר עם קוד זה כבר רשום: %', p_code USING ERRCODE = 'PT409';
+  END IF;
+
+  INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier)
+  VALUES (p_code, v_name,
+          to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier)
+  RETURNING sites.id INTO v_id;
+
+  PERFORM app.record_write_audit('site.register', v_actor, app.current_app_role(),
+                                 'site', p_code,
+                                 jsonb_build_object('site_name', v_name, 'tier', v_tier,
+                                                    'plc_type', v_plc, 'is_new', p_is_new));
+  PERFORM app.record_write_event(p_code, 'site-added',
+                                 jsonb_build_object('type','site-added','code',p_code,
+                                                    'siteName',v_name));
+
+  RETURN QUERY SELECT v_id, p_code, v_name;
+END;
+$fn$;
+
+-- ============================================================
+-- public.update_site
+-- ============================================================
+-- ⚠️ NULL = "אל תיגע", ולא "רוקן". זה מה שמאפשר לעדכן שם בלי לאבד סוג.
+-- לרוקן סוג מתקן — מעבירים מחרוזת ריקה.
+--
+-- ============================================================
+-- ⚠️ כל `WHERE` מסומך ב-`sites.` — וזה **לא** נוי
+-- ============================================================
+-- `RETURNS TABLE (id integer, ...)` מגדיר `id` כמשתנה פלט. `WHERE sites.id = v_id`
+-- הוא לכן `column reference "id" is ambiguous` (42702), ש-PostgREST ממפה
+-- ל-**400** — כלומר "הבקשה שגויה", על בקשה תקינה לחלוטין.
+--
+-- נמדד: כל עדכון החזיר 400 בעוד `register_site` (שאין בו WHERE) ו-
+-- `delete_site` (שאין בו פרמטר פלט בשם `id`) עבדו. כלומר הבאג היה נראה
+-- כמו "רק העדכון שבור" ולא כמו שגיאת שם.
+DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text);
+
+CREATE OR REPLACE FUNCTION public.update_site(
+  p_code      text,
+  p_new_code  text DEFAULT NULL,
+  p_site_name text DEFAULT NULL,
+  p_tier      text DEFAULT NULL,
+  p_plc_type  text DEFAULT NULL
+)
+RETURNS TABLE (id integer, code text, site_name text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_id    integer;
+  v_code  text;
+  v_name  text;
+BEGIN
+  SELECT s.id, s.code, s.site_name INTO v_id, v_code, v_name
+    FROM sites s WHERE s.code = p_code;
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'אתר לא נמצא: %', p_code USING ERRCODE = 'PT404';
+  END IF;
+
+  IF p_new_code IS NOT NULL AND p_new_code <> p_code THEN
+    IF p_new_code !~ '^[A-Za-z0-9_-]{1,64}$' THEN
+      RAISE EXCEPTION 'קוד אתר לא תקין' USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM sites s WHERE s.code = p_new_code) THEN
+      RAISE EXCEPTION 'הקוד כבר בשימוש: %', p_new_code USING ERRCODE = 'PT409';
+    END IF;
+    UPDATE sites SET code = p_new_code WHERE sites.id = v_id;
+    v_code := p_new_code;
+  END IF;
+
+  IF NULLIF(TRIM(COALESCE(p_site_name, '')), '') IS NOT NULL THEN
+    UPDATE sites SET site_name = TRIM(p_site_name) WHERE sites.id = v_id;
+    v_name := TRIM(p_site_name);
+  END IF;
+
+  IF p_tier IS NOT NULL THEN
+    IF p_tier NOT IN ('vip', 'extended', 'basic') THEN
+      RAISE EXCEPTION 'דרגת אתר לא תקינה' USING ERRCODE = 'check_violation';
+    END IF;
+    UPDATE sites SET tier = p_tier WHERE sites.id = v_id;
+  END IF;
+
+  -- ⚠️ כאן מחרוזת ריקה **כן** משמעותית: היא מרוקנת את הסוג. NULL אינו
+  -- נוגע. אותה סמנטיקה בדיוק כמו בשרת (plcType !== undefined).
+  IF p_plc_type IS NOT NULL THEN
+    IF NULLIF(TRIM(p_plc_type), '') IS NOT NULL
+       AND TRIM(p_plc_type) NOT IN
+       ('doli','matzbet-x','matzbet-y','xy','x','y','shuttle-y','shuttle-x') THEN
+      RAISE EXCEPTION 'סוג מתקן לא תקין' USING ERRCODE = 'check_violation';
+    END IF;
+    UPDATE sites SET plc_type = NULLIF(TRIM(p_plc_type), '') WHERE sites.id = v_id;
+  END IF;
+
+  PERFORM app.record_write_audit('site.update', v_actor, app.current_app_role(),
+                                 'site', v_code,
+                                 jsonb_build_object('from_code', p_code, 'new_code', p_new_code,
+                                                    'site_name', p_site_name, 'tier', p_tier,
+                                                    'plc_type', p_plc_type));
+  PERFORM app.record_write_event(v_code, 'site-updated',
+                                 jsonb_build_object('type','site-updated','code',v_code));
+
+  RETURN QUERY SELECT v_id, v_code, v_name;
+END;
+$fn$;
+
+-- ============================================================
+-- public.delete_site
+-- ============================================================
+-- ⚠️ מחזיר מה נמחק **לפני** המחיקה, כי אחריה אי אפשר לספור. אותה החזרה
+-- כמו deleteSite ב-JS, שהמסך מציג למשתמשת כאישור.
+DROP FUNCTION IF EXISTS public.delete_site(text);
+
+CREATE OR REPLACE FUNCTION public.delete_site(p_code text)
+RETURNS TABLE (code text, site_name text, operations integer, status_history integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_id    integer;
+  v_name  text;
+  v_ops   integer;
+  v_hist  integer;
+BEGIN
+  SELECT s.id, s.site_name INTO v_id, v_name FROM sites s WHERE s.code = p_code;
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'אתר לא נמצא: %', p_code USING ERRCODE = 'PT404';
+  END IF;
+
+  SELECT COUNT(*)::int INTO v_ops  FROM operations     WHERE site_id = v_id;
+  SELECT COUNT(*)::int INTO v_hist FROM status_history WHERE site_id = v_id;
+
+  -- ⚠️ האירוע נרשם **לפני** המחיקה: events.site_id הוא ON DELETE SET NULL,
+  -- ולכן רישום אחריה היה מאבד את הקישור. site_code נשאר בכל מקרה.
+  PERFORM app.record_write_audit('site.delete', v_actor, app.current_app_role(),
+                                 'site', p_code,
+                                 jsonb_build_object('site_name', v_name,
+                                                    'operations', v_ops,
+                                                    'status_history', v_hist));
+  PERFORM app.record_write_event(p_code, 'site-deleted',
+                                 jsonb_build_object('type','site-deleted','code',p_code));
+
+  DELETE FROM sites WHERE sites.id = v_id;
+
+  RETURN QUERY SELECT p_code, v_name, v_ops, v_hist;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.delete_site(text)                              FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;

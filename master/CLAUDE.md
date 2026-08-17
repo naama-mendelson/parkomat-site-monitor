@@ -211,15 +211,71 @@ and the server showed the site as "ready" forever.
 
 **`no_comm` never updates `last_seen`.** A disconnect is not a sighting.
 
-## Auth is a shared secret, and it is enforced server-side
+## Auth is a shared secret on the server routes — and the dashboard no longer uses them
 
-`requireAdmin` guards every write route (site registration, maintenance start/cancel). It checks
-an `x-admin-code` header against a sha256 hash in the `settings` table, compared with
-`timingSafeEqual`.
+`requireAdmin` guards every write route (site registration/update/delete, maintenance
+start/cancel). It checks an `x-admin-code` header against a sha256 hash in the `settings`
+table, compared with `timingSafeEqual`.
 
-This is **not real authentication** — it is one shared code, and it is a placeholder until
-Supabase Auth lands. But it is enforced **on the server**: hiding a button in the dashboard is
-not security. If you add a write endpoint, it gets `requireAdmin`.
+This is **not real authentication** — it is one shared code, its default value (`admin123`)
+is in the open source, and it has never been rotated. It is enforced **on the server**, which
+is the one thing it gets right: hiding a button in the dashboard is not security. If you add a
+server write endpoint, it gets `requireAdmin`.
+
+**The dashboard has moved off it.** All five write paths now go to Postgres directly (below).
+The routes stay because they are the exit door, so `requireAdmin` stays with them.
+
+## Writes live in SQL too — `db/writes.postgres.sql`
+
+Applied by `db.init()` **after** `security.postgres.sql`; that order is load-bearing, because
+the write functions call `app.actor_display_name()` / `app.current_app_role()` /
+`app.is_manager()`, which are defined there. Reverse order fails on *"function does not
+exist"*.
+
+| Function | Who may call it |
+|---|---|
+| `public.start_maintenance(text,numeric,text)` | any **active** user |
+| `public.cancel_maintenance(text)` | any **active** user |
+| `public.register_site(text,text,text,text,boolean)` | **manager only** |
+| `public.update_site(text,text,text,text,text)` | **manager only** |
+| `public.delete_site(text)` | **manager only** |
+
+**RPC, not table policies + `GRANT`.** A policy answers *"may this row be written"*; it cannot
+compute `expires_at`, enforce the 720-hour cap, write an audit line, or publish an event. And
+with `GRANT UPDATE` the browser could set `set_by_name` to anything, which kills the whole
+attribution model. RPC also stays portable — a plain Postgres function travels in `pg_dump`,
+unlike an Edge Function (forbidden by root rule 3).
+
+**`SECURITY DEFINER` means the check must be inside the body.** These functions bypass RLS by
+construction; `app.actor_display_name()` returning NULL → `insufficient_privilege` is the only
+thing standing between the public anon key and silencing every site. `check-writes.js` case 1
+is that assertion, and if it ever fails, everything is open.
+
+**Two rules that cost real debugging:**
+
+1. **`RETURNS TABLE (id integer, …)` makes `id` a variable, so `WHERE id = v_id` is
+   `column reference "id" is ambiguous` (42702) → PostgREST **400**.** Measured: every
+   `update_site` call returned 400 while `register_site` (no `WHERE`) and `delete_site` (no
+   `id` output parameter) worked — so it read as *"only the update is broken"* rather than as
+   a naming error. Every `WHERE` in this file is therefore qualified `sites.id = v_id`.
+2. **Raise `PT404` / `PT409`, never `no_data_found`.** PostgREST maps `PTxxx` to the HTTP code
+   in the digits; `P0002` becomes **500**, i.e. "server fault" for a mistyped site code.
+
+**Role comes from `app_users`, not from the token.** `app.is_manager()` → `current_app_role()`
+→ table read. A demoted manager loses access immediately instead of when their hour-old JWT
+expires. Cost: one query per call, which is why it is not read from the claim.
+
+**What is lost in the move, stated plainly:** the client **IP**. The server recorded it from
+`req.ip`; SQL has no access to PostgREST's client address. The identity is stronger than
+before (verified token instead of a shared code) but where it came from is gone.
+
+⚠️ **`POST /api/sites` on the server has never worked.** `insertSite` in `queries.js` lists six
+columns and supplies eight placeholders — measured against the database:
+*"INSERT has more expressions than target columns"*. So every site registration through the
+server returned 500, and it was never caught because **no gate registered a site**; the 12
+existing sites were added with `tools/add-test-site.js`. `register_site` in SQL is now the
+working path and `check-writes.js` covers it. **The server route is still broken** — it is the
+exit door, and fixing it is a separate task, not a side effect of this one.
 
 ## Metrics also live in SQL now — and there is a parity gate
 

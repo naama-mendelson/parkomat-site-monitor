@@ -46,6 +46,9 @@ import {
   startMaintenance as startMaintenanceViaServer,
   cancelMaintenance as cancelMaintenanceViaServer,
   fetchMonthlyReport as fetchMonthlyReportViaServer,
+  registerSite as registerSiteViaServer,
+  updateSite as updateSiteViaServer,
+  deleteSite as deleteSiteViaServer,
 } from "./api";
 import { fetchActivityDirect } from "./activityDirect";
 import { fetchInsightsDirect } from "./insightsDirect";
@@ -55,6 +58,7 @@ import { fetchExecutiveDirect } from "./executiveDirect";
 import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect } from "./sitesWriteDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 // ============================================================
@@ -362,6 +366,39 @@ export async function startMaintenance(code, name, durationHours, reason = "") {
 export async function cancelMaintenance(code) {
   if (!useDirect) return cancelMaintenanceViaServer(code);
   return cancelMaintenanceDirect(code);
+}
+
+// ============================================================
+// כתיבת אתרים — וכאן שתי הזרועות **אינן** שקולות
+// ============================================================
+// ⚠️ בכל שאר המתג ההבטחה היא "אותה התנהגות, מסלול אחר". כאן זה לא נכון,
+// ושתי אי-השקילויות חייבות להיות מוצהרות:
+//
+//   1. **ההרשאה שונה.** הזרוע הישירה דורשת תפקיד `manager` מאומת; זרוע
+//      השרת דורשת את הקוד המשותף `admin123`. הן לא מגנות על אותו דבר.
+//
+//   2. **`POST /api/sites` בשרת שבור** (שש עמודות, שמונה מקומות — ראה
+//      `sitesWriteDirect.js`). כלומר רישום אתר **עובד רק במצב הישיר**.
+//
+// ⚠️ ולכן `VITE_SUPABASE_DIRECT=false` אינו נסיגה שלמה כאן — הוא מחזיר גם
+// את הבאג. זה נרשם במפורש כדי שלא ייראה כמו "המתג עובד בשני הכיוונים".
+
+/** רישום אתר חדש. `{ ok, site }` בשתי הזרועות. */
+export async function registerSite(payload) {
+  if (!useDirect) return registerSiteViaServer(payload);
+  return registerSiteDirect(payload);
+}
+
+/** עדכון אתר. שדה חסר = "אל תיגע"; `plc_type: ""` = "מחק". */
+export async function updateSite(code, payload) {
+  if (!useDirect) return updateSiteViaServer(code, payload);
+  return updateSiteDirect(code, payload);
+}
+
+/** מחיקת אתר. `{ ok, deleted: { code, name, operations, statusHistory } }`. */
+export async function deleteSite(code) {
+  if (!useDirect) return deleteSiteViaServer(code);
+  return deleteSiteDirect(code);
 }
 
 /** מצב התחזוקה של אתר (יש/אין חלון פעיל). */

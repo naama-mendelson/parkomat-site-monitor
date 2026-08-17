@@ -1,6 +1,8 @@
 // components/AddSiteModal/AddSiteModal.jsx — מודל רישום אתר חדש
 import { useState } from "react";
-import { registerSite } from "../../services/api";
+// ⚠️ דרך dataSource ולא api: הרישום עובר ל-Supabase ישירות, והמתג הוא זה
+// שקובע. הכלל בפרויקט הוא שקומפוננטה אינה בוחרת מסלול נתונים.
+import { registerSite } from "../../services/dataSource";
 import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";

@@ -2,7 +2,10 @@
 // זמין רק למנהל בקרה ומנהל כללי, ומאחורי קוד מנהל שהשרת אוכף.
 import { useState } from "react";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
-import { updateSite, deleteSite, changeAdminCode, storeAdminCode } from "../../services/api";
+// ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
+// מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
+import { updateSite, deleteSite } from "../../services/dataSource";
+import { changeAdminCode, storeAdminCode } from "../../services/api";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";

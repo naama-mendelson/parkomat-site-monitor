@@ -41,6 +41,7 @@ escape path exists in the repo, written and tested but inactive.
 | B — `events` table | **Built.** One row per semantic event, `bus.publish`, replay via `GET /api/stream/since?after=<id>`, 7-day retention. |
 | C — identity + RLS | **Built.** `app.current_actor()` / `app.current_role()`; RLS enabled on all 7 tables, read granted to `authenticated`, `settings` deliberately policy-less. Real users exist. `POST /api/users/invite` and `GET /api/users` are behind `requireAuth` — token only. Verified adversarially: anon reads return `401`, `settings` returns `403` even with a valid token, writes from the browser return `403`. |
 | D — dashboard queries directly | **Built and live.** `getAllSitesGlobals` is now `site_globals` in SQL — that was the last blocker. `useSites` goes through `services/dataSource.js`; the site list is read straight from PostgREST. |
+| D' — writes go directly too | **Built and live.** `db/writes.postgres.sql`: `start_maintenance`, `cancel_maintenance`, `register_site`, `update_site`, `delete_site`. All five reachable from the browser through PostgREST; the server is not involved. 24 live checks in `tools/check-writes.js`. |
 | E — delete the read API | **Deliberately not done — see below.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
 
@@ -64,6 +65,11 @@ recorded here because they are cheap to hold and expensive to re-derive:
 2. **Everyone may put a site into maintenance.** No credential required. This is also the
    original design: the dashboard button was never role-gated, and the form has always
    required the user to type their name.
+
+⚠️ **Registering, renaming and deleting a site are the exception — those are manager-only**
+(`app.require_manager()`), and the difference is not inconsistency. `code` is the `{code}` in
+the MQTT topic, so changing it redirects which site incoming messages belong to; deletion
+removes history and cannot be undone. Attribution-after-the-fact is not enough for either.
 
 So the rule is **attribution, not prevention** — and that is a deliberate trade, not an
 oversight. Maintenance suppresses fault logging entirely and excludes the site from the
