@@ -15,9 +15,12 @@
   width: 100%;
   padding: 10px 20px;
   border: none;
-  border-block-end: 1px solid #f59e0b;
-  background: #b45309;
-  color: #fff;
+  /* ⚠️ כחול המותג ולא ענבר. הענבר הוא **צבע התחזוקה** בכל המערכת, ופס
+     ענבר לרוחב המסך נקרא כמו "אתר בתחזוקה" — הודעה שגויה לגמרי, ובדיוק
+     במקום שהעין סורקת ראשון. הליים מהלוגו מסמן את הקצה. */
+  border-block-end: 2px solid var(--brand-lime);
+  background: var(--brand);
+  color: var(--brand-on);
   font-family: inherit;
   font-size: 0.95rem;
   text-align: start;
@@ -26,7 +29,7 @@
 }
 
 .alert-unlock-bar:hover {
-  background: #92400e;
+  background: var(--brand-strong);
 }
 
 .alert-unlock-icon {
@@ -42,7 +45,9 @@
    טקסט דהוי פשוט אינו נקרא, וההבחנה בהיררכיה נעשית בגודל ובמשקל. */
 .alert-unlock-sub {
   font-size: 0.82rem;
-  color: #fde68a;
+  /* ⚠️ לבן-שקוף ולא צבע קבוע: הפס עצמו כחול המותג בשני המצבים (בהיר
+     וכהה), ולכן גוון קבוע היה מתנגש באחד מהם. */
+  color: rgba(255, 255, 255, 0.82);
 }
 
 /* במסך צר השורה השנייה יורדת מתחת ולא נחתכת. */
@@ -86,6 +91,10 @@
 
 .alert-unlock-card {
   position: relative;
+  /* ⚠️ פס המותג בראש הכרטיס נעשה ב-border-top ולא ב-::before: הכרטיס
+     מעוגל, ופס מוחלט היה צריך לחזור על ה-radius ולהישבר בכל שינוי שלו. */
+  border-top: 4px solid var(--brand);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -101,7 +110,10 @@
 
 /* ⚠️ הפעימה היא מה שמושך את העין מרחוק — במסך קיר השלט נקרא מ-3 מטר,
    ושם צורה סטטית נבלעת ברקע. איטית בכוונה: מהירה נקראת כמו אזעקה. */
+/* ⚠️ הפעמון נצבע בליים של הלוגו דרך drop-shadow ולא ב-color: אמוג'י
+   מתעלם מ-color ברוב הדפדפנים. ההילה היא מה שקושר אותו למותג. */
 .alert-unlock-card-icon {
+  filter: drop-shadow(0 0 10px var(--brand-lime));
   font-size: 2.4rem;
   line-height: 1;
   animation: alert-unlock-pulse 2.4s ease-in-out infinite;
@@ -132,13 +144,16 @@
   color: var(--text-secondary);
 }
 
+/* ⚠️ כחול המותג ולא var(--accent): ב-accent יושב הענבר, שהוא **צבע
+   התחזוקה** בכל שאר המערכת. כפתור ענבר באמצע המסך היה נקרא כמו התראת
+   תחזוקה ולא כמו פעולה של המשתמש. */
 .alert-unlock-card-btn {
   margin-top: 6px;
-  padding: 11px 30px;
+  padding: 11px 32px;
   border: none;
   border-radius: 999px;
-  background: var(--accent, #f59e0b);
-  color: #1a1205;
+  background: var(--brand);
+  color: var(--brand-on);
   font-family: inherit;
   font-size: 0.95rem;
   font-weight: 700;
@@ -146,11 +161,53 @@
   transition: filter 0.15s, transform 0.1s;
 }
 
-.alert-unlock-card-btn:hover  { filter: brightness(1.08); }
+.alert-unlock-card-btn:hover  { background: var(--brand-strong); }
 .alert-unlock-card-btn:active { transform: translateY(1px); }
 
 .alert-unlock-card-note {
   margin: 2px 0 0;
   font-size: 0.72rem;
   color: var(--text-muted);
+}
+
+/* ============================================================
+   הסימן — זהה למסך ההתחברות
+   ============================================================
+   ⚠️ אותה היררכיה ואותם מידות, ולא וריאציה: שלט שקופץ באמצע המסך על רקע
+   מעומעם הוא בדיוק הרגע שבו שואלים "מה זה", וסימן מוכר עונה לפני שקוראים
+   מילה. */
+.alert-unlock-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.alert-unlock-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.alert-unlock-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.1;
+}
+
+.alert-unlock-mark {
+  font-size: 1.02rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+/* הליים של הלוגו — הדגשה משנית, בדיוק כמו בסימן עצמו */
+.alert-unlock-submark {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-lime);
 }

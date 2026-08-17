@@ -87,6 +87,18 @@ function AlertUnlockBar() {
         tabIndex={-1}
       />
       <div className="alert-unlock-card">
+        {/* ⚠️ אותו סימן ואותה היררכיה כמו במסך ההתחברות — ולא וריאציה
+            חדשה. שלט שקופץ באמצע המסך על רקע מעומעם הוא בדיוק הרגע שבו
+            משתמש שואל "מה זה הדבר הזה"; סימן מוכר עונה על כך לפני שקוראים
+            מילה. עיצוב משלו היה נראה כמו חלון של תוכנה אחרת. */}
+        <div className="alert-unlock-brand">
+          <img src="/parkomat-logo.png" alt="Parkomat" className="alert-unlock-logo" />
+          <div className="alert-unlock-brand-text">
+            <span className="alert-unlock-mark">Parkomat</span>
+            <span className="alert-unlock-submark">SiteMonitor</span>
+          </div>
+        </div>
+
         <span className="alert-unlock-card-icon" aria-hidden="true">🔔</span>
         <h2 className="alert-unlock-card-title">הפעלת התראות קוליות</h2>
         <p className="alert-unlock-card-text">{SUB}</p>
