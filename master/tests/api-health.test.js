@@ -45,7 +45,7 @@ test("API תקין → healthy", async () => {
   stubFetch({ status: 200, type: "application/json; charset=utf-8",
               body: { status: "ok", db: "ready" } });
   const { probeApi } = await fresh();
-  assert.equal((await probeApi()).kind, "healthy");
+  assert.equal((await probeApi()).kind, "ok");
 });
 
 // ============================================================
@@ -72,29 +72,47 @@ test("⚠️ Apache מחזיר index.html עם 200 → not-api", async () => {
   assert.match(v.detail.contentType, /text\/html/);
 });
 
-test("⚠️ 503 עם JSON תקין → unhealthy, ולא not-api", async () => {
-  // ה-API שם ועונה; חולה המסד או ה-MQTT. מיזוג השניים היה שולח לתקן את
-  // כתובת ה-API בזמן שהיא נכונה לגמרי.
-  stubFetch({ status: 503, type: "application/json",
-              body: { status: "unhealthy", db: "not_ready" } });
+// ============================================================
+// ⚠️ 401 הוא תשובה **חיובית** — וזה תיקון של באג
+// ============================================================
+// הבדיקה רצה לפני התחברות ואין לה אסימון, ולכן השרת מחזיר
+// `401 {"error":"נדרשת התחברות"}`. זו הוכחה שה-API ענה בכתובת הזו.
+// מה שמסגיר כתובת שגויה הוא **סוג התוכן**, לא הסטטוס.
+test("⚠️ 401 עם JSON → ok, כי ה-API ענה", async () => {
+  stubFetch({ status: 401, type: "application/json; charset=utf-8",
+              body: { error: "נדרשת התחברות" } });
   const { probeApi } = await fresh();
-  const v = await probeApi();
-  assert.equal(v.kind, "unhealthy");
-  assert.equal(v.detail.db, "not_ready", "הפירוט נשמר כדי שיהיה מה לתקן");
+  assert.equal((await probeApi()).kind, "ok");
 });
 
-test("⚠️ JSON שהוכרז ולא נפרס → not-api", async () => {
-  // שרת אחר שמכריז JSON. פרסינג שנכשל הוא סימן חזק יותר מהכותרת.
-  stubFetch({ status: 200, type: "application/json", bad: true });
+test("גם 503 עם JSON → ok — הכתובת נכונה, השרת חולה", async () => {
+  // בריאות השרת אינה באחריות הבדיקה הזו. היא בודקת **כתובת**.
+  stubFetch({ status: 503, type: "application/json", body: { status: "unhealthy" } });
   const { probeApi } = await fresh();
-  assert.equal((await probeApi()).kind, "not-api");
+  assert.equal((await probeApi()).kind, "ok");
 });
 
-test("⚠️ JSON תקין בלי השדה status → not-api", async () => {
-  // כל שרת יכול להחזיר JSON. `status` הוא מה ש-/health שלנו מחזיר תמיד.
-  stubFetch({ status: 200, type: "application/json", body: { hello: "world" } });
-  const { probeApi } = await fresh();
-  assert.equal((await probeApi()).kind, "not-api");
+// ============================================================
+// ⚠️ הנתיב הנבדק חייב להיות תחת /api — הבאג שהפס נדלק בפיתוח
+// ============================================================
+// הגרסה הראשונה בדקה `/health`. הוא פתוח ומחזיר JSON, ולכן נראה כבחירה
+// הטבעית — **והוא נתיב שהאפליקציה אינה משתמשת בו.** ה-proxy של Vite מכסה
+// "/api" בלבד, ולכן נמדד:
+//
+//     :5173/health     → 200 text/html        ← Vite מחזיר index.html
+//     :5173/api/sites  → 401 application/json
+//
+// כלומר הפס נדלק בסביבת הפיתוח, שבה הכול תקין לגמרי.
+test("⚠️ הבדיקה פונה לנתיב תחת /api, ולא ל-/health", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "..", "dashboard", "src", "services", "apiHealth.js"), "utf8");
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.match(code, /PROBE_PATH\s*=\s*"\/api\//,
+    "חייב להיות תחת /api — הקידומת שהאפליקציה באמת פונה אליה");
+  assert.doesNotMatch(code, /"\/health"/,
+    "/health יושב מחוץ ל-proxy של Vite ונדלק בפיתוח");
 });
 
 test("fetch שזרק → unreachable", async () => {
@@ -104,7 +122,7 @@ test("fetch שזרק → unreachable", async () => {
 });
 
 // ============================================================
-// ⚠️ הפס אינו חוסם, ואינו מדווח על unhealthy
+// ⚠️ הפס אינו חוסם, ואינו נדלק על תשובת JSON
 // ============================================================
 const fs = require("node:fs");
 const BAR = fs.readFileSync(
@@ -118,10 +136,10 @@ test("⚠️ הפס אינו חוסם את המסך", () => {
   assert.doesNotMatch(barCode, /position:\s*fixed|overlay|createPortal/i);
 });
 
-test("⚠️ ואינו מתריע על unhealthy — זו אינה תקלת הגדרה", () => {
-  // הכרזת "כתובת שגויה" כשהכתובת נכונה לגמרי הייתה שולחת לתקן את הדבר
-  // הלא נכון.
-  assert.match(barCode, /kind === "unhealthy"[\s\S]{0,40}return null/);
+test("⚠️ ואינו נדלק כשהתשובה היא JSON — כולל 401", () => {
+  // 401 הוא הוכחה שה-API ענה בכתובת הזו. פס שנדלק עליו היה נדלק בכל
+  // טעינה לפני התחברות — כלומר תמיד, ובכל סביבה.
+  assert.match(barCode, /kind === "ok"[\s\S]{0,30}return null/);
 });
 
 test("⚠️ ומונה מה נשבר בפועל, לא 'שגיאה'", () => {

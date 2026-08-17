@@ -34,12 +34,10 @@ function ApiHealthBar() {
     return () => { cancelled = true; };
   }, []);
 
-  if (!verdict || verdict.kind === "healthy") return null;
-
-  // ⚠️ 'unhealthy' הוא ה-API שמדווח על עצמו — לא תקלת הגדרה, ולא באחריות
-  // הפס הזה. הוא כבר מוצג בכל קריאה שנכשלת, והצגתו כאן הייתה מכריזה על
-  // "כתובת שגויה" כשהכתובת נכונה לגמרי.
-  if (verdict.kind === "unhealthy") return null;
+  // ⚠️ 'ok' כולל 401: הבדיקה רצה לפני התחברות, ותשובת JSON — גם שגיאת
+  // אימות — היא הוכחה שה-API ענה בכתובת הזו. מה שמסגיר כתובת שגויה הוא
+  // **סוג התוכן**, לא הסטטוס.
+  if (!verdict || verdict.kind === "ok") return null;
 
   const isNotApi = verdict.kind === "not-api";
 
@@ -66,7 +64,7 @@ function ApiHealthBar() {
             <>
               {/* ⚠️ מסבירים למה **200 ולא שגיאה**: זה מה שהופך את הכשל
                   לבלתי מובן בלי ההסבר הזה. */}
-              הכתובת <code>{API_ROOT || "(נתיב יחסי)"}/health</code> החזירה{" "}
+              הכתובת <code>{API_ROOT || "(נתיב יחסי)"}/api/sites</code> החזירה{" "}
               <code>{verdict.detail?.contentType || "לא-JSON"}</code> במקום JSON — כלומר
               שרת הקבצים ענה, לא ה-API.
               {isRelative(API_ROOT) && (
@@ -78,7 +76,7 @@ function ApiHealthBar() {
               {/* ⚠️ שתי סיבות ולא אחת: הדפדפן אינו מבדיל בין שרת מכובה
                   לחסימת CORS, ואמירת אחת מהן בביטחון הייתה שולחת לחפש
                   במקום הלא נכון. */}
-              לא הגיעה תשובה מ-<code>{API_ROOT || "(נתיב יחסי)"}/health</code>. שתי
+              לא הגיעה תשובה מ-<code>{API_ROOT || "(נתיב יחסי)"}/api/sites</code>. שתי
               אפשרויות שאי אפשר להבחין ביניהן מהדפדפן: השרת אינו רץ, או
               ש-<code>DASHBOARD_ORIGIN</code> אינו כולל את הכתובת שממנה נטען הדף.
             </>

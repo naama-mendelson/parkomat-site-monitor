@@ -14,43 +14,40 @@
 // ⚠️ **וב-VITE_SUPABASE_DIRECT=true זה גרוע יותר, לא פחות:** הקריאות
 // עובדות (הן הולכות ל-Supabase), ולכן המסך נראה **תקין לחלוטין** —
 // כרטיסים, גרפים, הכול. רק הכתיבות נכשלות: רישום אתר, חלון תחזוקה,
-// ניהול משתמשים, והעוזר. מישהו יגלה את זה כשינסה להכניס אתר לתחזוקה
-// באמצע תקלה.
+// ניהול משתמשים, והעוזר.
 //
 // ============================================================
-// ⚠️ למה בודקים content-type ולא status
+// ⚠️ בודקים נתיב **תחת /api**, ולא /health — וזה תיקון של באג
 // ============================================================
-// זו כל הנקודה. תשובת ה-rewrite היא `200 text/html` — בדיקת status הייתה
-// עוברת בהצלחה. מה שמסגיר אותה הוא שהיא **אינה JSON**.
+// הגרסה הראשונה בדקה `/health`. הוא פתוח בלי אימות ומחזיר JSON, ולכן הוא
+// נראה כמו הבחירה הטבעית. **והוא היה שגוי**, כי הוא נתיב שהאפליקציה אינה
+// משתמשת בו:
 //
-// ⚠️ ולמה `/health` ולא נתיב מוגן: הבדיקה חייבת לרוץ **לפני** התחברות,
-// ונתיב מוגן היה מחזיר 401 — שאינו ניתן להבחנה מהגדרה שגויה. `/health`
-// פתוח בכוונה (api/routes.js) ומחזיר JSON תמיד.
+//     ה-proxy של Vite מכסה "/api" בלבד (dashboard/vite.config.js).
+//     :5173/health     → 200 text/html   ← Vite מחזיר index.html
+//     :5173/api/sites  → 401 application/json
 //
-// ============================================================
-// ⚠️ **המודול הזה אינו מייבא כלום, וזה מכוון**
-// ============================================================
-// `apiRoot` מגיע כארגומנט ולא מ-`import { API_ROOT } from "./api"`. שני
-// טעמים, ושניהם נמדדו כאן:
+// כלומר הפס נדלק **בסביבת הפיתוח**, שבה הכול תקין לגמרי. מה שצריך להיבדק
+// הוא הקידומת שהאפליקציה באמת פונה אליה, ולא נתיב שנוח לבדוק.
 //
-//   • ייבוא מ-api.js היה גורר את supabase.js ואת supabase-js כולו, ולכן
-//     בדיקה בלי דפדפן לא הייתה יכולה לטעון את המודול בכלל.
-//   • ובדיקה שאינה יכולה לייבא את הקוד נאלצת להחזיק **עותק** שלו — וכך
-//     היא בודקת את העותק ולא את מה שרץ.
-//
-// אותו שיקול בדיוק הוציא את extractFaultText מ-state-handler בשרת.
+// ⚠️ **ו-401 הוא תשובה חיובית כאן.** `{"error":"נדרשת התחברות"}` ב-JSON הוא
+// הוכחה שה-API ענה — הבדיקה רצה לפני התחברות, ואין לה אסימון. מה שמסגיר
+// כתובת שגויה הוא **סוג התוכן**, לא הסטטוס.
 
 const TIMEOUT_MS = 8000;
 
+// נתיב תחת /api שאינו עושה עבודה: requireAuth עוצר אותו לפני כל שאילתה,
+// ולכן הבדיקה עולה 401 מיד ולא נוגעת במסד.
+const PROBE_PATH = "/api/sites";
+
 /**
  * @returns {Promise<{kind:string, status?:number, detail?:object}>}
- *   'healthy'     — ה-API שם ועונה תקין
- *   'unhealthy'   — ה-API שם, אבל מדווח על בעיה (DB/MQTT). **לא** תקלת הגדרה.
- *   'not-api'     — משהו ענה, אבל זה לא ה-API. כמעט תמיד VITE_API_BASE שגוי.
+ *   'ok'          — הגיעה תשובת JSON. ה-API נמצא בכתובת הזו (גם 401 נחשב).
+ *   'not-api'     — משהו ענה, אבל לא ב-JSON. כמעט תמיד VITE_API_BASE שגוי.
  *   'unreachable' — לא הגיעה תשובה בכלל.
  */
 export async function probeApi(apiRoot = "") {
-  const url = `${apiRoot}/health`;
+  const url = `${apiRoot}${PROBE_PATH}`;
 
   let res;
   try {
@@ -65,31 +62,14 @@ export async function probeApi(apiRoot = "") {
     return { kind: "unreachable", detail: { message: err?.message ?? String(err) } };
   }
 
-  // ⚠️ הבדיקה המכריעה. `includes` ולא השוואה: הכותרת מגיעה כ-
-  // "application/json; charset=utf-8".
+  // ⚠️ הבדיקה המכריעה, ואינה נוגעת בסטטוס. `includes` ולא השוואה: הכותרת
+  // מגיעה כ-"application/json; charset=utf-8".
   const type = res.headers.get("content-type") || "";
   if (!type.includes("json")) {
     return { kind: "not-api", status: res.status, detail: { contentType: type } };
   }
 
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    // JSON שהוכרז ולא נפרס — שרת אחר לגמרי, לא שלנו.
-    return { kind: "not-api", status: res.status, detail: { contentType: type } };
-  }
-
-  // ⚠️ בדיקת **צורה** ולא רק פרסינג: כל שרת יכול להחזיר JSON. `status`
-  // הוא השדה ש-/health שלנו מחזיר תמיד, והיעדרו אומר שזה לא אנחנו.
-  if (typeof body?.status !== "string") {
-    return { kind: "not-api", status: res.status, detail: { contentType: type } };
-  }
-
-  // ⚠️ **503 עם JSON תקין הוא 'unhealthy' ולא 'not-api'.** ה-API שם ועונה;
-  // מה שחולה הוא המסד או ה-MQTT. מיזוג השניים היה שולח לתקן את כתובת
-  // ה-API בזמן שהבעיה היא לגמרי אחרת.
-  return { kind: res.ok ? "healthy" : "unhealthy", status: res.status, detail: body };
+  return { kind: "ok", status: res.status };
 }
 
 /** האם הכתובת היא נתיב יחסי. לשימוש בהודעה בלבד. */
