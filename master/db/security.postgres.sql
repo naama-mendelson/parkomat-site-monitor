@@ -622,6 +622,31 @@ GRANT SELECT ON app_users, audit_log TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_app_user()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_app_role()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.is_manager()          TO authenticated;
+
+-- ============================================================
+-- public.my_role() — התפקיד שלי, מהמסד ולא מהאסימון
+-- ============================================================
+-- ⚠️ **PostgREST חושף רק את `public`.** `app.current_app_role()` מוענקת
+-- ל-`authenticated` וזה נכון, אבל הדפדפן אינו יכול לקרוא לה — ולכן הוא
+-- נשאר עם `parkomat_role` שבאסימון, שנכתב פעם אחת ותקף שעה.
+--
+-- ⚠️ וזה הפך למשמעותי כשמסך ניהול האתרים עבר להיפתח לפי תפקיד: מנהל
+-- שהורד לבקר היה ממשיך לראות את המסך עד שהאסימון יפוג, וכל פעולה שם
+-- הייתה מוחזרת ב-403. הכיוון ההפוך גרוע יותר — בקר שהועלה למנהל **לא**
+-- היה רואה את המסך למרות שהמסד כבר מרשה לו.
+--
+-- מחזירה 'anonymous' כשאין שורה פעילה — וזו **תשובה** ולא כשל: כך נראה
+-- משתמש שהושבת.
+CREATE OR REPLACE FUNCTION public.my_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$ SELECT app.current_app_role() $$;
+
+REVOKE ALL ON FUNCTION public.my_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.my_role() TO authenticated;
 -- ⚠️ אחרי שהמדיניות שוחזרו: הפונקציה כבר אינה בשימוש ונמחקת כאן, לא
 -- למעלה. מחיקה לפני שחזור המדיניות הייתה נכשלת על תלות.
 DROP FUNCTION IF EXISTS app.can_see_site(integer);

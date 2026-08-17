@@ -5,7 +5,12 @@
 // הסתרה ב-UI אינה אבטחה. בקר שיפתח את הפאנל יקבל 403 ויראה את הסיבה,
 // וזה עדיף על תפריט שנעלם בלי הסבר.
 import { useEffect, useRef, useState } from "react";
-import { inviteUser, fetchUsers, setUserActive, setUserRole, deleteUser } from "../../services/api";
+// ⚠️ **פיצול מכוון, ולא חצי עבודה.** שלוש הפעולות שנוגעות רק ב-`app_users`
+// עוברות דרך המתג ויכולות לרוץ ישירות מול Supabase. הזמנה ומחיקה עוברות
+// ב-Admin API של GoTrue, כלומר דורשות את מפתח ה-Secret — שאסור לו להגיע
+// לדפדפן, ולכן אין להן זרוע שנייה והן מיובאות מ-api ישירות.
+import { fetchUsers, setUserActive, setUserRole } from "../../services/dataSource";
+import { inviteUser, deleteUser } from "../../services/api";
 import { copyText } from "../../utils/clipboard";
 import "./UsersPanel.css";
 

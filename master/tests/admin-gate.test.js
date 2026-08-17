@@ -40,6 +40,7 @@ test("⚠️ הכתיבות עוברות ב-dataSource, לא ב-services/api", (
     "components/AdminPanel/AdminPanel.jsx",
     "components/AddSiteModal/AddSiteModal.jsx",
     "components/DetailPanel/DetailPanel.jsx",
+    "components/UsersPanel/UsersPanel.jsx",
     "views/SupervisorView/SupervisorView.jsx",
   ]) {
     const src = code(rel);
@@ -53,7 +54,14 @@ test("⚠️ הכתיבות עוברות ב-dataSource, לא ב-services/api", (
     // עדיין מיוצאות מ-services/api בכוונה — זו זרוע השרת של המתג — ולכן
     // הכשל היחיד האפשרי הוא שקומפוננטה תייבא אותן משם ישירות, ותעקוף את
     // המתג בלי שאיש יבחין.
-    for (const banned of ["registerSite", "updateSite", "deleteSite", "startMaintenance", "cancelMaintenance"]) {
+    // ⚠️ `inviteUser` ו-`deleteUser` **אינם** ברשימה, וזה מכוון: הן דורשות
+    // את מפתח ה-Secret של GoTrue ואין להן זרוע ישירה כלל. הכללתן כאן
+    // הייתה מפילה את הבדיקה על הקוד הנכון היחיד האפשרי.
+    for (const banned of [
+      "registerSite", "updateSite", "deleteSite",
+      "startMaintenance", "cancelMaintenance",
+      "fetchUsers", "setUserActive", "setUserRole",
+    ]) {
       assert.ok(
         !fromApi.includes(banned),
         `${rel} מייבא ${banned} מ-services/api — עוקף את המתג`,

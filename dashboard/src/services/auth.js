@@ -121,11 +121,43 @@ export async function changePassword(currentPassword, nextPassword) {
   return { error: null };
 }
 
+// ============================================================
+// ⚠️ התפקיד נקרא מהמסד, ולא מהתביעה שבאסימון
+// ============================================================
+// `mapUser` למעלה מחזיר את `parkomat_role` מה-app_metadata — תביעה שנכתבת
+// **פעם אחת** ותקפה שעה. זה היה מקובל כל עוד התפקיד היה רמז לתצוגה בלבד.
+//
+// ⚠️ **זה הפסיק להיות מקובל** כשמסך ניהול האתרים עבר להיפתח לפי תפקיד:
+//   • מנהל שהורד לבקר המשיך לראות את המסך עד שהאסימון פג, וכל פעולה שם
+//     חזרה ב-403 — מסך שמציע מה שאינו יכול.
+//   • ובכיוון ההפוך, שגרוע יותר: בקר שהועלה למנהל **לא** ראה את המסך
+//     למרות שהמסד כבר התיר לו, ולא הייתה שום דרך להבין למה.
+//
+// `public.my_role()` היא אותה `app.current_app_role()` שהמסד עצמו אוכף
+// בכל פונקציית כתיבה — כלומר צד אחד של אמת, ולא שני.
+//
+// ⚠️ **נפילה חזרה לתביעה בכשל רשת, ולא ל-"בקר".** זה נראה כמו הבחירה
+// הפחות זהירה והוא ההפוך: האכיפה במסד בכל מקרה, ולכן מסך שנפתח בטעות
+// אינו פרצה — הפעולות בו ייכשלו. נפילה ל-"בקר" הייתה נועלת מנהל אמיתי
+// מחוץ למסך בגלל הבהוב רשת, וזו תקלה שאין ממנה מוצא על המסך.
+async function withDbRole(user) {
+  const base = mapUser(user);
+  if (!base) return null;
+
+  try {
+    const { data, error } = await supabase.rpc("my_role");
+    // 'anonymous' הוא תשובה תקפה — כך נראה משתמש שהושבת.
+    if (!error && typeof data === "string" && data) return { ...base, role: data };
+  } catch { /* ראה למעלה — נשארים עם התביעה */ }
+
+  return base;
+}
+
 /** ה-session הנוכחי, או null. נקרא בעלייה כדי לא לבקש התחברות מחדש. */
 export async function currentUser() {
   if (!isSupabaseConfigured) return null;
   const { data } = await supabase.auth.getSession();
-  return data.session ? mapUser(data.session.user) : null;
+  return data.session ? withDbRole(data.session.user) : null;
 }
 
 /**
@@ -137,7 +169,21 @@ export async function currentUser() {
 export function onAuthChange(callback) {
   if (!isSupabaseConfigured) return () => {};
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session ? mapUser(session.user) : null);
+    if (!session) return callback(null);
+
+    // ============================================================
+    // ⚠️ ה-RPC נדחה ל-setTimeout, וזו אינה קוסמטיקה
+    // ============================================================
+    // supabase-js מריץ את המאזין הזה **בתוך מנעול פנימי**, וקריאה נוספת
+    // ל-supabase מתוכו (כולל `rpc`, שצריכה את האסימון) עלולה להיתקע על
+    // אותו מנעול — כלומר המסך היה נשאר לנצח על "טוען". הדחייה למיקרו-
+    // משימה משחררת את המנעול לפני הקריאה.
+    //
+    // ⚠️ ולכן גם ה-callback נקרא **פעמיים** בפועל: פעם עם התפקיד מהתביעה
+    // (מיד) ופעם עם התפקיד מהמסד (מיד אחר כך). זה מכוון — המסך לא ממתין
+    // לרשת כדי להיפתח, והוא מתקן את עצמו כשהתשובה האמיתית מגיעה.
+    callback(mapUser(session.user));
+    setTimeout(() => { withDbRole(session.user).then(callback).catch(() => {}); }, 0);
   });
   return () => data.subscription.unsubscribe();
 }

@@ -49,6 +49,9 @@ import {
   registerSite as registerSiteViaServer,
   updateSite as updateSiteViaServer,
   deleteSite as deleteSiteViaServer,
+  fetchUsers as fetchUsersViaServer,
+  setUserActive as setUserActiveViaServer,
+  setUserRole as setUserRoleViaServer,
 } from "./api";
 import { fetchActivityDirect } from "./activityDirect";
 import { fetchInsightsDirect } from "./insightsDirect";
@@ -59,6 +62,7 @@ import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
 import { registerSiteDirect, updateSiteDirect, deleteSiteDirect } from "./sitesWriteDirect";
+import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 // ============================================================
@@ -399,6 +403,35 @@ export async function updateSite(code, payload) {
 export async function deleteSite(code) {
   if (!useDirect) return deleteSiteViaServer(code);
   return deleteSiteDirect(code);
+}
+
+// ============================================================
+// ניהול משתמשים — שלוש פעולות מתוך חמש
+// ============================================================
+// ⚠️ **`inviteUser` ו-`deleteUser` אינם כאן, ולא יהיו.** הן עוברות ב-Admin
+// API של GoTrue, כלומר דורשות את מפתח ה-Secret — שאסור לו להגיע לדפדפן
+// (כלל 7 בשורש CLAUDE.md: הוא עוקף RLS לגמרי). `UsersPanel` מייבא אותן
+// מ-`services/api` ישירות, וזה נכון: אין להן זרוע שנייה.
+//
+// ⚠️ ולכן מסך המשתמשים הוא **חצי-חצי** גם במצב ישיר, וזה נאמר במפורש כדי
+// שלא ייראה כמו מסלול שנשכח.
+
+/** רשימת המשתמשים. `{ users: [...] }` בשתי הזרועות. */
+export async function fetchUsers() {
+  if (!useDirect) return fetchUsersViaServer();
+  return fetchUsersDirect();
+}
+
+/** השבתה או החזרה לפעילות. שני מגני הנעילה נאכפים בשתי הזרועות. */
+export async function setUserActive(id, isActive) {
+  if (!useDirect) return setUserActiveViaServer(id, isActive);
+  return setUserActiveDirect(id, isActive);
+}
+
+/** שינוי תפקיד. העלאה תמיד מותרת; הורדה כפופה לאותם מגנים. */
+export async function setUserRole(id, role) {
+  if (!useDirect) return setUserRoleViaServer(id, role);
+  return setUserRoleDirect(id, role);
 }
 
 /** מצב התחזוקה של אתר (יש/אין חלון פעיל). */

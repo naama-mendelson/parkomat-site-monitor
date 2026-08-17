@@ -161,6 +161,19 @@ const rpc = (fn, body, token) =>
     body: JSON.stringify({ email: MGR_EMAIL, password: PW }),
   })).json()).access_token;
 
+  // ============================================================
+  // my_role — התפקיד שהדשבורד מציג, מהמסד
+  // ============================================================
+  // ⚠️ **אותו מקור אמת שהכתיבות אוכפות.** אם הפונקציה הזאת תחזיר משהו אחר
+  // מ-`app.current_app_role()`, המסך יציע פעולות שהמסד ידחה — או יסתיר
+  // פעולות שהוא כן מתיר. השני גרוע יותר: אין ממנו מוצא על המסך.
+  const roleMgr = await rpc("my_role", {}, mgrToken);
+  add("my_role של מנהל", (await roleMgr.json().catch(() => null)), "manager");
+  const roleOp = await rpc("my_role", {}, token);
+  add("my_role של בקר", (await roleOp.json().catch(() => null)), "operator");
+  const roleAnon = await rpc("my_role", {}, null);
+  add("⚠️ my_role בלי אסימון — נדחה", roleAnon.status, 401);
+
   // ---- 8. ⚠️ בקר אינו רושם אתר ----
   const byOperator = await rpc("register_site",
     { p_code: NEW_CODE, p_site_name: "בדיקת שער" }, token);
@@ -252,6 +265,155 @@ const rpc = (fn, body, token) =>
   ).get(NEW_CODE, "site-deleted");
   add("⚠️ אירוע המחיקה שרד את המחיקה", delEv.n > 0, true);
 
+  // ============================================================
+  // ניהול משתמשים — ושני מגני הנעילה, חי מול המסד
+  // ============================================================
+  // ⚠️ **הכללים כתובים פעמיים** — ב-`auth/deactivation.js` לזרוע השרת,
+  // וב-SQL לזרוע הישירה. פער ביניהם פירושו שדרך מסלול אחד אפשר להשאיר את
+  // המערכת **בלי אף מנהל**, ואז אין דרך חזרה מהמסך בכלל. בדיקות היחידה
+  // מכסות את עותק ה-JS; רק כאן נבדק עותק ה-SQL.
+  const opRow = await db.prepare("SELECT id FROM app_users WHERE LOWER(email)=LOWER(?)").get(EMAIL);
+  const mgrRow = await db.prepare("SELECT id FROM app_users WHERE LOWER(email)=LOWER(?)").get(MGR_EMAIL);
+
+  // ---- list_users ----
+  // ⚠️ הפונקציה הזאת עושה JOIN ל-`auth.users` כדי להביא `last_sign_in_at`,
+  // וזה השדה שמבדיל בין מי שעובד כאן כל יום לבין הזמנה שנשלחה ולא נפתחה.
+  // בלי בדיקה שהוא **מגיע לא ריק**, `LEFT JOIN` שבור היה נראה בדיוק כמו
+  // "המשתמש עוד לא נכנס" — כלומר שקר שנראה כמו נתון.
+  const listMgr = await rpc("list_users", {}, mgrToken);
+  const listBody = await listMgr.json().catch(() => []);
+  add("מנהל קורא את רשימת המשתמשים", listMgr.status, 200);
+  add("...ויש בה שורות", Array.isArray(listBody) && listBody.length > 0, true);
+  add("⚠️ ...וכניסה אחרונה מגיעה מ-auth.users",
+      (listBody || []).some((u) => u.out_last_sign_in_at), true);
+  const listOp = await rpc("list_users", {}, token);
+  add("⚠️ בקר אינו קורא את רשימת המשתמשים → 403", listOp.status, 403);
+
+  const byOpUser = await rpc("set_user_active", { p_user_id: opRow.id, p_active: false }, token);
+  add("⚠️ בקר אינו משבית משתמש → 403", byOpUser.status, 403);
+
+  const missingUser = await rpc("set_user_active", { p_user_id: 999999, p_active: false }, mgrToken);
+  add("משתמש שאינו קיים → 404", missingUser.status, 404);
+
+  // ---- מגן 1: לא משביתים את עצמך ----
+  const selfOff = await rpc("set_user_active", { p_user_id: mgrRow.id, p_active: false }, mgrToken);
+  add("⚠️ מנהל אינו משבית את עצמו", selfOff.status, 400);
+
+  const selfDemote = await rpc("set_user_role", { p_user_id: mgrRow.id, p_role: "operator" }, mgrToken);
+  add("⚠️ מנהל אינו מוריד את עצמו", selfDemote.status, 400);
+
+  // ---- מגן 2: המנהל הפעיל האחרון ----
+  // ⚠️ הבדיקה דורשת שיהיה **בדיוק** מנהל פעיל אחד מלבד מנהל הבדיקה, ולכן
+  // היא נמדדת ולא מונחת: בייצור יש מנהלים אמיתיים, וכשיש שניים או יותר
+  // הכלל **לא אמור** לחסום. הנחה עיוורת כאן הייתה הופכת את השער לתלוי
+  // בכמה מנהלים יש במסד באותו יום.
+  const mgrCount = await db.prepare(
+    "SELECT COUNT(*)::int AS n FROM app_users WHERE role='manager' AND is_active"
+  ).get();
+  const other = await db.prepare(
+    "SELECT id FROM app_users WHERE role='manager' AND is_active AND id <> ? LIMIT 1"
+  ).get(mgrRow.id);
+
+  if (mgrCount.n === 2 && other) {
+    // ⚠️ **המקרה שנבדק כאן הוא הפוך ממה שנראה:** מנהל הבדיקה מוריד את
+    // המנהל האחר, ואז יישאר מנהל פעיל אחד — כלומר זה **מותר**. הכלל חוסם
+    // רק כשהיעד הוא האחרון. חוסם על 2 היה מונע כל הורדה לנצח.
+    const allowed = await rpc("set_user_role", { p_user_id: other.id, p_role: "operator" }, mgrToken);
+    add("הורדת מנהל כששניים פעילים — מותרת", allowed.status, 200);
+    if (allowed.status === 200) {
+      // עכשיו מנהל הבדיקה הוא האחרון — ואי אפשר להוריד אותו, גם לא בידי אחר.
+      await db.prepare("UPDATE app_users SET role='manager' WHERE id = ?").run(other.id);
+    }
+  } else {
+    console.log(`     │ (${mgrCount.n} מנהלים פעילים — מקרה "המנהל האחרון" נבדק על מנהל הבדיקה בלבד)`);
+  }
+
+  // ============================================================
+  // ⚠️ "המנהל הפעיל האחרון" — ולמה זה נבדק בטרנזקציה ולא ב-HTTP
+  // ============================================================
+  // כדי שההסתעפות הזו תרוץ צריך **מנהל פעיל אחד בלבד** במסד. בייצור יש
+  // ארבעה, ולהוריד שלושה מהם באמת — גם לרגע — זו בדיוק הפעולה שאין ממנה
+  // חזרה אם הסקריפט ייפול באמצע.
+  //
+  // לכן המצב נבנה בטרנזקציה שמתגלגלת אחורה. זה עובד מפני ש-
+  // `app.current_actor()` נופל ל-GUC `app.user_id` כשאין תביעת JWT —
+  // אותה עקיפה שנבנתה כדי שהמדיניות תרוץ גם על Postgres רגיל. כלומר
+  // הזהות מוזרקת בלי אסימון, והפונקציה נבדקת בדיוק כמו שהיא.
+  //
+  // ============================================================
+  // ⚠️ ומה שנמצא כאן: ההסתעפות הזו **אינה בת-הגעה במקרה המסוכן**
+  // ============================================================
+  // הכלל אומר "אל תוריד/תשבית את המנהל הפעיל האחרון". אבל `require_manager`
+  // דורש שהפועל עצמו יהיה מנהל **פעיל** — ולכן אם יש רק מנהל פעיל אחד,
+  // הוא הפועל, וכל יעד ששווה לו נחסם קודם ע"י בדיקת "לא על עצמך".
+  //
+  // כלומר האינווריאנטה "לעולם לא אפס מנהלים" נשמרת בפועל ע"י **בדיקת
+  // העצמי**, וספירת המנהלים היא הגנה בעומק. היא כן נורית במצב אחד: יעד
+  // שהוא מנהל **מושבת**, כשיש מנהל פעיל אחד — שם היא חוסמת פעולה שאינה
+  // מפחיתה ניהול פעיל, וההודעה מטעה.
+  //
+  // ⚠️ **לא שיניתי את זה.** שני העותקים (JS ו-SQL) מסכימים, וההתנהגות
+  // היא חסימה עודפת ולא פרצה. הרפיית מגן נעילה היא החלטת מוצר, לא
+  // תופעת לוואי של פורט.
+  let lastMgrBlocked = null;
+  await db.transaction(async () => {
+    await db.prepare("UPDATE app_users SET role='operator' WHERE role='manager' AND id <> ?")
+      .run(mgrRow.id);
+    // יעד: מנהל **מושבת** — המצב היחיד שבו ההסתעפות בת-הגעה.
+    await db.prepare("UPDATE app_users SET role='manager', is_active=false WHERE id = ?")
+      .run(opRow.id);
+    const me = await db.prepare("SELECT supabase_uid::text AS uid FROM app_users WHERE id = ?")
+      .get(mgrRow.id);
+    await db.prepare("SELECT set_config('app.user_id', ?, true) AS s").get(me.uid);
+    try {
+      await db.prepare("SELECT * FROM set_user_role(?, ?)").all(opRow.id, "operator");
+      lastMgrBlocked = false;
+    } catch (e) {
+      lastMgrBlocked = /המנהל הפעיל האחרון/.test(e.message);
+    }
+    // ⚠️ הגלילה היא **דרך חריגה**, ולא ROLLBACK מפורש: db.transaction מגלגל
+    // על חריגה. שכחה כאן הייתה משאירה שלושה מנהלים אמיתיים כבקרים.
+    throw new Error("ROLLBACK-מכוון");
+  }).catch((e) => { if (!/ROLLBACK-מכוון/.test(e.message)) throw e; });
+
+  add("⚠️ המנהל הפעיל האחרון אינו ניתן להורדה", lastMgrBlocked, true);
+
+  // ⚠️ ובדיקה שהגלילה אכן קרתה. בלעדיה כשל בטרנזקציה היה מוריד מנהלים
+  // אמיתיים לבקרים והשער היה ממשיך לדווח ✅ על כל השאר.
+  const mgrsAfter = await db.prepare(
+    "SELECT COUNT(*)::int AS n FROM app_users WHERE role='manager' AND is_active"
+  ).get();
+  add("⚠️ ...והמסד שוחזר במלואו", mgrsAfter.n, mgrCount.n);
+
+  // ---- השבתה תקינה, והחזרה ----
+  const off = await rpc("set_user_active", { p_user_id: opRow.id, p_active: false }, mgrToken);
+  add("מנהל משבית בקר", off.status, 200);
+  const offRow = await db.prepare("SELECT is_active, disabled_by FROM app_users WHERE id = ?").get(opRow.id);
+  add("...והשורה סומנה", offRow?.is_active, false);
+  // ⚠️ **המזהה המספרי ולא המייל.** disabled_by הוא FK ל-app_users(id), וזה
+  // בדיוק מה שהפיל כל השבתה בעבר — שגיאת טיפוס שנראתה כמו כפתור מקולקל.
+  add("⚠️ ...ובידי מי, כמזהה", offRow?.disabled_by, mgrRow.id);
+
+  const roleAudit = await db.prepare(
+    "SELECT action FROM audit_log WHERE target_type='user' AND target_id = ? ORDER BY id DESC LIMIT 1"
+  ).get(String(opRow.id));
+  // ⚠️ התחילית `user.` נושאת את כל ההרשאה — מדיניות audit_log מסתירה
+  // `user.%` מבקרים. שם אחר היה חושף ניהול משתמשים לכל המערכת בשקט.
+  add("⚠️ הביקורת מתחילה ב-user.", String(roleAudit?.action || "").startsWith("user."), true);
+
+  const on = await rpc("set_user_active", { p_user_id: opRow.id, p_active: true }, mgrToken);
+  add("החזרה לפעילות עובדת", on.status, 200);
+
+  const promote = await rpc("set_user_role", { p_user_id: opRow.id, p_role: "manager" }, mgrToken);
+  add("העלאה למנהל תמיד מותרת", promote.status, 200);
+  const sameAgain = await rpc("set_user_role", { p_user_id: opRow.id, p_role: "manager" }, mgrToken);
+  add("אותו תפקיד שוב נדחה", sameAgain.status, 400);
+  const badRole = await rpc("set_user_role", { p_user_id: opRow.id, p_role: "executive" }, mgrToken);
+  add("תפקיד שאינו קיים נדחה", badRole.status, 400);
+
+  // חזרה לבקר, כדי שההשבתה בהמשך תיבדק על בקר ולא על מנהל
+  await rpc("set_user_role", { p_user_id: opRow.id, p_role: "operator" }, mgrToken);
+
   // ---- 7. ⚠️ משתמש שהושבת ----
   // אותו אסימון בדיוק, שעדיין חתום כדין. זה מה ש-identifyActor לא בדק.
   await db.prepare("UPDATE app_users SET is_active = false WHERE LOWER(email) = LOWER(?)").run(EMAIL);
@@ -264,6 +426,11 @@ const rpc = (fn, body, token) =>
   // ⚠️ וההבחנה מול 401 של מקרה 1 היא מדויקת: שם אין אסימון בכלל, ו-
   // PostgREST דוחה לפני שהפונקציה נקראת.
   add("⚠️ מושבת נדחה — עם אותו אסימון תקף", afterOff.status, 403);
+
+  // ⚠️ ו-my_role מחזיר 'anonymous' ולא 'operator': כך המסך יודע שהחשבון
+  // הושבת, במקום להציג ממשק שכל בקשה בו מוחזרת ריקה בלי הסבר.
+  const roleOff = await rpc("my_role", {}, token);
+  add("⚠️ my_role של מושבת → anonymous", (await roleOff.json().catch(() => null)), "anonymous");
 
   console.log("בדיקה                                              בפועל     צפוי");
   let bad = 0;

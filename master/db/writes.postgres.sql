@@ -539,3 +539,251 @@ REVOKE ALL ON FUNCTION public.delete_site(text)                              FRO
 GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text)      TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;
+
+-- ============================================================
+-- ניהול משתמשים — מה שכן יכול לעבור, ומה שלא
+-- ============================================================
+-- ⚠️ **הזמנה ומחיקה אינן כאן, וזה לא חוסר.** יצירת משתמש ומחיקתו ב-GoTrue
+-- דורשות את ה-Admin API, כלומר את מפתח ה-Secret — והכלל בשורש CLAUDE.md
+-- אוסר עליו להגיע לדפדפן, כי הוא עוקף RLS לחלוטין. לכן `POST
+-- /api/users/invite` ו-`DELETE /api/users/:id` **נשארים בשרת**, וזו התשובה
+-- לשאלה "למה ניהול המשתמשים לא ישר ב-Supabase": חלקו כן, שני חלקים לא.
+--
+-- מה שכן עובר: **השבתה, החזרה לפעילות, ושינוי תפקיד** — כולן כתיבות ל-
+-- `app_users` ולא נוגעות ב-GoTrue.
+--
+-- ============================================================
+-- ⚠️ ומה שאִפשר את זה: התפקיד כבר אינו נקרא מהאסימון
+-- ============================================================
+-- קודם, שינוי תפקיד היה חייב לעדכן **שני** מקומות — `app_users` ו-
+-- `app_metadata` — כי התביעה שבאסימון היא מה שהדשבורד קרא. הסנכרון השני
+-- דורש את ה-Admin API, ולכן כל המסלול היה תקוע בשרת.
+--
+-- מרגע ש-`public.my_role()` קיים והדשבורד קורא ממנו, `app_users` הוא צד
+-- אחד של אמת — והתביעה היא רק הערך ההתחלתי שממנו `provision_app_user`
+-- בונה שורה חדשה.
+--
+-- ⚠️ **המחיר, במפורש:** `app_metadata` בלוח הבקרה של Supabase יישאר עם
+-- התפקיד הישן. מי שיסתכל שם יראה נתון שאינו הסמכות. זו הסיבה שהשרת עדיין
+-- מסנכרן אותו במסלול שלו — ומי שמשנה תפקיד מהמסלול הישיר מקבל אכיפה
+-- נכונה ותצוגה נכונה, ורק ה-app_metadata מתיישן.
+--
+-- ============================================================
+-- ⚠️ שני מגני הנעילה — מפורטים כאן **ושם**, וזו כפילות מודעת
+-- ============================================================
+-- הכללים חיים ב-`auth/deactivation.js` (`canDeactivate` / `canChangeRole`)
+-- ונבדקים שם כהתנהגות. כאן הם נכתבים שוב, כי הדפדפן אינו עובר בשרת.
+--
+-- ⚠️ **ופער בין שני העותקים הוא בדיוק הכשל שהם נועדו למנוע:** כלל שנשמר
+-- בזרוע אחת ולא בשנייה פירושו שאפשר להשאיר את המערכת בלי אף מנהל — דרך
+-- המסלול שלא עודכן. לכן `tools/check-writes.js` בודק את שני המגנים **חי**
+-- מול המסד, ולא רק את פונקציות ה-JS.
+
+-- ============================================================
+-- ⚠️ שמות הפלט מתחילים ב-`out_`, וזה מכוון
+-- ============================================================
+-- `RETURNS TABLE (id integer, …)` הופך `id` למשתנה, ואז `WHERE id = …` הוא
+-- `column reference "id" is ambiguous` (42702) → PostgREST **400**. זה קרה
+-- כאן בפועל ב-`update_site`, וזה נראה כמו "רק העדכון שבור" ולא כמו שגיאת
+-- שם.
+--
+-- הסמכה (`WHERE app_users.id = …`) פותרת את זה, והיא נעשית גם כאן. אבל
+-- תחילית בשמות הפלט הופכת את התקלה ל**בלתי אפשרית** במקום ל"נמנעת
+-- במשמעת" — והמחיר הוא שם שדה מכוער אחד ב-JSON, שמתאם דק ממילא ממפה.
+
+-- ============================================================
+-- public.set_user_active — השבתה והחזרה
+-- ============================================================
+DROP FUNCTION IF EXISTS public.set_user_active(integer, boolean);
+
+CREATE OR REPLACE FUNCTION public.set_user_active(
+  p_user_id integer,
+  p_active  boolean
+)
+RETURNS TABLE (out_id integer, out_email text, out_is_active boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor_name text := app.require_manager();
+  v_actor_id   integer := app.current_app_user();
+  v_email      text;
+  v_role       text;
+  v_managers   integer;
+BEGIN
+  IF p_user_id IS NULL OR p_active IS NULL THEN
+    RAISE EXCEPTION 'חסר מזהה משתמש או מצב' USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT u.email, u.role INTO v_email, v_role FROM app_users u WHERE u.id = p_user_id;
+  IF v_email IS NULL THEN
+    RAISE EXCEPTION 'משתמש לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+
+  -- ⚠️ המגנים חלים על **השבתה בלבד**. החזרה לפעילות אינה מסירה הרשאות
+  -- מאיש, ולכן אין ממה להגן — ובדיקה כאן הייתה חוסמת בדיוק את הפעולה
+  -- שמחלצת ממצב תקוע.
+  IF p_active = false THEN
+    IF p_user_id = v_actor_id THEN
+      RAISE EXCEPTION 'אי אפשר להשבית את עצמך' USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF v_role = 'manager' THEN
+      SELECT COUNT(*)::int INTO v_managers
+        FROM app_users u WHERE u.role = 'manager' AND u.is_active;
+      IF v_managers <= 1 THEN
+        RAISE EXCEPTION 'לא ניתן להשבית את המנהל הפעיל האחרון'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    END IF;
+  END IF;
+
+  -- ⚠️ `disabled_by` הוא FK ל-app_users(id) — מזהה מספרי ולא מייל. העברת
+  -- שם הפילה בעבר כל השבתה על שגיאת טיפוס, וזה נראה כמו "הכפתור לא עובד".
+  UPDATE app_users
+     SET is_active   = p_active,
+         disabled_at = CASE WHEN p_active THEN NULL
+                            ELSE to_char(now() AT TIME ZONE 'UTC',
+                                         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+         disabled_by = CASE WHEN p_active THEN NULL ELSE v_actor_id END
+   WHERE app_users.id = p_user_id;
+
+  -- ⚠️ התחילית `user.` נושאת את כל ההרשאה: מדיניות audit_log מסתירה
+  -- `user.%` מבקרים. פעולה שתיקרא אחרת תהיה גלויה לכולם בלי שום סימן.
+  PERFORM app.record_write_audit(
+    CASE WHEN p_active THEN 'user.enable' ELSE 'user.disable' END,
+    v_actor_name, app.current_app_role(), 'user', p_user_id::text,
+    jsonb_build_object('email', v_email, 'is_active', p_active));
+
+  RETURN QUERY SELECT p_user_id, v_email, p_active;
+END;
+$fn$;
+
+-- ============================================================
+-- public.set_user_role — שינוי תפקיד
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.set_user_role(
+  p_user_id integer,
+  p_role    text
+)
+RETURNS TABLE (out_id integer, out_email text, out_role text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor_name text := app.require_manager();
+  v_actor_id   integer := app.current_app_user();
+  v_email      text;
+  v_role       text;
+  v_managers   integer;
+BEGIN
+  IF p_role NOT IN ('operator', 'manager') THEN
+    RAISE EXCEPTION 'תפקיד לא תקין' USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT u.email, u.role INTO v_email, v_role FROM app_users u WHERE u.id = p_user_id;
+  IF v_email IS NULL THEN
+    RAISE EXCEPTION 'משתמש לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+
+  IF v_role = p_role THEN
+    RAISE EXCEPTION 'זה כבר התפקיד שלו' USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- ⚠️ **הורדה ממנהל לבקר היא אותה סכנה בדיוק כמו השבתה** — שתיהן מסירות
+  -- את יכולת הניהול. כלל שמגן רק על ההשבתה משאיר דלת פתוחה: מורידים את
+  -- המנהל האחרון לבקר, ואין מי שיחזיר. העלאה תמיד מותרת.
+  IF p_role = 'operator' THEN
+    IF p_user_id = v_actor_id THEN
+      RAISE EXCEPTION 'אי אפשר להוריד את עצמך מתפקיד מנהל'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT COUNT(*)::int INTO v_managers
+      FROM app_users u WHERE u.role = 'manager' AND u.is_active;
+    IF v_managers <= 1 THEN
+      RAISE EXCEPTION 'לא ניתן להוריד את המנהל הפעיל האחרון'
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+
+  UPDATE app_users SET role = p_role WHERE app_users.id = p_user_id;
+
+  PERFORM app.record_write_audit('user.role', v_actor_name, app.current_app_role(),
+                                 'user', p_user_id::text,
+                                 jsonb_build_object('email', v_email,
+                                                    'from', v_role, 'to', p_role));
+
+  RETURN QUERY SELECT p_user_id, v_email, p_role;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.set_user_active(integer, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_user_role(integer, text)      FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.set_user_active(integer, boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_user_role(integer, text)      TO authenticated;
+
+-- ============================================================
+-- public.list_users — רשימת המשתמשים, כולל כניסה אחרונה
+-- ============================================================
+-- ⚠️ **הקריאה הפשוטה מ-`app_users` דרך PostgREST לא הייתה מספיקה**, וזה
+-- מה שחייב פונקציה: `last_sign_in_at` יושב ב-`auth.users`, ו-PostgREST
+-- חושף רק את `public`. השרת שלף אותו דרך ה-Admin API, כלומר עם מפתח
+-- ה-Secret — שאסור לו להגיע לדפדפן.
+--
+-- ⚠️ ולמה זה שדה שכדאי להילחם עליו: הוא התשובה לשאלה "האם המשתמש הזה
+-- בכלל השתמש במערכת". בלעדיו רשימת המשתמשים אינה יכולה להבדיל בין מי
+-- שעובד כאן כל יום לבין הזמנה שנשלחה ואף פעם לא נפתחה.
+--
+-- ============================================================
+-- ⚠️ המחיר: JOIN ל-auth.users, וזה החיבור היחיד כאן ל-Supabase
+-- ============================================================
+-- הכלל בשורש CLAUDE.md אוסר **FK** ל-`auth.users` ואוסר `auth.*` בתוך
+-- פונקציות מדדים ומדיניות. זו אינה אף אחת מהשתיים — אבל היא כן נשענת על
+-- סכמה שלא תיסע ב-`pg_dump --schema=public --schema=app`.
+--
+-- העלות בהגירה מפורשת ומוגדרת: **שורת JOIN אחת**. `app_users` נשאר טבלת
+-- המשתמשים הקנונית, `supabase_uid` נשאר עמודה בלי FK, וכל השאר בפונקציה
+-- הוא שלנו. אותו דפוס בדיוק כמו הטריגרים על `auth.users`.
+--
+-- ⚠️ ו-`LEFT JOIN` ולא `JOIN`: משתמש שנוצר אצלנו ואין לו עדיין שורת auth
+-- (או שנמחק משם) חייב להופיע ברשימה. `INNER` היה **מעלים אותו** — כלומר
+-- מסתיר בדיוק את השורה החריגה שמנהל צריך לראות.
+CREATE OR REPLACE FUNCTION public.list_users()
+RETURNS TABLE (
+  out_id              integer,
+  out_email           text,
+  out_full_name       text,
+  out_role            text,
+  out_is_active       boolean,
+  out_created_at      text,
+  out_disabled_at     text,
+  out_last_sign_in_at text
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  -- ⚠️ בפנים ולא במדיניות: SECURITY DEFINER עוקף RLS, ולכן זו ההגנה
+  -- היחידה. המדיניות על app_users מתירה קריאה לכל משתמש פעיל, אבל הנתיב
+  -- בשרת היה מוגבל למנהלים — וכאן נשמרת אותה החלטה.
+  PERFORM app.require_manager();
+
+  RETURN QUERY
+    SELECT u.id, u.email, u.full_name, u.role, u.is_active,
+           u.created_at, u.disabled_at,
+           to_char(au.last_sign_in_at AT TIME ZONE 'UTC',
+                   'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      FROM app_users u
+      LEFT JOIN auth.users au ON au.id = u.supabase_uid
+     ORDER BY u.id;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.list_users() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.list_users() TO authenticated;

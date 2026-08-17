@@ -255,6 +255,10 @@ exist"*.
 | `public.register_site(text,text,text,text,boolean)` | **manager only** |
 | `public.update_site(text,text,text,text,text)` | **manager only** |
 | `public.delete_site(text)` | **manager only** |
+| `public.list_users()` | **manager only** |
+| `public.set_user_active(integer,boolean)` | **manager only** |
+| `public.set_user_role(integer,text)` | **manager only** |
+| `public.my_role()` | any authenticated user — returns **their own** role |
 
 **RPC, not table policies + `GRANT`.** A policy answers *"may this row be written"*; it cannot
 compute `expires_at`, enforce the 720-hour cap, write an audit line, or publish an event. And
@@ -284,6 +288,45 @@ expires. Cost: one query per call, which is why it is not read from the claim.
 **What is lost in the move, stated plainly:** the client **IP**. The server recorded it from
 `req.ip`; SQL has no access to PostgREST's client address. The identity is stronger than
 before (verified token instead of a shared code) but where it came from is gone.
+
+## User management: three of five operations moved, two cannot
+
+This is the full answer to *"why isn't user management just in Supabase?"* — most of it now is.
+
+| Operation | Where it runs | Why |
+|---|---|---|
+| list | **Postgres** (`list_users`) | reads `app_users`, joins `auth.users` for last sign-in |
+| deactivate / restore | **Postgres** (`set_user_active`) | touches `app_users` only |
+| change role | **Postgres** (`set_user_role`) | touches `app_users` only |
+| **invite** | **server** | `POST /auth/v1/admin/users` needs the **Secret key** |
+| **delete** | **server** | removing the GoTrue user needs the **Secret key** |
+
+The Secret key bypasses RLS entirely, so it must never reach a browser (root rule 7). That is
+the whole reason the last two stay. `UsersPanel` therefore imports three functions from
+`services/dataSource` and two from `services/api` — half-and-half on purpose.
+
+**What unblocked the role change** was `public.my_role()`. Before it, a role change had to
+write **two** places — `app_users` *and* the token's `app_metadata` — because the dashboard read
+the role from the claim, and the second write needs the Admin API. Once the dashboard reads
+`my_role()`, `app_users` is the single side of truth. **Stated cost:** `app_metadata` in the
+Supabase dashboard keeps the old role. It is not the authority, but anyone reading it there sees
+something the system does not enforce. The server arm still syncs it.
+
+`list_users` is the **only** place outside the `auth.users` triggers that touches Supabase's auth
+schema, and the join is `LEFT` on purpose — a user with no auth row must still appear, since that
+is exactly the anomalous row a manager needs to see. Migration cost is one `JOIN` line.
+
+⚠️ **The "last active manager" guard cannot fire in the dangerous case, and that is worth
+knowing before someone "fixes" it.** `require_manager()` demands the caller be an *active
+manager*, so if only one active manager exists, they are the caller — and any target equal to
+them is already refused by the "not yourself" check. The invariant *never zero managers* is
+therefore held by the self-check; the count is defence in depth. It does fire in one state: an
+**inactive** manager target while one active manager exists, where it blocks a harmless change
+with a misleading message. **Both copies (JS `auth/deactivation.js` and SQL) agree, and it was
+left alone** — loosening a lock-out guard is a product decision, not a port side effect.
+`check-writes.js` proves the SQL branch blocks, by building the state inside a **rolled-back
+transaction** (the `app.user_id` GUC injects identity without a token) and then asserting the
+database was fully restored — the only safe way to test it against production.
 
 ⚠️ **`POST /api/sites` on the server has never worked.** `insertSite` in `queries.js` lists six
 columns and supplies eight placeholders — measured against the database:
