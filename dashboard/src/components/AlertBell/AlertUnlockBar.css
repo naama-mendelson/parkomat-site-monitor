@@ -55,3 +55,102 @@
     flex-basis: 100%;
   }
 }
+
+/* ============================================================
+   שלב 1 — השלט המרכזי
+   ============================================================
+   ⚠️ position: fixed ולא absolute: האב הוא .app שיש לו זרימה משלו,
+   וב-absolute השלט היה נוחת בראש המסמך ולא במרכז החלון — כלומר בדיוק
+   לא במקום שבגללו הוא נבנה. */
+.alert-unlock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  /* ⚠️ pointer-events נשאר פעיל: הרקע עצמו הוא כפתור שמשחרר. */
+}
+
+/* הרקע — מעמעם את הדשבורד אבל אינו מסתיר אותו לגמרי.
+   ⚠️ שקיפות ולא צבע מלא: מי שמסתכל צריך לראות שהמערכת מאחור **עובדת**,
+   אחרת השלט נקרא כמו מסך טעינה או כמו תקלה. */
+.alert-unlock-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+
+.alert-unlock-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 420px);
+  padding: 28px 32px 22px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+/* ⚠️ הפעימה היא מה שמושך את העין מרחוק — במסך קיר השלט נקרא מ-3 מטר,
+   ושם צורה סטטית נבלעת ברקע. איטית בכוונה: מהירה נקראת כמו אזעקה. */
+.alert-unlock-card-icon {
+  font-size: 2.4rem;
+  line-height: 1;
+  animation: alert-unlock-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes alert-unlock-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.85; }
+  50%      { transform: scale(1.12); opacity: 1; }
+}
+
+/* ⚠️ מכבדים בקשת הפחתת-תנועה. מי שהגדיר זאת עושה זאת מסיבה, ופעימה
+   אינסופית היא בדיוק מה שההגדרה נועדה לעצור. */
+@media (prefers-reduced-motion: reduce) {
+  .alert-unlock-card-icon { animation: none; }
+}
+
+.alert-unlock-card-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.alert-unlock-card-text {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.alert-unlock-card-btn {
+  margin-top: 6px;
+  padding: 11px 30px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent, #f59e0b);
+  color: #1a1205;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.alert-unlock-card-btn:hover  { filter: brightness(1.08); }
+.alert-unlock-card-btn:active { transform: translateY(1px); }
+
+.alert-unlock-card-note {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}

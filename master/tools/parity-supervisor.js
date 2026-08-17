@@ -83,6 +83,11 @@ function compare(label, server, direct) {
     .replace(/\\/g, "/");
   const { toSupervisorShape } = await import(shapeUrl);
 
+  // ⚠️ ההשוואה נעטפת בבדיקת יציבות: כל כתיבה שנכנסת בין שתי הזרועות
+  // נראית כמו הבדל ביניהן. ראה tools/lib/stability.js.
+  const { runStable } = require("./lib/stability");
+  const compareAll = async () => {
+  checks = 0; failures = 0; fails.length = 0; ties = 0;
   for (const period of ["week", "month", "year"]) {
     const { range } = resolvePeriod(period);
     // ============================================================
@@ -244,8 +249,25 @@ function compare(label, server, direct) {
     }
     console.log(`  ${ok ? "✓" : "✗"} ${c.name}`);
   }
+  };
+
+  const { stable, marker } = await runStable(db, compareAll);
 
   console.log(`\n${"=".repeat(60)}`);
+
+  // ============================================================
+  // ⚠️ "לא ניתן להשוות" — ולא "עבר" ולא "נפל"
+  // ============================================================
+  // כשהנתונים זזו תוך כדי, ההשוואה אינה אומרת דבר על נכונות הקוד. "עבר"
+  // היה משקר; "נפל" היה מאמן להתעלם. קוד יציאה 2, ו-gates.js מדווח
+  // "לא רץ" — אותה הפרדה שכבר קיימת שם לשער שחסרים לו אישורים.
+  if (!stable && failures) {
+    console.log("⏭️  לא ניתן להשוות — נתונים נכתבו במהלך כל הניסיונות.");
+    console.log(`   סמן: ${marker}`);
+    console.log("   קורה בזמן מסירה חוזרת מ-HiveMQ (עלייה מחדש של השרת). נסו שוב בעוד דקה.");
+    process.exit(2);
+  }
+
   if (failures) {
     console.log(`❌ ${failures} הבדלים מתוך ${checks} השוואות\n`);
     fails.slice(0, 25).forEach((f) => console.log("   " + f));
