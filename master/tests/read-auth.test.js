@@ -563,3 +563,91 @@ test("⚠️ אבל מסך קביעת הסיסמה נשאר — הקישור ע�
 test("⚠️ והמסך אומר מה כן לעשות במקום", () => {
   assert.match(LOGIN_JSX, /פנו למנהל/, "חייב להיות מסלול התאוששות כתוב");
 });
+
+// ============================================================
+// identifyActor נסגר — והתנאי שנקבע לכך התקיים
+// ============================================================
+// ⚠️ ההערה בקוד אמרה במפורש: "כדי להפוך את הנתיב לחוסם (אחרי שיהיו
+// משתמשים), הסירו את ההערה". יש משתמשים — הם נוצרים בהזמנה ונשמרים
+// ב-app_users. התנאי מולא.
+//
+// ⚠️ ומה שהפך את זה מדחוי לדחוף: הפיצול לשני קונטיינרים נותן לשרת שם DNS
+// ציבורי. עד אז הנתיב מוגן ברשת בלבד. נמדד לפני הסגירה:
+//
+//     POST /api/sites/2438/maintenance  (בלי אסימון)  →  400 "חסר שם"
+//
+// כלומר הוא עבר את השומר. פורט פתוח = כל אדם באינטרנט יכול להשתיק כל
+// אתר ל-720 שעות, להוציא אותו ממכנה הזמינות ולדכא רישום תקלות.
+test("⚠️ identifyActor חוסם בקשה לא מזוהה", () => {
+  const m = ROUTES.match(/async function identifyActor[\s\S]*?\n}/);
+  assert.ok(m, "identifyActor קיימת");
+
+  const body = m[0].replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  // הענף האנונימי חייב להחזיר 401 ולא להמשיך.
+  assert.match(body, /return res\.status\(401\)/,
+    "הענף האנונימי חייב לחסום");
+  // ⚠️ ובלי `return next()` אחריו: זה היה מריץ את שני המסלולים.
+  const status401 = body.lastIndexOf("res.status(401)");
+  const lastNext = body.lastIndexOf("return next()");
+  assert.ok(lastNext < status401,
+    "אין return next() אחרי החסימה — אחרת היא חסרת משמעות");
+});
+
+test("⚠️ אבל 'ייחוס במקום מנע' נשמר — אין דרישת תפקיד", () => {
+  // ההחלטה הייתה שכל **משתמש** יכול להכניס אתר לתחזוקה, בלי דרישת תפקיד
+  // ובלי קוד מנהל. מה שנחסם הוא מי שאינו מזוהה כלל — ועליו ההחלטה
+  // מעולם לא דיברה. בקר ומנהל כאחד עוברים.
+  const m = ROUTES.match(/async function identifyActor[\s\S]*?\n}/);
+  const body = m[0].replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(body, /requireManager|role\s*===\s*"manager"/,
+    "אסור שתופיע כאן דרישת תפקיד");
+  // ושני מסלולי הכניסה נשמרים: אסימון וקוד מנהל.
+  assert.match(body, /trust: "token"/);
+  assert.match(body, /trust: "admin-code"/);
+});
+
+test("⚠️ ומסלולי התחזוקה ממשיכים להשתמש בו ולא ב-requireAuth", () => {
+  // requireAuth היה מוסיף בדיקת is_active ושובר את מסלול קוד-המנהל,
+  // שהוא הדרך של מי שאינו משתמש רשום.
+  for (const line of ROUTES.split(/\r?\n/)) {
+    if (/^app\.(post|delete)\("\/api\/sites\/:code\/maintenance"/.test(line)) {
+      assert.match(line, /identifyActor/, `שומר שגוי: ${line.slice(0, 70)}`);
+    }
+  }
+});
+
+// ============================================================
+// CORS כרשימה — הדרישה שחוסמת את הפיצול
+// ============================================================
+// ⚠️ `Access-Control-Allow-Origin` אינו מקבל רשימה לפי התקן. שרת שתומך
+// בכמה origins חייב להשוות מול הבקשה ולהחזיר את זה שהתאים. בלי זה אי
+// אפשר להחזיק בו-זמנית את הפיתוח (5173) ואת דומיין הספק, והמעבר הופך
+// ל"או-או".
+test("⚠️ DASHBOARD_ORIGIN מפוצל לרשימה", () => {
+  assert.match(ROUTES, /ALLOWED_ORIGINS[\s\S]{0,200}\.split\(","\)/,
+    "חייב לתמוך בכמה origins");
+});
+
+test("⚠️ ומוחזר ה-origin שהתאים — לא הראשון ברשימה", () => {
+  // דפדפן משווה את הכותרת מול ה-origin שלו בדיוק. החזרת הראשון היא
+  // בדיוק הבאג ששרת עם רשימה נוטה אליו, והוא נראה כמו CORS שבור בלי סיבה.
+  const m = ROUTES.match(/app\.use\(\(req, res, next\) => \{[\s\S]*?Allow-Methods[^\n]*\n/);
+  assert.ok(m, "ה-middleware של CORS קיים");
+  const body = m[0].replace(/^\s*\/\/.*$/gm, "");
+  assert.match(body, /ALLOWED_ORIGINS\.includes\(/, "השוואה מול הבקשה");
+  assert.match(body, /Allow-Origin", origin\)/, "מחזיר את ה-origin עצמו");
+});
+
+test("⚠️ ו-Vary: Origin מוגדר", () => {
+  // בלעדיו proxy או מטמון עלול להגיש לדומיין אחד תשובה ששמורה עם הכותרת
+  // של דומיין אחר — תקלת CORS מקרית שאי אפשר לשחזר.
+  assert.match(ROUTES, /setHeader\("Vary", "Origin"\)/);
+});
+
+test("⚠️ ובקשה בלי Origin אינה נחסמת", () => {
+  // same-origin, curl, וכל השערים אינם שולחים Origin. חסימה כאן הייתה
+  // שוברת את כל הבדיקות — ו-CORS אינו אבטחת שרת מלכתחילה.
+  const m = ROUTES.match(/app\.use\(\(req, res, next\) => \{[\s\S]*?Allow-Methods[^\n]*\n/);
+  assert.match(m[0], /else if \(!origin\)/, "מסלול מפורש לבקשה בלי Origin");
+});
