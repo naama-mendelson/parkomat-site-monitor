@@ -606,6 +606,16 @@ function init() {
       // EXECUTE — סדר הפוך היה נכשל על "function does not exist".
       const security = fs.readFileSync(path.join(__dirname, "security.postgres.sql"), "utf8");
       await setup.query(security);
+
+      // ============================================================
+      // פעולות כתיבה שהדפדפן קורא ישירות — **אחרי** security
+      // ============================================================
+      // ⚠️ הסדר אינו סגנוני: הפונקציות כאן קוראות ל-`app.current_actor()`,
+      // ל-`app.current_app_role()` ול-`app.is_active_user()`, וכולן נוצרות
+      // ב-security.postgres.sql. סדר הפוך נכשל על "function does not exist"
+      // ב-clone טרי — כלומר עובר בפיתוח ונופל בהתקנה חדשה.
+      const writes = fs.readFileSync(path.join(__dirname, "writes.postgres.sql"), "utf8");
+      await setup.query(writes);
     } finally {
       // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
       // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.

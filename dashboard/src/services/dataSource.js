@@ -43,6 +43,8 @@ import {
   fetchSiteDetail as fetchSiteDetailViaServer,
   fetchSiteAnalytics as fetchSiteAnalyticsViaServer,
   fetchMaintenance as fetchMaintenanceViaServer,
+  startMaintenance as startMaintenanceViaServer,
+  cancelMaintenance as cancelMaintenanceViaServer,
   fetchMonthlyReport as fetchMonthlyReportViaServer,
 } from "./api";
 import { fetchActivityDirect } from "./activityDirect";
@@ -52,6 +54,7 @@ import { fetchMonthlyReportDirect } from "./reportDirect";
 import { fetchExecutiveDirect } from "./executiveDirect";
 import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
+import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 // ============================================================
@@ -332,6 +335,33 @@ export async function fetchAnalytics(code, period) {
     },
     chart,
   };
+}
+
+// ============================================================
+// כתיבה — ולא רק קריאה
+// ============================================================
+// ⚠️ **זה המתג הראשון שעובר על פעולת כתיבה.** עד כה שני הזרועות היו
+// "קרא מ-Supabase" מול "קרא מהשרת"; כאן הן "כתוב ל-Supabase" מול "כתוב
+// דרך השרת", והשמירה על זהות ההתנהגות חשובה יותר — כתיבה שנופלת בין
+// הזרועות משאירה מצב שונה במסד, ולא רק תצוגה שונה.
+//
+// ⚠️ שני ההבדלים הידועים, ושניהם לטובה בזרוע הישירה:
+//   • `name` אינו נשלח — הוא נגזר מהזהות המאומתת במסד.
+//   • שורת ביקורת ב-audit_log נכתבת בפועל. בזרוע השרת היא console.log.
+//
+// ⚠️ ובזרוע השרת `name` **כן** חובה (400 בלעדיו), ולכן הוא נשאר בחתימה.
+// חתימה שונה בין הזרועות הייתה הופכת את המתג לשני מסלולי קוד במסך.
+
+/** פתיחת חלון תחזוקה. `name` נדרש רק בזרוע השרת — ראה למעלה. */
+export async function startMaintenance(code, name, durationHours, reason = "") {
+  if (!useDirect) return startMaintenanceViaServer(code, name, durationHours, reason);
+  return startMaintenanceDirect(code, durationHours, reason);
+}
+
+/** ביטול חלון התחזוקה הפעיל. */
+export async function cancelMaintenance(code) {
+  if (!useDirect) return cancelMaintenanceViaServer(code);
+  return cancelMaintenanceDirect(code);
 }
 
 /** מצב התחזוקה של אתר (יש/אין חלון פעיל). */

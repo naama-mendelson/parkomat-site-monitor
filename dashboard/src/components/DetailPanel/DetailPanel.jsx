@@ -4,7 +4,9 @@ import { STATUS_LABELS, siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { formatDate } from "../../utils/helpers";
-import { startMaintenance, cancelMaintenance } from "../../services/api";
+// ⚠️ מ-dataSource ולא מ-api: הכתיבה עוברת עכשיו במתג — ישירות ל-Supabase
+// כברירת מחדל, ודרך השרת כשהמתג כבוי. ראה services/dataSource.js.
+import { startMaintenance, cancelMaintenance } from "../../services/dataSource";
 import { useSiteAnalytics } from "../../hooks/useSiteAnalytics";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
 import MetricCard from "../MetricCard/MetricCard";

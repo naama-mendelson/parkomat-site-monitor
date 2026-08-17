@@ -34,6 +34,7 @@ const GATES = [
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
   { name: "check-permissions",  what: "מי מורשה למה — מקצה לקצה" },
+  { name: "check-writes",       what: "כתיבה ישירה ל-Supabase, בלי השרת" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 

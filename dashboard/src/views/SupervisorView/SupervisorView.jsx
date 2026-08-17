@@ -2,7 +2,8 @@
 // טבלת אתרים ממוינת/מסוננת, תקלות אחרונות, ותחזוקות פעילות.
 import { useState, useMemo } from "react";
 import { STATUS_COLORS, STATUS_LABELS, STATUSES, METRIC_COLORS } from "../../utils/constants";
-import { cancelMaintenance } from "../../services/api";
+// ⚠️ מ-dataSource ולא מ-api — ראה ההסבר שם.
+import { cancelMaintenance } from "../../services/dataSource";
 import { useSupervisorStats } from "../../hooks/useSupervisorStats";
 import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
