@@ -167,8 +167,19 @@ database. Supabase Auth replaces the shared admin code, and the operator / super
 executive roles become real instead of a client-side `useState`.
 
 **The server.** MQTT ingestion (dedup, plausibility, timestamps, transactions, FIFO) plus
-the assistant. The daily maintenance job can move to `pg_cron`, which is already running
-on the instance and is a standard extension, not a Supabase invention.
+the assistant. **Three of the daily job's four steps can move to `pg_cron`** — monthly summary,
+cleanup over a year, and the 7-day `events` prune are all pure SQL.
+
+⚠️ **`pg_cron` is *available* but NOT installed** — measured: `pg_available_extensions` offers
+1.6.4, `installed_version` is `null`, and `cron.job` does not exist. This file previously said it
+was "already running on the instance", which was wrong. Moving the job therefore starts with
+`CREATE EXTENSION`, a production DDL step, not with writing a schedule.
+
+⚠️ **And the fourth step cannot move at all.** `runBackup` writes a file to our own disk — that
+file *is* the data half of the exit door, and `pg_cron` runs inside Postgres with no access to
+our filesystem. So the daily job shrinks; it does not disappear, and the server still has to run
+daily for the backup. Which also caps the value of the move: the three SQL steps would survive
+server downtime, and that is the whole gain.
 
 **The dashboard.** `fetch('/api/sites')` becomes a Supabase query through PostgREST.
 Live updates come from a new `events` table: ingestion writes one row per semantic event,
