@@ -17,6 +17,9 @@ import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
 // להציג אתרים גם אם איש לא נגע בו.
 import AlertUnlockBar from "./components/AlertBell/AlertUnlockBar";
+// ⚠️ פס תקלת הגדרה — כתובת API שגויה נכשלת ב-200 ולא בשגיאה, כי Apache
+// עושה rewrite של כל נתיב ל-index.html. ראה services/apiHealth.js.
+import ApiHealthBar from "./components/ApiHealthBar/ApiHealthBar";
 import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
@@ -214,6 +217,8 @@ function App() {
 
   return (
     <div className="app">
+      {/* ⚠️ לפני פס הקול: תקלת פריסה קודמת בחשיבותה לבקשה מהמשתמש. */}
+      <ApiHealthBar />
       <AlertUnlockBar />
       <Header
         sites={sites}
