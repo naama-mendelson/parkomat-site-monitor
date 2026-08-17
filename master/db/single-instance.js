@@ -121,16 +121,70 @@ async function acquireSingleInstanceLock(connectionString, keys = [LOCK_KEY_1, L
     // ⚠️ שולפים מי מחזיק **לפני** שסוגרים, ומוותרים בשקט אם אי אפשר: הודעת
     // הכשל חשובה יותר משלמות האבחון, ובלי זה ההודעה הייתה "משהו תפוס".
     let who = "";
+    // ⚠️ שם ייחודי ולא `holder` — כדי לא להסתיר את משתנה המודול שמחזיק
+    // את החיבור החי. הצללה שם הייתה משאירה את הנעילה בלי מי שישחרר אותה.
+    let stale = null;
     try {
       const { rows: w } = await client.query(`
-        SELECT a.client_addr::text AS addr, a.backend_start
+        SELECT l.pid, a.client_addr::text AS addr, a.backend_start,
+               EXTRACT(EPOCH FROM (now() - a.state_change))::int AS idle_seconds
           FROM pg_locks l
           JOIN pg_stat_activity a ON a.pid = l.pid
          WHERE l.locktype = 'advisory'
            AND l.classid = $1 AND l.objid = $2 AND l.granted
          LIMIT 1`, [k1, k2]);
-      if (w[0]) who = `\n   המחזיק: ${w[0].addr || "מקומי"} מאז ${w[0].backend_start.toISOString()}`;
+      stale = w[0] || null;
+      if (stale) {
+        who = `\n   המחזיק: ${stale.addr || "מקומי"} מאז ${stale.backend_start.toISOString()}`;
+      }
     } catch { /* אבחון בלבד */ }
+
+    // ============================================================
+    // ⚠️ מחזיק **בסרק** אינו שרת — הוא שרת שמת ולא נוקה
+    // ============================================================
+    // נעילת advisory משוחררת כשה-session נגמר. מול ה-pooler של Supabase
+    // `kill` של התהליך **אינו** מסיים את ה-session מיד — הוא נשאר פתוח
+    // בצד Postgres, והנעילה איתו.
+    //
+    // ⚠️ נמדד שוב ושוב היום: 11.5 דקות, ואחר כך 32 דקות, שבהן השרת סירב
+    // לעלות עם ההודעה "שרת אחר כבר רץ" **בזמן שלא רץ שום שרת**. וזה בדיוק
+    // מה שיקרה בכל `docker compose restart`.
+    //
+    // ⚠️ **וההבחנה בטוחה, לא ניחוש:** שרת חי מריץ keep-alive של 4 שאילתות
+    // כל 20 שניות (master.js), ולכן `state_change` שלו לעולם אינו מתיישן
+    // מעבר לזה. סרק של דקה שלמה פירושו שאין מי שיריץ אותן.
+    //
+    // ⚠️ והסף הוא 60ש' ולא 25ש': שלוש החמצות רצופות של ה-keep-alive, ולא
+    // אחת. עומס חולף או ניתוק חולף לא יוציאו שרת חי מהמשחק.
+    const STALE_AFTER_SECONDS = 60;
+    if (stale && stale.idle_seconds >= STALE_AFTER_SECONDS) {
+      console.warn(
+        `[single-instance] נעילה בסרק ${stale.idle_seconds}ש' (pid ${stale.pid}) — ` +
+        "שרת קודם שנהרג ולא נוקה. משחרר וממשיך."
+      );
+      try {
+        await client.query("SELECT pg_terminate_backend($1)", [stale.pid]);
+      } catch (err) {
+        console.error("[single-instance] שחרור הנעילה התקועה נכשל:", err.message);
+      }
+
+      // ⚠️ ניסיון **אחד** נוסף, ולא לולאה: אם גם הוא נכשל, יש מחזיק אמיתי
+      // (או שאין הרשאה לשחרר) — ואז ההודעה למטה היא התשובה הנכונה.
+      const retry = await client.query(
+        "SELECT pg_try_advisory_lock($1, $2) AS got", [k1, k2]
+      ).catch(() => ({ rows: [{ got: false }] }));
+
+      if (retry.rows[0].got) {
+        client.on("error", (err) => {
+          console.error("[single-instance] חיבור הנעילה נותק:", err.message);
+        });
+        holder = client;
+        return async () => {
+          holder = null;
+          await client.end().catch(() => {});
+        };
+      }
+    }
 
     await client.end().catch(() => {});
     throw new Error(
