@@ -432,6 +432,33 @@ const rpc = (fn, body, token) =>
   const roleOff = await rpc("my_role", {}, token);
   add("⚠️ my_role של מושבת → anonymous", (await roleOff.json().catch(() => null)), "anonymous");
 
+  // ============================================================
+  // ⚠️ שורות יתומות — משתמש אצלנו שאין לו חשבון ב-Supabase
+  // ============================================================
+  // ⚠️ **נתפס בייצור, ולא בתיאוריה:** שתי שורות `app_users` פעילות עם
+  // `supabase_uid` שאין לו חשבון. הן מופיעות ברשימת המשתמשים כבקרים
+  // אמיתיים ופעילים, ולעולם לא יוכלו להתחבר.
+  //
+  // המקור אינו באג בקוד שלנו: **מחיקת משתמש בלוח הבקרה של Supabase**
+  // מסירה את חשבון ה-auth ואינה יודעת דבר על `app_users`. הנתיב שלנו מוחק
+  // את שניהם, בסדר "Supabase קודם" — ולכן גם כשל בחצי השני משאיר בדיוק את
+  // הצורה הזאת.
+  //
+  // ⚠️ הסדר ההפוך היה גרוע יותר (משתמש שיכול להתחבר בלי שורה אצלנו), אבל
+  // "פחות גרוע" אינו "מזוהה". עד עכשיו שום דבר לא הבחין בזה.
+  const authList = await (await f(`${SB}/auth/v1/admin/users?per_page=200`, { headers: admin })).json();
+  const authUids = new Set((authList.users || []).map((u) => String(u.id)));
+  const ours = await db.prepare(
+    "SELECT id, email, supabase_uid::text AS uid FROM app_users WHERE is_active"
+  ).all();
+  // ⚠️ שורה בלי supabase_uid אינה יתומה — היא שורה שנזרעה ידנית ומעולם לא
+  // חוברה לחשבון. אין מה להשוות שם, וסימונה כשגיאה היה רעש.
+  const orphans = ours.filter((u) => u.uid && !authUids.has(u.uid));
+  if (orphans.length) {
+    for (const o of orphans) console.log(`     │ יתום: app_users #${o.id} — ${o.email}`);
+  }
+  add("⚠️ אין שורות app_users פעילות בלי חשבון Supabase", orphans.length, 0);
+
   console.log("בדיקה                                              בפועל     צפוי");
   let bad = 0;
   for (const [name, got, want] of checks) {

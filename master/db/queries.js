@@ -2531,6 +2531,49 @@ async function deleteAppUser(id) {
 module.exports.deleteAppUser = deleteAppUser;
 
 // ============================================================
+// recordAudit — ועד עכשיו השרת לא כתב לטבלה הזו כלום
+// ============================================================
+// ⚠️ **נמדד: `audit_log` הכיל אפס שורות `user.%`.** שלושת נתיבי ניהול
+// המשתמשים — הזמנה, השבתה/תפקיד, ומחיקה — כתבו `console.log` בלבד. לוג
+// שנעלם עם הקונטיינר.
+//
+// ⚠️ וזה נתפס בדרך הגרועה: משתמש **נמחק בפועל**, וכשנשאל מי מחק אותו ומתי
+// לא הייתה תשובה בשום מקום. המחיקה היא הפעולה הבלתי-הפיכה היחידה בניהול
+// המשתמשים, והיא הייתה גם היחידה בלי שום תיעוד עמיד.
+//
+// ⚠️ ולמה לא לקרוא ל-`app.record_write_audit` שקיים ב-SQL: הוא שולף את
+// הפועל מ-`app.current_actor()`, שקורא תביעת JWT — ולשרת אין אחת, הוא
+// מתחבר כ-`postgres`. הוא גם מקבע `trust='token'`. כאן הערכים מפורשים,
+// כולל `ip`, שדווקא **כן** קיים בשרת ואינו קיים ב-SQL.
+//
+// ⚠️ התחילית `user.` נושאת את כל ההרשאה: מדיניות `audit_log` מסתירה
+// `user.%` מבקרים. פעולה שתיקרא אחרת תהיה גלויה לכולם, בלי שגיאה ובלי סימן.
+async function recordAudit({
+  action, actorId = null, actorName, actorRole = null, trust = "anonymous",
+  targetType = null, targetId = null, targetName = null, details = null, ip = null,
+}) {
+  // ⚠️ נכשל בשקט ואינו מפיל את הפעולה. שורת ביקורת שלא נכתבה היא אובדן
+  // מידע; פעולה שנפלה **בגלל** שורת הביקורת היא אובדן הפעולה — והמשתמשת
+  // הייתה רואה "המחיקה נכשלה" על מחיקה שכן בוצעה ב-Supabase.
+  try {
+    await db.prepare(
+      `INSERT INTO audit_log
+         (at, actor_id, actor_name, actor_role, trust, action,
+          target_type, target_id, target_name, details, ip)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      new Date().toISOString(), actorId, actorName || "לא ידוע", actorRole, trust, action,
+      targetType, targetId === null ? null : String(targetId), targetName,
+      details === null ? null : JSON.stringify(details), ip,
+    );
+  } catch (err) {
+    console.error("[audit] כתיבת שורת ביקורת נכשלה:", err.message);
+  }
+}
+
+module.exports.recordAudit = recordAudit;
+
+// ============================================================
 // תקלות שהושמטו בזמן תחזוקה
 // ============================================================
 // ⚠️ **אף מדד אינו קורא מהטבלה הזו, וזו התכונה המרכזית שלה.** אחוז הכשל,

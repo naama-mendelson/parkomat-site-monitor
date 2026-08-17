@@ -17,7 +17,7 @@ const { getAllSites, getAllSitesWithMetrics, findSiteByCode, insertSite, getRece
         ensureAdminCode, verifyAdminCode, setAdminCode,
         updateSite, deleteSite ,
   getAppUserByUid, getAppUserByEmail, listAppUsers, setAppUserActive, setAppUserRole,
-  deleteAppUser } = require("../db/queries");
+  deleteAppUser, recordAudit } = require("../db/queries");
 const db = require("../db/db");
 const bus = require("../bus");
 const { canDeactivate, canChangeRole, canDelete } = require("../auth/deactivation");
@@ -550,6 +550,17 @@ app.post("/api/users/invite", requireAuth, requireManager, inviteRateLimit, asyn
       `[users] ${req.actor.name} (${req.actor.userId}) הזמין את ${result.user.email} ` +
       `בתפקיד ${result.user.role}`);
 
+    // ⚠️ **בלי `tempPassword` בשורת הביקורת.** הסיסמה הזמנית מוחזרת פעם
+    // אחת ואינה נשמרת בשום מקום — כתיבתה ל-`details` הייתה הופכת את
+    // `audit_log`, שכל משתמש פעיל קורא ממנה, למחסן סיסמאות.
+    await recordAudit({
+      action: "user.invite",
+      actorId: req.actor.appUserId, actorName: req.actor.name,
+      actorRole: req.actor.role, trust: "token",
+      targetType: "user", targetId: appUser?.id ?? null, targetName: result.user.email,
+      details: { email: result.user.email, role: wantRole }, ip: req.ip,
+    });
+
     res.json({
       ok: true,
       user: result.user,
@@ -660,6 +671,14 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
       // אחר כך ב-requireManager, ועדיף שלא ייקרא מרשומה שהתיישנה.
       forgetActor(target.supabase_uid);
 
+      await recordAudit({
+        action: "user.role",
+        actorId: req.actor.appUserId, actorName: req.actor.name,
+        actorRole: req.actor.role, trust: "token",
+        targetType: "user", targetId: id, targetName: target.email,
+        details: { email: target.email, from: target.role, to: role }, ip: req.ip,
+      });
+
       console.log(`[api] ${target.email} → ${role} בידי ${req.actor.name}`);
       return res.json({ ok: true, id, role });
     }
@@ -689,6 +708,17 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
     // התיישן, ולכן הוא זה שמנקה אותו. ה-TTL נשאר רשת ביטחון לשינוי שנעשה
     // מחוץ לשרת, ולא המנגנון העיקרי.
     forgetActor(target.supabase_uid);
+
+    // ⚠️ אותם שמות פעולה בדיוק כמו ב-SQL (`set_user_active`), ולא במקרה:
+    // שתי הזרועות כותבות לאותה טבלה, ולוג שבו אותה פעולה נקראת בשני שמות
+    // אינו ניתן לסינון — כלומר לא ניתן לענות בו על "מי הושבת החודש".
+    await recordAudit({
+      action: is_active ? "user.enable" : "user.disable",
+      actorId: req.actor.appUserId, actorName: req.actor.name,
+      actorRole: req.actor.role, trust: "token",
+      targetType: "user", targetId: id, targetName: target.email,
+      details: { email: target.email, is_active }, ip: req.ip,
+    });
 
     console.log(
       `[api] משתמש ${target.email} ${is_active ? "הוחזר לפעילות" : "הושבת"} ` +
@@ -745,6 +775,20 @@ app.delete("/api/users/:id", requireAuth, requireManager, async (req, res) => {
 
     const removed = await deleteAppUser(id);
     forgetActor(target.supabase_uid);
+
+    // ⚠️ **אחרי המחיקה, ובכוונה.** לפניה היה נרשם "נמחק" גם כשהמחיקה
+    // בטבלה נכשלה — כלומר ביקורת שמעידה על מה שלא קרה.
+    //
+    // ⚠️ וזה השדה שהיה חסר לגמרי: `audit_log` הכילה **אפס** שורות user.%,
+    // ולכן משתמש שנמחק בפועל לא הותיר שום עדות מי מחק אותו ומתי. זו
+    // הפעולה הבלתי-הפיכה היחידה כאן.
+    await recordAudit({
+      action: "user.delete",
+      actorId: req.actor.appUserId, actorName: req.actor.name,
+      actorRole: req.actor.role, trust: "token",
+      targetType: "user", targetId: id, targetName: target.email,
+      details: { email: target.email, role: target.role }, ip: req.ip,
+    });
 
     console.log(`[api] משתמש ${target.email} **נמחק** בידי ${req.actor.name}`);
     res.json({ ok: true, id, email: removed?.email ?? target.email });
