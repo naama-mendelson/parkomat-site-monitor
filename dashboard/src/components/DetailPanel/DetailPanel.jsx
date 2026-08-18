@@ -153,7 +153,28 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
 
   return (
     <div className="detail-overlay" onClick={onClose}>
-      <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
+      {/* ============================================================
+          לחיצה על הפאנל סוגרת אותו
+          ============================================================
+          ⚠️ **קודם כאן ישב stopPropagation סתמי**, שבלע כל לחיצה בפאנל כדי
+          שהרקע לא יסגור אותו. זה נכון לפקדים ושגוי לכל השאר: המשתמשת
+          ביקשה שלחיצה על הפאנל תסגור, וזו הייתה הסיבה שזה לא קרה.
+
+          ⚠️ אבל הבליעה **חייבת** להישאר על פקדים. בלעדיה לחיצה על שדה
+          "שם מפעיל", על מספר השעות או על "הכנס לתחזוקה" הייתה סוגרת את
+          הפאנל באמצע ההקלדה — כלומר טופס שאי אפשר למלא.
+
+          closest() ולא בדיקת tagName: הלחיצה נוחתת לרוב על טקסט **בתוך**
+          הכפתור, ולא על הכפתור עצמו. */}
+      <div className="detail-panel" onClick={(e) => {
+        const el = e.target;
+        if (el instanceof Element &&
+            el.closest("button, input, select, textarea, a, label, .detail-tabs, .uptime")) {
+          e.stopPropagation();
+          return;
+        }
+        // מחוץ לפקדים — הלחיצה ממשיכה לרקע, והוא סוגר.
+      }}>
         {/* כותרת */}
         <div className="detail-header">
           <div>
