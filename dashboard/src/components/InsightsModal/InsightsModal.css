@@ -458,4 +458,5 @@
    במסך של 320px. אותו שיקול בדיוק כמו בפס ההתראות הקוליות. */
 @media (max-width: 640px) {
   .insights-sub { display: none; }
+  .insights-h3-log { display: none; }
 }

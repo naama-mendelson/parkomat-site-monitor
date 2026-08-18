@@ -847,7 +847,11 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
             {/* ---------- לוג ---------- */}
             {section === "log" && (
               <section className="insights-card">
-                <h3>לוג פעילות מלא</h3>
+                {/* ⚠️ המחלקה קיימת רק כדי להסתיר את הכותרת בטלפון. הפאנל
+                    נפתח מהאייקון של הלוג — המשתמשת בדיוק בחרה להגיע לכאן,
+                    וכותרת שחוזרת על מה שנלחץ עולה שורה שלמה במסך שבו כל
+                    שורה נלקחת מהלוג עצמו. */}
+                <h3 className="insights-h3-log">לוג פעילות מלא</h3>
                 <p className="insights-sub">
                   כל האירועים בתקופה — כניסות ויציאות, שינויי מצב וחלונות תחזוקה, מהחדש לישן
                 </p>

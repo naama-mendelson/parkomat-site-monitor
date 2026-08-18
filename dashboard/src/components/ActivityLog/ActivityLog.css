@@ -493,12 +493,21 @@
     border-radius: 8px;
   }
 
+  /* ⚠️ **שורה אחת, לא שתיים.** קודם נתתי לשדה רוחב מלא, וזה דחף את
+     כפתור "חפש" לשורה משלו — 44px נוספים בשביל כפתור אחד. flex: 1 על
+     השדה ו-auto על הכפתור נותנים בדיוק את אותו רוחב שדה, בלי השורה. */
   .alog-search {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 6px;
   }
 
   .alog-search-input {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
     min-width: 0;
   }
+
+  .alog-search-btn {
+    flex: 0 0 auto;
+  }
+
 }
