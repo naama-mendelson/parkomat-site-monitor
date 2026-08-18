@@ -433,6 +433,58 @@ const rpc = (fn, body, token) =>
   add("⚠️ my_role של מושבת → anonymous", (await roleOff.json().catch(() => null)), "anonymous");
 
   // ============================================================
+  // ⚠️ ניסוי — מנהל בלבד, ובקר נחסם
+  // ============================================================
+  // ⚠️ **זה המקרה שאם ייפול, כל אחד יכול לשנות את הסטטיסטיקה.** סימון
+  // כניסוי מוריד פעולות מהמונה ותקלות מאחוז הכשל — כלומר הוא משפר את
+  // המספרים. בלי הבדיקה הזו  יכולה להימחק מהפונקציה
+  // ואף שער לא ירגיש.
+  const testOp = await db.prepare(
+    "SELECT id FROM operations WHERE excluded_at IS NULL ORDER BY id DESC LIMIT 1"
+  ).get();
+
+  const testAsOperator = await rpc("mark_as_test", { p_kind: "operation", p_id: testOp.id }, token);
+  add("⚠️ בקר מנסה לסמן ניסוי — נדחה", testAsOperator.status, 403);
+
+  const untestAsOperator = await rpc("unmark_test", { p_kind: "operation", p_id: testOp.id }, token);
+  add("⚠️ בקר מנסה להחזיר לספירה — נדחה", untestAsOperator.status, 403);
+
+  const testAnon = await rpc("mark_as_test", { p_kind: "operation", p_id: testOp.id }, null);
+  add("⚠️ בלי אסימון — נדחה", testAnon.status, 401);
+
+  // מנהל כן, ומוחזר מיד — השער אינו משנה נתוני ייצור.
+  const testAsMgr = await rpc(
+    "mark_as_test", { p_kind: "operation", p_id: testOp.id, p_reason: "שער" }, mgrToken);
+  add("מנהל מסמן ניסוי", testAsMgr.status, 200);
+
+  const dupe = await rpc("mark_as_test", { p_kind: "operation", p_id: testOp.id }, mgrToken);
+  add("סימון כפול → 409, לא 500", dupe.status, 409);
+
+  const badKind = await rpc("mark_as_test", { p_kind: "nope", p_id: testOp.id }, mgrToken);
+  add("סוג דיווח לא תקין → 400", badKind.status, 400);
+
+  const missing = await rpc("mark_as_test", { p_kind: "operation", p_id: 2147483000 }, mgrToken);
+  add("⚠️ מזהה שאינו קיים → 404, לא 500", missing.status, 404);
+
+  // ⚠️ **מי ומתי** — הדרישה המפורשת. שם מאומת, לא מה שנשלח.
+  const marked = await db.prepare(
+    "SELECT excluded_by, excluded_at, exclusion_reason FROM operations WHERE id = ?"
+  ).get(testOp.id);
+  add("...והשם נגזר מהזהות", marked?.excluded_by, MGR_EMAIL);
+  add("...ונרשם גם מתי", Boolean(marked?.excluded_at), true);
+
+  const testAudit = await db.prepare(
+    "SELECT trust, actor_role FROM audit_log WHERE actor_name = ? AND action = ? LIMIT 1"
+  ).get(MGR_EMAIL, "report.mark-test");
+  add("⚠️ שורת ביקורת על הסימון", Boolean(testAudit), true);
+  add("...עם trust=token", testAudit?.trust, "token");
+
+  const restored = await rpc("unmark_test", { p_kind: "operation", p_id: testOp.id }, mgrToken);
+  add("מנהל מחזיר לספירה", restored.status, 200);
+  const after = await db.prepare("SELECT excluded_at, excluded_by FROM operations WHERE id = ?").get(testOp.id);
+  add("⚠️ שלוש העמודות נוקו יחד", after?.excluded_at === null && after?.excluded_by === null, true);
+
+  // ============================================================
   // ⚠️ שורות יתומות — משתמש אצלנו שאין לו חשבון ב-Supabase
   // ============================================================
   // ⚠️ **נתפס בייצור, ולא בתיאוריה:** שתי שורות `app_users` פעילות עם

@@ -519,7 +519,14 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
                               "מישהו החליט", וזה בדיוק מה שביקשת שלא יקרה. */}
                           {e.excludedAt && (
                             <span className="alog-test-tag">
+                              {/* ⚠️ גם **מתי**, לא רק מי. בלי הזמן אי אפשר לדעת אם
+                                  הסימון נעשה בזמן הניסוי או חודש אחריו — וזו
+                                  ההבחנה בין תיעוד לבין תיקון מספרים בדיעבד. */}
                               ניסוי · נוסה בידי {e.excludedBy || "—"}
+                              {e.excludedAt && ` · ${new Date(e.excludedAt).toLocaleString("he-IL", {
+                                day: "numeric", month: "numeric",
+                                hour: "2-digit", minute: "2-digit",
+                              })}`}
                             </span>
                           )}
                         </span>

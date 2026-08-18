@@ -79,6 +79,9 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
   const testTag = (row) => row.excluded_at ? (
     <span className="log-test-tag" title={row.exclusion_reason || "סומן כניסוי"}>
       ניסוי · נוסה בידי {row.excluded_by || "—"}
+      {row.excluded_at && ` · ${new Date(row.excluded_at).toLocaleString("he-IL", {
+        day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
+      })}`}
     </span>
   ) : null;
   const [period, setPeriod] = useState("week");   // ברירת מחדל: שבוע
