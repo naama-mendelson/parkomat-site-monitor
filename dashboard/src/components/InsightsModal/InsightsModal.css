@@ -518,3 +518,13 @@
     border-radius: 10px;
   }
 }
+
+/* ⚠️ אותו נימוק כמו בפאנל: המודאל גולל הרבה, וה-✕ הוא דרך היציאה היחידה
+   בטלפון (אין רקע ללחוץ עליו ואין מקלדת ל-Escape). כותרת שנגללת החוצה
+   הופכת אותו למסך שצריך לגלול למעלה כדי לצאת ממנו. */
+.insights-header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 5;
+  background: var(--bg-primary, #fff);
+}
