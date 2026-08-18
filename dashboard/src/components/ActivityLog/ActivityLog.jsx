@@ -299,6 +299,11 @@ function ActivityLog({ log, code = null, period = "week" }) {
   const { user } = useAuth();
   const isManager = user?.role === "manager";
   const [testBusy, setTestBusy] = useState(false);
+  // ⚠️ `confirm()` ו-`alert()` הוחלפו בדיאלוג של המסך. שניהם חוסמים את
+  // הדפדפן, נראים כמו הודעת מערכת ולא כמו חלק מהמערכת, ואי אפשר לומר בהם
+  // **על איזו שורה בדיוק** מדובר — וזו השאלה היחידה שחשובה כאן.
+  const [pending, setPending] = useState(null);   // האירוע שממתין לאישור
+  const [testError, setTestError] = useState("");
 
   // ⚠️ רק פעולות ומקטעי תקלה. סימון 'מוכן' כניסוי היה מוציא זמן תקין
   // מהמדידה ומעלה את הזמינות בלי סיבה, ותחזוקה ממילא אינה נספרת.
@@ -306,11 +311,15 @@ function ActivityLog({ log, code = null, period = "week" }) {
     isManager && !testBusy && e.id != null &&
     (e.kind === "operation" || (e.kind === "status" && e.status === "error"));
 
-  async function toggleTest(e) {
+  // ⚠️ גם ביטול הסימון עובר בדיאלוג, בשונה ממה שכתבתי קודם. הלחיצה היא על
+  // כל השורה, ולכן קל מאוד לפגוע בה בטעות בגלילה — ופעולה שמשנה מספרים
+  // צריכה צעד אחד של כוונה לשני הכיוונים.
+  async function confirmTest() {
+    const e = pending;
+    if (!e) return;
     const kind = e.kind === "operation" ? "operation" : "fault";
-    if (!e.excludedAt &&
-        !confirm("לסמן כניסוי? השורה תישאר בלוג ולא תיספר בסטטיסטיקה.")) return;
     setTestBusy(true);
+    setTestError("");
     try {
       if (e.excludedAt) await unmarkTest(kind, e.id);
       else await markAsTest(kind, e.id);
@@ -319,7 +328,10 @@ function ActivityLog({ log, code = null, period = "week" }) {
       // הישן — כלומר "סימנתי ושום דבר לא זז".
       window.location.reload();
     } catch (err) {
-      alert("שגיאה: " + err.message);
+      // ⚠️ השגיאה נשארת **בתוך** הדיאלוג ולא סוגרת אותו: מי שקיבל "מותר
+      // למנהלים בלבד" צריך לראות את זה לצד השורה שניסה לסמן, לא במקום שבו
+      // כבר אי אפשר לדעת על מה מדובר.
+      setTestError(err.message);
       setTestBusy(false);
     }
   }
@@ -455,7 +467,7 @@ function ActivityLog({ log, code = null, period = "week" }) {
                                  (canMarkTest(e) ? " is-clickable" : "")}
                       // ⚠️ לחיצה על **השורה** ולא כפתור קטן בקצה: זה מה
                       // שהתבקש, וזה גם היעד היחיד שאפשר לפגוע בו בטלפון.
-                      onClick={canMarkTest(e) ? () => toggleTest(e) : undefined}
+                      onClick={canMarkTest(e) ? () => { setTestError(""); setPending(e); } : undefined}
                       title={canMarkTest(e)
                         ? (e.excludedAt ? "לחצו כדי להחזיר לספירה" : "לחצו כדי לסמן כניסוי")
                         : undefined}
@@ -517,6 +529,59 @@ function ActivityLog({ log, code = null, period = "week" }) {
       )}
 
       {busy && !view?.truncated && <p className="alog-empty">טוען…</p>}
+
+      {/* ==========================================================
+          דיאלוג הניסוי
+          ==========================================================
+          ⚠️ מציג **את השורה עצמה** ולא רק שאלה כללית. הלחיצה היא על כל
+          השורה, ולכן קל לפגוע בשכנה בטעות — והדבר היחיד שמונע את זה הוא
+          לראות במפורש מה עומד להסתמן.
+          ⚠️ ולחיצה על הרקע סוגרת: דיאלוג שאפשר לצאת ממנו רק דרך "בטל" הוא
+          מלכודת קטנה, במיוחד כשהוא נפתח בטעות. */}
+      {pending && (
+        <div className="alog-modal-back" onClick={() => !testBusy && setPending(null)}>
+          <div
+            className="alog-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <h3 className="alog-modal-title">
+              {pending.excludedAt ? "להחזיר את השורה לספירה?" : "לסמן את השורה כניסוי?"}
+            </h3>
+
+            <div className="alog-modal-row">
+              <span className="alog-modal-dot" style={{ background: describe(pending).color }} />
+              <div>
+                <div className="alog-modal-row-title" style={{ color: describe(pending).color }}>
+                  {describe(pending).title}
+                  {pending.siteName && <span className="alog-site">{pending.siteName}</span>}
+                </div>
+                <div className="alog-modal-row-sub">
+                  {describe(pending).details} · {new Date(pending.at).toLocaleString("he-IL")}
+                </div>
+              </div>
+            </div>
+
+            <p className="alog-modal-note">
+              {pending.excludedAt
+                ? "השורה תיספר שוב באחוז הכשל, בזמינות ובמונה הפעולות."
+                : "השורה תישאר בלוג ותסומן כניסוי, ולא תיספר באחוז הכשל, בזמינות או במונה הפעולות."}
+            </p>
+
+            {testError && <p className="alog-modal-error">{testError}</p>}
+
+            <div className="alog-modal-actions">
+              <button className="alog-modal-cancel" onClick={() => setPending(null)} disabled={testBusy}>
+                בטל
+              </button>
+              <button className="alog-modal-ok" onClick={confirmTest} disabled={testBusy}>
+                {testBusy ? "רגע…" : pending.excludedAt ? "החזר לספירה" : "סמן כניסוי"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

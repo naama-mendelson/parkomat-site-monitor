@@ -320,3 +320,93 @@
   background: var(--surface-2, rgba(128, 128, 128, 0.16));
   border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
 }
+
+/* ============================================================
+   דיאלוג הניסוי
+   ============================================================
+   ⚠️ צבעים מ-var עם נפילה אחורה: הדשבורד מחליף ערכת נושא, וצבע קשיח
+   כאן היה יוצר חלון לבן בוהק על מסך כהה. */
+.alog-modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.alog-modal {
+  width: min(30rem, 100%);
+  padding: 1.25rem 1.35rem;
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--text, inherit);
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.alog-modal-title { margin: 0 0 0.9rem; font-size: 1.05rem; }
+
+/* תצוגת השורה שעומדת להסתמן */
+.alog-modal-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--surface-2, rgba(128, 128, 128, 0.09));
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.22));
+}
+
+.alog-modal-dot {
+  flex: 0 0 auto;
+  width: 10px; height: 10px;
+  margin-top: 0.35rem;
+  border-radius: 50%;
+}
+
+.alog-modal-row-title { font-weight: 600; }
+.alog-modal-row-sub { margin-top: 0.15rem; font-size: 0.88em; opacity: 0.75; }
+
+.alog-modal-note { margin: 0.9rem 0 0; font-size: 0.9em; opacity: 0.8; line-height: 1.5; }
+
+.alog-modal-error {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.9em;
+  color: #b42318;
+  background: rgba(180, 35, 24, 0.1);
+  border: 1px solid rgba(180, 35, 24, 0.3);
+}
+
+.alog-modal-actions {
+  display: flex;
+  gap: 0.55rem;
+  justify-content: flex-start;
+  margin-top: 1.15rem;
+}
+
+.alog-modal-actions button {
+  padding: 0.45rem 1.1rem;
+  border-radius: 9px;
+  font-size: 0.94rem;
+  cursor: pointer;
+}
+
+.alog-modal-cancel {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.4));
+}
+
+.alog-modal-ok {
+  color: #fff;
+  background: var(--accent, #0b6b63);
+  border: 1px solid transparent;
+}
+
+.alog-modal-actions button:disabled { opacity: 0.6; cursor: progress; }
