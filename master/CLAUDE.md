@@ -336,6 +336,29 @@ existing sites were added with `tools/add-test-site.js`. `register_site` in SQL 
 working path and `check-writes.js` covers it. **The server route is still broken** — it is the
 exit door, and fixing it is a separate task, not a side effect of this one.
 
+## `master/public` is a build artifact — locally, nothing rebuilt it
+
+The server serves the dashboard from `master/public`. In Docker that directory is produced by
+the build (`COPY --from=dashboard /app/dashboard/dist master/public`), so in production it
+always matches the code. **Locally it was a manual copy, and it is git-ignored, so no command
+refreshed it.**
+
+⚠️ **Measured: the bundle served on `localhost:4000` was two days old and contained none of
+the direct-to-Supabase writes** — no `start_maintenance`, no `my_role`, no `register_site`.
+The screen looked correct, the *"הכנס לתחזוקה"* button was there, and pressing it did nothing
+useful. There is no error to read in this failure: the new code simply was not present. Two
+days of work were being judged against a UI that did not contain it.
+
+- **`npm run build:web`** (`tools/build-web.js`) builds and copies in one step. It runs
+  `node vite.js` directly — `npm` is a shell script, so spawning it needs `shell: true`
+  (unescaped args, DEP0190) or `npm.cmd`, which does not resolve under Git Bash.
+- **It deletes the target before copying.** Vite hashes filenames, so copy-over leaves every
+  old bundle in place forever, still served to anyone whose `index.html` is cached.
+- **The server warns at startup** when the newest file under `dashboard/src` is newer than
+  `public/index.html`. It warns and does not refuse: in production `dashboard/src` does not
+  exist so the check simply does not run, and refusing to boot over a UI artifact would stop
+  MQTT ingestion for an unrelated reason.
+
 ## Gates build their own user — they no longer borrow a human account
 
 `npm run gates` runs all 13 and **all 13 run**, with no environment variables.

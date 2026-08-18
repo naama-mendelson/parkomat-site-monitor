@@ -1979,6 +1979,48 @@ if (fs.existsSync(DASHBOARD_DIST)) {
   });
 
   console.log(`api: מגיש את הדשבורד מ-${DASHBOARD_DIST}`);
+  warnIfStaleBuild(DASHBOARD_DIST);
+}
+
+// ============================================================
+// ⚠️ בנייה ישנה — הכשל השקט הגרוע ביותר שהיה כאן
+// ============================================================
+// ב-Docker העתקת ה-build אוטומטית (Dockerfile: COPY dashboard/dist master/public).
+// **מקומית אין שום שלב כזה** — התיקייה היא עותק ידני, והיא ב-.gitignore.
+//
+// ⚠️ ונמדד: הבנדל שהוגש היה בן יומיים ולא הכיל אף אחת מהכתיבות הישירות
+// ל-Supabase. המסך נראה תקין לחלוטין, הכפתור היה שם, והפעולה פשוט לא
+// עבדה — כלומר יומיים של עבודה נבדקו מול ממשק שלא הכיל אותה, בלי שום סימן.
+//
+// ⚠️ אזהרה ולא סירוב לעלות: בייצור התיקייה **תמיד** חדשה מהמקור (היא
+// נבנית בבנייה), אבל שם גם אין `dashboard/src` בכלל — ולכן הבדיקה פשוט
+// אינה רצה. שרת שמסרב לעלות בגלל build ישן היה מפיל את הקליטה בגלל בעיה
+// בממשק, ואלה שני דברים נפרדים.
+function warnIfStaleBuild(dist) {
+  try {
+    const src = path.join(__dirname, "../../dashboard/src");
+    if (!fs.existsSync(src)) return;   // ייצור — אין מקור להשוות אליו
+
+    const newest = (dir) => {
+      let max = 0;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        max = Math.max(max, e.isDirectory() ? newest(p) : fs.statSync(p).mtimeMs);
+      }
+      return max;
+    };
+
+    const built = fs.statSync(path.join(dist, "index.html")).mtimeMs;
+    const srcTime = newest(src);
+    if (srcTime <= built) return;
+
+    const days = Math.floor((srcTime - built) / 86400000);
+    const age = days >= 1 ? `${days} ימים` : `${Math.round((srcTime - built) / 3600000)} שעות`;
+    console.warn(
+      `\n⚠️  הדשבורד שמוגש ישן מהמקור ב-${age} — שינויים אחרונים אינם בו.\n` +
+      `   בנייה מחדש:  npm run build:web\n`,
+    );
+  } catch { /* בדיקה בלבד — לעולם לא מפילה עלייה */ }
 }
 
 // מטפל שגיאות אחרון — חייב 4 פרמטרים ולהיות אחרי כל המסלולים.

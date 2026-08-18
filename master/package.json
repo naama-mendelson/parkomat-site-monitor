@@ -16,7 +16,8 @@
     "test:db:init": "node --env-file=.env.test tools/test-db/init.js",
     "test:db:seed": "node --env-file=.env.test tools/test-db/seed.js",
     "test:db:reset": "node --env-file=.env.test tools/test-db/reset.js",
-    "test:server": "node --env-file=.env.test master.js"
+    "test:server": "node --env-file=.env.test master.js",
+    "build:web": "node tools/build-web.js"
   },
   "dependencies": {
     "express": "^5.2.1",
