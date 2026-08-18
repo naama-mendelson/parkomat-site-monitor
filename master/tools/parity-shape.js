@@ -39,8 +39,15 @@ const API = process.env.PARITY_API || "http://localhost:4000";
 const ENV = fs.readFileSync(path.resolve(__dirname, "../../dashboard/.env"), "utf8");
 const pick = (k) => (ENV.match(new RegExp(`^${k}=(.*)$`, "m")) || [])[1]?.trim();
 
+const SB_URL = pick("VITE_SUPABASE_URL");
+const SB_KEY = pick("VITE_SUPABASE_PUBLISHABLE_KEY");
+
 let checks = 0, failures = 0;
 const fails = [];
+
+// ⚠️ הניקוי עובר דרך `done` ולא נכתב ליד כל יציאה — יש כאן ארבע.
+let cleanupUser = async () => {};
+const done = async (code) => { await cleanupUser(); process.exit(code); };
 
 /** קבוצת הנתיבים של אובייקט, עד עומק מוגבל. */
 function shapeOf(v, prefix = "", depth = 0, out = new Set()) {
@@ -74,10 +81,18 @@ function compareShape(label, server, direct) {
 }
 
 (async () => {
-  const email = process.env.PARITY_EMAIL, password = process.env.PARITY_PASSWORD;
-  if (!email || !password) {
-    console.error("parity-shape: נדרשים PARITY_EMAIL ו-PARITY_PASSWORD.");
-    process.exit(1);
+  // ⚠️ בונה לעצמו משתמש חד-פעמי אם אין הגדרה — קודם השער היה תלוי בחשבון
+  // של אדם, והחשבון נמחק. **וכאן דרושה סיסמה ולא רק אסימון:** הכניסה
+  // למטה עוברת ב-`supabase.auth.signInWithPassword` של הלקוח האמיתי, שהוא
+  // בדיוק המסלול שהדפדפן מריץ — וזו כל הנקודה של השער הזה.
+  const { gateToken } = require("./lib/gate-user");
+  let email, password;
+  try {
+    const g = await gateToken(SB_URL, SB_KEY, process.env.SUPABASE_SECRET_KEY);
+    email = g.email; password = g.password; cleanupUser = g.cleanup;
+  } catch (e) {
+    console.log(`⚠️  לא ניתן היה להזדהות — המבנה לא נבדק. ${e.message}`);
+    process.exit(2);
   }
 
   // ============================================================
@@ -127,7 +142,7 @@ function compareShape(label, server, direct) {
     if (!error || !/fetch failed|network|ECONNRESET/i.test(error.message)) break;
     await new Promise((r) => setTimeout(r, 500 * i));
   }
-  if (authErr) { console.error(`  ✘ התחברות: ${authErr.message}`); process.exit(1); }
+  if (authErr) { console.error(`  ✘ התחברות: ${authErr.message}`); await done(1); }
 
   const ds = await vite.ssrLoadModule("/src/services/dataSource.js");
 
@@ -217,8 +232,8 @@ function compareShape(label, server, direct) {
   if (failures) {
     console.log(`❌ ${failures} מסלולים עם מבנה חסר\n`);
     fails.forEach((f) => console.log("   " + f));
-    process.exit(1);
+    await done(1);
   }
   console.log(`✅ כל ${checks} המסלולים מחזירים את אותו מבנה בשתי הזרועות`);
-  process.exit(0);
-})().catch((e) => { console.error("parity-shape: נפל —", e.message); process.exit(1); });
+  await done(0);
+})().catch(async (e) => { console.error("parity-shape: נפל —", e.message); await done(1); });

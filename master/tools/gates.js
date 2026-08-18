@@ -26,9 +26,13 @@ const GATES = [
   { name: "parity",            what: "JS מול SQL — כל המדדים" },
   { name: "parity-supervisor", what: "מסך הבקרה — JS מול RPC" },
   { name: "parity-activity",   what: "לוג הפעילות — שתי הזרועות" },
-  { name: "parity-insights",   what: "תובנות — דרך PostgREST",  needsAuth: true },
-  { name: "parity-executive",  what: "מנהל כללי — דרך PostgREST", needsAuth: true },
-  { name: "parity-shape",      what: "זהות מבנה בכל המסלולים",   needsAuth: true },
+  // ⚠️ שלושת אלה **היו** מסומנים needsAuth ודילגו מראש בלי PARITY_EMAIL.
+  // הם בונים לעצמם משתמש חד-פעמי עכשיו (tools/lib/gate-user.js), ולכן
+  // הדגל הוסר: החשבון האנושי שהם השתמשו בו נמחק, ושלושה מתוך שלושה-עשר
+  // שערים הפסיקו לרוץ בלי שאיש הבחין — הם דיווחו "לא רץ", וזה נקרא כרעש.
+  { name: "parity-insights",   what: "תובנות — דרך PostgREST" },
+  { name: "parity-executive",  what: "מנהל כללי — דרך PostgREST" },
+  { name: "parity-shape",      what: "זהות מבנה בכל המסלולים" },
   { name: "check-switch",      what: "שתי זרועות המתג שלמות",    noEnv: true },
   { name: "check-scope",       what: "מה בקר רואה ומה לא" },
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
@@ -38,16 +42,13 @@ const GATES = [
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 
-const hasAuth = Boolean(process.env.PARITY_EMAIL && process.env.PARITY_PASSWORD);
+// ⚠️ **הדילוג-מראש הוסר, ולא רק הדגל.** הבדיקה כאן הכריעה לפני שהשער
+// בכלל התחיל, ולכן היא הייתה חזקה מהשער עצמו: גם אחרי שהם למדו לבנות
+// לעצמם משתמש, gates.js המשיך לדווח "לא רץ". שער שיודע להזדהות מכריע
+// בעצמו, ומחזיר קוד 2 אם לא הצליח.
 const results = [];
 
 for (const g of GATES) {
-  if (g.needsAuth && !hasAuth) {
-    results.push({ ...g, state: "skip", why: "אין PARITY_EMAIL / PARITY_PASSWORD" });
-    console.log(`⏭️  ${g.name} — לא רץ (אין PARITY_EMAIL / PARITY_PASSWORD)`);
-    continue;
-  }
-
   const args = g.noEnv ? [] : ["--env-file=.env"];
   const r = spawnSync(process.execPath, [...args, path.join(__dirname, `${g.name}.js`)], {
     cwd: path.join(__dirname, ".."),

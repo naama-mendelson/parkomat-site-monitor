@@ -39,6 +39,13 @@ let checks = 0, failures = 0;
 const fails = [];
 let TOKEN = null;
 
+// ⚠️ לשער הזה חמש נקודות יציאה שונות (כולל "לא ניתן להשוות" ו-catch),
+// ולכן הניקוי עובר דרך `done` ולא נכתב ליד כל אחת מהן. ניקוי שנשכח
+// בנתיב אחד משאיר משתמש שער אחרי כל ריצה שנופלת בו — כלומר בדיוק בנתיב
+// שחוזרים עליו.
+let cleanupUser = async () => {};
+const done = async (code) => { await cleanupUser(); process.exit(code); };
+
 function compare(label, a, b) {
   checks++;
   const x = JSON.stringify(a ?? null), y = JSON.stringify(b ?? null);
@@ -136,17 +143,19 @@ async function viaPostgrest(from, to, filters) {
 (async () => {
   await db.init();
 
-  const email = process.env.PARITY_EMAIL, password = process.env.PARITY_PASSWORD;
-  if (!email || !password) {
-    console.log("\n⚠️  אין PARITY_EMAIL / PARITY_PASSWORD — PostgREST לא נבדק, ולכן אין מה לדווח.");
+  // ⚠️ בונה לעצמו משתמש חד-פעמי במקום להישען על חשבון של אדם — החשבון
+  // שהשער השתמש בו נמחק בפועל, והשער הפסיק לרוץ בלי שאיש שם לב.
+  const { gateToken } = require("./lib/gate-user");
+  let email;
+  try {
+    const g = await gateToken(SB_URL, SB_KEY, process.env.SUPABASE_SECRET_KEY, fetchRetry);
+    TOKEN = g.token; email = g.email; cleanupUser = g.cleanup;
+  } catch (e) {
+    // ⚠️ קוד 2 ולא 1: אי-אפשרות להזדהות היא **אין ידיעה**, לא אי-התאמה
+    // בין הזרועות. דיווח ככישלון היה מצביע על באג במדדים שאינו קיים.
+    console.log(`\n⚠️  לא ניתן היה להזדהות — PostgREST לא נבדק. ${e.message}`);
     process.exit(2);
   }
-  const auth = await fetchRetry(`${SB_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!auth.ok) { console.error(`התחברות נכשלה: ${auth.status}`); process.exit(1); }
-  TOKEN = (await auth.json()).access_token;
   console.log(`מחובר כ-${email}\n`);
 
   // מגוון פילטרים — לא רק ברירת המחדל. הפילוח והמיון הם בדיוק המקום שבו
@@ -287,7 +296,7 @@ async function viaPostgrest(from, to, filters) {
   if (seededFailures) {
     console.log(`❌ ${seededFailures} כשלים במקרים הזרועים — אינם תלויים בנתוני ייצור\n`);
     fails.slice(-8).forEach((f) => console.log("   " + f));
-    process.exit(1);
+    await done(1);
   }
 
   // "לא ניתן להשוות" — ולא "עבר" ולא "נפל". קוד 2, ו-gates.js מדווח
@@ -296,14 +305,14 @@ async function viaPostgrest(from, to, filters) {
     console.log("⏭️  לא ניתן להשוות — נתונים נכתבו במהלך כל הניסיונות.");
     console.log(`   סמן: ${marker}`);
     console.log("   קורה כשאתר משנה מצב או בזמן מסירה חוזרת מ-HiveMQ. נסו שוב בעוד דקה.");
-    process.exit(2);
+    await done(2);
   }
 
   if (failures) {
     console.log(`❌ ${failures} הבדלים מתוך ${checks} השוואות\n`);
     fails.slice(0, 8).forEach((f) => console.log("   " + f));
-    process.exit(1);
+    await done(1);
   }
   console.log(`✅ שתי הזרועות זהות — ${checks} השוואות, 0 הבדלים`);
-  process.exit(0);
-})().catch((e) => { console.error("parity-executive: נפל —", e.message); process.exit(1); });
+  await done(0);
+})().catch(async (e) => { console.error("parity-executive: נפל —", e.message); await done(1); });

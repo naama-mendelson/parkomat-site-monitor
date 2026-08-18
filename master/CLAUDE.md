@@ -336,6 +336,35 @@ existing sites were added with `tools/add-test-site.js`. `register_site` in SQL 
 working path and `check-writes.js` covers it. **The server route is still broken** — it is the
 exit door, and fixing it is a separate task, not a side effect of this one.
 
+## Gates build their own user — they no longer borrow a human account
+
+`npm run gates` runs all 13 and **all 13 run**, with no environment variables.
+
+⚠️ **Three of them used to need `PARITY_EMAIL` / `PARITY_PASSWORD` — a real person's
+address and password.** The account they used was deleted, and from that moment
+`parity-insights`, `parity-executive` and `parity-shape` could not run at all. They did not
+go red; they reported *"did not run"*, which is the honest answer and also the one people
+scroll past. Three of thirteen were dark and the summary still said nothing had failed.
+
+`tools/lib/gate-user.js` creates a throwaway manager through the Admin API, signs in, and
+deletes **both sides** at the end. Points worth keeping:
+
+- **It returns the password, not only the token.** `parity-shape` signs in through
+  `supabase.auth.signInWithPassword` on the real client — the browser's own path, which is
+  the whole point of that gate — and a raw token would not populate a session.
+- **The role is written to `app_users` by hand.** `provision_app_user` runs AFTER INSERT,
+  before GoTrue writes `app_metadata`, so the row lands as `operator`; `current_app_role()`
+  reads the table, so without that line the "manager" is manager in name only.
+- **Cleanup removes the auth user *and* the `app_users` row**, and runs on every exit path
+  including failure. Deleting only the auth side manufactures exactly the orphan that
+  `check-writes` now fails on — a gate that produces the fault it hunts is the worst kind.
+- **`gates.js` no longer pre-skips.** The `needsAuth` short-circuit decided before the gate
+  started, so it outranked the gate itself: even after they learned to self-provision,
+  `gates.js` kept printing "did not run". A gate that can authenticate decides for itself
+  and returns code 2 if it cannot.
+- `PARITY_EMAIL` / `PARITY_PASSWORD` still win when set — signing in as a real account
+  stays testable.
+
 ## Metrics also live in SQL now — and there is a parity gate
 
 `db/functions.postgres.sql` is applied by `db.init()` on **every boot**, after the schema
@@ -541,6 +570,42 @@ parity gate.
 production this costs nothing** — queries inside a transaction are serial anyway —
 and it removes the hazard from any future code that runs `Promise.all` in a
 transaction. The pool path is untouched.
+
+## Every user action writes an audit line — and until recently none did
+
+⚠️ **Measured: `audit_log` held zero `user.%` rows.** Invite, deactivate/role and delete all
+wrote `console.log` and nothing else — a log that dies with the container. A user was
+deleted in production and *"who deleted them, and when"* had no answer anywhere. Deletion is
+the one irreversible operation here and it was also the only one with no durable record.
+
+`recordAudit()` in `queries.js` now writes one row per action. Why not the SQL helper
+`app.record_write_audit`: it derives the actor from `app.current_actor()`, a JWT claim the
+server does not have (it connects as `postgres`), it pins `trust = 'token'`, and it has no
+access to the client **IP** — which the server does have and records.
+
+- **Action names match the SQL side exactly** (`user.enable` / `user.disable` / `user.role`).
+  Both arms write to the same table, and the same action under two names cannot be filtered,
+  i.e. *"who was deactivated this month"* becomes unanswerable.
+- **The temp password never enters `details`.** `audit_log` is readable by every active user.
+- **Writing the row never fails the action.** A missing audit line loses information; an
+  action that fails *because of* its audit line loses the action — and the user would be told
+  "delete failed" about a delete that already happened in Supabase.
+- **The line is written after the delete, not before**, or it would attest to something that
+  did not happen.
+
+### Deleting a user in the Supabase dashboard leaves an orphan
+
+The dashboard removes the GoTrue user and knows nothing about `app_users`, so the row stays —
+active, listed, and unable to ever sign in. Two such rows were found in production. The
+route's "Supabase first, our table second" order produces the same shape when the second half
+fails, which is the lesser evil but still not *detected*.
+
+`check-writes.js` now fails when any active `app_users` row has a `supabase_uid` with no auth
+account. Rows with a NULL `supabase_uid` are not orphans — those were seeded by hand and
+never linked.
+
+⚠️ The check was first added *after* the results table was printed, so it listed the two
+orphans and the gate still reported ✅. Position in the file was the whole bug.
 
 ## Removing a user: deactivate *and* delete — two different operations
 

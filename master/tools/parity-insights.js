@@ -68,20 +68,27 @@ function compare(label, a, b) {
 //
 //     PARITY_EMAIL=... PARITY_PASSWORD=... node --env-file=.env tools/parity-insights.js
 let TOKEN = null;
+let GATE_EMAIL = null;
+let cleanupUser = async () => {};
 
+// ⚠️ **כבר לא דורש חשבון של אדם.** קודם השער נכנס עם PARITY_EMAIL, ולכן
+// מחיקת אותו חשבון השביתה אותו לגמרי — וזה קרה. עכשיו הוא בונה לעצמו
+// משתמש חד-פעמי ומוחק אותו בסוף. PARITY_EMAIL עדיין מנצח אם הוגדר.
 async function signIn() {
-  const email = process.env.PARITY_EMAIL;
-  const password = process.env.PARITY_PASSWORD;
-  if (!email || !password) return false;
-
-  const res = await fetchRetry(`${SB_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { apikey: SB_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) throw new Error(`התחברות נכשלה: ${res.status} ${(await res.text()).slice(0, 120)}`);
-  TOKEN = (await res.json()).access_token;
-  return true;
+  const { gateToken } = require("./lib/gate-user");
+  try {
+    const g = await gateToken(SB_URL, SB_KEY, process.env.SUPABASE_SECRET_KEY, fetchRetry);
+    TOKEN = g.token;
+    GATE_EMAIL = g.email;
+    cleanupUser = g.cleanup;
+    return true;
+  } catch (e) {
+    // ⚠️ מחזיר false ולא זורק: "לא הצלחתי להזדהות" הוא **אין ידיעה**, וזו
+    // בדיוק ההפרדה ש-gates.js קיים בשבילה. כשל כאן שהיה נספר ככישלון
+    // פריטי היה מצביע על באג במדדים שאינו קיים.
+    console.log(`⚠️  ${e.message}`);
+    return false;
+  }
 }
 
 // ============================================================
@@ -200,14 +207,14 @@ const build = ({ ops, segments, windows }, from, to) => {
     // ⚠️ **לא** נופלים בשקט לבדיקה חלשה יותר. השער הזה קיים כדי לאמת שהבורר
     // של PostgREST מחזיר את אותה קבוצת שורות; בלי התחברות הוא אינו יכול
     // לעשות זאת, ו"עבר" כאן היה שקר.
-    console.log("\n⚠️  אין PARITY_EMAIL / PARITY_PASSWORD — PostgREST לא נבדק.");
-    console.log("    הרצה מלאה:");
+    console.log("\n⚠️  לא ניתן היה להזדהות — PostgREST לא נבדק.");
+    console.log("    השער בונה לעצמו משתמש דרך SUPABASE_SECRET_KEY; בלעדיו:");
     console.log("      PARITY_EMAIL=<מייל> PARITY_PASSWORD=<סיסמה> \\");
     console.log("        node --env-file=.env tools/parity-insights.js");
     console.log("\n    (401 ללא התחברות הוא ההתנהגות התקינה: RLS מעניק קריאה ל-authenticated בלבד.)");
     process.exit(2);
   }
-  console.log(`מחובר כ-${process.env.PARITY_EMAIL} — נבדק מול PostgREST האמיתי`);
+  console.log(`מחובר כ-${GATE_EMAIL} — נבדק מול PostgREST האמיתי`);
 
   const sites = await db.prepare("SELECT id, code FROM sites ORDER BY code").all();
   const targets = [{ id: null, code: null, label: "כל האתרים" },
@@ -274,6 +281,10 @@ const build = ({ ops, segments, windows }, from, to) => {
   console.log(`  מקטעים שהתחילו לפני החלון ונמשכים לתוכו: ${spanning.n}` +
               (spanning.n ? "  ✓ הכלל מכוסה" : "  ⚠ אין מקרים — הכלל אינו מכוסה"));
 
+  // ⚠️ **לפני כל יציאה, כולל יציאת כישלון.** ניקוי שרץ רק בנתיב ההצלחה
+  // משאיר משתמש שער אחרי כל ריצה אדומה — כלומר בדיוק כשמריצים שוב ושוב.
+  await cleanupUser();
+
   console.log(`\n${"=".repeat(60)}`);
   if (failures) {
     console.log(`❌ ${failures} הבדלים מתוך ${checks} השוואות\n`);
@@ -282,4 +293,8 @@ const build = ({ ops, segments, windows }, from, to) => {
   }
   console.log(`✅ שתי הזרועות זהות — ${checks} השוואות, 0 הבדלים`);
   process.exit(0);
-})().catch((e) => { console.error("parity-insights: נפל —", e.message); process.exit(1); });
+})().catch(async (e) => {
+  await cleanupUser();
+  console.error("parity-insights: נפל —", e.message);
+  process.exit(1);
+});
