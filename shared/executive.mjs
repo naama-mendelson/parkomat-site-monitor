@@ -232,6 +232,9 @@ export function coveredMs(merged, start, end) {
 // כאן זו הגנה על נתונים היסטוריים שכבר נרשמו.)
 export function wasInMaintenanceMem(data, siteId, ts) {
   for (const w of data.windows.get(siteId) || []) {
+    // ⚠️ חלון שסומן כניסוי אינו קיים לצורך המדד. בלי זה תקלה שקרתה בתוכו
+    // הייתה עדיין מסווגת כ"תקלה בתחזוקה" — כלומר החלון בוטל לחצאין.
+    if (w.excluded_at) continue;
     const end = w.cancelled_at || w.expires_at;
     if (w.started_at <= ts && end >= ts) return true;
   }
@@ -328,7 +331,12 @@ export function uptimeFromData(data, siteId, { from, to }) {
   //
   // שני קובצי ההנחיות אומרים את ההפך במפורש — "מוחרגת מהמכנה", "אינה
   // uptime ואינה downtime, ואסור שתתוגמל כזמינות". זה מיישר את הקוד למפרט.
-  const cover = mergedWindows(data.windows.get(siteId) || [], windowStart, windowEnd);
+  // ⚠️ חלונות שסומנו כניסוי אינם מכסים כלום. חלון תחזוקה אינו רק שורה
+  // בלוג — הוא **הופך** זמן של מקטעים אחרים לתחזוקה, ולכן סימונו כניסוי
+  // חייב להסיר גם את הכיסוי ולא רק את השורה.
+  const cover = mergedWindows(
+    (data.windows.get(siteId) || []).filter((w) => !w.excluded_at),
+    windowStart, windowEnd);
 
   // ============================================================
   // תחזוקה אחרי תקלה היא **תפעול תקלה**, לא תחזוקה מתוכננת

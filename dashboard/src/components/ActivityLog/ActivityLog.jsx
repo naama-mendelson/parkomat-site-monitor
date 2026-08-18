@@ -318,7 +318,7 @@ function ActivityLog({ log, code = null, period = "week" }) {
   // שעת הניסוי מסומנת זה בדיוק הרצוי — אף צד של המשוואה לא נספר.
   const canMarkTest = (e) =>
     isManager && !testBusy && e.id != null &&
-    (e.kind === "operation" || e.kind === "status");
+    (e.kind === "operation" || e.kind === "status" || e.kind === "maintenance");
 
   // ⚠️ גם ביטול הסימון עובר בדיאלוג, בשונה ממה שכתבתי קודם. הלחיצה היא על
   // כל השורה, ולכן קל מאוד לפגוע בה בטעות בגלילה — ופעולה שמשנה מספרים
@@ -326,7 +326,11 @@ function ActivityLog({ log, code = null, period = "week" }) {
   async function confirmTest() {
     const e = pending;
     if (!e) return;
-    const kind = e.kind === "operation" ? "operation" : "fault";
+    // ⚠️ שלושה יעדים, שלוש טבלאות. מיפוי דו-ערכי היה שולח 'fault' גם על
+    // חלון תחזוקה — כלומר מחפש את מזהה החלון ב-status_history ומחזיר 404,
+    // או גרוע מכך פוגע בשורה אחרת שבמקרה נושאת את אותו מזהה.
+    const kind = { operation: "operation", status: "fault", maintenance: "maintenance" }[e.kind];
+    if (!kind) return;
     setTestBusy(true);
     setTestError("");
     try {

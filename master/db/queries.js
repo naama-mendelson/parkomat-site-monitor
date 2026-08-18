@@ -423,7 +423,7 @@ async function getStatusHistory(siteId, limit = 10) {
   const oldest = rows[rows.length - 1].started_at;
   const windows = await db
     .prepare(
-      `SELECT started_at, expires_at, cancelled_at FROM maintenance_windows
+      `SELECT started_at, expires_at, cancelled_at, excluded_at FROM maintenance_windows
        WHERE site_id = ? AND COALESCE(cancelled_at, expires_at) >= ?`
     )
     .all(siteId, oldest);
@@ -1289,7 +1289,8 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
     ).all(siteId, from, to, LOG_FETCH_CAP),
 
     db.prepare(
-      `SELECT set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at
+      `SELECT id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at,
+              excluded_at, excluded_by
        FROM maintenance_windows
        WHERE site_id = ? AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC LIMIT ?`

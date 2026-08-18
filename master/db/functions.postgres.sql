@@ -207,6 +207,9 @@ win AS (
     -- סינון לקסיקלי על TEXT, כמו בכל שאר הפונקציות כאן
     AND m.started_at < o.w_to
     AND COALESCE(m.cancelled_at, m.expires_at) > o.w_from
+    -- ⚠️ חלון שסומן כניסוי אינו מכסה כלום. חלון תחזוקה **הופך** זמן של
+    -- מקטעים אחרים לתחזוקה, ולכן סימונו כניסוי חייב להסיר גם את הכיסוי.
+    AND m.excluded_at IS NULL
 ),
 -- איחוד קטעים חופפים: קטע פותח קבוצה חדשה רק אם הוא מתחיל אחרי הסוף
 -- המקסימלי של כל מי שלפניו.
@@ -486,6 +489,7 @@ classified AS (
     (EXISTS (
        SELECT 1 FROM maintenance_windows w
         WHERE w.site_id = e.site_id
+          AND w.excluded_at IS NULL
           AND w.started_at <= e.started_at
           AND COALESCE(w.cancelled_at, w.expires_at) >= e.started_at)
      OR EXISTS (
@@ -650,7 +654,8 @@ maint AS (
   SELECT DISTINCT ON (m.site_id) m.*
     FROM maintenance_windows m
     JOIN ids ON ids.site_id = m.site_id
-   WHERE m.cancelled_at IS NULL
+   WHERE m.excluded_at IS NULL
+     AND m.cancelled_at IS NULL
      AND m.expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
    ORDER BY m.site_id, m.expires_at DESC
 )

@@ -495,6 +495,10 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
     })),
     ...maint.map((m) => ({
       kind: "maintenance",
+      // ⚠️ מזהה ושדות ניסוי — חלון תחזוקה ניתן לסימון בדיוק כמו כל שורה אחרת.
+      id: m.id ?? null,
+      excludedAt: m.excluded_at ?? null,
+      excludedBy: m.excluded_by ?? null,
       at: m.started_at,
       setBy: m.set_by_name,
       role: m.set_by_role,

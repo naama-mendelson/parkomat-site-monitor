@@ -825,6 +825,10 @@ AS $fn$
   SELECT CASE lower(COALESCE(p_kind, ''))
            WHEN 'operation' THEN 'operations'
            WHEN 'fault'     THEN 'status_history'
+           -- ⚠️ חלון תחזוקה הוא יעד שלישי, ולא סתם עוד שורה: הוא **מכסה**
+           -- זמן של מקטעים אחרים והופך אותו לתחזוקה. סימונו כניסוי מסיר
+           -- גם את הכיסוי — ראה הסינון ב-win CTE וב-cover שב-JS.
+           WHEN 'maintenance' THEN 'maintenance_windows'
          END;
 $fn$;
 

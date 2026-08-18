@@ -602,7 +602,10 @@ function init() {
       // ⚠️ שלוש עמודות ולא טבלה נפרדת: לוג הפעילות כבר קורא בדיוק את
       // השורות האלה, ולכן טבלה צדדית הייתה מוסיפה JOIN לכל רינדור של הלוג
       // רק כדי לומר מי ביטל. הרישום העמיד הנוסף יושב ב-audit_log.
-      for (const table of ["operations", "status_history"]) {
+      // ⚠️ maintenance_windows נוספה כאן אחר כך: חלון תחזוקה אינו רק שורה
+      // בלוג — הוא **הופך** זמן של מקטעים אחרים לתחזוקה, ולכן הוא חייב
+      // להיות ניתן לסימון בדיוק כמו השניים האחרים.
+      for (const table of ["operations", "status_history", "maintenance_windows"]) {
         await setup.query(`
           ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS excluded_at      TEXT;
           ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS excluded_by      TEXT;
