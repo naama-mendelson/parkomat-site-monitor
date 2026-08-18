@@ -234,6 +234,17 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       <div
         className={`site-card is-expanded${stuck ? " is-stuck" : ""}`}
         data-code={site.code}
+        // ============================================================
+        // ⚠️ הסגירה — היא פשוט לא הייתה כאן
+        // ============================================================
+        // `toggle` ב-SiteGrid טיפל נכון בשני הכיוונים, אבל ה-onClick היה
+        // מחובר **רק לגרסה הרגילה**. הכרטיס המורחב הוא ענף return אחר
+        // לגמרי, ובו לא היה onClick בכלל — כלומר הוא נפתח ולעולם לא נסגר.
+        //
+        // ⚠️ קריאת הקוד של toggle לבדה אמרה שהכול תקין, ולכן טענתי שזה
+        // עובד. בדיקה בדפדפן הראתה "פתוח · פתוח · פתוח" בשלוש לחיצות,
+        // בשני הרוחבים. ההתנהגות היא מה שקובע.
+        onClick={() => onToggle(site.code)}
         onMouseEnter={() => onHover?.(site.code)}
         // style מגיע מ-SiteGrid ומכיל מיקום מפורש כשהכרטיס בעמודה האחרונה
         // (ראה placementFor שם). מפוזר אחרון כדי שיוכל להוסיף, ולא לדרוס צבע.
@@ -310,7 +321,12 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
 
-        <button className="exp-open" onClick={() => onOpenDetail(site.code)}>
+        <button
+          className="exp-open"
+          // ⚠️ בלי stopPropagation הלחיצה מבעבעת לכרטיס, toggle סוגר אותו,
+          // והפירוט המלא נפתח מעל כרטיס שנסגר תחתיו.
+          onClick={(e) => { e.stopPropagation(); onOpenDetail(site.code); }}
+        >
           פתח פירוט מלא ←
         </button>
 
