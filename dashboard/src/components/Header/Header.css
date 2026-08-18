@@ -154,3 +154,62 @@
     min-width: 0;
   }
 }
+
+/* ============================================================
+   קיפול הפילטרים בטלפון
+   ============================================================
+   ⚠️ הכפתור אינו קיים בשולחן העבודה — לא מוסתר, פשוט display: none —
+   והפילטרים שם מוצגים תמיד. קיפול במסך רחב היה מסתיר מידע שיש לו מקום. */
+.header-filters-toggle {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .header-filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    /* יעד מגע — אותו מינימום כמו בדיאלוג הניסוי. */
+    min-height: 44px;
+    padding: 8px 14px;
+    font-size: 0.92rem;
+    color: var(--brand-on);
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-block-start: 1px solid rgba(255, 255, 255, 0.16);
+    cursor: pointer;
+  }
+
+  .header-filters-chevron {
+    font-size: 0.7rem;
+    opacity: 0.85;
+  }
+
+  /* ⚠️ display ולא max-height עם מעבר: הבלוק מכיל רשימות נפתחות
+     (SiteFilterTile), ו-overflow: hidden שנדרש לאנימציית גובה היה חותך
+     אותן כשהן נפתחות. פתיחה מיידית עדיפה על תפריט קטוע. */
+  .header-filters {
+    display: none;
+  }
+
+  .header-filters.is-open {
+    display: block;
+  }
+}
+
+/* ⚠️ כיווץ נוסף בטלפון. אחרי הקיפול השדר ירד מ-~490px ל-282px, אבל
+   הכרטיס הראשון עדיין התחיל ב-y=300 — שליש מהמסך לפני שרואים נתון אחד.
+   כאן מקצצים את מה שהוא נוכחות מותג ולא מידע. */
+@media (max-width: 640px) {
+  .app-header { padding: 8px 12px; gap: 8px; }
+  .header-top { gap: 8px; }
+
+  /* הלוגו יורד מ-40 ל-30 והכיתוב מתכווץ איתו. הוא נשאר — מסך קיר בלי
+     שם המערכת נראה כמו דף שנטען חלקית — אבל הוא אינו צריך להיות הדבר
+     הגדול ביותר במסך של 320px. */
+  .logo-img { width: 30px; height: 30px; border-radius: 8px; padding: 3px; }
+  .logo-mark { font-size: 1rem; }
+  .logo-subtitle { font-size: 0.62rem; }
+}

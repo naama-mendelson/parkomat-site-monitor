@@ -38,6 +38,21 @@ function Header({
   // (requireAuth ב-api/routes.js); הסתרה ב-UI אינה אבטחה.
   const [usersOpen, setUsersOpen] = useState(false);
 
+  // ============================================================
+  // ⚠️ בטלפון השדר תפס יותר מחצי המסך
+  // ============================================================
+  // נמדד: ~490px מתוך 850 — הלוגו, החיפוש, שישה מוני סטטוס ושתי רשימות
+  // סינון, לפני שנראה ולו כרטיס אחד. בשולחן העבודה זה נכון: הכול נגיש
+  // במבט. בטלפון זה הופך את המסך הראשי למסך סינון.
+  //
+  // ⚠️ **מקופל ולא מוסתר.** המונים הם גם הפילטרים — הסתרתם הייתה מוחקת
+  // יכולת, לא רק תצוגה. הכפתור אומר כמה פילטרים פעילים, כדי שמצב מסונן
+  // לא ייראה כמו רשימה חלקית בלי סיבה.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeCount = (activeFilters?.length ?? 0) +
+    (typeFilter && typeFilter !== "all" ? 1 : 0) +
+    (tierFilter && tierFilter !== "all" ? 1 : 0);
+
   return (
     <header className="app-header">
       <div className="header-top">
@@ -95,6 +110,21 @@ function Header({
 
       {/* מוני סטטוס כפילטרים — רק בתצוגת הבקר */}
       {isOperator && (
+        <button
+          type="button"
+          className="header-filters-toggle"
+          aria-expanded={filtersOpen}
+          onClick={() => setFiltersOpen((v) => !v)}
+        >
+          <span>סינון ותצוגה{activeCount ? ` · ${activeCount} פעילים` : ""}</span>
+          <span className="header-filters-chevron" aria-hidden="true">
+            {filtersOpen ? "▲" : "▼"}
+          </span>
+        </button>
+      )}
+
+      {isOperator && (
+        <div className={`header-filters${filtersOpen ? " is-open" : ""}`}>
         <StatusFilters
           sites={sites}
           activeFilters={activeFilters}
@@ -109,6 +139,7 @@ function Header({
             />
           }
         />
+        </div>
       )}
     </header>
   );
