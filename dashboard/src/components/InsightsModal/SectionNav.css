@@ -64,3 +64,70 @@
   .sn-label { display: none; }
   .sn-tab { padding: 10px; }
 }
+
+/* ============================================================
+   המבורגר — טלפון בלבד
+   ============================================================
+   ⚠️ שש לשוניות עם אייקונים בלבד תפסו שורה שלמה ולא ענו על "איפה אני":
+   התווית מוסתרת ב-320px, ולכן נשארו שישה ריבועים כמעט זהים. המבורגר אומר
+   את שם המסך הנוכחי — וזה בדיוק המידע שאבד. */
+.sn-burger {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .sn-burger {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    color: inherit;
+    background: var(--surface-2, rgba(128, 128, 128, 0.1));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    cursor: pointer;
+  }
+
+  .sn-burger-label { flex: 1; text-align: start; font-weight: 600; }
+  .sn-burger-caret { font-size: 0.7rem; opacity: 0.8; }
+
+  .sn-burger-lines {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    width: 16px;
+  }
+
+  .sn-burger-lines > span {
+    display: block;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+
+  /* ⚠️ display ולא max-height מונפש: מספר המסכים משתנה (מצרפת מול אתר
+     בודד), ו-overflow: hidden שנדרש לאנימציה היה חותך את האחרון. */
+  .sn { display: none; }
+
+  .sn.is-open {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-block-start: 6px;
+  }
+
+  /* בתפריט הלשונית היא שורה מלאה, והתווית **חוזרת** — היא מה שהופך
+     שישה אייקונים לרשימה שאפשר לקרוא. */
+  .sn.is-open .sn-tab {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px;
+    min-height: 42px;
+  }
+
+  .sn.is-open .sn-label { display: inline; }
+}

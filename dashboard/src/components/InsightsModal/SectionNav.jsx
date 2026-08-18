@@ -49,15 +49,43 @@ const Icon = ({ name }) => {
 };
 
 function SectionNav({ sections, active, onChange }) {
+  // ============================================================
+  // המבורגר בטלפון — שורת אייקונים היא לא ניווט במסך צר
+  // ============================================================
+  // ⚠️ שש לשוניות עם אייקונים בלבד תפסו שורה שלמה ולא אמרו **איפה
+  // אני**: התווית מוסתרת ב-320px, ולכן נשארו שישה ריבועים כמעט זהים
+  // שצריך לנחש. המבורגר אומר את שם המסך הנוכחי, וזה מה שחסר.
+  //
+  // ⚠️ הוא אינו קיים בשולחן העבודה (display: none) — שם יש מקום לתוויות,
+  // והלשוניות עדיפות: מעבר בלחיצה אחת במקום שתיים.
+  const [open, setOpen] = useState(false);
+  const current = sections.find((x) => x.key === active);
+
   return (
-    <nav className="sn" role="tablist">
+    <>
+    <button
+      type="button"
+      className="sn-burger"
+      aria-expanded={open}
+      onClick={() => setOpen((v) => !v)}
+    >
+      <span className="sn-burger-lines" aria-hidden="true">
+        <span /><span /><span />
+      </span>
+      <span className="sn-burger-label">{current?.label ?? "תפריט"}</span>
+      <span className="sn-burger-caret" aria-hidden="true">{open ? "▲" : "▼"}</span>
+    </button>
+
+    <nav className={`sn${open ? " is-open" : ""}`} role="tablist">
       {sections.map((s) => (
         <button
           key={s.key}
           role="tab"
           aria-selected={s.key === active}
           className={`sn-tab ${s.key === active ? "is-active" : ""}`}
-          onClick={() => onChange(s.key)}
+          // ⚠️ סוגר את התפריט אחרי הבחירה — תפריט שנשאר פתוח מכסה בדיוק
+          // את המסך שזה עתה נבחר.
+          onClick={() => { onChange(s.key); setOpen(false); }}
         >
           <Icon name={s.key} />
           <span className="sn-label">{s.label}</span>
@@ -67,6 +95,7 @@ function SectionNav({ sections, active, onChange }) {
         </button>
       ))}
     </nav>
+    </>
   );
 }
 
