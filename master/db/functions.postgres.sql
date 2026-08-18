@@ -73,6 +73,12 @@
 -- שהקובץ הזה נשען עליה ("הקובץ הוא מצב היעד").
 DROP FUNCTION IF EXISTS public.site_uptime(integer[], text, text);
 
+-- ⚠️ DROP ולא רק REPLACE: נוספה עמודה ל-RETURNS TABLE, ו-CREATE OR REPLACE
+-- אינו יכול לשנות טיפוס החזרה ("cannot change return type of existing
+-- function"). הפונקציות שקוראות לה נפתרות בזמן ריצה ולכן אינן חוסמות מחיקה;
+-- מדיניות RLS כן הייתה חוסמת, ואין כזו שמצביעה לכאן.
+DROP FUNCTION IF EXISTS public.site_uptime(integer[], text, text);
+
 CREATE OR REPLACE FUNCTION public.site_uptime(
   p_site_ids integer[],
   p_from     text,
@@ -88,6 +94,10 @@ RETURNS TABLE (
   repair_hours         double precision,
   planned_hours        double precision,
   no_comm_hours        double precision,
+  -- ⚠️ זמן שמנהל הוציא מהסטטיסטיקה ("הקפצנו את הדלת כדי לבדוק"). מחוץ
+  -- לזמינות לחלוטין — לא במונה ולא במכנה, בדיוק כמו תחזוקה — אבל **בתוך**
+  -- total_hours, כדי שהפס על המסך לא יתקצר בלי הסבר.
+  excluded_hours       double precision,
   total_hours          double precision,
   measured_hours       double precision,
   availability_percent double precision
@@ -120,6 +130,33 @@ clipped AS (
     -- שתי ההשוואות על TEXT: האינדקס (site_id, started_at) נשאר בשימוש
     AND h.started_at < o.w_to
     AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
+    -- ⚠️ **המקטע יוצא כאן, לפני כל דלי.** זהה ל-`continue` ב-uptimeFromData,
+    -- ולכן גם החלק שנופל בתוך חלון תחזוקה ידני אינו נספר כתחזוקה. סינון
+    -- מאוחר יותר (FILTER בכל צבירה) היה משאיר את החלק המכוסה שלו בתוך
+    -- maintenance_s — שבע צבירות שכל אחת מהן הזדמנות לשכוח אחת.
+    AND h.excluded_at IS NULL
+),
+-- ============================================================
+-- excl — הזמן שהוצא, נמדד באותה חיתוך בדיוק
+-- ============================================================
+-- ⚠️ CTE נפרד ולא דלי בתוך agg, כי `clipped` כבר סינן אותו. אותו חישוב
+-- חיתוך מילה במילה — מקטע שהוצא נחתך לחלון כמו כל אחר, אחרת "שעה שהוצאה"
+-- בקצה התקופה הייתה נספרת במלואה בשתי תקופות סמוכות.
+excl AS (
+  SELECT
+    h.site_id,
+    SUM(EXTRACT(EPOCH FROM (
+      LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz)
+      - GREATEST(h.started_at::timestamptz, o.w_from::timestamptz)
+    ))) AS excluded_s
+  FROM status_history h
+  CROSS JOIN ok o
+  WHERE o.valid
+    AND (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+    AND h.started_at < o.w_to
+    AND (h.ended_at IS NULL OR h.ended_at > o.w_from)
+    AND h.excluded_at IS NOT NULL
+  GROUP BY h.site_id
 ),
 -- ============================================================
 -- תחזוקה אחרי תקלה היא **תפעול תקלה**, לא תחזוקה מתוכננת
@@ -242,9 +279,11 @@ SELECT
   ROUND((COALESCE(s.repair_s,0)      / 3600.0)::numeric, 2)::double precision,
   ROUND((COALESCE(s.planned_s,0)     / 3600.0)::numeric, 2)::double precision,
   ROUND((COALESCE(s.no_comm_s,0)     / 3600.0)::numeric, 2)::double precision,
-  -- total כולל תחזוקה ונתק — הוא כל הזמן שנמדד
+  ROUND((COALESCE(x.excluded_s,0)    / 3600.0)::numeric, 2)::double precision,
+  -- total כולל תחזוקה, נתק, ומה שהוצא — הוא כל הזמן שנמדד
   ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0) + COALESCE(s.error_s,0)
-        + COALESCE(s.maintenance_s,0) + COALESCE(s.no_comm_s,0)) / 3600.0)::numeric, 2)::double precision,
+        + COALESCE(s.maintenance_s,0) + COALESCE(s.no_comm_s,0)
+        + COALESCE(x.excluded_s,0)) / 3600.0)::numeric, 2)::double precision,
   -- ============================================================
   -- measured = זמין + תקלה. **בלי תחזוקה ובלי נתק.**
   -- ============================================================
@@ -274,7 +313,10 @@ SELECT
 -- 2. תמיד חוזרת שורה לכל אתר *קיים*, גם לאתר בלי שום היסטוריה בטווח.
 FROM (SELECT id AS site_id FROM sites
        WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)) AS ids
-LEFT JOIN secs s ON s.site_id = ids.site_id;
+LEFT JOIN secs s ON s.site_id = ids.site_id
+-- ⚠️ LEFT ולא INNER: הרוב המוחלט של האתרים לא הוציאו כלום, ו-INNER היה
+-- מוחק אותם מהתוצאה כולה — כלומר "לא הוצאת שום דבר" היה נקרא "אין אתר".
+LEFT JOIN excl x ON x.site_id = ids.site_id;
 $$;
 
 COMMENT ON FUNCTION public.site_uptime(integer[], text, text) IS
@@ -314,6 +356,8 @@ COMMENT ON FUNCTION public.site_uptime(integer[], text, text) IS
 --
 -- ה-ORDER BY כולל id כשובר-שוויון: קיימים מקטעים באותה שנייה בדיוק, ובלי
 -- שובר-שוויון ה-LAG היה שרירותי. אותו סדר בדיוק כמו sortByStartedAt ב-JS.
+DROP FUNCTION IF EXISTS public.site_segments_collapsed(integer[], text, text);
+
 CREATE OR REPLACE FUNCTION public.site_segments_collapsed(
   p_site_ids integer[],
   p_from     text,
@@ -324,13 +368,16 @@ RETURNS TABLE (
   id         integer,
   status     text,
   started_at text,
-  ended_at   text
+  ended_at   text,
+  -- ⚠️ נחשף ולא מסונן כאן: הקיפול חייב לראות את המקטע כדי לדעת אם מה
+  -- שאחריו הוא המשך. הצרכן מחליט. ראה statsFromData.
+  excluded_at text
 )
 LANGUAGE sql
 STABLE
 AS $$
 WITH src AS (
-  SELECT h.id, h.site_id, h.status, h.started_at, h.ended_at
+  SELECT h.id, h.site_id, h.status, h.started_at, h.ended_at, h.excluded_at
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      -- שתי ההשוואות על TEXT — האינדקס נשאר בשימוש. ה-look-back מתקבל
@@ -345,11 +392,11 @@ observed AS (
     FROM src s
    WHERE s.status <> 'no_comm'
 )
-SELECT o.site_id, o.id, o.status, o.started_at, o.ended_at
+SELECT o.site_id, o.id, o.status, o.started_at, o.ended_at, o.excluded_at
   FROM observed o
  WHERE o.prev_status IS NULL OR o.status <> o.prev_status
 UNION ALL
-SELECT s.site_id, s.id, s.status, s.started_at, s.ended_at
+SELECT s.site_id, s.id, s.status, s.started_at, s.ended_at, s.excluded_at
   FROM src s
  WHERE s.status = 'no_comm'
 ORDER BY 1, 4, 2;
@@ -409,6 +456,9 @@ WITH ops AS (
   SELECT o.site_id, COUNT(*)::int AS n
     FROM operations o
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
+     -- ⚠️ הוצאה ידנית של מנהל. **לא** מוזגה ל-is_anomaly: זה שיפוט של
+     -- הקליטה על סמך הנתון, וזו הצהרה של אדם. מיזוגם היה מוחק את ההבחנה.
+     AND o.excluded_at IS NULL
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
      -- מעבר פיזי אחד = פעולה אחת: ניסיון שנקטע והוחלף אינו נספר שוב
@@ -423,6 +473,10 @@ err AS (
   SELECT c.site_id, c.started_at
     FROM public.site_segments_collapsed(p_site_ids, p_from, p_to) c
    WHERE c.status = 'error'
+     -- ⚠️ **אחרי הקיפול ולא לפניו** — זהה ל-statsFromData. מקטע שהוצא
+     -- עדיין משתתף בקיפול הריצוד, כי הוא ההקשר שקובע אם מה שאחריו הוא
+     -- המשך. סינון מוקדם היה מזיז את ספירת שכניו.
+     AND c.excluded_at IS NULL
      AND c.started_at >= p_from
      AND c.started_at < p_to
 ),

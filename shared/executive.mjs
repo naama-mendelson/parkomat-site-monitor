@@ -258,6 +258,9 @@ export function availabilityFrom(ms) {
 export function statsFromData(data, siteId, { from, to }) {
   let operations = 0;
   for (const o of data.ops.get(siteId) || []) {
+    // ⚠️ הוצאה ידנית של מנהל — "הקפצנו את הדלת כדי לבדוק". נבדק כאן ולא
+    // מוזג לתוך התנאי שמעליו כדי שיישאר קריא שזו החלטת אדם ולא שיפוט קליטה.
+    if (o.excluded_at) continue;
     if (o.is_anomaly === 0 && !o.superseded_by && o.start_end === "end" &&
         o.occurred_at >= from && o.occurred_at < to) operations++;
   }
@@ -269,6 +272,11 @@ export function statsFromData(data, siteId, { from, to }) {
   // בלי המקטע הקודם אי אפשר לדעת זאת.
   for (const s of collapseNoCommFlicker(data.segments.get(siteId) || [])) {
     if (s.status !== "error") continue;
+    // ⚠️ **אחרי הקיפול ולא לפניו.** מקטע שהוצא עדיין משתתף בקיפול ריצוד
+    // הנתק כרגיל — הוא קרה, והוא ההקשר שקובע אם המקטע שאחריו הוא המשך או
+    // תקלה חדשה. סינון לפני הקיפול היה משנה את גבולות המקטעים של שכניו,
+    // כלומר הוצאה של תקלה אחת הייתה מזיזה את הספירה של אחרת.
+    if (s.excluded_at) continue;
     if (!(s.started_at >= from && s.started_at < to)) continue;
     if (wasInMaintenanceMem(data, siteId, s.started_at)) errorsInMaintenance++;
     else errors++;
@@ -288,6 +296,7 @@ export function uptimeFromData(data, siteId, { from, to }) {
   const empty = {
     readyHours: 0, operatingHours: 0, errorHours: 0,
     maintenanceHours: 0, repairHours: 0, plannedHours: 0, noCommHours: 0,
+    excludedHours: 0,
     totalHours: 0, measuredHours: 0, availabilityPercent: 0,
   };
 
@@ -297,7 +306,7 @@ export function uptimeFromData(data, siteId, { from, to }) {
   const windowEnd = Date.parse(rangeEnd);
   if (!(windowEnd > windowStart)) return empty;
 
-  const ms = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
+  const ms = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0, excluded: 0 };
 
   // ⚠️ מצטברי הפילוח יושבים **מחוץ ל-ms**, ובכוונה. totalMs מסכם את
   // Object.values(ms), ולכן הכנסתם לשם סופרת את שעות התחזוקה פעמיים —
@@ -349,6 +358,24 @@ export function uptimeFromData(data, siteId, { from, to }) {
 
   for (const row of data.segments.get(siteId) || []) {
     if (ms[row.status] === undefined) continue;
+
+    // ============================================================
+    // ⚠️ מקטע שהוצא — לא במונה, לא במכנה, אבל **כן נספר**
+    // ============================================================
+    // ההכרעה הייתה "לא נמדד בכלל", בדיוק כמו תחזוקה. `availabilityFrom`
+    // קורא רשימת סטטוסים סגורה, ולכן דלי `excluded` נשאר מחוץ לשתי
+    // הצלעות מעצם קיומו — בלי לגעת בהגדרת הזמינות.
+    //
+    // ⚠️ ולמה דלי ולא `continue` פשוט: `totalHours` הוא סכום הדליים, והוא
+    // מה שמצויר בפס הזמינות. השמטה הייתה מקצרת את הפס בלי לומר למה —
+    // כלומר זמן שנעלם מהמסך. כאן הוא מוצג ומוסבר.
+    if (row.excluded_at) {
+      const s0 = Math.max(Date.parse(row.started_at), windowStart);
+      const e0 = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
+      if (e0 > s0 && row.started_at < rangeEnd &&
+          (row.ended_at === null || row.ended_at > from)) ms.excluded += e0 - s0;
+      continue;
+    }
     // אותו תנאי חפיפה כמו בשאילתה המקורית
     if (!(row.started_at < rangeEnd && (row.ended_at === null || row.ended_at > from))) continue;
 
@@ -383,6 +410,8 @@ export function uptimeFromData(data, siteId, { from, to }) {
     repairHours: toHours(repairMs),
     plannedHours: toHours(plannedMs),
     noCommHours: toHours(ms.no_comm),
+    // זמן שמנהל הוציא מהסטטיסטיקה. מחוץ לזמינות, בתוך totalHours.
+    excludedHours: toHours(ms.excluded),
     totalHours: toHours(totalMs),          // כל הזמן שנמדד, כולל תחזוקה (לתצוגה)
     // המכנה של הזמינות — בלי תחזוקה. 0 = אין נתון, ולא "זמינות אפס".
     measuredHours: toHours(measuredMs),

@@ -190,6 +190,56 @@ async function parityUptime() {
 // בזיכרון (uptimeFromData היא פונקציה טהורה). שום דבר לא נשמר.
 const H = 3600 * 1000;
 const EDGE_CASES = [
+  // ============================================================
+  // הוצאה מהסטטיסטיקה — ארבעה מקרים, ואף אחד מהם אינו קיים בייצור
+  // ============================================================
+  // ⚠️ ההכרעה: זמן שהוצא **אינו נמדד בכלל** — לא במונה ולא במכנה, בדיוק
+  // כמו תחזוקה — אבל כן נספר ב-total_hours כדי שהפס על המסך לא יתקצר
+  // בלי הסבר. ארבעת המקרים כאן הם הכיסוי היחיד לכלל הזה.
+  {
+    name: "תקלה שהוצאה — לא במונה ולא במכנה, וזמינות 100%",
+    segments: (f, t) => [
+      { status: "ready", started_at: iso(f), ended_at: iso(f + 6 * H) },
+      { status: "error", started_at: iso(f + 6 * H), ended_at: iso(f + 8 * H),
+        excluded_at: iso(t) },
+      { status: "ready", started_at: iso(f + 8 * H), ended_at: iso(t) },
+    ],
+  },
+  {
+    // ⚠️ המקרה שמפריד בין "הוצא" לבין "נמחק": אילו ההוצאה הייתה DELETE,
+    // total_hours היה זהה לזה של תקלה שלא הייתה — וכאן הוא חייב להיות גדול
+    // ממנו בדיוק בשעתיים.
+    name: "תקלה שהוצאה — נשארת ב-total_hours ואינה נעלמת",
+    segments: (f, t) => [
+      { status: "error", started_at: iso(f), ended_at: iso(f + 2 * H),
+        excluded_at: iso(t) },
+      { status: "ready", started_at: iso(f + 2 * H), ended_at: iso(t) },
+    ],
+  },
+  {
+    // ⚠️ הוצאה חלקית: רק חלק מהמקטע נופל בחלון. אם החיתוך ב-CTE `excl`
+    // נשמט, השעות היו נספרות במלואן — ואותה שעה הייתה מופיעה פעמיים
+    // בשתי תקופות סמוכות.
+    name: "תקלה שהוצאה וחוצה את גבול החלון — נחתכת כמו כל מקטע",
+    segments: (f, t) => [
+      { status: "error", started_at: iso(f - 3 * H), ended_at: iso(f + 3 * H),
+        excluded_at: iso(t) },
+      { status: "ready", started_at: iso(f + 3 * H), ended_at: iso(t) },
+    ],
+  },
+  {
+    // ⚠️ המקרה הכי עדין: המקטע שהוצא נמצא **בין** שני מקטעי ready. הקיפול
+    // חייב עדיין לראות אותו, אחרת ה-ready השני נקרא כהמשך של הראשון
+    // ומקטע שלם נעלם. סינון לפני הקיפול נופל כאן ורק כאן.
+    name: "תקלה שהוצאה בין שני ready — הקיפול עדיין רואה אותה",
+    segments: (f, t) => [
+      { status: "ready", started_at: iso(f), ended_at: iso(f + 2 * H) },
+      { status: "error", started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H),
+        excluded_at: iso(t) },
+      { status: "no_comm", started_at: iso(f + 3 * H), ended_at: iso(f + 4 * H) },
+      { status: "ready", started_at: iso(f + 4 * H), ended_at: iso(t) },
+    ],
+  },
   {
     name: "מקטע יחיד שעוטף את כל החלון (חוצה את שני הגבולות)",
     segments: (f, t) => [{ status: "ready", started_at: iso(f - 5 * H), ended_at: iso(t + 5 * H) }],
@@ -313,8 +363,13 @@ async function parityEdgeCases() {
 
       for (const s of segments) {
         await db.prepare(
-          "INSERT INTO status_history (site_id, status, started_at, ended_at) VALUES (?, ?, ?, ?)"
-        ).run(siteId, s.status, s.started_at, s.ended_at);
+          // ⚠️ excluded_at נזרע כאן כי בייצור **אין ולו שורה אחת** כזו, ולכן
+          // 1,533 ההשוואות על נתוני אמת עיוורות לחלוטין לכלל החדש. זה בדיוק
+          // מה שקרה כבר עם חלונות התחזוקה הידניים.
+          "INSERT INTO status_history (site_id, status, started_at, ended_at, excluded_at, excluded_by)" +
+          " VALUES (?, ?, ?, ?, ?, ?)"
+        ).run(siteId, s.status, s.started_at, s.ended_at,
+              s.excluded_at ?? null, s.excluded_at ? "parity" : null);
       }
 
       for (const w of windows) {

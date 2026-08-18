@@ -1444,7 +1444,8 @@ async function loadRangeData(siteIds, { from, to }) {
       // superseded_by נשלף כי statsFromData מחריג לפיו — ניסיון שנקטע והוחלף
       // בניסיון חוזר אינו פעולה נוספת. **בלעדיו ה-JS סופר והפונקציה ב-SQL לא**,
       // וזה בדיוק מה ש-tools/parity.js תפס: JS=1029 מול SQL=1018.
-      `SELECT site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by
+      `SELECT site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by,
+              excluded_at
        FROM operations
        WHERE ${filter} AND occurred_at >= ? AND occurred_at < ?`
     ).all(...ids, from, to),
@@ -1454,7 +1455,7 @@ async function loadRangeData(siteIds, { from, to }) {
     // תורם 0ms ממילא. עדיף להביא יותר מדי מלפספס מקטע קצה.
     // id נשלף כדי לשמש שובר-שוויון למיון — ראה sortByStartedAt.
     db.prepare(
-      `SELECT id, site_id, status, started_at, ended_at
+      `SELECT id, site_id, status, started_at, ended_at, excluded_at
        FROM status_history
        WHERE ${filter} AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
     ).all(...ids, to, from),

@@ -787,3 +787,146 @@ $fn$;
 
 REVOKE ALL ON FUNCTION public.list_users() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.list_users() TO authenticated;
+
+-- ============================================================
+-- הוצאת דיווח מהסטטיסטיקה — למנהלים בלבד
+-- ============================================================
+-- "הקפצתי דלתות חניון כדי לבדוק שהמערכת עובדת, ועכשיו אני רוצה להסיר את
+-- זה מהסטטיסטיקה." שתי ישויות נכנסות לכאן:
+--
+--   'operation' → שורה ב-operations      (פעולת בדיקה מנפחת את מונה הפעולות)
+--   'fault'     → מקטע error ב-status_history (תקלה מכוונת מנפחת אחוז כשל)
+--
+-- ⚠️ **סימון, לא מחיקה.** הדרישה הייתה "שיהיה כתוב מה בוטל ועל ידי מי",
+-- ומחיקה הופכת את זה לבלתי אפשרי — אין על מה לכתוב. השורה נשארת, ולוג
+-- הפעילות מציג אותה עם השם של מי שהוציא אותה.
+--
+-- ⚠️ **מנהל בלבד, בשונה מתחזוקה.** תחזוקה היא ייחוס-במקום-מנע: היא הפיכה,
+-- פגה מעצמה, וכל טכנאי צריך אותה בשטח. הוצאה מהסטטיסטיקה משנה את המספרים
+-- שעליהם מסתכלים — אחוז כשל וזמינות — ואין לה תפוגה. מי שיכול להוריד את
+-- אחוז הכשל של אתר צריך להיות אותו מעגל שיכול למחוק אתר.
+--
+-- ⚠️ ולמה `restore` קיימת: בלעדיה טעות אחת היא לצמיתות. היא מנקה את שלוש
+-- העמודות יחד — שחזור שמשאיר `excluded_by` מאוכלס נראה כמו שורה שהוצאה
+-- ועדיין נספרת, וזה בדיוק המצב שאי אפשר להסביר.
+
+CREATE OR REPLACE FUNCTION app.exclusion_target(p_kind text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $fn$
+  SELECT CASE lower(COALESCE(p_kind, ''))
+           WHEN 'operation' THEN 'operations'
+           WHEN 'fault'     THEN 'status_history'
+         END;
+$fn$;
+
+DROP FUNCTION IF EXISTS public.exclude_report(text, bigint, text);
+
+CREATE OR REPLACE FUNCTION public.exclude_report(
+  p_kind   text,
+  p_id     bigint,
+  p_reason text DEFAULT NULL
+)
+RETURNS TABLE (kind text, id bigint, excluded_at text, excluded_by text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor  text := app.require_manager();
+  v_table  text := app.exclusion_target(p_kind);
+  v_now    text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_reason text := NULLIF(TRIM(COALESCE(p_reason, '')), '');
+  v_code   text;
+  v_prev   text;
+BEGIN
+  IF v_table IS NULL THEN
+    RAISE EXCEPTION 'סוג דיווח לא תקין: %', p_kind USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- ⚠️ EXECUTE עם שם טבלה מתוך רשימה סגורה (exclusion_target), ולא
+  -- מחרוזת מהלקוח. שתי הטבלאות זהות במבנה הרלוונטי, וכתיבת שתי פונקציות
+  -- כמעט־זהות הייתה מזמינה תיקון שנעשה רק באחת מהן.
+  EXECUTE format(
+    'SELECT s.code, t.excluded_at FROM %I t JOIN sites s ON s.id = t.site_id WHERE t.id = $1',
+    v_table
+  ) INTO v_code, v_prev USING p_id;
+
+  IF v_code IS NULL THEN
+    RAISE EXCEPTION 'דיווח לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+  IF v_prev IS NOT NULL THEN
+    -- 409 ולא 400: הבקשה תקינה, המצב כבר כזה. לרוב שתי לחיצות על אותו כפתור.
+    RAISE EXCEPTION 'הדיווח כבר הוצא מהסטטיסטיקה' USING ERRCODE = 'PT409';
+  END IF;
+
+  EXECUTE format(
+    'UPDATE %I SET excluded_at = $1, excluded_by = $2, exclusion_reason = $3 WHERE id = $4',
+    v_table
+  ) USING v_now, v_actor, v_reason, p_id;
+
+  PERFORM app.record_write_audit('report.exclude', v_actor, app.current_app_role(),
+                                 p_kind, p_id::text,
+                                 jsonb_build_object('site', v_code, 'reason', v_reason));
+  PERFORM app.record_write_event(v_code, 'report-excluded',
+                                 jsonb_build_object('type','report-excluded','code',v_code,
+                                                    'kind',p_kind,'id',p_id));
+
+  RETURN QUERY SELECT p_kind, p_id, v_now, v_actor;
+END;
+$fn$;
+
+DROP FUNCTION IF EXISTS public.restore_report(text, bigint);
+
+CREATE OR REPLACE FUNCTION public.restore_report(p_kind text, p_id bigint)
+RETURNS TABLE (kind text, id bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_table text := app.exclusion_target(p_kind);
+  v_code  text;
+  v_prev  text;
+BEGIN
+  IF v_table IS NULL THEN
+    RAISE EXCEPTION 'סוג דיווח לא תקין: %', p_kind USING ERRCODE = 'check_violation';
+  END IF;
+
+  EXECUTE format(
+    'SELECT s.code, t.excluded_at FROM %I t JOIN sites s ON s.id = t.site_id WHERE t.id = $1',
+    v_table
+  ) INTO v_code, v_prev USING p_id;
+
+  IF v_code IS NULL THEN
+    RAISE EXCEPTION 'דיווח לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+  IF v_prev IS NULL THEN
+    RAISE EXCEPTION 'הדיווח אינו מוצא מהסטטיסטיקה' USING ERRCODE = 'PT409';
+  END IF;
+
+  -- ⚠️ שלוש העמודות יחד. ניקוי חלקי משאיר שורה שנספרת אבל נושאת שם של מי
+  -- שהוציא אותה — מצב שאי אפשר להסביר למי שקורא את הלוג.
+  EXECUTE format(
+    'UPDATE %I SET excluded_at = NULL, excluded_by = NULL, exclusion_reason = NULL WHERE id = $1',
+    v_table
+  ) USING p_id;
+
+  PERFORM app.record_write_audit('report.restore', v_actor, app.current_app_role(),
+                                 p_kind, p_id::text,
+                                 jsonb_build_object('site', v_code));
+  PERFORM app.record_write_event(v_code, 'report-restored',
+                                 jsonb_build_object('type','report-restored','code',v_code,
+                                                    'kind',p_kind,'id',p_id));
+
+  RETURN QUERY SELECT p_kind, p_id;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.exclude_report(text, bigint, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.restore_report(text, bigint)       FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.exclude_report(text, bigint, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.restore_report(text, bigint)       TO authenticated;
