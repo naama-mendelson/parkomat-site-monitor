@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- צבע המותג נדגם מהלוגו (parkomatLogo/logo-color.ico) -->
     <meta name="theme-color" content="#0e4194" />
+
+    <!-- ============================================================
+         התקנה כאפליקציה (PWA) — תוספת בלבד, בלי Service Worker
+         ============================================================
+         ⚠️ **אין כאן Service Worker בכוונה.** הוא מה שנותן עבודה במצב
+         לא-מקוון, והוא גם מה שמגיש למשתמש גרסה ישנה מהמטמון אחרי פריסה.
+         אחרי יום שלם שבו הדשבורד שהוגש היה בן יומיים ואיש לא ידע — זה
+         בדיוק הכשל שאסור להוסיף כאן. הוספתו היא החלטה נפרדת שדורשת גם
+         אסטרטגיית עדכון, לא שורה אחת.
+
+         בלעדיו: "הוסף למסך הבית" עובד בשני המכשירים, האתר נפתח במסך מלא
+         בלי שורת הכתובת של הדפדפן, ואין שום שינוי בהתנהגות האתר עצמו. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- iOS אינו קורא את ה-manifest, ולכן שלוש ההצהרות האלה. בלעדיהן
+         האייקון במסך הבית הוא צילום מוקטן של הדף. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Parkomat" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/parkomat-logo.png" />
     <link rel="icon" type="image/png" href="/parkomat-logo.png" />
     <title>Parkomat · SiteMonitor</title>
 

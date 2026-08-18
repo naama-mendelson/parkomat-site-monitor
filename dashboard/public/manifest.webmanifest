@@ -1,0 +1,27 @@
+{
+  "name": "Parkomat SiteMonitor",
+  "short_name": "Parkomat",
+  "description": "ניטור אתרי חניה — מצב, תקלות וזמינות בזמן אמת",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e4194",
+  "theme_color": "#0e4194",
+  "icons": [
+    {
+      "src": "/parkomat-logo.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/parkomat-logo.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
