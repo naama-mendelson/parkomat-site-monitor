@@ -1,4 +1,5 @@
 // components/InsightsModal/SectionNav.jsx — ניווט בין מסכי המידע
+import { useState } from "react";
 import "./SectionNav.css";
 
 // אייקונים קטנים ב-SVG טהור — נקיים, חדים בכל גודל, בלי ספריות.
