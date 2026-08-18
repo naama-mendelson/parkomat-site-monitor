@@ -350,3 +350,50 @@
   color: var(--text-muted);
   line-height: 1.5;
 }
+
+/* ============================================================
+   ניסוי — שורה שנשארת בלוג ואינה נספרת
+   ============================================================
+   ⚠️ עמעום ולא הסתרה, ולא קו חוצה. השורה עדיין אומרת מה קרה; היא רק
+   אומרת גם שהיא לא נספרת. קו חוצה היה קורא כ"נמחק", וזה בדיוק ההפך
+   ממה שהמנגנון הזה עושה. */
+.log-row.is-test {
+  opacity: 0.62;
+}
+
+.log-test-tag {
+  display: inline-block;
+  margin-inline-start: 0.5em;
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  font-size: 0.78em;
+  white-space: nowrap;
+  background: var(--surface-2, rgba(128, 128, 128, 0.16));
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+}
+
+.log-test-btn {
+  margin-inline-start: 0.6em;
+  padding: 0.1em 0.6em;
+  border-radius: 6px;
+  font-size: 0.78em;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.4));
+}
+
+/* ⚠️ הכפתור נשאר גלוי תמיד ואינו מופיע רק בריחוף: במסך מגע אין ריחוף,
+   והפעולה הייתה בלתי נגישה לגמרי בטלפון. */
+.log-test-btn:hover:not(:disabled) {
+  border-color: currentColor;
+}
+
+.log-test-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.log-test-btn.is-marked {
+  font-weight: 600;
+}

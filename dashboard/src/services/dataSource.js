@@ -61,6 +61,7 @@ import { fetchExecutiveDirect } from "./executiveDirect";
 import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
+import { markAsTestDirect, unmarkTestDirect } from "./reportsDirect";
 import { registerSiteDirect, updateSiteDirect, deleteSiteDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
@@ -563,4 +564,31 @@ function prevWeekFromIso() {
   const from = new Date(weekFromIso());
   const span = Date.now() - from.getTime();
   return new Date(from.getTime() - span).toISOString();
+}
+
+// ============================================================
+// סימון דיווח כניסוי — **אין זרוע שרת, וזו הצהרה**
+// ============================================================
+// ⚠️ בכל שאר המתג קיימות שתי זרועות. כאן קיימת אחת: אין מסלול שרת שמסמן
+// דיווח כניסוי, ולא נבנה כזה. הסיבה היא שהכלל — "מנהל בלבד" — נשען על
+// `app.require_manager()` שקורא תפקיד מאומת מ-`app_users`. הזרוע דרך
+// השרת מגינה בקוד המשותף `admin123`, שערכו בקוד הפתוח, ולכן היא הייתה
+// **מחלישה** את ההגנה על הפעולה שמשנה את המספרים שמסתכלים עליהם.
+//
+// ⚠️ ולכן הזרוע השנייה זורקת הודעה מפורשת ולא נופלת חזרה בשקט. נפילה
+// שקטה לשרת הייתה הופכת מצב `VITE_SUPABASE_DIRECT=false` ל"הכפתור לא
+// עובד ואיש לא יודע למה".
+export async function markAsTest(kind, id, note = "") {
+  if (!useDirect) {
+    throw new Error("סימון ניסוי זמין רק בקריאה ישירה ל-Supabase (VITE_SUPABASE_DIRECT=true)");
+  }
+  return markAsTestDirect(kind, id, note);
+}
+
+/** ביטול סימון הניסוי — הדיווח חוזר להיספר. */
+export async function unmarkTest(kind, id) {
+  if (!useDirect) {
+    throw new Error("ביטול סימון ניסוי זמין רק בקריאה ישירה ל-Supabase");
+  }
+  return unmarkTestDirect(kind, id);
 }

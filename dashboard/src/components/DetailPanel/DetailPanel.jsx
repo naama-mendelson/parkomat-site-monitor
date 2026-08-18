@@ -6,7 +6,8 @@ import { siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { formatDate } from "../../utils/helpers";
 // ⚠️ מ-dataSource ולא מ-api: הכתיבה עוברת עכשיו במתג — ישירות ל-Supabase
 // כברירת מחדל, ודרך השרת כשהמתג כבוי. ראה services/dataSource.js.
-import { startMaintenance, cancelMaintenance } from "../../services/dataSource";
+import { startMaintenance, cancelMaintenance, markAsTest, unmarkTest } from "../../services/dataSource";
+import { useAuth } from "../../hooks/useAuth";
 import { useSiteAnalytics } from "../../hooks/useSiteAnalytics";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
 import MetricCard from "../MetricCard/MetricCard";
@@ -65,6 +66,55 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
   const [maintName, setMaintName] = useState("");
   const [maintHours, setMaintHours] = useState(2);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // ============================================================
+  // סימון דיווח כניסוי — "הקפצנו את הדלת כדי לבדוק"
+  // ============================================================
+  // ⚠️ ההסתרה מבקר היא **נוחות ולא הגנה.** הכלל נאכף ב-app.require_manager()
+  // בתוך הפונקציה ב-SQL, ו-DevTools פתוח לכל אחד. מה שההסתרה כן מונעת:
+  // מסך שמציע פעולה שתיכשל ב-403 — הדרך האמינה לגרום למישהו להסיק
+  // שהמערכת שבורה.
+  const { user } = useAuth();
+  const isManager = user?.role === "manager";
+  const [testBusy, setTestBusy] = useState(null);
+
+  async function toggleTest(kind, id, isMarked) {
+    if (!id) return;
+    // ⚠️ אישור על הסימון ולא על ביטולו: הסימון משנה מספרים שמסתכלים
+    // עליהם, והביטול רק מחזיר אותם. אישור על שניהם היה הופך את שניהם לרעש.
+    if (!isMarked &&
+        !confirm("לסמן את הדיווח כניסוי? הוא יישאר בלוג ולא ייספר בסטטיסטיקה.")) return;
+    setTestBusy(`${kind}-${id}`);
+    try {
+      if (isMarked) await unmarkTest(kind, id);
+      else await markAsTest(kind, id);
+      onRefresh();
+    } catch (err) {
+      alert("שגיאה: " + err.message);
+    } finally {
+      setTestBusy(null);
+    }
+  }
+
+  // ⚠️ מציג את **מי ניסה**, לא רק שזה ניסוי. בלי השם התג אומר "מישהו
+  // החליט", וזה בדיוק מה שהתבקש לא לקרות.
+  const testTag = (row) => row.excluded_at ? (
+    <span className="log-test-tag" title={row.exclusion_reason || "סומן כניסוי"}>
+      ניסוי · נוסה בידי {row.excluded_by || "—"}
+    </span>
+  ) : null;
+
+  const testBtn = (kind, row) => (isManager && row.id) ? (
+    <button
+      type="button"
+      className={`log-test-btn${row.excluded_at ? " is-marked" : ""}`}
+      disabled={testBusy === `${kind}-${row.id}`}
+      onClick={() => toggleTest(kind, row.id, Boolean(row.excluded_at))}
+      title={row.excluded_at ? "החזר לספירה בסטטיסטיקה" : "סמן כניסוי — לא ייספר בסטטיסטיקה"}
+    >
+      {row.excluded_at ? "בטל ניסוי" : "ניסוי"}
+    </button>
+  ) : null;
   const [period, setPeriod] = useState("week");   // ברירת מחדל: שבוע
   const [insightsOpen, setInsightsOpen] = useState(false);
 
@@ -434,7 +484,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                   return (
                     <li
                       key={`o-${item.occurred_at}-${i}`}
-                      className="log-row"
+                      className={`log-row${item.excluded_at ? " is-test" : ""}`}
                       style={{ borderInlineStartColor: oc.dot }}
                     >
                       <span className="log-status">
@@ -443,12 +493,14 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                       </span>
                       <span className="log-time" title={formatDate(item.occurred_at)}>
                         כרטיס {item.card_number || "—"} · {new Date(item.occurred_at).toLocaleTimeString("he-IL")}
+                        {testTag(item)}
                       </span>
                       <span
                         className="log-duration"
                         style={item.is_anomaly ? { color: STATUS_COLORS.error.text } : undefined}
                       >
                         {phase}{item.is_anomaly ? " · אנומליה" : ""}
+                        {testBtn("operation", item)}
                       </span>
                     </li>
                   );
@@ -479,7 +531,7 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                 return (
                   <li
                     key={`s-${item.started_at}-${i}`}
-                    className="log-row"
+                    className={`log-row${item.excluded_at ? " is-test" : ""}`}
                     style={{ borderInlineStartColor: c.dot }}
                   >
                     <span className="log-status">
@@ -488,9 +540,13 @@ function DetailPanel({ detail, maintenance, onClose, onRefresh, dataVersion = 0 
                     </span>
                     <span className="log-time" title={formatDate(item.started_at)}>
                       התחיל {new Date(item.started_at).toLocaleTimeString("he-IL")}
+                      {testTag(item)}
                     </span>
                     <span className="log-duration">
                       {item.ended_at ? `נמשך ${formatDuration(item.started_at, item.ended_at)}` : "נוכחי"}
+                      {/* ⚠️ רק מקטעי תקלה: סימון 'מוכן' כניסוי היה מוציא זמן
+                          תקין מהמדידה ומעלה את הזמינות בלי סיבה. */}
+                      {item.status === "error" ? testBtn("fault", item) : null}
                     </span>
                   </li>
                 );
