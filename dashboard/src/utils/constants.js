@@ -109,6 +109,10 @@ export const UPTIME_COLORS = {
   error:       STATUS_COLORS.error.dot,
   maintenance: STATUS_COLORS.maintenance.dot,
   no_comm:     STATUS_COLORS.no_comm.dot,
+  // ⚠️ סגול — לא צבע של אף מצב אחר. זמן ניסוי אינו "מוכן דהוי" ואינו
+  // "תחזוקה אחרת": הוא זמן שהוצא מהמדידה בהחלטה של אדם, וצבע שמזכיר מצב
+  // קיים היה גורם לקרוא אותו כאחד מהם.
+  excluded:    "#a78bfa",
 };
 
 // ==========================================================

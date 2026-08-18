@@ -14,7 +14,9 @@ function UptimeBar({ uptime, trend }) {
   const {
     readyHours, operatingHours, errorHours,
     maintenanceHours, repairHours = 0, plannedHours = 0,
-    noCommHours, totalHours, measuredHours, availabilityPercent,
+    // ⚠️ ברירת מחדל 0: הזרוע-דרך-השרת עדיין עשויה להחזיר תשובה בלי השדה
+    // (מטמון, או מופע שלא עודכן), ו-undefined היה מייצר "NaN שעות" בפס.
+    noCommHours, excludedHours = 0, totalHours, measuredHours, availabilityPercent,
   } = uptime;
 
   // אין מקטעי מצב בטווח — אין מה לחשב, ואסור להציג 0% שנראה כמו כשל.
@@ -56,6 +58,12 @@ function UptimeBar({ uptime, trend }) {
     {
       key: "no_comm", hours: noCommHours, color: UPTIME_COLORS.no_comm,
       title: `ללא תקשורת — ${formatHours(noCommHours)} (מחוץ לחישוב)`,
+    },
+    {
+      // ⚠️ **זו הסיבה שהשעות נספרות ב-totalHours מלכתחילה.** בלי המקטע הזה
+      // הפס היה מתקצר בדיוק בזמן שסומן כניסוי, בלי לומר לאן הוא נעלם.
+      key: "excluded", hours: excludedHours, color: UPTIME_COLORS.excluded,
+      title: `ניסוי — ${formatHours(excludedHours)} (מחוץ לחישוב)`,
     },
   ].filter((s) => s.hours > 0);
 
@@ -146,6 +154,16 @@ function UptimeBar({ uptime, trend }) {
       hours: noCommHours,
       color: UPTIME_COLORS.no_comm,
     },
+    // ⚠️ מותנה, בשונה משאר השורות: המקרא מרנדר את כל האיברים בלי סינון,
+    // ואצל רוב האתרים אין ולא יהיה ולו ניסוי אחד. שורת "ניסוי · 0 שעות"
+    // קבועה הייתה מלמדת להתעלם מהמקרא כולו.
+    ...(excludedHours > 0 ? [{
+      key: "excluded",
+      label: "ניסוי",
+      explain: "סומן כניסוי בידי מנהל — אינו נכלל בחישוב",
+      hours: excludedHours,
+      color: UPTIME_COLORS.excluded,
+    }] : []),
   ];
 
   return (
