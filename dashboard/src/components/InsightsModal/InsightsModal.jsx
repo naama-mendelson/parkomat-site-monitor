@@ -52,8 +52,15 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
   const [openCard, setOpenCard] = useState(null);
   // מפעילים רק את ההוק הרלוונטי (כלל ה-hooks: שניהם נקראים תמיד, אחד מושבת
   // דרך enabled). מצב "כל האתרים" מצרף על כל המערכת ואינו תלוי ב-site.
-  const siteRes = useSiteInsights(site?.code, period, { version, enabled: !allSites });
-  const globalRes = useGlobalInsights(period, { version, enabled: allSites });
+  // ⚠️ גרסה מקומית **בנוסף** לזו שמבחוץ: סימון ניסוי משנה את הנתונים,
+  // וקודם רועננו אותם ב-window.location.reload() — פתרון גס שסגר את
+  // המודאל, איבד את הגלילה ואת הצ'יפ שנבחר, וטען מחדש את כל הדשבורד.
+  // הגדלת מונה מקומי מרעננת בדיוק את מה שהשתנה.
+  const [localVersion, setLocalVersion] = useState(0);
+  const v = `${version}-${localVersion}`;
+
+  const siteRes = useSiteInsights(site?.code, period, { version: v, enabled: !allSites });
+  const globalRes = useGlobalInsights(period, { version: v, enabled: allSites });
   const { data, loading, error } = allSites ? globalRes : siteRes;
 
   // סגירה ב-Escape
@@ -850,6 +857,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   log={data.log}
                   code={allSites ? null : site?.code}
                   period={period}
+                  onChanged={() => setLocalVersion((n) => n + 1)}
                 />
               </section>
             )}
