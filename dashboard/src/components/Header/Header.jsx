@@ -1,5 +1,5 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
@@ -49,6 +49,23 @@ function Header({
   // יכולת, לא רק תצוגה. הכפתור אומר כמה פילטרים פעילים, כדי שמצב מסונן
   // לא ייראה כמו רשימה חלקית בלי סיבה.
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // ⚠️ גלילה סוגרת את הסינון. הוא נפתח מעל הכרטיסים ותופס כחצי מסך, ולכן
+  // מי שמתחיל לגלול כבר סיים איתו — והשארתו פתוחה פירושה לגלול "מתחת"
+  // לתפריט שכבר לא רלוונטי.
+  //
+  // ⚠️ capture: true על window, ולא מאזין על אלמנט מסוים: הגלילה כאן קורית
+  // ברשת הכרטיסים ולא ב-document, ואירוע scroll **אינו מבעבע**. בלי שלב
+  // ה-capture המאזין פשוט לא היה נורה.
+  //
+  // ⚠️ ורק כשהתפריט פתוח — מאזין קבוע היה רץ בכל גלילה במסך, לנצח, כדי
+  // לבדוק דגל שברוב הזמן כבוי.
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const close = () => setFiltersOpen(false);
+    window.addEventListener("scroll", close, { passive: true, capture: true });
+    return () => window.removeEventListener("scroll", close, { capture: true });
+  }, [filtersOpen]);
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0);
