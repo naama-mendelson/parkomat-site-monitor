@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 // דרך המתג: במצב ישיר הדשבורד שולף שורות גולמיות מ-Supabase ומריץ עליהן
 // את **אותה** buildActivityLog שהשרת מריץ (shared/timeline.mjs).
-import { fetchActivity } from "../../services/dataSource";
+import { fetchActivity, markAsTest, unmarkTest } from "../../services/dataSource";
+import { useAuth } from "../../hooks/useAuth";
 import { STATUS_COLORS, STATUS_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import "./ActivityLog.css";
 
@@ -290,6 +291,39 @@ const PAGE = 300;
  * @param period  week | month | year — נדרש כדי שהדפדוף ישאל על אותה תקופה
  */
 function ActivityLog({ log, code = null, period = "week" }) {
+  // ============================================================
+  // סימון שורה כניסוי — "הקפצנו את הדלת כדי לבדוק"
+  // ============================================================
+  // ⚠️ ההסתרה מבקר היא **נוחות ולא הגנה.** הכלל נאכף ב-app.require_manager()
+  // בתוך הפונקציה ב-SQL. מה שההסתרה כן מונעת: שורה שנראית לחיצה ומחזירה 403.
+  const { user } = useAuth();
+  const isManager = user?.role === "manager";
+  const [testBusy, setTestBusy] = useState(false);
+
+  // ⚠️ רק פעולות ומקטעי תקלה. סימון 'מוכן' כניסוי היה מוציא זמן תקין
+  // מהמדידה ומעלה את הזמינות בלי סיבה, ותחזוקה ממילא אינה נספרת.
+  const canMarkTest = (e) =>
+    isManager && !testBusy && e.id != null &&
+    (e.kind === "operation" || (e.kind === "status" && e.status === "error"));
+
+  async function toggleTest(e) {
+    const kind = e.kind === "operation" ? "operation" : "fault";
+    if (!e.excludedAt &&
+        !confirm("לסמן כניסוי? השורה תישאר בלוג ולא תיספר בסטטיסטיקה.")) return;
+    setTestBusy(true);
+    try {
+      if (e.excludedAt) await unmarkTest(kind, e.id);
+      else await markAsTest(kind, e.id);
+      // ⚠️ רענון מלא ולא עדכון מקומי: הסימון משנה את אחוז הכשל, הזמינות
+      // והמונים שבראש המסך. עדכון השורה בלבד היה משאיר את כולם על הערך
+      // הישן — כלומר "סימנתי ושום דבר לא זז".
+      window.location.reload();
+    } catch (err) {
+      alert("שגיאה: " + err.message);
+      setTestBusy(false);
+    }
+  }
+
   const [filter, setFilter] = useState("all");
   const [cardInput, setCardInput] = useState("");
   const [card, setCard] = useState("");
@@ -415,7 +449,17 @@ function ActivityLog({ log, code = null, period = "week" }) {
                 {items.map((e, i) => {
                   const d = describe(e);
                   return (
-                    <li key={`${e.kind}-${e.at}-${i}`} className="alog-item">
+                    <li
+                      key={`${e.kind}-${e.at}-${i}`}
+                      className={`alog-item${e.excludedAt ? " is-test" : ""}` +
+                                 (canMarkTest(e) ? " is-clickable" : "")}
+                      // ⚠️ לחיצה על **השורה** ולא כפתור קטן בקצה: זה מה
+                      // שהתבקש, וזה גם היעד היחיד שאפשר לפגוע בו בטלפון.
+                      onClick={canMarkTest(e) ? () => toggleTest(e) : undefined}
+                      title={canMarkTest(e)
+                        ? (e.excludedAt ? "לחצו כדי להחזיר לספירה" : "לחצו כדי לסמן כניסוי")
+                        : undefined}
+                    >
                       {/* ציר הזמן: נקודה + קו */}
                       <span className="alog-marker" style={{ background: d.color }}>
                         <span className="alog-icon">{d.icon}</span>
@@ -434,7 +478,16 @@ function ActivityLog({ log, code = null, period = "week" }) {
                             })}
                           </time>
                         </div>
-                        <span className="alog-details">{d.details}</span>
+                        <span className="alog-details">
+                          {d.details}
+                          {/* ⚠️ מציג את **מי ניסה**. בלי השם השורה אומרת
+                              "מישהו החליט", וזה בדיוק מה שביקשת שלא יקרה. */}
+                          {e.excludedAt && (
+                            <span className="alog-test-tag">
+                              ניסוי · נוסה בידי {e.excludedBy || "—"}
+                            </span>
+                          )}
+                        </span>
                       </div>
 
                       {d.badge && (

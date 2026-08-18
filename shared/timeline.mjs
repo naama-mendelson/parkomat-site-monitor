@@ -406,6 +406,12 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   return [
     ...visibleOps.map((o) => ({
       kind: "operation",
+      // ⚠️ המזהה ושדות הניסוי — בלעדיהם אי אפשר לסמן שורה מהלוג הראשי,
+      // וזה הלוג שממנו באמת עובדים. השם מוצג בשורה עצמה, ולכן הוא נשלף
+      // כאן ולא בשאילתה נוספת לכל שורה.
+      id: o.id ?? null,
+      excludedAt: o.excluded_at ?? null,
+      excludedBy: o.excluded_by ?? null,
       at: o.occurred_at,
       startEnd: o.start_end,
       entryExit: o.entry_exit,
@@ -429,6 +435,9 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
       const paired = pairedOpFor(s);
       return {
         kind: "status",
+        id: s.id ?? null,
+        excludedAt: s.excluded_at ?? null,
+        excludedBy: s.excluded_by ?? null,
         // ============================================================
         // אימוץ חותם הפעולה — התיקון שמנקה גם את ההיסטוריה
         // ============================================================

@@ -1273,7 +1273,7 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
     db.prepare(
       // id נשלף כי superseded_by מצביע עליו: הפתיחה שאיחדה ניסיון קודם חייבת
       // להיעלם מהציר יחד עם הסגירה שהיא איחדה, אחרת נשארת התחלה בלי סיום.
-      `SELECT id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at
+      `SELECT id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at, excluded_at, excluded_by
        FROM operations
        WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
        ORDER BY occurred_at DESC LIMIT ?`
@@ -1283,7 +1283,7 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
       // site_id נשלף גם באתר בודד: buildActivityLog מצמיד מצבים לפעולות
       // *לפי אתר*, ואם צד אחד מחזיר site_id והשני לא — ההצמדה לא תתפוס אף
       // פעם, וכל שינוי מצב ייראה יתום.
-      `SELECT site_id, status, started_at, ended_at, fault_text FROM status_history
+      `SELECT id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by FROM status_history
        WHERE site_id = ? AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC LIMIT ?`
     ).all(siteId, from, to, LOG_FETCH_CAP),

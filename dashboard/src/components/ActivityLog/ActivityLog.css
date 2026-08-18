@@ -300,3 +300,23 @@
   .alog-details { white-space: normal; }
   .alog-badge { display: none; }
 }
+
+/* ============================================================
+   ניסוי — שורה שנשארת בלוג ואינה נספרת
+   ============================================================
+   ⚠️ עמעום ולא קו חוצה: קו חוצה קורא כ"נמחק", וזה ההפך ממה שקורה כאן. */
+.alog-item.is-test { opacity: 0.6; }
+
+.alog-item.is-clickable { cursor: pointer; }
+.alog-item.is-clickable:hover { background: var(--surface-2, rgba(128,128,128,0.08)); }
+
+.alog-test-tag {
+  display: inline-block;
+  margin-inline-start: 0.5em;
+  padding: 0.05em 0.55em;
+  border-radius: 999px;
+  font-size: 0.85em;
+  white-space: nowrap;
+  background: var(--surface-2, rgba(128, 128, 128, 0.16));
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+}

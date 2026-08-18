@@ -61,7 +61,7 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
       supabase
         .from("operations")
         // id נשלף כי superseded_by מצביע עליו — ראה getActivityLog ב-queries.js.
-        .select("id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at, sites(site_name)")
+        .select("id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at, excluded_at, excluded_by, sites(site_name)")
         .gte("occurred_at", from).lt("occurred_at", to)
         .order("occurred_at", { ascending: false })
         .range(a, b)
@@ -70,7 +70,7 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
     pageAll((a, b) => scoped(
       supabase
         .from("status_history")
-        .select("site_id, status, started_at, ended_at, fault_text, sites(site_name)")
+        .select("id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by, sites(site_name)")
         .gte("started_at", from).lt("started_at", to)
         .order("started_at", { ascending: false })
         .range(a, b)

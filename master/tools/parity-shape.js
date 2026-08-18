@@ -88,7 +88,12 @@ function compareShape(label, server, direct) {
   const { gateToken } = require("./lib/gate-user");
   let email, password;
   try {
-    const g = await gateToken(SB_URL, SB_KEY, process.env.SUPABASE_SECRET_KEY);
+    // ⚠️ fetchRetry ולא fetch. הרשת כאן מנתקת מיוזמתה — נמדד: בערך כל בקשה
+    // שנייה — ושני השערים האחרים כבר עברו דרך ריטריי. השער הזה נשאר בלי,
+    // ולכן הוא **דיווח "לא ניתן להזדהות" על תקלת רשת חולפת** בזמן ששאר
+    // השערים באותה ריצה דיברו עם Supabase בהצלחה. שער שנופל באקראי הוא
+    // שער שלומדים להתעלם ממנו.
+    const g = await gateToken(SB_URL, SB_KEY, process.env.SUPABASE_SECRET_KEY, fetchRetry);
     email = g.email; password = g.password; cleanupUser = g.cleanup;
   } catch (e) {
     console.log(`⚠️  לא ניתן היה להזדהות — המבנה לא נבדק. ${e.message}`);
