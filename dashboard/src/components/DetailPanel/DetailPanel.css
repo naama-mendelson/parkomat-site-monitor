@@ -367,7 +367,10 @@
   padding: 0.05em 0.5em;
   border-radius: 999px;
   font-size: 0.78em;
-  white-space: nowrap;
+  /* ⚠️ **לא nowrap.** התג נושא שם מלא ותאריך, ובטלפון צר (360px) הוא
+     דחף את השורה לגלישה אופקית של כל הלוג. הוא יורד שורה במקום. */
+  white-space: normal;
+  max-width: 100%;
   background: var(--surface-2, rgba(128, 128, 128, 0.16));
   border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
 }

@@ -316,7 +316,10 @@
   padding: 0.05em 0.55em;
   border-radius: 999px;
   font-size: 0.85em;
-  white-space: nowrap;
+  /* ⚠️ **לא nowrap.** התג נושא שם מלא ותאריך, ובטלפון צר (360px) הוא
+     דחף את השורה לגלישה אופקית של כל הלוג. הוא יורד שורה במקום. */
+  white-space: normal;
+  max-width: 100%;
   background: var(--surface-2, rgba(128, 128, 128, 0.16));
   border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
 }
@@ -410,3 +413,29 @@
 }
 
 .alog-modal-actions button:disabled { opacity: 0.6; cursor: progress; }
+
+/* ============================================================
+   טלפון
+   ============================================================
+   ⚠️ **תקרת גובה למודאל.** בלעדיה, מסך קטן במצב לרוחב חתך את הכפתורים
+   מתחת לקצה — כלומר דיאלוג שאי אפשר לאשר ואי אפשר לבטל. */
+.alog-modal {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  /* ⚠️ יעד מגע. 0.45rem ריפוד נתן כפתור בגובה ~30px — מתחת למינימום
+     שאפשר לפגוע בו באגודל, ובדיאלוג שמשנה סטטיסטיקה החטאה גרועה במיוחד. */
+  .alog-modal-actions button {
+    flex: 1;
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  .alog-modal { padding: 1rem; }
+  .alog-modal-row-sub { font-size: 0.85em; }
+
+  /* השורה עצמה היא יעד הלחיצה לסימון — נותנים לה גובה שאפשר לפגוע בו. */
+  .alog-item.is-clickable { min-height: 48px; }
+}
