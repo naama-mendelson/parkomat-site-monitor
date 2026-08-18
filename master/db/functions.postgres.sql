@@ -777,15 +777,22 @@ COMMENT ON FUNCTION public.recent_errors(integer) IS
 -- 2. **"תחזוקה גוברת"** — תקלה שהתחילה בתוך תחזוקה או בגבולה אינה מוצגת,
 --    כמו שאינה נספרת. שני המקורות נבדקים (מקטע PLC + חלון ידני); בדיקת אחד
 --    בלבד הייתה מעלימה תקלה ממסך אחד ומשאירה אותה באחר.
+-- ⚠️ DROP: נוספו עמודות ל-RETURNS TABLE, ו-REPLACE אינו יכול לשנות טיפוס.
+DROP FUNCTION IF EXISTS public.site_status_history(integer, integer);
+
 CREATE OR REPLACE FUNCTION public.site_status_history(
   p_site_id integer,
   p_limit   integer DEFAULT 10
 )
-RETURNS TABLE (status text, started_at text, ended_at text)
+-- ⚠️ id נחשף כי בלעדיו אי אפשר לסמן שורה כניסוי — הכפתור בלוג צריך מזהה.
+-- והשדות האחרים כדי שהשורה תוכל לומר "ניסוי · נוסה בידי X" בלי שאילתה נוספת.
+RETURNS TABLE (id integer, status text, started_at text, ended_at text,
+               excluded_at text, excluded_by text, exclusion_reason text)
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT h.status, h.started_at, h.ended_at
+  SELECT h.id, h.status, h.started_at, h.ended_at,
+         h.excluded_at, h.excluded_by, h.exclusion_reason
     FROM status_history h
    WHERE h.site_id = p_site_id
      -- כלל 1: 'בפעולה' מוסתר רק אם יש פעולה שמסבירה אותו

@@ -789,8 +789,15 @@ REVOKE ALL ON FUNCTION public.list_users() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.list_users() TO authenticated;
 
 -- ============================================================
--- הוצאת דיווח מהסטטיסטיקה — למנהלים בלבד
+-- סימון דיווח כ**ניסוי** — למנהלים בלבד
 -- ============================================================
+--
+-- ⚠️ **"ניסוי" ולא "בוטל", וזו לא בחירת מילים.** "בוטל" מתאר פעולה
+-- מנהלית ומזמין את השאלה "מי הרשה"; "ניסוי" מתאר **מה קרה בפועל** —
+-- מישהו הקפיץ את הדלת כדי לבדוק שהמערכת עובדת. מי שיקרא את הלוג בעוד
+-- חצי שנה צריך לדעת את זה, לא את מי אישר.
+--
+-- ⚠️ ולכן גם השם של מי שסימן אינו "מי מחק" אלא **מי ניסה**.
 -- "הקפצתי דלתות חניון כדי לבדוק שהמערכת עובדת, ועכשיו אני רוצה להסיר את
 -- זה מהסטטיסטיקה." שתי ישויות נכנסות לכאן:
 --
@@ -810,7 +817,7 @@ GRANT EXECUTE ON FUNCTION public.list_users() TO authenticated;
 -- העמודות יחד — שחזור שמשאיר `excluded_by` מאוכלס נראה כמו שורה שהוצאה
 -- ועדיין נספרת, וזה בדיוק המצב שאי אפשר להסביר.
 
-CREATE OR REPLACE FUNCTION app.exclusion_target(p_kind text)
+CREATE OR REPLACE FUNCTION app.test_target_table(p_kind text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -821,9 +828,9 @@ AS $fn$
          END;
 $fn$;
 
-DROP FUNCTION IF EXISTS public.exclude_report(text, bigint, text);
+DROP FUNCTION IF EXISTS public.mark_as_test(text, bigint, text);
 
-CREATE OR REPLACE FUNCTION public.exclude_report(
+CREATE OR REPLACE FUNCTION public.mark_as_test(
   p_kind   text,
   p_id     bigint,
   p_reason text DEFAULT NULL
@@ -835,7 +842,7 @@ SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
   v_actor  text := app.require_manager();
-  v_table  text := app.exclusion_target(p_kind);
+  v_table  text := app.test_target_table(p_kind);
   v_now    text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_reason text := NULLIF(TRIM(COALESCE(p_reason, '')), '');
   v_code   text;
@@ -866,20 +873,20 @@ BEGIN
     v_table
   ) USING v_now, v_actor, v_reason, p_id;
 
-  PERFORM app.record_write_audit('report.exclude', v_actor, app.current_app_role(),
+  PERFORM app.record_write_audit('report.mark-test', v_actor, app.current_app_role(),
                                  p_kind, p_id::text,
                                  jsonb_build_object('site', v_code, 'reason', v_reason));
-  PERFORM app.record_write_event(v_code, 'report-excluded',
-                                 jsonb_build_object('type','report-excluded','code',v_code,
+  PERFORM app.record_write_event(v_code, 'report-marked-test',
+                                 jsonb_build_object('type','report-marked-test','code',v_code,
                                                     'kind',p_kind,'id',p_id));
 
   RETURN QUERY SELECT p_kind, p_id, v_now, v_actor;
 END;
 $fn$;
 
-DROP FUNCTION IF EXISTS public.restore_report(text, bigint);
+DROP FUNCTION IF EXISTS public.unmark_test(text, bigint);
 
-CREATE OR REPLACE FUNCTION public.restore_report(p_kind text, p_id bigint)
+CREATE OR REPLACE FUNCTION public.unmark_test(p_kind text, p_id bigint)
 RETURNS TABLE (kind text, id bigint)
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -887,7 +894,7 @@ SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
   v_actor text := app.require_manager();
-  v_table text := app.exclusion_target(p_kind);
+  v_table text := app.test_target_table(p_kind);
   v_code  text;
   v_prev  text;
 BEGIN
@@ -914,19 +921,19 @@ BEGIN
     v_table
   ) USING p_id;
 
-  PERFORM app.record_write_audit('report.restore', v_actor, app.current_app_role(),
+  PERFORM app.record_write_audit('report.unmark-test', v_actor, app.current_app_role(),
                                  p_kind, p_id::text,
                                  jsonb_build_object('site', v_code));
-  PERFORM app.record_write_event(v_code, 'report-restored',
-                                 jsonb_build_object('type','report-restored','code',v_code,
+  PERFORM app.record_write_event(v_code, 'report-unmarked-test',
+                                 jsonb_build_object('type','report-unmarked-test','code',v_code,
                                                     'kind',p_kind,'id',p_id));
 
   RETURN QUERY SELECT p_kind, p_id;
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION public.exclude_report(text, bigint, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.restore_report(text, bigint)       FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.mark_as_test(text, bigint, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.unmark_test(text, bigint)       FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.exclude_report(text, bigint, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.restore_report(text, bigint)       TO authenticated;
+GRANT EXECUTE ON FUNCTION public.mark_as_test(text, bigint, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.unmark_test(text, bigint)       TO authenticated;

@@ -950,7 +950,10 @@ async function getUptimeBreakdown(siteId, { from, to }) {
 
   const rows = await db
     .prepare(
-      `SELECT status, started_at, ended_at FROM status_history
+      // ⚠️ id ושדות הניסוי — הזרוע הישירה מחזירה אותם (site_status_history),
+      // ו-parity-shape דורש שתי זרועות בעלות אותו מבנה בדיוק.
+      `SELECT id, status, started_at, ended_at,
+              excluded_at, excluded_by, exclusion_reason FROM status_history
        WHERE site_id = ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
     )
     .all(siteId, rangeEnd, from);
