@@ -53,11 +53,25 @@
 /* במסך צר השורה השנייה יורדת מתחת ולא נחתכת. */
 @media (max-width: 720px) {
   .alert-unlock-bar {
-    flex-wrap: wrap;
-    gap: 4px 12px;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 7px 12px;
   }
+
+  /* ⚠️ **ההסבר יורד בטלפון.** הוא היה עולה לשורה משלו (flex-basis: 100%)
+     ותפס יחד עם הכותרת כ-90px — כמעט עשירית מגובה המסך — בשביל מידע
+     שהוא הקשר ולא הוראה. השורה הראשית כבר אומרת מה לעשות, והלחיצה
+     היא על הפס כולו.
+
+     ⚠️ display: none ולא הקטנת גופן: טקסט זעיר בשתי שורות היה תופס כמעט
+     אותו גובה ורק נעשה בלתי קריא. */
   .alert-unlock-sub {
-    flex-basis: 100%;
+    display: none;
+  }
+
+  .alert-unlock-main {
+    font-size: 0.92rem;
+    line-height: 1.25;
   }
 }
 
