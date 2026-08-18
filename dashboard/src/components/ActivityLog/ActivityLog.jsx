@@ -304,6 +304,7 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
   // **על איזו שורה בדיוק** מדובר — וזו השאלה היחידה שחשובה כאן.
   const [pending, setPending] = useState(null);   // האירוע שממתין לאישור
   const [testError, setTestError] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ============================================================
   // ⚠️ **כל שורה**, וזה שינוי מכוון מהגרסה הקודמת
@@ -423,13 +424,41 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
 
   return (
     <div className="alog">
-      {/* סינון */}
-      <div className="alog-filters">
+      {/* ============================================================
+          סינון — תפריט נפתח בטלפון, שורת צ'יפים בשולחן העבודה
+          ============================================================
+          ⚠️ עשרה צ'יפים נשברו לחמש שורות (~170px), ואז ניסיתי גלילה
+          אופקית. שתיהן לא טובות מאותה סיבה: **הצ'יפים אינם שווי-ערך.**
+          "הכל" ו"תקלות" נלחצים כל הזמן, ו"תפעול תקלה" כמעט לעולם לא —
+          ושורה נגללת מציגה את כולם באותו משקל ומסתירה חצי מהם מאחורי
+          מחווה שאין לה סימן.
+
+          תפריט אומר שני דברים שהשורה לא: מה נבחר **עכשיו**, וכמה שורות
+          יש בו. השאר נפתח בלחיצה מפורשת.
+
+          ⚠️ הכפתור אינו קיים בשולחן העבודה (display: none) — שם יש מקום
+          לכל העשרה, ותפריט היה מוסיף לחיצה לכל החלפת מסנן. */}
+      <button
+        type="button"
+        className="alog-filter-toggle"
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((v) => !v)}
+      >
+        <span>
+          {FILTERS.find((f) => f.key === filter)?.label ?? "הכל"}
+          {" · "}{counts[filter] ?? 0}
+        </span>
+        <span className="alog-filter-caret" aria-hidden="true">{menuOpen ? "▲" : "▼"}</span>
+      </button>
+
+      <div className={`alog-filters${menuOpen ? " is-open" : ""}`}>
         {FILTERS.map((f) => (
           <button
             key={f.key}
             className={`alog-chip ${filter === f.key ? "is-active" : ""}`}
-            onClick={() => setFilter(f.key)}
+            // ⚠️ סוגר את התפריט אחרי הבחירה. תפריט שנשאר פתוח מכסה בדיוק
+            // את הרשימה שהמשתמשת בדיוק סיננה, וזה קורא כמו "לא קרה כלום".
+            onClick={() => { setFilter(f.key); setMenuOpen(false); }}
           >
             {f.label}
             {/* המונה מגיע מהשרת ונספר מאותו ציר שנפתח. בזמן טעינה של מסנן אחר

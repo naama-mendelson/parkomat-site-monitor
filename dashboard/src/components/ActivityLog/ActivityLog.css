@@ -441,34 +441,58 @@
 }
 
 /* ============================================================
-   ראש הסינון בטלפון — שורה נגללת במקום חמש שורות
+   סינון כתפריט נפתח — טלפון בלבד
    ============================================================
-   ⚠️ עשרה צ'יפים שנשברו לחמש שורות תפסו כ-170px, ומעליהם כותרת ותת-כותרת.
-   בפועל: כל המסך הראשון של "לוג פעילות מלא" היה סינון, והשורה הראשונה
-   של הלוג התחילה מתחת לקיפול.
+   ⚠️ כאן ישב קודם בלוק גלילה אופקית, והוא הוסר ולא נשאר לצד התפריט.
+   שתי דרכים לאותו דבר באותו מסך הן שתי התנהגויות שיתפצלו בשינוי הראשון. */
+.alog-filter-toggle {
+  display: none;
+}
 
-   ⚠️ **גלילה אופקית ולא הסתרה, ולא קיפול.** הצ'יפים הם הניווט של המסך
-   הזה — הם גם מציגים את המונים, וזה מידע שנקרא במבט. קיפולם מאחורי כפתור
-   (כמו שנעשה בשדר) היה נכון שם, כי שם הם מסתירים את **הכרטיסים**; כאן הם
-   הדבר שבאים אליו. */
 @media (max-width: 640px) {
+  .alog-filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    /* אותו יעד מגע כמו בשאר המסך (44px) — ראה הדיאלוג וכפתור הסינון בשדר. */
+    min-height: 44px;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    color: inherit;
+    background: var(--surface-2, rgba(128, 128, 128, 0.1));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    cursor: pointer;
+  }
+
+  .alog-filter-caret {
+    font-size: 0.7rem;
+    opacity: 0.8;
+  }
+
+  /* ⚠️ display ולא max-height מונפש: הרשימה משנה גובה לפי מספר המסננים,
+     ו-overflow: hidden שנדרש לאנימציה היה חותך את האחרון. */
   .alog-filters {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    /* scrollbar-width: none מסתיר את הפס בפיירפוקס; ב-webkit הוא דק ממילא
-       ואינו תופס מקום כשלא גוללים. */
-    scrollbar-width: none;
-    padding-block-end: 2px;
+    display: none;
   }
 
-  /* ⚠️ בלי זה כל צ'יפ מתכווץ לרוחב מילה ו-nowrap מאבד את משמעותו —
-     פריט flex מתכווץ כברירת מחדל גם ב-nowrap. */
-  .alog-chip {
-    flex: 0 0 auto;
+  .alog-filters.is-open {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-block-start: 6px;
   }
 
-  /* החיפוש לפי כרטיס יורד לשורה משלו וברוחב מלא — הוא שדה קלט. */
+  /* בתפריט הצ'יפ הוא שורה מלאה: הכותרת בצד אחד, המונה בשני. */
+  .alog-filters.is-open .alog-chip {
+    width: 100%;
+    justify-content: space-between;
+    min-height: 40px;
+    border-radius: 8px;
+  }
+
   .alog-search {
     flex-wrap: wrap;
   }
