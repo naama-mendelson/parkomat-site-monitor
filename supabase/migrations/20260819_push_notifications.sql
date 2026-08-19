@@ -538,3 +538,67 @@ GRANT EXECUTE ON FUNCTION public.delete_user(integer) TO authenticated;
 -- בעוד שנה ויקרא לה.
 DROP FUNCTION IF EXISTS public.delete_user_check(integer);
 DROP FUNCTION IF EXISTS public.delete_user_finish(integer);
+
+-- ============================================================
+-- קוד המנהל — צעד אישור, לא הגנה
+-- ============================================================
+-- ⚠️ **ההגנה האמיתית היא app.require_manager() בתוך פונקציות הכתיבה.**
+-- בקר שינסה לרשום או למחוק אתר יקבל 403 מהמסד, בין אם הקוד בידיו ובין
+-- אם לא. נבדק חי.
+--
+-- מה שהקוד כן: **צעד אישור לפני פעולה בלתי-הפיכה.** מחיקת אתר מוחקת
+-- היסטוריה, ושינוי `code` מפנה מחדש את הודעות ה-MQTT — שתיהן בלי ביטול,
+-- ולחיצה מקרית עליהן יקרה.
+--
+-- ⚠️ **והגיבוב לעולם אינו מגיע לדפדפן.** ההשוואה כאן; מה שנשלח הוא הקוד
+-- ומה שחוזר true/false. זו בדיוק הסיבה ש-`settings` היא הטבלה היחידה בלי
+-- מדיניות RLS — נמדד: קריאה ישירה אליה מהדפדפן מחזירה 403.
+--
+-- ⚠️ ו-sha256 מובנה ולא pgcrypto: אותו אלגוריתם בדיוק שהשרת השתמש בו
+-- (crypto.createHash("sha256")...digest("hex")), ולכן הקוד הקיים ממשיך
+-- לעבוד בלי איפוס. נמדד מול הגיבוב שכבר במסד.
+CREATE OR REPLACE FUNCTION public.verify_admin_code(p_code text)
+RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE h text;
+BEGIN
+  IF app.current_actor() IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE='insufficient_privilege';
+  END IF;
+  SELECT value INTO h FROM settings WHERE key='admin_code_hash';
+  IF h IS NULL THEN RETURN false; END IF;
+  -- ⚠️ מחזיר false ואינו זורק: "קוד שגוי" אינו תקלה. זריקה הייתה נראית
+  -- במסך כנפילת רשת, ומי שהקליד לא נכון היה מחפש בעיה שאינה קיימת.
+  RETURN h = encode(sha256(convert_to(coalesce(p_code,''),'utf8')),'hex');
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.set_admin_code(p_current text, p_new text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE h text;
+BEGIN
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE='insufficient_privilege';
+  END IF;
+  IF length(coalesce(p_new,'')) < 4 THEN
+    RAISE EXCEPTION 'הקוד החדש קצר מדי' USING ERRCODE='check_violation';
+  END IF;
+  SELECT value INTO h FROM settings WHERE key='admin_code_hash';
+  IF h IS NOT NULL AND h <> encode(sha256(convert_to(coalesce(p_current,''),'utf8')),'hex') THEN
+    RAISE EXCEPTION 'הקוד הנוכחי שגוי' USING ERRCODE='insufficient_privilege';
+  END IF;
+  INSERT INTO settings (key, value, updated_at)
+  VALUES ('admin_code_hash', encode(sha256(convert_to(p_new,'utf8')),'hex'),
+          to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+  ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at;
+  RETURN true;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.verify_admin_code(text)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_admin_code(text, text)   FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.verify_admin_code(text)    TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_admin_code(text, text) TO authenticated;

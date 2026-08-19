@@ -28,7 +28,14 @@
 // מציג. הסתרת כפתור אינה אבטחה — ולכן `roleGated` חוזר החוצה, כדי שהמסך
 // יאמר "מותר למנהלים בלבד" במקום להציג טופס שלא יעזור.
 import { useState, useCallback } from "react";
-import { verifyAdminCode, getAdminCode, storeAdminCode } from "../services/api";
+// ⚠️ מ-Supabase ולא מהשרת: בענן אין שרת, והנעילה פשוט נכשלה שם.
+// הגיבוב מושווה בתוך הפונקציה ב-SQL ולעולם אינו מגיע לדפדפן.
+import {
+  verifyAdminCodeDirect as verifyAdminCode,
+  isUnlocked as getAdminCode,
+  markUnlocked as storeAdminCode,
+  lockAgain,
+} from "../services/adminCodeDirect";
 import { useDirect } from "../services/dataSource";
 import { useAuth } from "./useAuth";
 
@@ -50,8 +57,11 @@ export function useAdmin() {
     setChecking(true);
     setError(null);
     try {
-      await verifyAdminCode(code);
-      storeAdminCode(code);
+      // ⚠️ הפונקציה מחזירה false על קוד שגוי ואינה זורקת — זריקה שמורה
+      // לתקלה אמיתית. בלי ההבחנה "קוד שגוי" היה נראה כמו נפילת רשת.
+      const ok = await verifyAdminCode(code);
+      if (!ok) { setError("קוד מנהל שגוי"); return false; }
+      storeAdminCode();
       setCodeUnlocked(true);
       return true;
     } catch (e) {
@@ -62,8 +72,11 @@ export function useAdmin() {
     }
   }, []);
 
+  // ⚠️ "נעל" חייב **למחוק** את הסימון ולא לכתוב null: storeAdminCode(null)
+  // בגרסה הקודמת שמר את המחרוזת "null" ב-localStorage, וההרשאה נשארה
+  // פתוחה — הכפתור אמר "נעול" ולא נעל. עכשיו lockAgain מסיר את המפתח.
   const lock = useCallback(() => {
-    storeAdminCode(null);
+    lockAgain();
     setCodeUnlocked(false);
     setDismissed(true);
   }, []);
