@@ -252,3 +252,87 @@ $$;
 
 COMMENT ON FUNCTION app.push_targets_for_site(integer, text) IS
   'מכשירים לקבלת התראה. אין שורות ב-push_user_sites = כל האתרים; אין ב-push_user_types = תקלה בלבד.';
+
+-- ============================================================
+-- מעטפת ב-public — כי supabase-js רואה רק אותו
+-- ============================================================
+-- ⚠️ ה-Edge Function קוראת דרך supabase-js, ו-PostgREST חושף **רק** את
+-- schema public. הפונקציה ב-app אינה נגישה לה, והשגיאה שהתקבלה בפועל
+-- הייתה "Could not find the function public.push_targets_for_site".
+--
+-- ⚠️ **וזו הפונקציה המסוכנת ביותר בקובץ הזה.** היא מחזירה endpoints של
+-- **כל** המשתמשים — כלומר את המפתחות שמאפשרים לשלוח התראה לכל טלפון
+-- במערכת. חשיפתה ל-authenticated הייתה מבטלת בבת אחת את כל מדיניות ה-RLS
+-- שנכתבה מעליה, כי כל מי שמחובר היה מקבל את מה שהמדיניות מסתירה.
+--
+-- לכן: REVOKE מכולם, ו-GRANT ל-service_role **בלבד** — התפקיד שה-Edge
+-- Function רצה בו, ושאינו קיים בדפדפן.
+CREATE OR REPLACE FUNCTION public.push_targets_for_site(p_site_id integer, p_kind text)
+RETURNS TABLE (endpoint text, p256dh text, auth text, subscription_id bigint)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT * FROM app.push_targets_for_site(p_site_id, p_kind);
+$$;
+
+REVOKE ALL ON FUNCTION public.push_targets_for_site(integer, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.push_targets_for_site(integer, text) FROM authenticated;
+REVOKE ALL ON FUNCTION public.push_targets_for_site(integer, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.push_targets_for_site(integer, text) TO service_role;
+
+-- ============================================================
+-- הטריגר — מה שהופך את זה לאוטומטי
+-- ============================================================
+-- ⚠️ **pg_net, כלומר אסינכרוני.** זה לא פרט מימוש: טריגר סינכרוני שנכשל
+-- היה מגלגל אחורה את ה-INSERT שהפעיל אותו — כלומר **התראה שנכשלה הייתה
+-- מוחקת את רישום התקלה עצמו**. net.http_post מכניס את הבקשה לתור ומחזיר
+-- מיד; הטרנזקציה נסגרת בלי קשר לתוצאה.
+--
+-- ⚠️ ורק על **כניסה** למצב. שורה ב-status_history נוצרת רק במעבר —
+-- state-handler.js:95 חוסם מצב זהה — ולכן עצם קיומה של השורה **הוא**
+-- הכניסה. אין צורך להשוות למצב הקודם.
+--
+-- ⚠️ ותקלה בזמן תחזוקה אינה מגיעה לכאן כלל: היא נחסמת ב-state-handler.js:53
+-- ונרשמת ב-suppressed_faults, בלי שורת status_history. הכלל נאכף בקליטה,
+-- ולא צריך תנאי כאן.
+CREATE OR REPLACE FUNCTION app.notify_push_on_status()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_site   record;
+  v_kind   text;
+BEGIN
+  -- fault ו-no_comm בלבד. 'ready' ו-'operating' אינם אירועים להתריע עליהם,
+  -- ו-'maintenance' מהבקר אינו פעולה של אדם ולכן אינו נכנס לסוג 'maintenance'.
+  v_kind := CASE NEW.status WHEN 'error' THEN 'fault'
+                            WHEN 'no_comm' THEN 'no_comm'
+                            ELSE NULL END;
+  IF v_kind IS NULL THEN RETURN NEW; END IF;
+
+  SELECT s.code, s.site_name INTO v_site FROM sites s WHERE s.id = NEW.site_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+
+  -- ⚠️ המפתח הציבורי בכותרת, ולא הסודי. הפונקציה עצמה משתמשת ב-service_role
+  -- מתוך סביבתה; מה שנדרש כאן הוא רק להיכנס בשער של Edge Functions.
+  PERFORM net.http_post(
+    url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || current_setting('app.push_anon_key', true)
+    ),
+    body    := jsonb_build_object(
+      'site_id',    NEW.site_id,
+      'site_code',  v_site.code,
+      'site_name',  v_site.site_name,
+      'kind',       v_kind,
+      'fault_text', NEW.fault_text
+    )
+  );
+  RETURN NEW;
+END;
+$fn$;
