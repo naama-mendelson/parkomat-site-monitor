@@ -73,16 +73,20 @@ export async function enablePush() {
 
   // ⚠️ app_user_id נשלף מהמסד ולא מהאסימון: הוא המזהה המספרי שלנו, בעוד
   // האסימון נושא את ה-UUID של Supabase. מדיניות ה-RLS משווה מולו.
-  const { data: me, error: meErr } = await supabase
-    .from("app_users").select("id").limit(1).maybeSingle();
+  // ⚠️ **דרך RPC, ולא select על app_users.** הגרסה הראשונה עשתה
+  // .select("id").limit(1) — וזה מחזיר את **השורה הראשונה בטבלה**, לא את
+  // המשתמש הנוכחי: app_users קריא לכל מחובר. התוצאה הייתה מזהה של מישהו
+  // אחר, ומדיניות ה-INSERT דחתה ב-403 "violates row-level security" —
+  // שגיאה שנראית כמו בעיית הרשאות ובאמת הייתה מזהה שגוי.
+  const { data: myId, error: meErr } = await supabase.rpc("my_app_user_id");
   if (meErr) throw new Error(meErr.message || "לא ניתן לזהות את המשתמש");
-  if (!me) throw new Error("המשתמש אינו פעיל במערכת");
+  if (!myId) throw new Error("המשתמש אינו פעיל במערכת");
 
   // ⚠️ upsert על endpoint, ולא insert: אישור חוזר באותו מכשיר מחזיר את
   // אותו endpoint, ו-insert היה נכשל על אילוץ הייחודיות ומציג שגיאה על
   // פעולה שהצליחה בפועל.
   const { error } = await supabase.from("push_subscriptions").upsert({
-    app_user_id: me.id,
+    app_user_id: myId,
     endpoint: json.endpoint,
     p256dh: json.keys.p256dh,
     auth: json.keys.auth,
@@ -122,19 +126,19 @@ export async function getPushSites() {
 
 /** קובע את רשימת האתרים. מערך ריק מחזיר ל"כל האתרים". */
 export async function setPushSites(siteIds) {
-  const { data: me } = await supabase.from("app_users").select("id").limit(1).maybeSingle();
-  if (!me) throw new Error("המשתמש אינו פעיל במערכת");
+  const { data: myId } = await supabase.rpc("my_app_user_id");
+  if (!myId) throw new Error("המשתמש אינו פעיל במערכת");
 
   // ⚠️ מחיקה ואז הוספה, ולא diff: הרשימה קצרה (12 אתרים), והפרש שגוי
   // משאיר העדפה שאיש לא ביקש — כשל שקט שמתגלה רק כשהתראה לא מגיעה.
   const { error: delErr } = await supabase
-    .from("push_user_sites").delete().eq("app_user_id", me.id);
+    .from("push_user_sites").delete().eq("app_user_id", myId);
   if (delErr) throw new Error(delErr.message || "עדכון ההעדפות נכשל");
 
   if (!siteIds.length) return { sites: 0 };
 
   const { error } = await supabase.from("push_user_sites")
-    .insert(siteIds.map((id) => ({ app_user_id: me.id, site_id: id })));
+    .insert(siteIds.map((id) => ({ app_user_id: myId, site_id: id })));
   if (error) throw new Error(error.message || "עדכון ההעדפות נכשל");
   return { sites: siteIds.length };
 }

@@ -336,3 +336,46 @@ BEGIN
   RETURN NEW;
 END;
 $fn$;
+
+-- ============================================================
+-- ⚠️ GRANT — מדיניות RLS אינה מעניקה גישה, היא רק מסננת שורות
+-- ============================================================
+-- זה נשכח, והתסמין היה "permission denied for table push_subscriptions"
+-- על המסך. Postgres בודק קודם הרשאה ברמת הטבלה; בלי GRANT הוא חוסם לפני
+-- שהמדיניות בכלל נבדקת. שלוש מדיניות מושלמות מעל טבלה בלי GRANT = אפס.
+GRANT SELECT, INSERT, UPDATE, DELETE ON push_subscriptions TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE push_subscriptions_id_seq TO authenticated;
+GRANT SELECT, INSERT, DELETE ON push_user_sites TO authenticated;
+GRANT SELECT, INSERT, DELETE ON push_user_types TO authenticated;
+
+-- ⚠️ ו-push_last_sent נסגר במפורש: Supabase מעניקה הרשאות ברירת מחדל
+-- לטבלאות חדשות ב-public, ולכן הוא **היה** נגיש לדפדפן בלי שביקשנו.
+-- הוא נתון פנימי של השליחה ואין לו קורא בדפדפן.
+REVOKE ALL ON push_last_sent FROM authenticated;
+REVOKE ALL ON push_last_sent FROM anon;
+
+-- ============================================================
+-- my_app_user_id — ובאג שנתפס רק בבדיקה חיה
+-- ============================================================
+-- ⚠️ הקוד בדשבורד עשה `.from("app_users").select("id").limit(1)` כדי
+-- למצוא את המשתמש הנוכחי. **זה מחזיר את השורה הראשונה בטבלה**, לא אותו:
+-- app_users קריא לכל מחובר. התוצאה הייתה מזהה של מישהו אחר, ומדיניות
+-- ה-INSERT דחתה ב-403 "violates row-level security" — שגיאה שנראית כמו
+-- בעיית הרשאות ובאמת הייתה מזהה שגוי.
+--
+-- ⚠️ ולא נתפס בשום בדיקת מבנה: הקריאה תקינה, הטיפוס נכון, והתשובה היא
+-- מספר. רק ניסיון כתיבה אמיתי כמשתמש מחובר חשף אותה.
+CREATE OR REPLACE FUNCTION public.my_app_user_id()
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+  SELECT u.id FROM app_users u
+   WHERE u.supabase_uid::text = app.current_actor() AND u.is_active
+   LIMIT 1
+$fn$;
+
+REVOKE ALL ON FUNCTION public.my_app_user_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.my_app_user_id() TO authenticated;

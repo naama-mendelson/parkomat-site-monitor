@@ -70,13 +70,15 @@ function PushSettings({ onClose }) {
     if (key === "fault") return;
     const next = kinds.includes(key) ? kinds.filter((x) => x !== key) : [...kinds, key];
     setKinds(next);
-    const { data: me } = await supabase.from("app_users").select("id").limit(1).maybeSingle();
-    if (!me) return;
-    await supabase.from("push_user_types").delete().eq("app_user_id", me.id);
+    // ⚠️ אותה טעות שהייתה ב-pushDirect: select().limit(1) על app_users
+    // מחזיר את השורה הראשונה בטבלה ולא את המשתמש הנוכחי.
+    const { data: myId } = await supabase.rpc("my_app_user_id");
+    if (!myId) return;
+    await supabase.from("push_user_types").delete().eq("app_user_id", myId);
     // 'fault' נשמר תמיד יחד עם השאר — ברירת המחדל "אין שורות" מכסה רק
     // את המקרה שבו איש לא בחר דבר.
     const rows = ["fault", ...next.filter((k) => k !== "fault")]
-      .map((k) => ({ app_user_id: me.id, kind: k }));
+      .map((k) => ({ app_user_id: myId, kind: k }));
     await supabase.from("push_user_types").insert(rows).catch((e) => setErr(e.message));
   }
 
