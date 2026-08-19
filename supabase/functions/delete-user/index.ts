@@ -46,9 +46,22 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const { data: users } = await admin.from("app_users").select("id, email, role, is_active, supabase_uid");
-  const target = (users ?? []).find((u) => u.id === id);
+  // ⚠️ **שליפה ישירה לפי id, ולא משיכת כל הטבלה וחיפוש בזיכרון.**
+  // הגרסה הראשונה עשתה select() בלי תנאי ואז find() — וכשהשליפה חזרה
+  // ריקה מכל סיבה, התוצאה הייתה "משתמש לא נמצא" על שורה שקיימת. שגיאה
+  // שמצביעה על הנתון במקום על הגישה אליו, וזה בדיוק מה שקרה.
+  const { data: target, error: findErr } = await admin
+    .from("app_users").select("id, email, role, is_active, supabase_uid")
+    .eq("id", id).maybeSingle();
+
+  // ⚠️ כשל בשליפה **אינו** "לא נמצא": הראשון הוא בעיית גישה והשני עובדה
+  // על הנתונים. מיזוגם הוא מה שהפך תקלת הרשאה לשגיאה מטעה.
+  if (findErr) return json({ error: "שליפת המשתמש נכשלה: " + findErr.message }, 500);
   if (!target) return json({ error: "משתמש לא נמצא" }, 404);
+
+  const { data: users, error: listErr } = await admin
+    .from("app_users").select("id, role, is_active").eq("role", "manager").eq("is_active", true);
+  if (listErr) return json({ error: "בדיקת המנהלים נכשלה: " + listErr.message }, 500);
 
   // ============================================================
   // שני המנעולים — ומדוע הם חשובים כאן יותר מאשר בהשבתה
@@ -57,7 +70,7 @@ Deno.serve(async (req) => {
   // כשאין מנהל נוסף **אינו משאיר שום דרך חזרה מהממשק** — רק מפתח ה-Secret.
   if (target.id === meId) return json({ error: "אי אפשר למחוק את עצמך" }, 400);
 
-  const activeManagers = (users ?? []).filter((u) => u.role === "manager" && u.is_active);
+  const activeManagers = users ?? [];
   if (target.role === "manager" && target.is_active && activeManagers.length <= 1) {
     return json({ error: "לא ניתן למחוק את המנהל הפעיל האחרון" }, 400);
   }
