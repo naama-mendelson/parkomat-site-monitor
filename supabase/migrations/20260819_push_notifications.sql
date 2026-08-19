@@ -472,3 +472,69 @@ REVOKE ALL ON FUNCTION public.delete_user_check(integer)  FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.delete_user_finish(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.delete_user_check(integer)  TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_user_finish(integer) TO authenticated;
+
+-- ============================================================
+-- ⚠️ delete_user — RPC אחד, בלי Edge Function ובלי שרת
+-- ============================================================
+-- שתי הגרסאות הקודמות נכשלו, וכל אחת לימדה משהו:
+--   1. לקוח service_role ב-Edge Function → "permission denied for table
+--      app_users". ההנחה שהוא עוקף RLS לא החזיקה.
+--   2. פיצול לשתי RPC + Edge Function → עבד, אבל דרש **פריסה** שאינה
+--      עוברת ב-git: תיקון נדחף ל-main ולא הגיע לייצור עד שמישהו הריץ
+--      פקודה ידנית. זה בדיוק הפער שהחזיר את אותה שגיאה שוב ושוב.
+--
+-- RPC מוחל ברגע שהוא נוצר במסד. אין מה לפרוס.
+--
+-- ⚠️ **ויתרון אמיתי מעבר לנוחות: הכול בטרנזקציה אחת.** הגרסה הקודמת מחקה
+-- ב-Supabase ואז אצלנו בשתי קריאות נפרדות, וכשל בין השתיים היה משאיר
+-- משתמש שיכול להתחבר בלי שורת זהות — מאומת, בלי מי שהוא. כאן שתי
+-- המחיקות מתחייבות יחד או נכשלות יחד.
+--
+-- ⚠️ ומחיקה ישירה מ-auth.users: זה מה שה-Admin API עושה מתחת לפני השטח,
+-- והיא מותרת כאן כי הפונקציה בבעלות postgres. זה מה שמסיר את הצורך
+-- ב-Secret key לגמרי — הפעולה היחידה שנשארה שדרשה אותו.
+CREATE OR REPLACE FUNCTION public.delete_user(p_id integer)
+RETURNS TABLE (id integer, email text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, auth, pg_temp
+AS $fn$
+DECLARE me integer; nm text; t record; mgrs integer;
+BEGIN
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE='insufficient_privilege';
+  END IF;
+  SELECT u.id, u.email INTO me, nm FROM app_users u
+   WHERE u.supabase_uid::text = app.current_actor() AND u.is_active;
+  SELECT * INTO t FROM app_users WHERE app_users.id = p_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'משתמש לא נמצא' USING ERRCODE='PT404'; END IF;
+
+  -- ⚠️ מנהל שמשבית את עצמו יכול להיות מוחזר בידי אחר. מנהל שמוחק את עצמו
+  -- כשאין מנהל נוסף אינו משאיר שום דרך חזרה מהממשק.
+  IF t.id = me THEN
+    RAISE EXCEPTION 'אי אפשר למחוק את עצמך' USING ERRCODE='check_violation';
+  END IF;
+  SELECT COUNT(*) INTO mgrs FROM app_users WHERE role='manager' AND is_active;
+  IF t.role='manager' AND t.is_active AND mgrs <= 1 THEN
+    RAISE EXCEPTION 'לא ניתן למחוק את המנהל הפעיל האחרון' USING ERRCODE='check_violation';
+  END IF;
+
+  -- ⚠️ הביקורת **לפני** המחיקה, כי אחריה t.email כבר לא ניתן לשליפה —
+  -- והיא בתוך אותה טרנזקציה, כך שהיא נסוגה יחד עם כישלון.
+  PERFORM app.record_write_audit('user.delete', nm, 'manager', 'user', p_id::text,
+                                 jsonb_build_object('email', t.email, 'role', t.role, 'via', 'rpc'));
+
+  DELETE FROM app_users WHERE app_users.id = p_id;
+  IF t.supabase_uid IS NOT NULL THEN
+    DELETE FROM auth.users WHERE auth.users.id = t.supabase_uid;
+  END IF;
+
+  RETURN QUERY SELECT p_id, t.email;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.delete_user(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.delete_user(integer) TO authenticated;
+
+-- הפונקציות של הגרסה הקודמת נמחקות: פונקציה נטושה היא מה שמישהו ימצא
+-- בעוד שנה ויקרא לה.
+DROP FUNCTION IF EXISTS public.delete_user_check(integer);
+DROP FUNCTION IF EXISTS public.delete_user_finish(integer);

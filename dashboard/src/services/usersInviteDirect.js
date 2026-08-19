@@ -35,31 +35,26 @@ export async function inviteUserDirect(email, role = "operator") {
 }
 
 /**
- * מחיקת משתמש דרך Edge Function.
+ * מחיקת משתמש — **RPC אחד, בלי Edge Function ובלי שרת.**
  *
- * ⚠️ **מחיקה, לא השבתה.** השבתה הפיכה והשורה נשארת; זו מסירה גם את חשבון
- * ה-auth וגם את השורה אצלנו, וחזרה משמעותה הזמנה חדשה עם מזהה חדש.
+ * ⚠️ הגרסה הקודמת עברה ב-Edge Function, וזה הוסיף שלב פריסה שאינו עובר
+ * ב-git — כלומר תיקון שנדחף ל-main ולא הגיע לייצור עד שמישהו הריץ פקודה.
+ * RPC מוחל ברגע שהוא נוצר במסד, ואין מה לפרוס.
  *
- * ⚠️ ושני המנעולים — אי אפשר למחוק את עצמך, ואי אפשר למחוק את המנהל
- * הפעיל האחרון — נאכפים **בפונקציה** ולא כאן. בדיקה בדפדפן נעקפת ב-DevTools.
+ * ⚠️ **ויתרון אמיתי מעבר לנוחות: הכול בטרנזקציה אחת.** הגרסה הקודמת מחקה
+ * ב-Supabase ואז אצלנו בשתי קריאות נפרדות — וכשל בין השתיים היה משאיר
+ * משתמש שיכול להתחבר בלי שורת זהות. כאן שתי המחיקות מתחייבות יחד או
+ * נכשלות יחד.
+ *
+ * ⚠️ והכללים — מנהל בלבד, לא את עצמך, לא את המנהל הפעיל האחרון — יושבים
+ * בגוף הפונקציה ב-SQL. גם קריאה ישירה שעוקפת את המסך תיתקל בהם.
  */
 export async function deleteUserDirect(id) {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
 
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("נדרשת התחברות מחדש");
+  const { data, error } = await supabase.rpc("delete_user", { p_id: Number(id) });
+  if (error) throw new Error(error.message || "מחיקת המשתמש נכשלה");
 
-  const res = await fetch(`${FUNCTIONS_URL}/delete-user`, {
-    method: "POST",
-    headers: {
-      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ id }),
-  });
-
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || "מחיקת המשתמש נכשלה");
-  return body;
+  const row = Array.isArray(data) ? data[0] : data;
+  return { ok: true, id: row?.id ?? id, email: row?.email ?? null };
 }
