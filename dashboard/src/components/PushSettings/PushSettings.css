@@ -55,3 +55,11 @@
   margin: 0.7rem 0 0; padding: 0.5rem 0.7rem; border-radius: 8px; font-size: 0.9rem;
   color: #b42318; background: rgba(180,35,24,0.1); border: 1px solid rgba(180,35,24,0.3);
 }
+
+/* ⚠️ אזהרת כיסוי — לא אדום של שגיאה: זו עובדה שצריך לראות, לא תקלה
+   שהמשתמשת גרמה לה. ענבר קורא כ"שים לב" ולא כ"נשבר". */
+.pushset-stale {
+  padding: 0.5rem 0.7rem; border-radius: 8px; opacity: 1;
+  color: #92400e; background: rgba(245,158,11,0.12);
+  border: 1px solid rgba(245,158,11,0.35);
+}

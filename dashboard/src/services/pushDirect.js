@@ -162,3 +162,80 @@ export async function setPushSites(siteIds) {
   if (error) throw new Error(error.message || "עדכון ההעדפות נכשל");
   return { sites: siteIds.length };
 }
+
+// ============================================================
+// אימות שקט בכל פתיחה — העמידות לאורך זמן
+// ============================================================
+// ⚠️ **iOS מוחק PWA שלא נפתח כשבועיים, כולל ההרשמה.** איש שירות שלא נכנס
+// שבועיים יפסיק לקבל התראות — **ולא יידע**. הוא יניח שאין תקלות, וזה הכשל
+// הגרוע ביותר האפשרי כאן: שקט שנקרא כ"הכול בסדר".
+//
+// ⚠️ וגם בלי iOS: שירות ה-push מבטל מנויים מעצמו (חוסר שימוש, עדכון
+// מערכת), וניקוי נתוני דפדפן מוחק את ה-Service Worker.
+//
+// ⚠️ **זה אינו פותר — אין דרך להריץ קוד באפליקציה שנמחקה.** מה שזה כן
+// עושה: מי שנכנס אחת לשבוע מכוסה, וההרשמה מתחדשת **בלי לשאול שוב**
+// (ההרשאה נשמרה במערכת ההפעלה, ולכן subscribe אינו מציג בקשה).
+export async function ensurePushSubscription() {
+  if (pushPermission() !== "granted") return { state: "off" };
+
+  const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  await navigator.serviceWorker.ready;
+
+  let sub = await reg.pushManager.getSubscription();
+  let renewed = false;
+
+  if (!sub) {
+    // ⚠️ בלי בקשת הרשאה: היא כבר granted, ו-subscribe על הרשאה קיימת
+    // אינו מציג דבר למשתמש. זו כל הנקודה — חידוש שקט.
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
+    }).catch(() => null);
+    if (!sub) return { state: "lost" };
+    renewed = true;
+  }
+
+  const { data: myId } = await supabase.rpc("my_app_user_id");
+  if (!myId) return { state: "no-user" };
+
+  const json = sub.toJSON();
+  const now = new Date().toISOString();
+  // ⚠️ upsert ולא update: אחרי חידוש ה-endpoint **שונה**, ולכן אין שורה
+  // לעדכן. update לבדו היה מצליח בשקט ומעדכן אפס שורות.
+  await supabase.from("push_subscriptions").upsert({
+    app_user_id: myId,
+    endpoint: json.endpoint,
+    p256dh: json.keys.p256dh,
+    auth: json.keys.auth,
+    user_agent: navigator.userAgent.slice(0, 300),
+    created_at: now,
+    verified_at: now,
+  }, { onConflict: "endpoint" });
+
+  return { state: "ok", renewed, endpoint: json.endpoint };
+}
+
+/**
+ * מצב הכיסוי להצגה במסך — **כמה מכשירים ומתי אומתו**.
+ *
+ * ⚠️ הטבלה תומכת בכמה מכשירים לאותו משתמש מלכתחילה: שורה לכל endpoint,
+ * עם UNIQUE עליו. טלפון חדש מוסיף שורה ואינו דורס את הקודמת.
+ *
+ * ⚠️ ומכשיר שלא אומת שבוע מוצג כלא-מכוסה — לא כשגיאה, אלא כעובדה שצריך
+ * לראות. זה ההבדל בין אובדן שקט לאובדן שיודעים עליו.
+ */
+export async function pushCoverage() {
+  const { data, error } = await supabase
+    .from("push_subscriptions").select("endpoint, user_agent, verified_at");
+  if (error) return { devices: [], stale: 0 };
+
+  const WEEK = 7 * 24 * 3600 * 1000;
+  const devices = (data || []).map((d) => ({
+    endpoint: d.endpoint,
+    agent: d.user_agent || "",
+    verifiedAt: d.verified_at,
+    stale: !d.verified_at || Date.now() - Date.parse(d.verified_at) > WEEK,
+  }));
+  return { devices, stale: devices.filter((d) => d.stale).length };
+}

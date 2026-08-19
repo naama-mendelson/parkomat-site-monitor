@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import {
   pushPermission, enablePush, disablePush,
-  getPushSites, setPushSites,
+  getPushSites, setPushSites, ensurePushSubscription, pushCoverage,
 } from "../../services/pushDirect";
 import { supabase } from "../../services/supabase";
 import "./PushSettings.css";
@@ -31,12 +31,17 @@ function PushSettings({ onClose }) {
   const [sites, setSites] = useState([]);
   const [chosen, setChosen] = useState([]);
   const [kinds, setKinds] = useState([]);
+  const [cover, setCover] = useState(null);
 
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from("sites").select("id, code, site_name").order("site_name");
       setSites(data || []);
       if (pushPermission() === "granted") {
+        // ⚠️ חידוש שקט לפני הצגת המצב: אחרת המסך היה מציג "לא מכוסה" על
+        // מנוי שהיה מתחדש שנייה אחר כך מעצמו.
+        await ensurePushSubscription().catch(() => {});
+        setCover(await pushCoverage().catch(() => null));
         setChosen(await getPushSites().catch(() => []));
         const { data: t } = await supabase.from("push_user_types").select("kind");
         setKinds((t || []).map((r) => r.kind));
@@ -140,6 +145,17 @@ function PushSettings({ onClose }) {
 
             {on && (
               <>
+                {/* ⚠️ מצב הכיסוי — כדי שאובדן לא יישאר שקט.
+                    iOS מוחק PWA שלא נפתח כשבועיים, כולל ההרשמה. מי שנגרע
+                    לא מקבל התראות ו**לא יודע** — הוא מניח שאין תקלות. */}
+                {cover && (
+                  <p className={`pushset-hint${cover.stale ? " pushset-stale" : ""}`}>
+                    {cover.stale > 0
+                      ? `⚠️ ${cover.stale} מתוך ${cover.devices.length} מכשירים לא אומתו מעל שבוע — ייתכן שאינם מקבלים התראות. פתיחת האפליקציה במכשיר מחדשת אותו.`
+                      : `מכוסה · ${cover.devices.length} ${cover.devices.length === 1 ? "מכשיר" : "מכשירים"} · אומת עכשיו`}
+                  </p>
+                )}
+
                 <h4 className="pushset-sub">על מה להתריע</h4>
                 {KINDS.map((k) => (
                   <label key={k.key} className={`pushset-row ${k.always ? "is-locked" : ""}`}>
