@@ -1,12 +1,27 @@
 // supabase/functions/delete-user — מחיקת משתמש, בלי השרת.
 //
-// ⚠️ **מחיקה, לא השבתה.** שתיהן קיימות ושונות: השבתה הפיכה והשורה נשארת,
-// מחיקה מסירה גם את חשבון ה-auth וגם את השורה אצלנו. חזרה משמעותה הזמנה
-// חדשה עם מזהה חדש.
+// ============================================================
+// ⚠️ הכללים ב-SQL, לא כאן — ולמה זה לא בחירת סגנון
+// ============================================================
+// הגרסה הראשונה עשתה את הכול דרך לקוח service_role: שולפת מ-app_users,
+// בודקת את המנעולים ב-TypeScript, ומוחקת. **נמדד: היא נכשלה ב-
+// "permission denied for table app_users"** — הלקוח בפונקציה אינו עוקף
+// RLS כפי שהנחתי.
 //
-// ⚠️ ומה ששורד את המחיקה: `audit_log.actor_name` ו-
-// `maintenance_windows.set_by_name` הם **צילומי טקסט בלי FK**, בכוונה.
-// שורת ביקורת עדיין אומרת מי עשה מה אחרי שהמשתמש נעלם.
+// התיקון אינו למצוא מפתח חזק יותר אלא ללכת בתבנית שכבר עובדת בכל
+// הפרויקט: `SECURITY DEFINER` שרץ בהרשאות הבעלים, עם בדיקת הזהות **בתוך
+// גוף הפונקציה**. אותה תבנית בדיוק כמו start_maintenance ו-register_site.
+//
+// ⚠️ ויתרון נוסף, חשוב יותר: שני המנעולים — אי אפשר למחוק את עצמך, ואי
+// אפשר למחוק את המנהל הפעיל האחרון — חיים עכשיו **במסד**. גם קריאה ישירה
+// שעוקפת את הפונקציה הזו תיתקל בהם.
+//
+// ============================================================
+// הסדר: בדיקה → מחיקה ב-Supabase → מחיקה אצלנו
+// ============================================================
+// ⚠️ הסדר ההפוך משאיר, בכשל, משתמש שעדיין יכול להתחבר בלי שורת app_users
+// — מאומת, בלי זהות, ו-provision_app_user לא ייצור לו שורה חדשה כי אין
+// INSERT נוסף. לכן הבדיקה והמחיקה מופרדות לשתי קריאות.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -21,6 +36,16 @@ const cors = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, "content-type": "application/json" } });
 
+// ⚠️ קודי SQLSTATE מכוונים → סטטוס HTTP. בלי המיפוי כל דחייה נראית כמו
+// תקלת שרת, ו"אי אפשר למחוק את עצמך" היה מוצג כ-500.
+function statusFor(err: { code?: string; message?: string }) {
+  const m = String(err?.message ?? "");
+  if (m.includes("מנהלים בלבד")) return 403;
+  if (m.includes("לא נמצא")) return 404;
+  if (m.includes("עצמך") || m.includes("האחרון")) return 400;
+  return 500;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -28,82 +53,38 @@ Deno.serve(async (req) => {
   const authHeader = req.headers.get("Authorization") ?? "";
   if (!authHeader.startsWith("Bearer ")) return json({ error: "נדרשת הזדהות" }, 401);
 
+  const id = Number((await req.json().catch(() => ({})))?.id);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "מזהה משתמש לא תקין" }, 400);
+
+  // ⚠️ בזהות **הקורא**: הפונקציות ב-SQL בודקות app.current_actor(), ולקוח
+  // service_role היה מגיע בלי זהות ונדחה — או גרוע, עוקף את הבדיקה.
   const asCaller = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
     auth: { persistSession: false },
   });
 
-  // ⚠️ מול המסד ולא מול האסימון: app_users הוא מקור האמת. מנהל שהורד
-  // לבקר נושא אסימון שאומר 'manager' עד שיפוג — והוא לא ימחק כאן איש.
-  const { data: role } = await asCaller.rpc("my_role");
-  if (role !== "manager") return json({ error: "הפעולה מותרת למנהלים בלבד" }, 403);
+  // שלב 1 — כל הכללים נאכפים כאן, ומחזירים את מה שצריך למחיקה ב-Supabase.
+  const { data: rows, error: checkErr } = await asCaller.rpc("delete_user_check", { p_id: id });
+  if (checkErr) return json({ error: checkErr.message }, statusFor(checkErr));
 
-  const { data: meId } = await asCaller.rpc("my_app_user_id");
-  if (!meId) return json({ error: "המשתמש אינו פעיל במערכת" }, 403);
-
-  const id = Number((await req.json().catch(() => ({})))?.id);
-  if (!Number.isInteger(id) || id <= 0) return json({ error: "מזהה משתמש לא תקין" }, 400);
-
-  const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-
-  // ⚠️ **שליפה ישירה לפי id, ולא משיכת כל הטבלה וחיפוש בזיכרון.**
-  // הגרסה הראשונה עשתה select() בלי תנאי ואז find() — וכשהשליפה חזרה
-  // ריקה מכל סיבה, התוצאה הייתה "משתמש לא נמצא" על שורה שקיימת. שגיאה
-  // שמצביעה על הנתון במקום על הגישה אליו, וזה בדיוק מה שקרה.
-  const { data: target, error: findErr } = await admin
-    .from("app_users").select("id, email, role, is_active, supabase_uid")
-    .eq("id", id).maybeSingle();
-
-  // ⚠️ כשל בשליפה **אינו** "לא נמצא": הראשון הוא בעיית גישה והשני עובדה
-  // על הנתונים. מיזוגם הוא מה שהפך תקלת הרשאה לשגיאה מטעה.
-  if (findErr) return json({ error: "שליפת המשתמש נכשלה: " + findErr.message }, 500);
+  const target = Array.isArray(rows) ? rows[0] : rows;
   if (!target) return json({ error: "משתמש לא נמצא" }, 404);
 
-  const { data: users, error: listErr } = await admin
-    .from("app_users").select("id, role, is_active").eq("role", "manager").eq("is_active", true);
-  if (listErr) return json({ error: "בדיקת המנהלים נכשלה: " + listErr.message }, 500);
-
-  // ============================================================
-  // שני המנעולים — ומדוע הם חשובים כאן יותר מאשר בהשבתה
-  // ============================================================
-  // ⚠️ מנהל שמשבית את עצמו יכול להיות מוחזר בידי אחר. מנהל שמוחק את עצמו
-  // כשאין מנהל נוסף **אינו משאיר שום דרך חזרה מהממשק** — רק מפתח ה-Secret.
-  if (target.id === meId) return json({ error: "אי אפשר למחוק את עצמך" }, 400);
-
-  const activeManagers = users ?? [];
-  if (target.role === "manager" && target.is_active && activeManagers.length <= 1) {
-    return json({ error: "לא ניתן למחוק את המנהל הפעיל האחרון" }, 400);
-  }
-
-  // ⚠️ **Supabase קודם, הטבלה שלנו אחריה.** הסדר ההפוך משאיר, בכשל,
-  // משתמש שעדיין יכול להתחבר בלי שורת app_users — מאומת, בלי זהות,
-  // ו-provision_app_user לא ייצור לו שורה חדשה כי אין INSERT נוסף.
-  if (target.supabase_uid) {
-    const { error } = await admin.auth.admin.deleteUser(target.supabase_uid);
-    // 404 = כבר לא קיים שם. זו הצלחה, לא כשל.
-    if (error && !String(error.message).includes("not found")) {
+  // שלב 2 — Supabase קודם. ⚠️ ה-Admin API הוא הדבר היחיד שבאמת מחייב את
+  // ה-Secret, והוא עובד (נמדד: ההזמנה מצליחה דרכו).
+  if (target.uid) {
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+    const { error } = await admin.auth.admin.deleteUser(target.uid);
+    // 404 = כבר לא קיים שם. הצלחה, לא כשל.
+    if (error && !String(error.message).toLowerCase().includes("not found")) {
       return json({ error: "המחיקה ב-Supabase נכשלה — המשתמש לא נמחק" }, 502);
     }
   }
 
-  await admin.from("app_users").delete().eq("id", id);
-
-  // ⚠️ **אחרי המחיקה, ובכוונה.** לפניה היה נרשם "נמחק" גם כשהמחיקה
-  // בטבלה נכשלה — ביקורת שמעידה על מה שלא קרה. וזו הפעולה הבלתי-הפיכה
-  // היחידה כאן, כלומר זו שהכי חייבת תיעוד.
-  const { data: actor } = await admin.from("app_users").select("email").eq("id", meId).maybeSingle();
-  await admin.from("audit_log").insert({
-    at: new Date().toISOString(),
-    actor_id: meId,
-    actor_name: actor?.email ?? "לא ידוע",
-    actor_role: "manager",
-    trust: "token",
-    action: "user.delete",
-    target_type: "user",
-    target_id: String(id),
-    target_name: target.email,
-    details: { email: target.email, role: target.role, via: "edge-function" },
-  });
+  // שלב 3 — השורה אצלנו, ושורת הביקורת. ⚠️ הביקורת נכתבת בתוך אותה
+  // פונקציה, כלומר היא נרשמת רק אם המחיקה באמת קרתה.
+  const { error: delErr } = await asCaller.rpc("delete_user_finish", { p_id: id });
+  if (delErr) return json({ error: delErr.message }, statusFor(delErr));
 
   return json({ ok: true, id, email: target.email });
 });

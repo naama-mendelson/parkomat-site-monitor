@@ -397,3 +397,78 @@ ALTER TABLE push_subscriptions
 
 -- מאתחלים לזמן היצירה: מנוי חדש אומת עכשיו בהגדרה.
 UPDATE push_subscriptions SET verified_at = created_at WHERE verified_at IS NULL;
+
+-- ============================================================
+-- מחיקת משתמש — הכללים ב-SQL, לא ב-Edge Function
+-- ============================================================
+-- ⚠️ הגרסה הראשונה של הפונקציה עשתה את הכול דרך לקוח service_role: שולפת
+-- מ-app_users, בודקת את המנעולים ב-TypeScript, ומוחקת. **נמדד: היא נכשלה
+-- ב-"permission denied for table app_users"** — הלקוח בפונקציה אינו עוקף
+-- RLS כפי שהונח.
+--
+-- התיקון אינו למצוא מפתח חזק יותר אלא ללכת בתבנית שכבר עובדת בכל הפרויקט:
+-- SECURITY DEFINER עם בדיקת זהות בגוף הפונקציה, בדיוק כמו start_maintenance
+-- ו-register_site.
+--
+-- ⚠️ ויתרון שלא היה קודם: **שני המנעולים חיים עכשיו במסד.** גם קריאה
+-- ישירה שעוקפת את ה-Edge Function תיתקל בהם.
+--
+-- ⚠️ ושתי פונקציות ולא אחת, כי הסדר קריטי: בדיקה → מחיקה ב-Supabase →
+-- מחיקה אצלנו. הסדר ההפוך משאיר, בכשל, משתמש שיכול להתחבר בלי שורת
+-- app_users — מאומת, בלי זהות, ו-provision_app_user לא ייצור לו שורה כי
+-- אין INSERT נוסף.
+
+-- שלב 1: אוכף את כל הכללים ומחזיר את מה שצריך למחיקה ב-Supabase.
+CREATE OR REPLACE FUNCTION public.delete_user_check(p_id integer)
+RETURNS TABLE (uid text, email text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE me integer; t record; mgrs integer;
+BEGIN
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE='insufficient_privilege';
+  END IF;
+  SELECT u.id INTO me FROM app_users u
+   WHERE u.supabase_uid::text = app.current_actor() AND u.is_active;
+  SELECT * INTO t FROM app_users WHERE id = p_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'משתמש לא נמצא' USING ERRCODE='PT404'; END IF;
+
+  -- ⚠️ מנהל שמשבית את עצמו יכול להיות מוחזר בידי אחר. מנהל שמוחק את עצמו
+  -- כשאין מנהל נוסף אינו משאיר שום דרך חזרה מהממשק.
+  IF t.id = me THEN
+    RAISE EXCEPTION 'אי אפשר למחוק את עצמך' USING ERRCODE='check_violation';
+  END IF;
+  SELECT COUNT(*) INTO mgrs FROM app_users WHERE role='manager' AND is_active;
+  IF t.role='manager' AND t.is_active AND mgrs <= 1 THEN
+    RAISE EXCEPTION 'לא ניתן למחוק את המנהל הפעיל האחרון' USING ERRCODE='check_violation';
+  END IF;
+
+  RETURN QUERY SELECT t.supabase_uid::text, t.email;
+END;
+$fn$;
+
+-- שלב 2: מוחק את השורה **וכותב את הביקורת באותה פעולה**, כך שהיא נרשמת
+-- רק אם המחיקה באמת קרתה.
+CREATE OR REPLACE FUNCTION public.delete_user_finish(p_id integer)
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE me integer; nm text; em text;
+BEGIN
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE='insufficient_privilege';
+  END IF;
+  SELECT u.id, u.email INTO me, nm FROM app_users u
+   WHERE u.supabase_uid::text = app.current_actor() AND u.is_active;
+  SELECT email INTO em FROM app_users WHERE id = p_id;
+  DELETE FROM app_users WHERE id = p_id;
+  PERFORM app.record_write_audit('user.delete', nm, 'manager', 'user', p_id::text,
+                                 jsonb_build_object('email', em, 'via', 'edge-function'));
+  RETURN p_id;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.delete_user_check(integer)  FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.delete_user_finish(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.delete_user_check(integer)  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_user_finish(integer) TO authenticated;
