@@ -1,5 +1,6 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
 import { useEffect, useState } from "react";
+import PushSettings from "../PushSettings/PushSettings";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
@@ -48,6 +49,9 @@ function Header({
   // ⚠️ **מקופל ולא מוסתר.** המונים הם גם הפילטרים — הסתרתם הייתה מוחקת
   // יכולת, לא רק תצוגה. הכפתור אומר כמה פילטרים פעילים, כדי שמצב מסונן
   // לא ייראה כמו רשימה חלקית בלי סיבה.
+  // ⚠️ נפתח מכפתור ולא קופץ מעצמו: לדפדפן יש הזדמנות אחת לבקש הרשאה,
+  // ומי שיחסום כי לא הבין — לא נוכל לשאול אותו שוב לעולם.
+  const [pushOpen, setPushOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   // ⚠️ גלילה סוגרת את הסינון. הוא נפתח מעל הכרטיסים ותופס כחצי מסך, ולכן
@@ -105,6 +109,11 @@ function Header({
               של המסך, לא של התפקיד שמסתכל בו. */}
           <AlertBell />
 
+          {/* התראות push — נפרד מהפעמון בכוונה: הפעמון הוא הצליל
+              באפליקציה פתוחה, וזה מה שמגיע כשהיא סגורה. */}
+          <button className="theme-toggle" onClick={() => setPushOpen(true)}
+                  title="התראות תקלה בטלפון" aria-label="התראות תקלה">🔔</button>
+
 
           {canManage && (
             <button className="add-site-btn" onClick={onAdmin} title="ניהול אתרים">
@@ -138,6 +147,8 @@ function Header({
       </div>
 
       {usersOpen && <UsersPanel onClose={() => setUsersOpen(false)} />}
+
+      {pushOpen && <PushSettings onClose={() => setPushOpen(false)} />}
 
       {/* מוני סטטוס כפילטרים — רק בתצוגת הבקר */}
       {isOperator && (
