@@ -40,9 +40,41 @@ import "./AlertUnlockBar.css";
 // "פתחתי" ל"קראתי מה כתוב ולחצתי".
 const RETREAT_MS = 25000;
 
+// ============================================================
+// זכירת הבחירה — ומה הדפדפן **לא** מאפשר לזכור
+// ============================================================
+// ⚠️ **אי אפשר לשמור "קול מותר" בין טעינות.** מדיניות ה-autoplay דורשת
+// מגע מהמשתמש **בכל טעינת דף** לפני ש-AudioContext יכול לנגן. זו הגנה
+// של הדפדפן, לא הגדרה שלנו, ואין דרך לעקוף אותה.
+//
+// מה שכן אפשר, וזה מה שהתבקש בפועל: לזכור את **הכוונה**. מי שאישר פעם
+// אחת לא יישאל שוב — במקום השלט, המערכת מחכה בשקט למגע הראשון (כל
+// לחיצה או גלילה) ומשחררת את הקול לבד. מבחינת המשתמשת הקול פשוט עובד.
+//
+// ⚠️ ולכן זה נשמר ב-localStorage ולא ב-state: state נמחק בכל רענון, וזה
+// בדיוק מה שגרם לשאלה לחזור.
+const OPTED_IN = "audio-opted-in";
+
 function AlertUnlockBar() {
   const { state, onControlClick } = useAlertAudio();
   const [retreated, setRetreated] = useState(false);
+  const [optedIn, setOptedIn] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem(OPTED_IN) === "1",
+  );
+
+  // ⚠️ שחרור שקט אחרי מגע ראשון — רק למי שכבר אישר בעבר. pointerdown
+  // ו-keydown ולא click: גלילה בטלפון אינה click, והמשתמשת הייתה נוגעת
+  // במסך והקול לא היה משתחרר.
+  useEffect(() => {
+    if (!optedIn || state !== "locked") return;
+    const release = () => onControlClick();
+    window.addEventListener("pointerdown", release, { once: true, capture: true });
+    window.addEventListener("keydown", release, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", release, { capture: true });
+      window.removeEventListener("keydown", release, { capture: true });
+    };
+  }, [optedIn, state, onControlClick]);
 
   // ⚠️ השעון מתחיל רק כשהשלט באמת מוצג. בלי התנאי הוא היה רץ גם כשהקול
   // כבר פעיל, ואז משתמש שהשתיק והחזיר היה מקבל את הפס הדק במקום השלט.
@@ -52,7 +84,16 @@ function AlertUnlockBar() {
     return () => clearTimeout(t);
   }, [state, retreated]);
 
-  if (state !== "locked") return null;
+  // ⚠️ מי שאישר בעבר אינו רואה שום דבר — לא שלט ולא פס. זה כל העניין.
+  if (state !== "locked" || optedIn) return null;
+
+  // שומר את הכוונה **ואז** משחרר. סדר הפוך היה מאבד את הזכירה אם
+  // השחרור זורק (למשל AudioContext שנחסם), והשאלה הייתה חוזרת.
+  function remember() {
+    try { localStorage.setItem(OPTED_IN, "1"); } catch { /* מצב פרטי */ }
+    setOptedIn(true);
+    onControlClick();
+  }
 
   const SUB = "הדפדפן חוסם קול עד למגע ראשון · תקלה שתקרה עד אז תצלצל מיד כשייפתח";
 
@@ -62,7 +103,7 @@ function AlertUnlockBar() {
       <button
         type="button"
         className="alert-unlock-bar"
-        onClick={onControlClick}
+        onClick={remember}
         // ⚠️ status ולא alert: זו הודעת מצב מתמשכת, ו-alert היה מקטיע קורא
         // מסך באמצע כל פעולה אחרת.
         role="status"
@@ -82,7 +123,7 @@ function AlertUnlockBar() {
       <button
         type="button"
         className="alert-unlock-backdrop"
-        onClick={onControlClick}
+        onClick={remember}
         aria-label="הפעלת התראות קוליות"
         tabIndex={-1}
       />
@@ -105,7 +146,7 @@ function AlertUnlockBar() {
         <button
           type="button"
           className="alert-unlock-card-btn"
-          onClick={onControlClick}
+          onClick={remember}
           autoFocus
         >
           הפעל צליל תקלה

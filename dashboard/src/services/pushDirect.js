@@ -14,6 +14,19 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 
 const VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
+/**
+ * האם האתר רץ **כאפליקציה מותקנת** ולא בלשונית דפדפן.
+ *
+ * ⚠️ display-mode: standalone הוא מה שה-manifest מבקש, והדפדפן מדווח
+ * עליו רק כשנפתח ממסך הבית. navigator.standalone הוא הגרסה של ספארי,
+ * שאינה תומכת ב-display-mode — בלעדיה אייפון היה תמיד נראה כמחשב.
+ */
+export function isInstalledApp() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(display-mode: standalone)").matches === true ||
+         window.navigator.standalone === true;
+}
+
 /** האם הדפדפן מסוגל בכלל. אייפון: רק כאפליקציה מותקנת, מ-iOS 16.4. */
 export function pushSupported() {
   return typeof window !== "undefined" &&
@@ -32,6 +45,13 @@ export function pushSupported() {
 export function pushPermission() {
   if (!pushSupported()) return "unsupported";
   if (!VAPID_PUBLIC) return "unconfigured";
+  // ⚠️ **רק באפליקציה מותקנת, לא בלשונית במחשב.** זו בקשת המשתמשת, ויש
+  // לה גם נימוק: התראה שמגיעה למחשב שפתוח על הדשבורד ממילא היא כפילות
+  // של הצליל שכבר יש שם. הערך הזה נועד לטלפון שבכיס.
+  //
+  // ⚠️ ובאייפון זה ממילא **חובה** — ההרשאה אינה זמינה בלשונית ספארי
+  // בכלל, ולכן הבדיקה הזו הופכת כשל מבלבל להסבר.
+  if (!isInstalledApp()) return "not-installed";
   return Notification.permission;
 }
 
