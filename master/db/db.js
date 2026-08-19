@@ -650,6 +650,12 @@ function init() {
       // ב-clone טרי — כלומר עובר בפיתוח ונופל בהתקנה חדשה.
       const writes = fs.readFileSync(path.join(__dirname, "writes.postgres.sql"), "utf8");
       await setup.query(writes);
+
+      // ⚠️ **אחרון, ותלוי בכל מה שלפניו:** push.postgres.sql מפנה ל-app_users,
+      // ל-sites, ל-settings ול-app.current_actor(). סדר הפוך נכשל על
+      // "relation does not exist" והשרת לא היה עולה.
+      const push = fs.readFileSync(path.join(__dirname, "push.postgres.sql"), "utf8");
+      await setup.query(push);
     } finally {
       // end() על חיבור שכבר מת זורק, וזה היה מחליף את השגיאה האמיתית (הניתוק)
       // בשגיאה משנית — ואז isTransient לא היה מזהה אותה והניסיון החוזר לא היה קורה.
