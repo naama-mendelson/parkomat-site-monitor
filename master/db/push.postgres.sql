@@ -101,3 +101,81 @@ CREATE TABLE IF NOT EXISTS push_last_sent (
 -- **רק** בידי ה-Edge Function, שרצה עם ה-Secret ועוקפת RLS ממילא. מדיניות
 -- שמעניקה גישה לדפדפן הייתה פותחת אותן בלי שיש למי לקרוא מהן.
 ALTER TABLE push_last_sent ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- לאיזה אתרים להתריע — העדפה אישית, לא הרשאה
+-- ============================================================
+-- ⚠️ **זה אינו סותר את ההכרעה ש"כל משתמש רואה כל אתר".** הראייה היא
+-- הרשאה; זו העדפה — למי מותר להפריע לי באמצע הלילה. איש שירות שאחראי על
+-- שלושה אתרים אינו צריך לקבל התראה על תשעה אחרים, והוא עדיין רואה את
+-- כולם במסך.
+--
+-- ⚠️ **הכלל: אין שורות = כל האתרים.** זו ברירת המחדל וגם המקרה הנפוץ,
+-- ולכן היא עולה אפס שורות ואפס תחזוקה. מי שבוחר אתרים מקבל שורה לכל אחד.
+--
+-- ⚠️ ולכן "לבחור אפס אתרים" אינו מצב אפשרי דרך המסך — הוא זהה ל"הכל",
+-- ומי שרוצה לא לקבל התראות כלל מבטל את המנוי עצמו. שני מצבים שנראים
+-- דומה ומשמעותם הפוכה, ולכן המסך חייב לומר זאת במפורש.
+--
+-- ⚠️ ההעדפה היא **לפי משתמש ולא לפי מכשיר**, למרות שהמנוי הוא לפי מכשיר:
+-- העניין של אדם באתר אינו משתנה לפי איזה טלפון הוא מחזיק, והפרדה לפי
+-- מכשיר הייתה נותנת תוצאות שונות בשקט בשני מכשירים של אותו אדם.
+CREATE TABLE IF NOT EXISTS push_user_sites (
+  app_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  site_id     INTEGER NOT NULL REFERENCES sites(id)     ON DELETE CASCADE,
+  PRIMARY KEY (app_user_id, site_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_sites_site ON push_user_sites(site_id);
+
+-- ⚠️ אותה מדיניות כמו על המנויים, ומאותה סיבה: רשימת האתרים שאדם בחר
+-- מלמדת על מה הוא אחראי. זו העדפה אישית, לא נתון תפעולי משותף.
+ALTER TABLE push_user_sites ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS push_sites_own_select ON push_user_sites;
+CREATE POLICY push_sites_own_select ON push_user_sites
+  FOR SELECT TO authenticated
+  USING (app_user_id = (SELECT u.id FROM app_users u
+                         WHERE u.supabase_uid::text = app.current_actor()
+                           AND u.is_active));
+
+DROP POLICY IF EXISTS push_sites_own_insert ON push_user_sites;
+CREATE POLICY push_sites_own_insert ON push_user_sites
+  FOR INSERT TO authenticated
+  WITH CHECK (app_user_id = (SELECT u.id FROM app_users u
+                              WHERE u.supabase_uid::text = app.current_actor()
+                                AND u.is_active));
+
+DROP POLICY IF EXISTS push_sites_own_delete ON push_user_sites;
+CREATE POLICY push_sites_own_delete ON push_user_sites
+  FOR DELETE TO authenticated
+  USING (app_user_id = (SELECT u.id FROM app_users u
+                         WHERE u.supabase_uid::text = app.current_actor()
+                           AND u.is_active));
+
+-- ============================================================
+-- למי לשלוח על תקלה באתר מסוים
+-- ============================================================
+-- ⚠️ הפונקציה הזו היא **ההגדרה היחידה** של "מי מנוי לאתר", וה-Edge
+-- Function קוראת לה במקום לשכפל את הכלל ב-TypeScript. שני עותקים של כלל
+-- כזה נפרדים ביום שבו מישהו יתקן אחד מהם, והתסמין הוא התראה שלא הגיעה —
+-- כשל שקט שאין עליו שום סימן.
+CREATE OR REPLACE FUNCTION app.push_targets_for_site(p_site_id integer)
+RETURNS TABLE (endpoint text, p256dh text, auth text, subscription_id bigint)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT s.endpoint, s.p256dh, s.auth, s.id
+    FROM push_subscriptions s
+    JOIN app_users u ON u.id = s.app_user_id
+   WHERE u.is_active
+     -- אין שורות בכלל = כל האתרים. יש שורות = רק מה שנבחר.
+     AND (NOT EXISTS (SELECT 1 FROM push_user_sites f WHERE f.app_user_id = u.id)
+          OR EXISTS (SELECT 1 FROM push_user_sites f
+                      WHERE f.app_user_id = u.id AND f.site_id = p_site_id));
+$$;
+
+COMMENT ON FUNCTION app.push_targets_for_site(integer) IS
+  'המכשירים שאמורים לקבל התראה על תקלה באתר. אין שורות ב-push_user_sites = כל האתרים.';
