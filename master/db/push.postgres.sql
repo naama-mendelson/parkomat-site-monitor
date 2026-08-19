@@ -179,3 +179,76 @@ $$;
 
 COMMENT ON FUNCTION app.push_targets_for_site(integer) IS
   'המכשירים שאמורים לקבל התראה על תקלה באתר. אין שורות ב-push_user_sites = כל האתרים.';
+
+-- ============================================================
+-- אילו סוגי התראות — וברירת המחדל הפוכה מזו של האתרים
+-- ============================================================
+-- ⚠️ **באתרים "אין שורות = הכל". כאן "אין שורות = תקלה בלבד".** ההיפוך
+-- מכוון: לקבל התראה על אתר מיותר הוא רעש קטן, ולקבל **סוג** מיותר הוא
+-- רעש שמכבה את כל המערכת.
+--
+-- ⚠️ והמספרים אינם תיאורטיים. נמדד בפרויקט הזה: אתר 2439 מנותק כרבע
+-- מהזמן. מי שידליק no_comm יקבל עשרות התראות ביום, יכבה הכול — **כולל את
+-- התקלות**. סוג רועש אחד הורג את המנגנון כולו, ולכן הוא לעולם לא ברירת
+-- מחדל, והמסך חייב לומר כמה זה בערך ולא רק להציע תיבת סימון.
+CREATE TABLE IF NOT EXISTS push_user_types (
+  app_user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  -- fault | maintenance | no_comm
+  kind        TEXT NOT NULL CHECK (kind IN ('fault', 'maintenance', 'no_comm')),
+  PRIMARY KEY (app_user_id, kind)
+);
+
+ALTER TABLE push_user_types ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS push_types_own_select ON push_user_types;
+CREATE POLICY push_types_own_select ON push_user_types
+  FOR SELECT TO authenticated
+  USING (app_user_id = (SELECT u.id FROM app_users u
+                         WHERE u.supabase_uid::text = app.current_actor() AND u.is_active));
+
+DROP POLICY IF EXISTS push_types_own_insert ON push_user_types;
+CREATE POLICY push_types_own_insert ON push_user_types
+  FOR INSERT TO authenticated
+  WITH CHECK (app_user_id = (SELECT u.id FROM app_users u
+                              WHERE u.supabase_uid::text = app.current_actor() AND u.is_active));
+
+DROP POLICY IF EXISTS push_types_own_delete ON push_user_types;
+CREATE POLICY push_types_own_delete ON push_user_types
+  FOR DELETE TO authenticated
+  USING (app_user_id = (SELECT u.id FROM app_users u
+                         WHERE u.supabase_uid::text = app.current_actor() AND u.is_active));
+
+-- ============================================================
+-- היעדים — עכשיו גם לפי סוג
+-- ============================================================
+-- ⚠️ DROP ולא REPLACE: נוסף פרמטר, ו-CREATE OR REPLACE אינו יכול לשנות
+-- חתימה. בלי ה-DROP היו נשארות **שתי** גרסאות, וקריאה עם ארגומנט אחד
+-- הייתה ממשיכה לעבוד ולהתעלם מהסוג — כלומר להתריע על הכול בשקט.
+DROP FUNCTION IF EXISTS app.push_targets_for_site(integer);
+
+CREATE OR REPLACE FUNCTION app.push_targets_for_site(p_site_id integer, p_kind text)
+RETURNS TABLE (endpoint text, p256dh text, auth text, subscription_id bigint)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT s.endpoint, s.p256dh, s.auth, s.id
+    FROM push_subscriptions s
+    JOIN app_users u ON u.id = s.app_user_id
+   WHERE u.is_active
+     -- אתרים: אין שורות = כל האתרים
+     AND (NOT EXISTS (SELECT 1 FROM push_user_sites f WHERE f.app_user_id = u.id)
+          OR EXISTS (SELECT 1 FROM push_user_sites f
+                      WHERE f.app_user_id = u.id AND f.site_id = p_site_id))
+     -- סוגים: אין שורות = תקלה בלבד
+     AND (CASE
+            WHEN EXISTS (SELECT 1 FROM push_user_types t WHERE t.app_user_id = u.id)
+              THEN EXISTS (SELECT 1 FROM push_user_types t
+                            WHERE t.app_user_id = u.id AND t.kind = p_kind)
+            ELSE p_kind = 'fault'
+          END);
+$$;
+
+COMMENT ON FUNCTION app.push_targets_for_site(integer, text) IS
+  'מכשירים לקבלת התראה. אין שורות ב-push_user_sites = כל האתרים; אין ב-push_user_types = תקלה בלבד.';
