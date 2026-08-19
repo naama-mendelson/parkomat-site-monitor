@@ -33,3 +33,33 @@ export async function inviteUserDirect(email, role = "operator") {
   if (!res.ok) throw new Error(body.error || "הזמנת המשתמש נכשלה");
   return body;
 }
+
+/**
+ * מחיקת משתמש דרך Edge Function.
+ *
+ * ⚠️ **מחיקה, לא השבתה.** השבתה הפיכה והשורה נשארת; זו מסירה גם את חשבון
+ * ה-auth וגם את השורה אצלנו, וחזרה משמעותה הזמנה חדשה עם מזהה חדש.
+ *
+ * ⚠️ ושני המנעולים — אי אפשר למחוק את עצמך, ואי אפשר למחוק את המנהל
+ * הפעיל האחרון — נאכפים **בפונקציה** ולא כאן. בדיקה בדפדפן נעקפת ב-DevTools.
+ */
+export async function deleteUserDirect(id) {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("נדרשת התחברות מחדש");
+
+  const res = await fetch(`${FUNCTIONS_URL}/delete-user`, {
+    method: "POST",
+    headers: {
+      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id }),
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "מחיקת המשתמש נכשלה");
+  return body;
+}

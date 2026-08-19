@@ -12,8 +12,12 @@ import { useEffect, useRef, useState } from "react";
 import { fetchUsers, setUserActive, setUserRole } from "../../services/dataSource";
 // ⚠️ ההזמנה עברה ל-Edge Function: היא דורשת את ה-Secret, ומרגע שהדשבורד
 // עבר ל-Cloudflare ה-master אינו נגיש ממנו. המחיקה עדיין בשרת.
-import { deleteUser } from "../../services/api";
-import { inviteUserDirect as inviteUser } from "../../services/usersInviteDirect";
+// ⚠️ שתיהן עברו ל-Edge Functions: הן דורשות את ה-Secret, ומרגע שהדשבורד
+// עבר ל-Cloudflare ה-master אינו נגיש ממנו (מאחורי NAT, בלי כתובת ציבורית).
+import {
+  inviteUserDirect as inviteUser,
+  deleteUserDirect as deleteUser,
+} from "../../services/usersInviteDirect";
 import { copyText } from "../../utils/clipboard";
 import "./UsersPanel.css";
 
