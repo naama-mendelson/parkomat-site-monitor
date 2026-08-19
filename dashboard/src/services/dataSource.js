@@ -62,6 +62,14 @@ import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
 import { markAsTestDirect, unmarkTestDirect } from "./reportsDirect";
+import {
+  inviteUser as inviteUserViaServer,
+  deleteUser as deleteUserViaServer,
+  verifyAdminCode as verifyAdminCodeViaServer,
+  changeAdminCode as changeAdminCodeViaServer,
+} from "./api";
+import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
+import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
 import { registerSiteDirect, updateSiteDirect, deleteSiteDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
@@ -596,4 +604,47 @@ export async function unmarkTest(kind, id) {
     throw new Error("ביטול סימון ניסוי זמין רק בקריאה ישירה ל-Supabase");
   }
   return unmarkTestDirect(kind, id);
+}
+
+
+// ============================================================
+// ניהול משתמשים וקוד המנהל — **חזרו למתג**
+// ============================================================
+// ⚠️ ארבע הפעולות האלה נכתבו בתחילה ישירות מול Supabase, מחוץ לקובץ הזה.
+// התוצאה: `VITE_SUPABASE_DIRECT=false` החזיר את הקריאות והמדדים אבל
+// **השאיר את ניהול המשתמשים שבור** — דלת חירום שנסדקה בלי שאיש ידע.
+//
+// ⚠️ ו-check-switch היה **ירוק** כל אותו זמן, כי הוא סרק רק את הקובץ הזה.
+// שער שסורק קובץ אחד מאשר כל דבר שנכתב בקובץ שני. זה תוקן גם הוא.
+//
+// המסלולים בשרת קיימים ועובדים (נמדד: POST /api/users/invite מחזיר 200),
+// ולכן זו חיווט ולא בנייה.
+
+/** הזמנת משתמש. `{ ok, user, tempPassword }` בשתי הזרועות. */
+export async function inviteUser(email, role = "operator") {
+  if (!useDirect) return inviteUserViaServer(email, role);
+  return inviteUserDirect(email, role);
+}
+
+/** מחיקת משתמש. ⚠️ שני המנעולים נאכפים בשתי הזרועות — במסד ובשרת. */
+export async function deleteUser(id) {
+  if (!useDirect) return deleteUserViaServer(id);
+  return deleteUserDirect(id);
+}
+
+/** אימות קוד המנהל. מחזיר true/false; אינו זורק על קוד שגוי. */
+export async function verifyAdminCode(code) {
+  if (!useDirect) {
+    // ⚠️ זרוע השרת **זורקת** על קוד שגוי (401), והישירה מחזירה false.
+    // הנרמול כאן הוא מה שהופך את זה למתג ולא לשני מסלולי קוד במסך.
+    try { await verifyAdminCodeViaServer(code); return true; }
+    catch { return false; }
+  }
+  return verifyAdminCodeDirect(code);
+}
+
+/** החלפת קוד המנהל. מנהל בלבד, ונדרש הקוד הנוכחי. */
+export async function changeAdminCode(current, next) {
+  if (!useDirect) return changeAdminCodeViaServer(current, next);
+  return setAdminCodeDirect(current, next);
 }

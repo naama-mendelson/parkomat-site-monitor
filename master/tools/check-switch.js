@@ -52,6 +52,58 @@ for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from/g)) {
 //
 // ⚠️ העזרים בקובץ (`periodBounds`, `dayStartIso`, `prevRange`) **אינם
 // מיוצאים**, ולכן הם נופלים מחוץ לרשימה מעצם ההגדרה ולא בזכות סינון.
+
+// ============================================================
+// ⚠️ הרחבה: הרכיבים אינם רשאים לעקוף את המתג
+// ============================================================
+// השער סרק **רק את dataSource.js**, ולכן היה ירוק בזמן שארבע פעולות —
+// הזמנת משתמש, מחיקה, אימות קוד המנהל והחלפתו — נכתבו בקבצי *Direct.js
+// ויובאו ישירות לרכיבים. VITE_SUPABASE_DIRECT=false החזיר את הקריאות
+// והמדדים אבל השאיר את ניהול המשתמשים שבור, ואיש לא ידע.
+//
+// ⚠️ זה הכשל הגרוע: לא שער אדום שהתעלמו ממנו, אלא **שער ירוק שלא בדק
+// כלום** — כי הקוד החדש נכתב מחוץ לתחום שהוא סורק.
+//
+// הכלל: רכיב מייבא מ-dataSource. ייבוא ישיר מקובץ *Direct הוא עקיפה,
+// חוץ ממה שאין לו משמעות בזרוע השרת ולא צריכה להיות לו.
+const ALLOWED_DIRECT = new Set([
+  // עוזרי דפדפן בלבד — נעילת המושב. אין מקבילה בשרת.
+  "isUnlocked", "markUnlocked", "lockAgain",
+  // התראות push: אין זרוע שרת **בכוונה** — השולח אינו יכול להיות המחשב
+  // שנופל, וזה בדיוק הרגע שבו ההתראה נחוצה. חריגה מוצהרת ב-EXIT-PLAN.md.
+  "pushSupported", "pushPermission", "enablePush", "disablePush",
+  "getPushSites", "setPushSites", "ensurePushSubscription", "pushCoverage",
+  // ⚠️ useSSE מממש את המתג **בעצמו** ובצדק: מנוי חי אינו בקשה, ואי אפשר
+  // לעטוף אותו ב-dataSource שכולו פונקציות שמחזירות ערך. שתי הזרועות שם
+  // מלאות — Realtime מול EventSource — ונבדקות בסעיף הראשי.
+  "subscribeRealtime",
+]);
+
+const walkDir = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+  const full = dir + "/" + e.name;
+  return e.isDirectory() ? walkDir(full) : (/\.jsx?$/.test(e.name) ? [full] : []);
+});
+
+const SRC_DIR = path.resolve(__dirname, "../../dashboard/src");
+const bypass = [];
+for (const file of walkDir(SRC_DIR)) {
+  if (/[\\/]services[\\/]/.test(file)) continue;   // השכבה עצמה רשאית
+  const text = fs.readFileSync(file, "utf8");
+  for (const m of text.matchAll(/import\s*\{([^}]+)\}\s*from\s*["'][^"']*services\/(\w+Direct)["']/g)) {
+    const names = m[1].split(",").map((x) => x.trim().split(/\s+as\s+/)[0]).filter(Boolean);
+    const bad = names.filter((n) => !ALLOWED_DIRECT.has(n));
+    if (bad.length) bypass.push(file.replace(SRC_DIR + "/", "") + " → " + bad.join(", "));
+  }
+}
+
+if (bypass.length) {
+  console.log("❌ רכיבים שעוקפים את המתג:");
+  for (const b of bypass) console.log("   " + b);
+  console.log("\nכל אחד מהם ייכשל כש-VITE_SUPABASE_DIRECT=false.\n");
+  process.exit(1);
+}
+console.log("✅ אף רכיב אינו עוקף את המתג\n");
+
 const fns = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
 console.log(`נמצאו ${fns.length} מסלולים במתג\n`);
 

@@ -30,12 +30,8 @@
 import { useState, useCallback } from "react";
 // ⚠️ מ-Supabase ולא מהשרת: בענן אין שרת, והנעילה פשוט נכשלה שם.
 // הגיבוב מושווה בתוך הפונקציה ב-SQL ולעולם אינו מגיע לדפדפן.
-import {
-  verifyAdminCodeDirect as verifyAdminCode,
-  isUnlocked as getAdminCode,
-  markUnlocked as storeAdminCode,
-  lockAgain,
-} from "../services/adminCodeDirect";
+import { verifyAdminCode } from "../services/dataSource";
+import { isUnlocked as getAdminCode, markUnlocked as storeAdminCode, lockAgain } from "../services/adminCodeDirect";
 import { useDirect } from "../services/dataSource";
 import { useAuth } from "./useAuth";
 

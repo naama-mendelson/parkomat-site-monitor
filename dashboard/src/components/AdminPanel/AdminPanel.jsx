@@ -5,7 +5,8 @@ import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../u
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
 import { updateSite, deleteSite } from "../../services/dataSource";
-import { setAdminCodeDirect as changeAdminCode, markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
+import { changeAdminCode } from "../../services/dataSource";
+import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";

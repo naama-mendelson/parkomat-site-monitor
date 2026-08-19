@@ -14,10 +14,7 @@ import { fetchUsers, setUserActive, setUserRole } from "../../services/dataSourc
 // עבר ל-Cloudflare ה-master אינו נגיש ממנו. המחיקה עדיין בשרת.
 // ⚠️ שתיהן עברו ל-Edge Functions: הן דורשות את ה-Secret, ומרגע שהדשבורד
 // עבר ל-Cloudflare ה-master אינו נגיש ממנו (מאחורי NAT, בלי כתובת ציבורית).
-import {
-  inviteUserDirect as inviteUser,
-  deleteUserDirect as deleteUser,
-} from "../../services/usersInviteDirect";
+import { inviteUser, deleteUser } from "../../services/dataSource";
 import { copyText } from "../../utils/clipboard";
 import "./UsersPanel.css";
 
