@@ -10,7 +10,10 @@ import { useEffect, useRef, useState } from "react";
 // ב-Admin API של GoTrue, כלומר דורשות את מפתח ה-Secret — שאסור לו להגיע
 // לדפדפן, ולכן אין להן זרוע שנייה והן מיובאות מ-api ישירות.
 import { fetchUsers, setUserActive, setUserRole } from "../../services/dataSource";
-import { inviteUser, deleteUser } from "../../services/api";
+// ⚠️ ההזמנה עברה ל-Edge Function: היא דורשת את ה-Secret, ומרגע שהדשבורד
+// עבר ל-Cloudflare ה-master אינו נגיש ממנו. המחיקה עדיין בשרת.
+import { deleteUser } from "../../services/api";
+import { inviteUserDirect as inviteUser } from "../../services/usersInviteDirect";
 import { copyText } from "../../utils/clipboard";
 import "./UsersPanel.css";
 
