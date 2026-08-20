@@ -6,7 +6,10 @@ import { useSSE } from "./hooks/useSSE";
 import { useSiteDetail } from "./hooks/useSiteDetail";
 import { useTheme } from "./hooks/useTheme";
 import Header from "./components/Header/Header";
-import DetailPanel from "./components/DetailPanel/DetailPanel";
+// ⚠️ **הכרטיס פותח את הפירוט המלא ישירות.** קודם הוא פתח פאנל צד, וממנו
+// היה צריך לגלול וללחוץ "הצג עוד מידע" כדי להגיע לגרפים — שני מסכים
+// לאותו אתר, ורוב התוכן משוכפל ביניהם.
+import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
@@ -44,6 +47,11 @@ function App() {
   // וה"עוד מידע" של אתר ב' שפתוח בפאנל — נתונים שלא השתנו כלל.
   const [dataVersion, setDataVersion] = useState(0);
   const [detailVersion, setDetailVersion] = useState(0);
+
+  // ⚠️ התקופה עברה לכאן מ-DetailPanel, שירד. היא נשמרת ברמת האפליקציה
+  // ולא במודאל, כדי שסגירה ופתיחה של אתר אחר לא יאפסו את מה שנבחר —
+  // מי שמסתכל על חודש רוצה חודש גם באתר הבא.
+  const [period, setPeriod] = useState("week");
 
   // ===== Hooks =====
   const { sites, loading, error, reload, patch } = useSites();
@@ -235,14 +243,20 @@ function App() {
       <main className="app-main">{renderView()}</main>
 
       {/* הפאנל משותף — נפתח גם מהבקר וגם מטבלת מנהל הבקרה */}
-      {selectedCode && (
-        <DetailPanel
-          detail={detail}
+      {/* ⚠️ **גם detail?.site ולא רק selectedCode.** השליפה אסינכרונית,
+          ובין הלחיצה לתשובה site הוא undefined — והמודאל קורא site.site_name
+          מיד. הפאנל הישן היה מוגן ב-if (!detail) return null, וההגנה הזו
+          נפלה בהעברה. התסמין: מסך ריק ושגיאה בקונסול. */}
+      {selectedCode && detail?.site && (
+        <InsightsModal
+          site={detail?.site}
           maintenance={maintenance}
-          onClose={() => setSelectedCode(null)}
-          onRefresh={handleRefresh}
+          period={period}
+          onPeriodChange={setPeriod}
           // הגרסה של האתר הפתוח בלבד — לא של כל המערכת
-          dataVersion={detailVersion}
+          version={detailVersion}
+          onRefresh={handleRefresh}
+          onClose={() => setSelectedCode(null)}
         />
       )}
 

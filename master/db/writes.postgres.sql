@@ -941,3 +941,99 @@ REVOKE ALL ON FUNCTION public.unmark_test(text, bigint)       FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.mark_as_test(text, bigint, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.unmark_test(text, bigint)       TO authenticated;
+
+-- ============================================================
+-- חלון תחזוקה מתוזמן — עם שעת התחלה מפורשת
+-- ============================================================
+-- ⚠️ **גרסה נוספת ולא שינוי של הקיימת.** `start_maintenance` בת שלושת
+-- הפרמטרים נקראת מהדשבורד ומהשער; שינוי חתימתה היה שובר את שניהם ביום
+-- שבו הדשבורד עדיין לא נפרס. שתי החתימות חיות זו לצד זו.
+--
+-- ⚠️ **וזה שינוי אמיתי במודל, לא נוחות:** עד עכשיו כל חלון התחיל **עכשיו**,
+-- ולכן "יש חלון" ו"האתר בתחזוקה" היו אותו דבר. חלון עתידי מפריד ביניהם:
+-- הוא קיים ברשימה, ואינו משפיע על המדדים עד שיגיע זמנו.
+--
+-- כל השאר כבר עובד עם זה בלי שינוי: חישוב הזמינות מצטלב לפי
+-- started_at/expires_at, ולכן חלון שטרם התחיל פשוט אינו חופף לתקופה
+-- הנמדדת. וגם דיכוי התקלות — הוא בודק `started_at <= now`.
+CREATE OR REPLACE FUNCTION public.schedule_maintenance(
+  p_site_code text,
+  p_start_at  timestamptz,
+  p_end_at    timestamptz,
+  p_reason    text DEFAULT NULL
+)
+RETURNS TABLE (id integer, started_at text, expires_at text, set_by_name text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_name    text := app.actor_display_name();
+  v_role    text;
+  v_site_id integer;
+  v_hours   numeric;
+  v_started text;
+  v_expires text;
+  v_id      integer;
+BEGIN
+  -- ⚠️ אותו כלל כמו בפתיחה מיידית: **כל משתמש פעיל**, בלי דרישת תפקיד.
+  -- ההחלטה היא ייחוס במקום מנע — אנשי שירות מתזמנים בשטח.
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  v_role := app.current_app_role();
+
+  IF p_start_at IS NULL OR p_end_at IS NULL THEN
+    RAISE EXCEPTION 'חסרה שעת התחלה או סיום' USING ERRCODE = 'check_violation';
+  END IF;
+  IF p_end_at <= p_start_at THEN
+    RAISE EXCEPTION 'שעת הסיום חייבת להיות אחרי שעת ההתחלה'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  v_hours := EXTRACT(EPOCH FROM (p_end_at - p_start_at)) / 3600.0;
+  -- ⚠️ אותה תקרה של 720 שעות. חלון ארוך יותר משתיק אתר לחודש, ובלי גבול
+  -- טעות הקלדה בתאריך הופכת ל"האתר נעלם מהמדדים" בלי שאיש ישים לב.
+  IF v_hours > 720 THEN
+    RAISE EXCEPTION 'החלון ארוך מ-720 שעות' USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- ⚠️ **גבול על העבר, ולא רק על העתיד.** חלון שמתחיל שבוע אחורה היה
+  -- משנה למפרע זמינות שכבר דווחה — מספרים שאנשים כבר ראו. שעה של חסד
+  -- מכסה תיקון של מי שהתחיל לתעד באיחור.
+  IF p_start_at < now() - interval '1 hour' THEN
+    RAISE EXCEPTION 'לא ניתן לתזמן חלון שהתחיל לפני יותר משעה'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT s.id INTO v_site_id FROM sites s WHERE s.code = p_site_code;
+  IF v_site_id IS NULL THEN
+    RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404';
+  END IF;
+
+  v_started := to_char(p_start_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_expires := to_char(p_end_at   AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+
+  INSERT INTO maintenance_windows
+    (site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at)
+  VALUES
+    (v_site_id, v_name, v_role, NULLIF(TRIM(COALESCE(p_reason, '')), ''),
+     v_started, ROUND(v_hours, 2), v_expires)
+  RETURNING maintenance_windows.id INTO v_id;
+
+  PERFORM app.record_write_audit('maintenance.schedule', v_name, v_role,
+                                 'site', p_site_code,
+                                 jsonb_build_object('start_at', v_started,
+                                                    'end_at', v_expires,
+                                                    'hours', ROUND(v_hours, 2)));
+  PERFORM app.record_write_event(p_site_code, 'maintenance',
+                                 jsonb_build_object('type', 'maintenance',
+                                                    'code', p_site_code,
+                                                    'scheduled', true));
+
+  RETURN QUERY SELECT v_id, v_started, v_expires, v_name;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.schedule_maintenance(text, timestamptz, timestamptz, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.schedule_maintenance(text, timestamptz, timestamptz, text) TO authenticated;

@@ -517,10 +517,11 @@ async function getActiveMaintenance(siteId) {
   return await db
     .prepare(
       `SELECT * FROM maintenance_windows
-       WHERE site_id = ? AND cancelled_at IS NULL AND expires_at > ?
+       // ⚠️ גם started_at: חלון מתוזמן למחר אינו "פעיל" היום.
+       WHERE site_id = ? AND cancelled_at IS NULL AND started_at <= ? AND expires_at > ?
        ORDER BY expires_at DESC LIMIT 1`
     )
-    .get(siteId, now);
+    .get(siteId, now, now);
 }
 
 async function cancelMaintenance(siteId) {

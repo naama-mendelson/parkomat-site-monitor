@@ -31,13 +31,67 @@ const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:lolek@parkomat.co
 // בדיוק הסיבה שהשליחה אינה יכולה לרוץ בדפדפן.
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+
+// ============================================================
+// ⚠️ המרת המפתחות ל-JWK — שני פורמטים לאותו מפתח
+// ============================================================
+// `web-push generate-vapid-keys` מייצר **מחרוזות base64url**, ו-
+// `@negrel/webpush` מצפה ל-**JsonWebKey**. השגיאה בפועל הייתה:
+//
+//   TypeError: Failed to execute 'importKey' on 'SubtleCrypto':
+//   Argument 2 can not be converted to a dictionary
+//
+// ⚠️ והיא נראתה כמו "סוד חסר" ולא כמו "פורמט שגוי" — שלוש פעמים החלפנו
+// סודות ופרסנו מחדש לפני שראינו את השורה הזו, כי Deno החזיר
+// "Internal Server Error" בלי פירוט.
+//
+// המפתח הציבורי הוא נקודה על עקום P-256 בקידוד לא-דחוס: בייט 0x04 ואז
+// x ו-y, 32 בייט כל אחד. הפרטי הוא d — 32 בייט — וכבר base64url, ולכן
+// הוא נכנס כמו שהוא.
+function b64urlToBytes(s: string): Uint8Array {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const bin = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...bin].map((c) => c.charCodeAt(0)));
+}
+function bytesToB64url(b: Uint8Array): string {
+  // ⚠️ replaceAll עם מחרוזות ולא רג'קס: הבורחים ב-/\+/g ו-/\//g נאכלו
+  // פעמיים בהעברה דרך shell והפכו ל-/+/g ו-///g — קוד שנראה סביר ואינו
+  // מתקמפל. מחרוזת פשוטה אין בה מה לברוח.
+  return btoa(String.fromCharCode(...b))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+}
+function vapidJwk(pub: string, priv: string) {
+  const raw = b64urlToBytes(pub);
+  if (raw.length !== 65 || raw[0] !== 0x04) {
+    throw new Error("VAPID_PUBLIC_KEY אינו נקודת P-256 לא-דחוסה (65 בייט שמתחילים ב-0x04)");
+  }
+  const x = bytesToB64url(raw.slice(1, 33));
+  const y = bytesToB64url(raw.slice(33, 65));
+  return {
+    publicKey:  { kty: "EC", crv: "P-256", x, y, ext: true },
+    // ⚠️ x ו-y חייבים להופיע גם במפתח הפרטי — JWK של EC דורש את שניהם
+    // לצד d, ובלעדיהם importKey נכשל בשגיאה אחרת לגמרי.
+    privateKey: { kty: "EC", crv: "P-256", x, y, d: priv, ext: true },
+  };
+}
+
 const TITLES: Record<string, string> = {
   fault: "תקלה",
   no_comm: "ניתוק תקשורת",
   maintenance: "תחזוקה",
 };
 
+// ⚠️ **עוטף הכול ומחזיר את השגיאה בגוף התשובה.** ה-CLI בגרסה הזו אינו
+// תומך ב-`functions logs`, וללוח הבקרה אין גישה מכאן — ולכן "Internal
+// Server Error" היה קיר אטום: יודעים שנפל, לא יודעים על מה.
+//
+// ⚠️ זה בטוח כאן ואינו חושף סוד: הפונקציה נקראת מטריגר פנימי ומבדיקות
+// שלנו, לא מהדפדפן, וההודעה מתארת קוד ולא נתונים. **אם היא תיקרא אי פעם
+// מהלקוח — יש להסיר את זה**, כי הודעת שגיאה מפורטת היא מפת דרכים לתוקף.
 Deno.serve(async (req) => {
+  try {
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
   const body = await req.json().catch(() => null);
@@ -82,7 +136,7 @@ Deno.serve(async (req) => {
   const server = await webpush.ApplicationServer.new({
     contactInformation: VAPID_SUBJECT,
     vapidKeys: await webpush.importVapidKeys(
-      { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE },
+      vapidJwk(VAPID_PUBLIC, VAPID_PRIVATE),
       { extractable: false },
     ),
   });
@@ -128,4 +182,11 @@ Deno.serve(async (req) => {
   return new Response(JSON.stringify({ sent, removed: dead.length }), {
     status: 200, headers: { "content-type": "application/json" },
   });
+  } catch (e) {
+    // ⚠️ שם השגיאה **וגם** ה-stack: "TypeError" לבדו אינו אומר איפה.
+    return new Response(JSON.stringify({
+      error: String(e?.name ?? "Error") + ": " + String(e?.message ?? e),
+      where: String(e?.stack ?? "").slice(0, 300),
+    }), { status: 500, headers: { "content-type": "application/json" } });
+  }
 });

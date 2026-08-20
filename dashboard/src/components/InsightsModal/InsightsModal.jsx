@@ -8,6 +8,9 @@ import MetricCard from "../MetricCard/MetricCard";
 import BarChart from "../BarChart/BarChart";
 import DonutChart from "../DonutChart/DonutChart";
 import ActivityLog from "../ActivityLog/ActivityLog";
+// ⚠️ פרטי האתר וטופס התחזוקה — שני הדברים היחידים שהיו בפאנל הצד ולא
+// כאן. כל השאר (מדדים, זמינות, לוג) כבר היה במודאל, ולכן לא שוכפל.
+import SiteFacts from "../SiteFacts/SiteFacts";
 import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
 import Logo from "../Logo/Logo";
@@ -43,7 +46,7 @@ function fmtHours(h) {
   return `${Math.round(h * 10) / 10} שעות`;
 }
 
-function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false }) {
+function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false, maintenance = null, onRefresh = null }) {
   // ⚠️ `requested` ולא `section`: הרשימה תלויה ב-allSites (ראה sections
   // למטה), ולכן שונית שהתבקשה עשויה לא להתקיים. הערך האפקטיבי נגזר שם.
   const [requested, setSection] = useState(initialSection);
@@ -157,6 +160,16 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
             )}
 
             {/* ---------- סקירה ---------- */}
+            {/* ⚠️ **ראשון בסקירה, ולא מקטע נפרד.** "באיזה מצב האתר ומי
+                אחראי" היא השאלה הראשונה שנשאלת כשפותחים אתר — ומקטע
+                שדורש לחיצה נוספת היה משחזר בדיוק את הבעיה שהאיחוד בא לפתור.
+                ⚠️ ורק לאתר בודד: ב"כל האתרים" אין אתר יחיד לתחזק. */}
+            {section === "overview" && !allSites && (
+              <section className="insights-card">
+                <SiteFacts site={site} maintenance={maintenance} onRefresh={onRefresh} />
+              </section>
+            )}
+
             {section === "overview" && (
               <>
                 <div className="insights-kpis">

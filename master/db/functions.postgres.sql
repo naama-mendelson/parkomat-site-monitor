@@ -656,6 +656,11 @@ maint AS (
     JOIN ids ON ids.site_id = m.site_id
    WHERE m.excluded_at IS NULL
      AND m.cancelled_at IS NULL
+     -- ⚠️ **גם started_at, ולא רק expires_at.** כל עוד כל חלון התחיל מיד
+     -- הבדיקה הזו הייתה מיותרת; מרגע שאפשר לתזמן למחר, חלון עתידי היה
+     -- מסמן את האתר כבתחזוקה **עכשיו** — כלומר מוציא אותו מהמדידה יום
+     -- לפני שמישהו נגע בו.
+     AND m.started_at <= to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
      AND m.expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
    ORDER BY m.site_id, m.expires_at DESC
 )

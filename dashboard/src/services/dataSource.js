@@ -460,6 +460,9 @@ export async function fetchMaintenanceState(code) {
   const { data, error } = await supabase
     .from("maintenance_windows").select("*")
     .eq("site_id", site.id).is("cancelled_at", null)
+    // ⚠️ גם lte על started_at: חלון מתוזמן למחר אינו פעיל היום. בלי זה
+    // האתר היה מסומן כבתחזוקה מרגע התזמון — יום לפני שמישהו נגע בו.
+    .lte("started_at", new Date().toISOString())
     .gt("expires_at", new Date().toISOString())
     .order("expires_at", { ascending: false }).limit(1);
   if (error) throw new Error(error.message);
@@ -647,4 +650,27 @@ export async function verifyAdminCode(code) {
 export async function changeAdminCode(current, next) {
   if (!useDirect) return changeAdminCodeViaServer(current, next);
   return setAdminCodeDirect(current, next);
+}
+
+/**
+ * חלון תחזוקה **מתוזמן** — עם שעת התחלה וסיום מפורשות.
+ *
+ * ⚠️ **אין זרוע שרת, וזו הצהרה.** המסלול בשרת מקבל משך בלבד ומתחיל תמיד
+ * מעכשיו; תזמון לעתיד לא היה קיים שם מעולם. הוספתו הייתה בניית תכונה
+ * במסלול שהוא דלת חירום ולא יעד — ולכן הזרוע השנייה זורקת הודעה מפורשת
+ * במקום ליפול בשקט.
+ */
+export async function scheduleMaintenance(code, startAt, endAt, reason = "") {
+  if (!useDirect) {
+    throw new Error("תזמון תחזוקה זמין רק בקריאה ישירה ל-Supabase");
+  }
+  const { data, error } = await supabase.rpc("schedule_maintenance", {
+    p_site_code: String(code),
+    p_start_at: startAt,
+    p_end_at: endAt,
+    p_reason: reason || null,
+  });
+  if (error) throw new Error(error.message || "תזמון התחזוקה נכשל");
+  const row = Array.isArray(data) ? data[0] : data;
+  return { id: row?.id ?? null, startedAt: row?.started_at, expiresAt: row?.expires_at };
 }
