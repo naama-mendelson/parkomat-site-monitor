@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 // דרך המתג: במצב ישיר הדשבורד שולף שורות גולמיות מ-Supabase ומריץ עליהן
 // את **אותה** buildActivityLog שהשרת מריץ (shared/timeline.mjs).
-import { fetchActivity, markAsTest, unmarkTest } from "../../services/dataSource";
+import { fetchActivity, markAsTest, unmarkTest, reclassifyStatus } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
 import { STATUS_COLORS, STATUS_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import "./ActivityLog.css";
@@ -64,6 +64,11 @@ const FILTERS = [
   // הכללתן במונה ה"תקלות" הייתה מציגה מספר שסותר את אחוז הכשל שלידו.
   { key: "suppressed", label: "תקלות בתחזוקה" },
   { key: "status", label: "שינויי מצב" },
+  // ⚠️ **צ'יפ משלהם.** ניסוי חוצה את כל הסוגים — פעולה, תקלה, מעבר מצב —
+  // ולכן הוא שאלה על ההחלטה ולא על סוג האירוע. וזה גם המסך היחיד שמראה
+  // מה הוצא מהסטטיסטיקה; בלעדיו סימון שגוי נשאר בלתי נראה.
+  { key: "test", label: "ניסויים" },
+  { key: "reclassified", label: "סווגו מחדש" },
 ];
 
 // משך בשניות → טקסט קצר וקריא
@@ -321,6 +326,37 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
     isManager && !testBusy && e.id != null &&
     (e.kind === "operation" || e.kind === "status" || e.kind === "maintenance");
 
+  // ============================================================
+  // סיווג מחדש — תקלה שהייתה בעצם תחזוקה
+  // ============================================================
+  // ⚠️ **רק מקטע תקלה, ורק לתחזוקה.** הכיוון ההפוך (תחזוקה→תקלה) היה
+  // ממציא כשל שלא קרה, והפיכה ל'מוכן' הייתה מוחקת אירוע — ואת זה כבר
+  // עושה סימון הניסוי, שם במפורש ותחת השם הנכון.
+  //
+  // ⚠️ ושונה מניסוי בתוצאה, לא רק בשם: ניסוי מוציא את האירוע מהספירה
+  // כולה; סיווג מחדש מעביר אותו מעמודה לעמודה — הזמינות עדיין יורדת,
+  // אחוז הכשל לא. מי שהחליף מתקן באמת הוריד זמינות.
+  const canReclassify = (e) =>
+    isManager && !testBusy && e.id != null && e.kind === "status" &&
+    (e.status === "error" || Boolean(e.reclassifiedTo));
+
+  async function confirmReclassify() {
+    const e = pending;
+    if (!e) return;
+    setTestBusy(true);
+    setTestError("");
+    try {
+      // reclassifiedTo קיים ⟵ הלחיצה מבטלת. p_to=null הוא הביטול ב-SQL.
+      await reclassifyStatus(e.id, e.reclassifiedTo ? null : "maintenance");
+      setPending(null);
+      setTestBusy(false);
+      onChanged?.();
+    } catch (err) {
+      setTestError(err.message || "הפעולה נכשלה");
+      setTestBusy(false);
+    }
+  }
+
   // ⚠️ גם ביטול הסימון עובר בדיאלוג, בשונה ממה שכתבתי קודם. הלחיצה היא על
   // כל השורה, ולכן קל מאוד לפגוע בה בטעות בגלילה — ופעולה שמשנה מספרים
   // צריכה צעד אחד של כוונה לשני הכיוונים.
@@ -558,6 +594,22 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
                               })}`}
                             </span>
                           )}
+                          {/* ⚠️ **מה זה היה לפני ומי שינה** — שתי העובדות
+                              שהופכות סיווג מחדש לתיעוד ולא לתיקון מספרים
+                              בשקט. בלעדיהן השורה פשוט אומרת "תחזוקה", ואין
+                              דרך לדעת שמישהו החליט זאת אחרי המעשה. */}
+                          {e.reclassifiedTo && (
+                            <span className="alog-reclass-tag">
+                              {"היה: "}
+                              {STATUS_LABELS[e.originalStatus] || e.originalStatus || "תקלה"}
+                              {" · שונה בידי "}
+                              {e.reclassifiedBy || "—"}
+                              {e.reclassifiedAt && " · " + new Date(e.reclassifiedAt).toLocaleString("he-IL", {
+                                day: "numeric", month: "numeric",
+                                hour: "2-digit", minute: "2-digit",
+                              })}
+                            </span>
+                          )}
                         </span>
                       </div>
 
@@ -606,7 +658,11 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
             onClick={(ev) => ev.stopPropagation()}
           >
             <h3 className="alog-modal-title">
-              {pending.excludedAt ? "להחזיר את השורה לספירה?" : "לסמן את השורה כניסוי?"}
+              {/* ⚠️ כותרת ניטרלית כשיש יותר מפעולה אחת. "לסמן כניסוי?" מעל
+                  כפתור "הפוך לתחזוקה" היה שואל שאלה אחת ומציע תשובה אחרת. */}
+              {pending.excludedAt ? "להחזיר את השורה לספירה?"
+                : canReclassify(pending) ? "מה לעשות עם השורה?"
+                : "לסמן את השורה כניסוי?"}
             </h3>
 
             <div className="alog-modal-row">
@@ -634,6 +690,12 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
               <button className="alog-modal-cancel" onClick={() => setPending(null)} disabled={testBusy}>
                 בטל
               </button>
+              {/* ⚠️ לא בסגנון "מסוכן": סיווג מחדש הפיך בלחיצה אחת ואינו מוחק דבר. */}
+              {canReclassify(pending) && !pending.excludedAt && (
+                <button className="alog-modal-alt" onClick={confirmReclassify} disabled={testBusy}>
+                  {testBusy ? "רגע…" : pending.reclassifiedTo ? "החזר לתקלה" : "הפוך לתחזוקה"}
+                </button>
+              )}
               <button className="alog-modal-ok" onClick={confirmTest} disabled={testBusy}>
                 {testBusy ? "רגע…" : pending.excludedAt ? "החזר לספירה" : "סמן כניסוי"}
               </button>

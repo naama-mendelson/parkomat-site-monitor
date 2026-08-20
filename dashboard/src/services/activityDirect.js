@@ -70,7 +70,7 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
     pageAll((a, b) => scoped(
       supabase
         .from("status_history")
-        .select("id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by, sites(site_name)")
+        .select("id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by, reclassified_to, reclassified_by, reclassified_at, sites(site_name)")
         .gte("started_at", from).lt("started_at", to)
         .order("started_at", { ascending: false })
         .range(a, b)

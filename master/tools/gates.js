@@ -39,6 +39,9 @@ const GATES = [
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
   { name: "check-permissions",  what: "מי מורשה למה — מקצה לקצה" },
   { name: "check-writes",       what: "כתיבה ישירה ל-Supabase, בלי השרת" },
+  // ⚠️ .mjs ולא .js: הוא מייבא את shared/timeline.mjs — אותו מודול עצמו
+  // שהוא בא לבדוק. עותק שני של הלוגיקה כאן היה בודק את העותק, לא את הקוד.
+  { name: "check-reclass",      what: "סיווג מחדש — מוחל לפני החישוב", file: "check-reclass.mjs" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 
@@ -50,7 +53,8 @@ const results = [];
 
 for (const g of GATES) {
   const args = g.noEnv ? [] : ["--env-file=.env"];
-  const r = spawnSync(process.execPath, [...args, path.join(__dirname, `${g.name}.js`)], {
+  // g.file — לשער שאינו .js. ראה check-reclass: הוא מייבא מודול ESM.
+  const r = spawnSync(process.execPath, [...args, path.join(__dirname, g.file || `${g.name}.js`)], {
     cwd: path.join(__dirname, ".."),
     encoding: "utf8",
   });

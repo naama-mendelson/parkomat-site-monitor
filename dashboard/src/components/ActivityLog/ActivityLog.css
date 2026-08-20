@@ -511,3 +511,36 @@
   }
 
 }
+
+/* ===== סיווג מחדש ===== */
+
+/* ⚠️ ענבר — צבע התחזוקה בכל המערכת, כי זה מה שהשורה **הפכה** להיות.
+   צבע ניטרלי כאן היה מנתק את התג מהשורה שהוא מתאר. והוא נבדל מתג
+   הניסוי בכוונה: שתי החלטות שונות, לא וריאציה של אותה אחת. */
+.alog-reclass-tag {
+  display: inline-block;
+  margin-inline-start: 0.45rem;
+  padding: 0.08rem 0.42rem;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  color: var(--status-maintenance, #f59e0b);
+  background: rgba(245, 158, 11, 0.13);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+}
+
+/* כפתור שלישי בדיאלוג — לא ראשי ולא ביטול. */
+.alog-modal-alt {
+  padding: 0.5rem 0.95rem;
+  border-radius: 9px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--status-maintenance, #f59e0b);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.alog-modal-alt:hover:not(:disabled) { filter: brightness(1.1); }
+.alog-modal-alt:disabled { opacity: 0.55; cursor: progress; }

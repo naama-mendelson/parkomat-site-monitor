@@ -61,7 +61,7 @@ import { fetchExecutiveDirect } from "./executiveDirect";
 import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
-import { markAsTestDirect, unmarkTestDirect } from "./reportsDirect";
+import { markAsTestDirect, unmarkTestDirect, reclassifyStatusDirect } from "./reportsDirect";
 import {
   inviteUser as inviteUserViaServer,
   deleteUser as deleteUserViaServer,
@@ -607,6 +607,17 @@ export async function unmarkTest(kind, id) {
     throw new Error("ביטול סימון ניסוי זמין רק בקריאה ישירה ל-Supabase");
   }
   return unmarkTestDirect(kind, id);
+}
+
+// ⚠️ **זרוע אחת, מאותו נימוק בדיוק כמו סימון הניסוי** — הכלל "מנהל בלבד"
+// חי ב-app.is_manager() שקורא תפקיד מאומת. מסלול שרת היה מגן עליו ב-
+// admin123 שערכו בקוד הפתוח, כלומר מחליש דווקא את הפעולה שמזיזה את
+// אחוז הכשל. וגם כאן — זריקה מפורשת ולא נפילה שקטה.
+export async function reclassifyStatus(id, to = "maintenance") {
+  if (!useDirect) {
+    throw new Error("סיווג מחדש זמין רק בקריאה ישירה ל-Supabase (VITE_SUPABASE_DIRECT=true)");
+  }
+  return reclassifyStatusDirect(id, to);
 }
 
 

@@ -629,7 +629,7 @@ async function getSiteStats(siteId, { from = null, to = null } = {}) {
     ).all(siteId, rangeTo, rangeFrom),
 
     db.prepare(
-      `SELECT site_id, status, started_at, ended_at
+      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at
        FROM status_history
        WHERE site_id = ? AND status = 'maintenance'
          AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
@@ -1147,7 +1147,7 @@ async function getSiteInsights(siteId, { from, to }) {
     // *כל* המצבים, לא רק error/maintenance — חייבים גם את מקטעי ה-no_comm כדי
     // לזהות המשכיות (`X → no_comm → X`). ומיון כרונולוגי, כי הקיפול תלוי בסדר.
     db.prepare(
-      `SELECT site_id, status, started_at, ended_at FROM status_history
+      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at FROM status_history
        WHERE site_id = ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)
        ORDER BY started_at ASC`
     ).all(siteId, to, from),
@@ -1189,7 +1189,7 @@ async function getGlobalInsights({ from, to }) {
     // collapseSegmentsBySite; רשימה מעורבת הייתה מקפלת מקטעים של אתרים שונים
     // זה לתוך זה.
     db.prepare(
-      `SELECT site_id, status, started_at, ended_at FROM status_history
+      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at FROM status_history
        WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
        ORDER BY site_id ASC, started_at ASC`
     ).all(to, from),
@@ -1284,7 +1284,8 @@ async function getActivityLog(siteId, { from, to, limit = 300, offset = 0, filte
       // site_id נשלף גם באתר בודד: buildActivityLog מצמיד מצבים לפעולות
       // *לפי אתר*, ואם צד אחד מחזיר site_id והשני לא — ההצמדה לא תתפוס אף
       // פעם, וכל שינוי מצב ייראה יתום.
-      `SELECT id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by FROM status_history
+      `SELECT id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by,
+              reclassified_to, reclassified_by, reclassified_at FROM status_history
        WHERE site_id = ? AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC LIMIT ?`
     ).all(siteId, from, to, LOG_FETCH_CAP),

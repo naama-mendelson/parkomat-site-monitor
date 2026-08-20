@@ -1037,3 +1037,64 @@ $fn$;
 
 REVOKE ALL ON FUNCTION public.schedule_maintenance(text, timestamptz, timestamptz, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.schedule_maintenance(text, timestamptz, timestamptz, text) TO authenticated;
+
+-- ============================================================
+-- סיווג מחדש של תקלה לתחזוקה
+-- ============================================================
+-- ⚠️ **הסטטוס המקורי אינו נמחק.** `status` נשאר 'error' לנצח, ו-
+-- `reclassified_to` הוא שכבה מעליו. זו הדרישה המפורשת: לראות **מה זה היה
+-- לפני** ומי שינה — ו-UPDATE על status היה מוחק בדיוק את זה.
+--
+-- ⚠️ ולכן כל מדד חייב לקרוא `COALESCE(reclassified_to, status)`. שכחה
+-- באחד מהם פירושה שהמסך אומר "תחזוקה" והזמינות סופרת תקלה — שני מספרים
+-- לאותו אירוע, וזה הכשל שקשה ביותר לאתר.
+--
+-- ⚠️ ורק ל'maintenance': הפיכת תקלה ל'מוכן' הייתה **מוחקת אירוע** במקום
+-- לסווגו מחדש, ואת זה כבר עושה סימון הניסוי — שם זה מפורש.
+CREATE OR REPLACE FUNCTION public.reclassify_status(p_id integer, p_to text)
+RETURNS TABLE (id integer, was text, now_is text, by_name text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_name text := app.actor_display_name();
+  v_row  record;
+BEGIN
+  -- ⚠️ **מנהל בלבד.** בשונה מפתיחת תחזוקה, שהיא ייחוס-במקום-מנע, כאן
+  -- משנים אירוע שכבר נרשם — והשינוי מוריד תקלה מאחוז הכשל.
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT * INTO v_row FROM status_history WHERE status_history.id = p_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'השורה לא נמצאה' USING ERRCODE = 'PT404';
+  END IF;
+
+  -- p_to = NULL מבטל את הסיווג ומחזיר למקור.
+  IF p_to IS NOT NULL AND p_to <> 'maintenance' THEN
+    RAISE EXCEPTION 'ניתן לסווג מחדש רק לתחזוקה' USING ERRCODE = 'check_violation';
+  END IF;
+  IF p_to IS NOT NULL AND v_row.status <> 'error' THEN
+    RAISE EXCEPTION 'רק מקטע תקלה ניתן לסיווג מחדש' USING ERRCODE = 'check_violation';
+  END IF;
+
+  UPDATE status_history SET
+    reclassified_to = p_to,
+    reclassified_by = CASE WHEN p_to IS NULL THEN NULL ELSE v_name END,
+    reclassified_at = CASE WHEN p_to IS NULL THEN NULL
+      ELSE to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END
+  WHERE status_history.id = p_id;
+
+  PERFORM app.record_write_audit(
+    CASE WHEN p_to IS NULL THEN 'status.reclassify-undo' ELSE 'status.reclassify' END,
+    v_name, 'manager', 'status', p_id::text,
+    jsonb_build_object('was', v_row.status, 'to', p_to, 'at', v_row.started_at));
+
+  RETURN QUERY SELECT p_id, v_row.status, COALESCE(p_to, v_row.status), v_name;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.reclassify_status(integer, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.reclassify_status(integer, text) TO authenticated;

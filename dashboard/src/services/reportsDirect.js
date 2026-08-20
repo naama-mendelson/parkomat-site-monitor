@@ -66,3 +66,26 @@ export async function unmarkTestDirect(kind, id) {
   if (error) throw new Error(messageFor(error));
   return { kind, id };
 }
+
+// ============================================================
+// סיווג מחדש — תקלה שהייתה בעצם תחזוקה
+// ============================================================
+// ⚠️ **שכבה מעל, לא מחיקה.** `status` נשאר 'error' בבסיס הנתונים לנצח;
+// `reclassified_to` מכסה עליו בקריאה. זו הדרישה המפורשת — לראות מה זה
+// היה לפני ומי שינה — ו-UPDATE על השדה המקורי היה מוחק בדיוק את זה.
+//
+// ⚠️ ולכן זה **שונה מסימון ניסוי**: ניסוי מוציא אירוע מהספירה, סיווג
+// מחדש מעביר אותו מעמודה לעמודה. תקלה שסווגה כתחזוקה עדיין מורידה
+// זמינות — היא פשוט מפסיקה להיספר כתקלה. שתי פעולות, שתי משמעויות.
+export async function reclassifyStatusDirect(id, to = "maintenance") {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+
+  const { data, error } = await supabase.rpc("reclassify_status", {
+    p_id: Number(id),
+    p_to: to === null ? null : String(to),
+  });
+  if (error) throw new Error(messageFor(error));
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return { id: row?.id ?? id, was: row?.was ?? null, now: row?.now_is ?? null, by: row?.by_name ?? null };
+}

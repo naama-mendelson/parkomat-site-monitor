@@ -116,7 +116,13 @@ ok AS (SELECT *, (w_to > w_from) AS valid FROM bounds),
 clipped AS (
   SELECT
     h.site_id,
-    h.status,
+    -- ⚠️ **הסטטוס האפקטיבי, לא הגולמי.** מנהל יכול לסווג תקלה מחדש
+    -- כתחזוקה (reclassify_status), והמקור נשמר ב-status לנצח. כל מדד
+    -- חייב לקרוא את התוצאה — אחרת המסך אומר "תחזוקה" והזמינות סופרת
+    -- תקלה, שני מספרים לאותו אירוע.
+    -- ⚠️ והתיקון כאן ולא בלוגיקה: השאילתה מחזירה את הערך הנכון, ולכן
+    -- אף חישוב במורד הזרם לא צריך להשתנות — לא ב-SQL ולא ב-JS.
+    COALESCE(h.reclassified_to, h.status) AS status,
     GREATEST(h.started_at::timestamptz, o.w_from::timestamptz) AS seg_start,
     LEAST(COALESCE(h.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end,
     -- ⚠️ החותם ה**גולמי**, לא החתוך. סיווג "תפעול תקלה" נשען על התאמה
@@ -380,7 +386,14 @@ LANGUAGE sql
 STABLE
 AS $$
 WITH src AS (
-  SELECT h.id, h.site_id, h.status, h.started_at, h.ended_at, h.excluded_at
+  -- ⚠️ **הסטטוס האפקטיבי, לא הגולמי.** מנהל יכול לסווג תקלה מחדש
+  -- כתחזוקה (reclassify_status), והמקור נשמר ב-status לנצח. כל מדד
+  -- חייב לקרוא את התוצאה — אחרת המסך אומר "תחזוקה" והזמינות סופרת
+  -- תקלה, שני מספרים לאותו אירוע.
+  -- ⚠️ והתיקון כאן ולא בלוגיקה: השאילתה מחזירה את הערך הנכון, ולכן
+  -- אף חישוב במורד הזרם לא צריך להשתנות — לא ב-SQL ולא ב-JS.
+  SELECT h.id, h.site_id, COALESCE(h.reclassified_to, h.status) AS status,
+         h.started_at, h.ended_at, h.excluded_at
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      -- שתי ההשוואות על TEXT — האינדקס נשאר בשימוש. ה-look-back מתקבל
