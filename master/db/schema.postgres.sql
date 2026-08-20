@@ -307,6 +307,47 @@ END
 $$;
 
 -- ============================================================
+-- ⚠️ עמודות שנוספו אחרי הקמת הטבלאות — והיו חסרות מהקובץ הזה
+-- ============================================================
+-- **הן קיימות בייצור ולא היו קיימות כאן.** הן נוספו ביד, בהרצה חיה, ואיש
+-- לא החזיר את ה-DDL לקובץ. התוצאה: בסיס נתונים חדש — בסיס הבדיקות, או כל
+-- מופע שיוקם בעתיד — נוצר בלעדיהן, ו-db.init() נופל מיד אחר כך על
+-- functions.postgres.sql שקורא `h.excluded_at` ו-`h.reclassified_to`.
+-- כלומר השרת לא עולה בכלל, והשגיאה מצביעה על הפונקציה ולא על הסיבה.
+--
+-- ⚠️ וזה סותר את הכלל שהקובץ הזה בנוי עליו: **הקובץ הוא מצב היעד.** מרגע
+-- שיש עמודה בייצור שאינה כאן, "להריץ את הקובץ" כבר לא מייצר את המערכת.
+--
+-- ADD COLUMN IF NOT EXISTS — בייצור זו פעולת ריק, ואינה כותבת מחדש את
+-- הטבלה (עמודה בלי DEFAULT אינה מחייבת rewrite).
+ALTER TABLE status_history
+  ADD COLUMN IF NOT EXISTS fault_text        TEXT,   -- תיאור התקלה מהבקר. NULL = לא נקרא, '' = נקרא וריק
+  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,   -- סומן כניסוי — ואינו נספר באף מדד
+  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT,
+  -- סיווג מחדש: שכבה מעל `status`, שנשאר המקור לנצח.
+  ADD COLUMN IF NOT EXISTS reclassified_to   TEXT,
+  ADD COLUMN IF NOT EXISTS reclassified_by   TEXT,
+  ADD COLUMN IF NOT EXISTS reclassified_at   TEXT;
+
+ALTER TABLE operations
+  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
+  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+
+ALTER TABLE maintenance_windows
+  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
+  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+
+-- ⚠️ **רק 'maintenance'.** הפיכת תקלה ל'מוכן' הייתה מוחקת אירוע במקום
+-- לסווגו מחדש — ואת זה כבר עושה סימון הניסוי, שם במפורש ותחת השם הנכון.
+-- ה-DROP לפני ה-ADD הוא מה שהופך את זה לניתן להרצה חוזרת.
+ALTER TABLE status_history DROP CONSTRAINT IF EXISTS status_history_reclass_chk;
+ALTER TABLE status_history ADD CONSTRAINT status_history_reclass_chk
+  CHECK (reclassified_to IS NULL OR reclassified_to = 'maintenance');
+
+-- ============================================================
 -- ⚠️ ON DELETE SET NULL על שני ה-FK הפנימיים — בלעדיו אין מחיקה
 -- ============================================================
 -- `created_by` ו-`disabled_by` מצביעים ל-`app_users(id)` **בתוך אותה
