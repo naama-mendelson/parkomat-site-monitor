@@ -514,7 +514,7 @@
     padding: 0;
     font-size: 1.4em;
     /* משטח קל — כפתור בלי גבול על רקע לבן נקרא כטקסט ולא כיעד לחיצה. */
-    background: var(--surface-2, rgba(128, 128, 128, 0.1));
+    background: var(--bg-hover);
     border-radius: 10px;
   }
 }

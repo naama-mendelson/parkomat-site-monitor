@@ -87,6 +87,13 @@ function PushSettings({ onClose }) {
     await supabase.from("push_user_types").insert(rows).catch((e) => setErr(e.message));
   }
 
+  // ⚠️ שומר את הסירוב **ואז** סוגר. הסדר ההפוך היה מאבד אותו אם הסגירה
+  // מפרקת את הרכיב לפני שהכתיבה הסתיימה.
+  function decline() {
+    try { localStorage.setItem("push-declined", "1"); } catch { /* מצב פרטי */ }
+    onClose();
+  }
+
   const on = perm === "granted";
 
   return (
@@ -142,6 +149,15 @@ function PushSettings({ onClose }) {
                     onClick={on ? disable : enable} disabled={busy}>
               {busy ? "רגע…" : on ? "כבה התראות במכשיר הזה" : "הפעל התראות"}
             </button>
+
+            {/* ⚠️ **סירוב מפורש, ולא סגירה.** בלי הכפתור הזה אין דרך לומר
+                "לא" — וסגירת החלון אינה החלטה, ולכן ההזמנה תחזור בפתיחה
+                הבאה. מי שלא רוצה חייב מקום לומר זאת פעם אחת. */}
+            {!on && (
+              <button className="pushset-decline" onClick={decline} disabled={busy}>
+                לא, תודה — אל תשאלו שוב
+              </button>
+            )}
 
             {on && (
               <>

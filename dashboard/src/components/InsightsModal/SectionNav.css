@@ -86,8 +86,8 @@
     border-radius: 10px;
     font-size: 0.95rem;
     color: inherit;
-    background: var(--surface-2, rgba(128, 128, 128, 0.1));
-    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    background: var(--bg-hover);
+    border: 1px solid var(--border-color);
     cursor: pointer;
   }
 

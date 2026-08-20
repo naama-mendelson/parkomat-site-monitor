@@ -243,7 +243,7 @@
   font-size: 0.72em;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--surface-2, rgba(148, 163, 184, 0.14));
+  background: var(--bg-hover);
   border-radius: 999px;
   padding: 1px 8px;
   white-space: nowrap;
@@ -308,7 +308,7 @@
 .alog-item.is-test { opacity: 0.6; }
 
 .alog-item.is-clickable { cursor: pointer; }
-.alog-item.is-clickable:hover { background: var(--surface-2, rgba(128,128,128,0.08)); }
+.alog-item.is-clickable:hover { background: var(--bg-hover); }
 
 .alog-test-tag {
   display: inline-block;
@@ -320,8 +320,8 @@
      דחף את השורה לגלישה אופקית של כל הלוג. הוא יורד שורה במקום. */
   white-space: normal;
   max-width: 100%;
-  background: var(--surface-2, rgba(128, 128, 128, 0.16));
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
 }
 
 /* ============================================================
@@ -345,9 +345,9 @@
   width: min(30rem, 100%);
   padding: 1.25rem 1.35rem;
   border-radius: 14px;
-  background: var(--surface, #fff);
-  color: var(--text, inherit);
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 
@@ -360,8 +360,8 @@
   align-items: flex-start;
   padding: 0.7rem 0.8rem;
   border-radius: 10px;
-  background: var(--surface-2, rgba(128, 128, 128, 0.09));
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.22));
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
 }
 
 .alog-modal-dot {
@@ -403,12 +403,12 @@
 .alog-modal-cancel {
   color: inherit;
   background: transparent;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.4));
+  border: 1px solid var(--border-color);
 }
 
 .alog-modal-ok {
   color: #fff;
-  background: var(--accent, #0b6b63);
+  background: var(--brand);
   border: 1px solid transparent;
 }
 
@@ -462,8 +462,8 @@
     border-radius: 10px;
     font-size: 0.95rem;
     color: inherit;
-    background: var(--surface-2, rgba(128, 128, 128, 0.1));
-    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    background: var(--bg-hover);
+    border: 1px solid var(--border-color);
     cursor: pointer;
   }
 

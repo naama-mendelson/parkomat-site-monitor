@@ -80,7 +80,13 @@ function Header({
     if (!isInstalledApp()) return;
     // רק מי שטרם נשאל. "denied" ו-"granted" אינם מקרה להזמנה.
     if (Notification.permission !== "default") return;
-    if (localStorage.getItem("push-invited") === "1") return;
+    // ⚠️ **חוזר עד שיש החלטה, ולא פעם אחת.** קודם סימנתי "הוזמן" וזהו —
+    // אבל מי שסגר את החלון בלי לבחור פשוט לא קיבל התראות ולא ידע למה.
+    // עכשיו נשמרת רק **החלטה מפורשת**: אישור, או "לא, תודה".
+    //
+    // ⚠️ וזה בטוח: Notification.permission נשאר 'default' כל עוד לא נשאל,
+    // ולכן מי שאישר או חסם כבר יצא בשומר שמעל ואינו רואה את זה שוב.
+    if (localStorage.getItem("push-declined") === "1") return;
 
     // ============================================================
     // ⚠️ מי שכבר מחובר — נשאל **מיד**, ולא בכניסה השנייה
@@ -99,7 +105,6 @@ function Header({
     localStorage.setItem("visit-count", String(visits));
     if (!returning && visits < 2) return;
 
-    localStorage.setItem("push-invited", "1");
     // ⚠️ השהיה קצרה: פאנל שנפתח באותו רגע שהמסך נטען נקרא כתקלה, לא
     // כהצעה — והמשתמשת סוגרת אותו לפני שקראה.
     const t = setTimeout(() => setPushOpen(true), 1500);
