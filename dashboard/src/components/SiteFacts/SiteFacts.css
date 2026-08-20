@@ -1,55 +1,246 @@
 /* SiteFacts — פרטי האתר וטופס התחזוקה בתוך הפירוט המלא.
-   ⚠️ צבעים משמות המשתנים האמיתיים של theme.css. שמות מומצאים נופלים
-   לברירה ומייצרים לבן-על-בהיר — זה כבר קרה כאן פעם אחת. */
+ *
+ * ⚠️ צבעים משמות המשתנים האמיתיים של theme.css (--bg-card, --border-color,
+ * --text-primary, --brand). שמות מומצאים נופלים לברירת המחדל ומייצרים
+ * לבן-על-בהיר — זה כבר קרה כאן פעם אחת.
+ */
+
 .facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1rem;
+  align-items: start;
 }
 
 .facts-block {
-  padding: 0.9rem 1rem;
-  border-radius: 10px;
+  padding: 1.1rem 1.15rem;
+  border-radius: 14px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
+  box-shadow: var(--shadow);
 }
 
-.facts-block h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+.facts-block h3 {
+  margin: 0 0 0.85rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* פס מותג לפני הכותרת — מחבר את הבלוק לשאר המסך בלי להוסיף רעש. */
+.facts-block h3::before {
+  content: "";
+  width: 3px;
+  height: 1em;
+  border-radius: 2px;
+  background: var(--brand);
+}
 
 .facts-row {
   display: flex;
   justify-content: space-between;
   gap: 0.8rem;
-  padding: 0.32rem 0;
+  padding: 0.42rem 0;
   font-size: 0.92rem;
   border-block-end: 1px solid var(--border-color);
 }
-.facts-row:last-child { border-block-end: none; }
-.facts-label { color: var(--text-muted); }
 
-.facts-note {
-  margin: 0.6rem 0 0;
-  font-size: 0.85rem;
-  line-height: 1.5;
+.facts-row:last-child {
+  border-block-end: none;
+}
+
+.facts-label {
   color: var(--text-muted);
 }
 
-.facts-maint-form { display: flex; flex-direction: column; gap: 0.5rem; }
-.facts-input, .facts-hours {
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
+.facts-note {
+  margin: 0.7rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 9px;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+/* ===== טופס התחזוקה ===== */
+
+.facts-maint-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* ⚠️ שדות וכפתור בגובה אחיד. גבהים שונים בטור אחד הם מה שגורם לטופס
+   להיראות "לא מיושר" בלי שאפשר להצביע על מה בדיוק. */
+.facts-input,
+.facts-hours,
+.facts-maint-form select {
+  height: 42px;
+  padding: 0 0.7rem;
+  border-radius: 10px;
   font-size: 0.95rem;
+  font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.facts-duration { display: flex; align-items: center; gap: 0.5rem; }
-.facts-hours { width: 5.5rem; }
-.facts-unit { font-size: 0.9rem; color: var(--text-muted); }
-.facts-maint-active p { margin: 0 0 0.6rem; font-size: 0.92rem; line-height: 1.6; }
+
+.facts-input:focus,
+.facts-hours:focus,
+.facts-maint-form select:focus {
+  outline: none;
+  border-color: var(--brand);
+  /* טבעת עדינה במקום outline של הדפדפן — הוא נחתך בפינות מעוגלות. */
+  box-shadow: 0 0 0 3px rgba(14, 65, 148, 0.18);
+}
+
+.facts-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ⚠️ חץ משלנו: appearance: none מסיר את חץ ברירת המחדל, ובלי תחליף
+   ה-select נראה כמו שדה טקסט — ואיש לא יידע שאפשר לבחור בו. */
+.facts-maint-form select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+                    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: left 1rem center, left 0.7rem center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-inline-start: 2rem;
+  cursor: pointer;
+}
+
+.facts-duration {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.facts-hours {
+  flex: 1;
+  min-width: 0;
+}
+
+.facts-unit {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ===== יחידה בתוך השדה ===== */
+
+.facts-field {
+  position: relative;
+  display: flex;
+}
+
+.facts-field .facts-input {
+  width: 100%;
+  /* מקום ליחידה בקצה הפותח. ⚠️ padding-inline-end ולא -left: הדף RTL,
+     והמאפיין הלוגי הוא מה שמציב את זה נכון גם אם המסך יתהפך. */
+  padding-inline-end: 3.4rem;
+}
+
+.facts-suffix {
+  position: absolute;
+  inset-inline-end: 0.85rem;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  /* ⚠️ **חובה.** בלעדיו לחיצה על "שעות" נבלעת בטקסט במקום להתמקד בשדה,
+     והמשתמשת מקישה ולא קורה כלום. */
+  pointer-events: none;
+}
+
+/* ⚠️ החצים של type=number נדחפים מתחת ליחידה ומסתירים אותה. הם מיותרים
+   כאן ממילא — יש min ו-step, וההקלדה ישירה. */
+.facts-field .facts-hours::-webkit-outer-spin-button,
+.facts-field .facts-hours::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.facts-field .facts-hours {
+  appearance: textfield;
+}
+
+.facts-maint-form .btn,
+.facts-maint-active .btn {
+  height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 0.97rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.05s;
+}
+
+.facts-maint-form .btn-primary {
+  color: var(--brand-on);
+  background: var(--brand);
+}
+
+.facts-maint-form .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.facts-maint-form .btn:active:not(:disabled),
+.facts-maint-active .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.facts-maint-form .btn:disabled,
+.facts-maint-active .btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+/* ===== מצב פעיל ===== */
+
+/* ⚠️ ענבר — צבע התחזוקה בכל המערכת. צבע אחר כאן היה מנתק את הכרטיס
+   מהפאנל: אותו מצב, שני צבעים. */
+.facts-maint-active {
+  padding: 0.8rem 0.9rem;
+  border-radius: 11px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+}
+
+.facts-maint-active p {
+  margin: 0 0 0.7rem;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.facts-maint-active .btn-danger {
+  width: 100%;
+  color: #ffffff;
+  background: var(--status-error);
+}
+
+.facts-maint-active .btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 
 /* ⚠️ יעד מגע בטלפון — אותו מינימום כמו בשאר המסך. */
 @media (max-width: 640px) {
-  .facts { grid-template-columns: 1fr; }
-  .facts-input, .facts-hours, .facts-maint-form .btn { min-height: 44px; }
+  .facts {
+    grid-template-columns: 1fr;
+  }
+
+  .facts-input,
+  .facts-hours,
+  .facts-maint-form select {
+    height: 46px;
+  }
+
+  .facts-maint-form .btn,
+  .facts-maint-active .btn {
+    height: 48px;
+  }
 }

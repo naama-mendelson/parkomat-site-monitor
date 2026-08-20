@@ -182,16 +182,18 @@ function SiteFacts({ site, maintenance, onRefresh }) {
               <option value="scheduled">מתוזמן</option>
             </select>
 
+            {/* ⚠️ "שעות" **בתוך** השדה ולא לצידו: תווית חיצונית נראית
+                כשדה נוסף בטור, והטופס כולו הוא טור אחד. */}
             {mode === "now" ? (
-              <div className="facts-duration">
+              <div className="facts-field">
                 <input
                   type="number" min="0.5" step="0.5"
                   value={maintHours}
                   onChange={(e) => setMaintHours(Number(e.target.value))}
-                  className="facts-hours"
+                  className="facts-input facts-hours"
                   aria-label="משך תחזוקה בשעות"
                 />
-                <span className="facts-unit">שעות</span>
+                <span className="facts-suffix" aria-hidden="true">שעות</span>
               </div>
             ) : (
               <>
