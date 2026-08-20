@@ -78,3 +78,53 @@
   border: 1px solid var(--border-color);
 }
 .pushset-decline:disabled { opacity: 0.6; }
+
+/* ============================================================
+   בטלפון — מסך מלא, לא חלון
+   ============================================================
+   ⚠️ חלון צף בטלפון נראה כמו משהו שנפתח בטעות, וקל לסגור אותו בלי לקרוא.
+   ההחלטה כאן היא חד-פעמית ובלתי-הפיכה מבחינת הדפדפן (מי שיחסום לא יישאל
+   שוב לעולם), ולכן היא ראויה למסך מלא — לא לפינה.
+
+   ⚠️ **וצבעים מפורשים, בלי נפילת-ברירה.** הגרסה הראשונה השתמשה במשתנים
+   שאינם קיימים בפרויקט (--surface, --text), וכל אחד מהם נפל לברירה:
+   רקע לבן וטקסט **שיורש** מההורה. במצב כהה יצא לבן-על-בהיר — בלתי קריא.
+   כאן שני הצבעים נקבעים יחד, תמיד. */
+@media (max-width: 640px) {
+  .pushset-back {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .pushset {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    min-height: 100dvh;   /* dvh ולא vh: שורת הכתובת בטלפון גוזלת גובה */
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 1.25rem 1.1rem calc(1.25rem + env(safe-area-inset-bottom));
+    padding-block-start: calc(1.25rem + env(safe-area-inset-top));
+    background: var(--bg-card);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* הכותרת נשארת למעלה, והתוכן גולל תחתיה. */
+  .pushset-head {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    padding-block-end: 0.6rem;
+    background: var(--bg-card);
+  }
+
+  .pushset-head h3 { font-size: 1.2rem; }
+
+  /* ⚠️ הכפתורים נדבקים לתחתית: במסך מלא הם היו נעלמים מתחת לקצה ברשימת
+     אתרים ארוכה, והמשתמשת הייתה מגלה שאין מה ללחוץ. */
+  .pushset-main { min-height: 50px; font-size: 1.05rem; }
+  .pushset-decline { min-height: 46px; }
+}
