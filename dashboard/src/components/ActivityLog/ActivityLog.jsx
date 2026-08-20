@@ -678,12 +678,6 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
               </div>
             </div>
 
-            <p className="alog-modal-note">
-              {pending.excludedAt
-                ? "השורה תיספר שוב באחוז הכשל, בזמינות ובמונה הפעולות."
-                : "השורה תישאר בלוג ותסומן כניסוי, ולא תיספר באחוז הכשל, בזמינות או במונה הפעולות."}
-            </p>
-
             {testError && <p className="alog-modal-error">{testError}</p>}
 
             <div className="alog-modal-actions">
