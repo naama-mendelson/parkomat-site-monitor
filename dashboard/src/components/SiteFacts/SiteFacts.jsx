@@ -38,7 +38,7 @@ function SiteFacts({ site, maintenance, onRefresh }) {
   const [maintHours, setMaintHours] = useState(2);
   const [busy, setBusy] = useState(false);
 
-  // ⚠️ "מעכשיו" הוא ברירת המחדל, וזה לא שרירותי: זה המקרה הנפוץ — טכנאי
+  // ⚠️ "מיד" הוא ברירת המחדל, וזה לא שרירותי: זה המקרה הנפוץ — טכנאי
   // שעומד באתר. תזמון הוא התכנון המראש, והוא הפחות שכיח.
   const [mode, setMode] = useState("now");
   // ברירת מחדל היום, כפי שהתבקש. toLocaleDateString("sv") מחזיר
@@ -178,7 +178,7 @@ function SiteFacts({ site, maintenance, onRefresh }) {
               onChange={(e) => setMode(e.target.value)}
               aria-label="מתי"
             >
-              <option value="now">מעכשיו</option>
+              <option value="now">מיד</option>
               <option value="scheduled">מתוזמן</option>
             </select>
 
