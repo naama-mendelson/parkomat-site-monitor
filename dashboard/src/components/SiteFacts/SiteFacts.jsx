@@ -172,15 +172,21 @@ function SiteFacts({ site, maintenance, onRefresh }) {
               className="facts-input"
             />
 
-            <select
-              className="facts-input"
-              value={mode}
-              onChange={(e) => setMode(e.target.value)}
-              aria-label="מתי"
-            >
-              <option value="now">מיד</option>
-              <option value="scheduled">מתוזמן</option>
-            </select>
+            {/* ⚠️ **עטיפה, כי ל-select אין ::after.** החץ חייב להיות
+                פסאודו-אלמנט של ההורה — וזה מה שמאפשר לו לקחת את צבעו
+                מ-var(--brand) במקום להיות תמונה בצבע קבוע שנעלמת
+                באחת משתי ערכות הנושא. */}
+            <div className="facts-select">
+              <select
+                className="facts-input"
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                aria-label="מתי"
+              >
+                <option value="now">מיד</option>
+                <option value="scheduled">מתוזמן</option>
+              </select>
+            </div>
 
             {/* ⚠️ "שעות" **בתוך** השדה ולא לצידו: תווית חיצונית נראית
                 כשדה נוסף בטור, והטופס כולו הוא טור אחד. */}

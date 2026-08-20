@@ -101,17 +101,59 @@
   color: var(--text-muted);
 }
 
-/* ⚠️ חץ משלנו: appearance: none מסיר את חץ ברירת המחדל, ובלי תחליף
-   ה-select נראה כמו שדה טקסט — ואיש לא יידע שאפשר לבחור בו. */
+/* ===== ה-select נראה כמו select ===== */
+
+/* ⚠️ **כאן היו שני linear-gradient שהרכיבו משולש בן 5 פיקסלים.** על המסך
+   זה יצא סימן זעיר ומעוקם בפינה — לא חץ, ובוודאי לא רמז שאפשר לבחור.
+   appearance: none מסיר את חץ ברירת המחדל, ומה שבא במקומו חייב להיות
+   ברור לפחות כמוהו. */
 .facts-maint-form select {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
-                    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-  background-position: left 1rem center, left 0.7rem center;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-  padding-inline-start: 2rem;
   cursor: pointer;
+  width: 100%;
+  /* מקום לאזור החץ, מעבר לקו המפריד. */
+  padding-inline-start: 2.9rem;
+}
+
+.facts-select {
+  position: relative;
+  display: flex;
+}
+
+/* ⚠️ משולש אמיתי מ-border ולא תמונה: כך הוא לוקח את צבעו
+   מ-var(--brand), ונשאר גלוי גם בערכה הבהירה וגם בכהה. data-URI של SVG
+   אינו יכול לקרוא משתני CSS — הצבע היה נצרב, ונעלם באחת מהשתיים. */
+.facts-select::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 1.1rem;
+  inset-block-start: 50%;
+  margin-block-start: -2px;
+  width: 0;
+  height: 0;
+  border-inline: 5px solid transparent;
+  border-block-start: 6px solid var(--brand);
+  /* ⚠️ **חובה.** בלי זה לחיצה בדיוק על החץ — המקום שאליו העין מכוונת —
+     נבלעת בפסאודו-אלמנט והרשימה לא נפתחת. אותו לקח כמו ב-facts-suffix. */
+  pointer-events: none;
+}
+
+/* קו מפריד שהופך את הקצה ל"אזור בחירה". זה מה שמבדיל ויזואלית select
+   משדה טקסט עוד לפני שמסתכלים על החץ עצמו. */
+.facts-select::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 2.35rem;
+  inset-block: 9px;
+  width: 1px;
+  background: var(--border-color);
+  pointer-events: none;
+}
+
+/* הקצה נצבע קלות — רמז נוסף שזה כפתור פתיחה ולא רק טקסט. */
+.facts-select:hover::after {
+  border-block-start-color: var(--brand);
+  filter: brightness(1.25);
 }
 
 .facts-duration {
