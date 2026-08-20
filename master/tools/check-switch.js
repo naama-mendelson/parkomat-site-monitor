@@ -71,6 +71,10 @@ const ALLOWED_DIRECT = new Set([
   "isUnlocked", "markUnlocked", "lockAgain",
   // התראות push: אין זרוע שרת **בכוונה** — השולח אינו יכול להיות המחשב
   // שנופל, וזה בדיוק הרגע שבו ההתראה נחוצה. חריגה מוצהרת ב-EXIT-PLAN.md.
+  // ⚠️ isInstalledApp היא בדיקת **סביבה בדפדפן** (display-mode: standalone),
+  // לא גישה לנתונים. אין לה מקבילה בשרת ולא צריכה להיות — היא עונה על
+  // "האם אני רץ כאפליקציה מותקנת", שאלה שלשרת אין בה שום חלק.
+  "isInstalledApp",
   "pushSupported", "pushPermission", "enablePush", "disablePush",
   "getPushSites", "setPushSites", "ensurePushSubscription", "pushCoverage",
   // ⚠️ useSSE מממש את המתג **בעצמו** ובצדק: מנוי חי אינו בקשה, ואי אפשר

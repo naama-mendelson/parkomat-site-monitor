@@ -1,6 +1,14 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
 import { useEffect, useState } from "react";
 import PushSettings from "../PushSettings/PushSettings";
+// ⚠️ **התראות push אינן קיימות במחשב — לא מוסתרות, פשוט לא נבנות.**
+// זו בקשת המשתמשת, ויש לה נימוק: התראה למחשב שפתוח על הדשבורד ממילא היא
+// כפילות של הצליל שכבר יש שם. וגם באייפון ההרשאה זמינה **רק** באפליקציה
+// מותקנת, ולכן כפתור בלשונית היה מבטיח מה שלא יכול לקרות.
+//
+// ⚠️ ואין לבלבל עם התראת הקול: היא עובדת בכל מקום שבו האפליקציה פתוחה,
+// כולל במחשב, והיא אינה נוגעת לזה כלל.
+import { isInstalledApp } from "../../services/pushDirect";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import SearchBar from "../SearchBar/SearchBar";
@@ -67,6 +75,9 @@ function Header({
   // אוטומטית, וכך גם על הבקשה האמיתית.
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
+    // ⚠️ וההזמנה גם היא לא קופצת במחשב: פאנל שמסביר שצריך להתקין הוא
+    // בדיוק ה"אזכור" שהתבקש לא להיות שם.
+    if (!isInstalledApp()) return;
     // רק מי שטרם נשאל. "denied" ו-"granted" אינם מקרה להזמנה.
     if (Notification.permission !== "default") return;
     if (localStorage.getItem("push-invited") === "1") return;
@@ -151,10 +162,13 @@ function Header({
               של המסך, לא של התפקיד שמסתכל בו. */}
           <AlertBell />
 
-          {/* התראות push — נפרד מהפעמון בכוונה: הפעמון הוא הצליל
-              באפליקציה פתוחה, וזה מה שמגיע כשהיא סגורה. */}
-          <button className="theme-toggle" onClick={() => setPushOpen(true)}
-                  title="התראות תקלה בטלפון" aria-label="התראות תקלה">🔔</button>
+          {/* ⚠️ התראות push — **רק באפליקציה מותקנת.** במחשב הכפתור אינו
+              נבנה כלל, ולכן אין שום אזכור להתראות שם.
+              נפרד מהפעמון בכוונה: הפעמון הוא הצליל באפליקציה פתוחה. */}
+          {isInstalledApp() && (
+            <button className="theme-toggle" onClick={() => setPushOpen(true)}
+                    title="התראות תקלה בטלפון" aria-label="התראות תקלה">🔔</button>
+          )}
 
 
           {canManage && (
