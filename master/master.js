@@ -6,40 +6,25 @@ const { handleMessage } = require("./ingestion/dispatcher");
 const { startApiServer, closeSseClients } = require("./api/routes");
 const { acquireSingleInstanceLock } = require("./db/single-instance");
 
-// תחזוקה יומית: גיבוי → סיכום → ניקוי (בודק כל 24 שעות)
-const { runBackup } = require("./tools/backup-db");
-const { runMonthlySummary } = require("./tools/monthly-summary");
-const { runCleanup } = require("./tools/cleanup-old-data");
-
-// גריפת טבלת events. הרטנציה שלה קצרה בכוונה (שבוע): היא נועדה ל-replay
-// אחרי ניתוק, שנמדד בדקות עד שעות. ההיסטוריה האמיתית יושבת ב-status_history
-// וב-operations ואינה תלויה בה, ולכן אין סיבה לצבור אותה לאורך שנה.
-async function runPruneEvents() {
-  const { pruneEvents } = require("./db/queries");
-  const removed = await pruneEvents(7);
-  console.log(`[events] נגרפו ${removed} אירועים מעל שבוע.`);
-}
-
-async function dailyMaintenance() {
-  // כל שלב עטוף בנפרד: כשל בסיכום/ניקוי לא צריך להפיל את השרת (MQTT + API)
-  // ולא צריך למנוע את השלבים האחרים.
-  const steps = [
-    ["גיבוי", runBackup],               // 1. ביטוח — לפני כל שינוי
-    ["סיכום חודשי", runMonthlySummary],  // 2. לחודש שנגמר
-    ["ניקוי", runCleanup],              // 3. מעל שנה
-    ["גריפת אירועים", runPruneEvents],  // 4. events מעל שבוע — נועדו ל-replay, לא להיסטוריה
-  ];
-
-  for (const [name, step] of steps) {
-    try {
-      // await חיוני: השלבים אסינכרוניים עכשיו. בלעדיו ה-catch לא היה תופס
-      // כלום, וכשל היה מסיים את התהליך כ-unhandled rejection.
-      await step();
-    } catch (err) {
-      console.error(`[maintenance] שלב '${name}' נכשל:`, err.message);
-    }
-  }
-}
+// ============================================================
+// ⚠️ התחזוקה היומית עברה ל-pg_cron — ואינה כאן יותר
+// ============================================================
+// כאן ישבה `dailyMaintenance`: גיבוי → סיכום חודשי → ניקוי → גריפת
+// events, על `setTimeout(10s)` ואז `setInterval(24h)`. היא הוסרה, ולא
+// הועברה כמות שהיא — כל שלב קיבל הכרעה נפרדת:
+//
+//   • **גיבוי** — היה `console.log` בלבד. הגיבוי המקומי הושבת במעבר
+//     ל-Supabase, שמגבה בעצמו. אין מה להעביר.
+//   • **ניקוי** ו**גריפת events** — עברו ל-`db/cron.postgres.sql`, ורצים
+//     בתוך Postgres בשעה קבועה.
+//   • **סיכום חודשי** — נמחק ולא הועבר. `monthly_summary` נקראת רק בשני
+//     נתיבי שרת רדומים שהדשבורד אינו קורא, והיא מתועדת כשגויה; נמדד
+//     שהיא חותכת חודשים לפי שעון מקומי בעוד כל השאר לפי UTC (יולי 801
+//     מול 806). העברת חישוב שגוי ל-SQL הייתה מקבעת אותו.
+//
+// ⚠️ **וזה מה שההעברה קנתה:** הטיימר הישן נדד עם כל הפעלה מחדש, ושרת
+// שהיה למטה בשעת הריצה פשוט דילג — ב-22.08 הוא היה למטה 14.7 שעות.
+// pg_cron רץ בשעה קבועה, בלי תלות בשאלה אם השרת חי.
 
 // ==========================================================
 // תור עיבוד לכל אתר — הכרחי, לא אופטימיזציה
@@ -204,8 +189,6 @@ async function main() {
 
   console.log("master: started");
 
-  setTimeout(dailyMaintenance, 10 * 1000);
-  setInterval(dailyMaintenance, 24 * 60 * 60 * 1000);
 
   // ==========================================================
   // Keep-alive — מונע "קימה קרה" של ה-DB בענן
