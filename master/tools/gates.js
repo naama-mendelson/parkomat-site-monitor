@@ -45,6 +45,7 @@ const GATES = [
   // ⚠️ noEnv: סריקת טקסט בלבד. הוא נכתב אחרי שנמצאו 11 שאילתות שקראו
   // status גולמי — ו-parity היה ירוק, כי הבאג היה בשתי הזרועות.
   { name: "check-effective-status", what: "כל קורא רואה את הסטטוס האפקטיבי", noEnv: true },
+  { name: "check-heartbeat",     what: "המסך יודע לומר שהוא מציג נתונים ישנים" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 

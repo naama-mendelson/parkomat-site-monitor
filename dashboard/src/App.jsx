@@ -20,6 +20,7 @@ import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
 // להציג אתרים גם אם איש לא נגע בו.
 import AlertUnlockBar from "./components/AlertBell/AlertUnlockBar";
+import StaleBanner from "./components/StaleBanner/StaleBanner";
 import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
@@ -240,7 +241,13 @@ function App() {
         onAdmin={() => setAdminOpen(true)}
       />
 
-      <main className="app-main">{renderView()}</main>
+      {/* ⚠️ **בתוך main ומעל התוכן, ולא מעל ה-Header.** הבאנר צריך לשבת
+          במקום שהעין מגיעה אליו כשהיא באה לקרוא מספרים — מעל הכותרת הוא
+          נקרא כשורת מערכת ומדלגים עליו. */}
+      <main className="app-main">
+        <StaleBanner />
+        {renderView()}
+      </main>
 
       {/* הפאנל משותף — נפתח גם מהבקר וגם מטבלת מנהל הבקרה */}
       {/* ⚠️ **גם detail?.site ולא רק selectedCode.** השליפה אסינכרונית,

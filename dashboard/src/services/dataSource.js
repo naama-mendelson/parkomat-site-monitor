@@ -62,11 +62,13 @@ import { fetchSitesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
 import { markAsTestDirect, unmarkTestDirect, reclassifyStatusDirect } from "./reportsDirect";
+import { fetchServerHealthDirect } from "./healthDirect";
 import {
   inviteUser as inviteUserViaServer,
   deleteUser as deleteUserViaServer,
   verifyAdminCode as verifyAdminCodeViaServer,
   changeAdminCode as changeAdminCodeViaServer,
+  fetchServerHealth as apiFetchServerHealth,
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
@@ -684,4 +686,21 @@ export async function scheduleMaintenance(code, startAt, endAt, reason = "") {
   if (error) throw new Error(error.message || "תזמון התחזוקה נכשל");
   const row = Array.isArray(data) ? data[0] : data;
   return { id: row?.id ?? null, startedAt: row?.started_at, expiresAt: row?.expires_at };
+}
+
+// ============================================================
+// בריאות השרת — שתי זרועות, ובכוונה שונות זו מזו
+// ============================================================
+// ⚠️ שאר המסלולים כאן מחזירים את אותו נתון משני מקורות. כאן שתי הזרועות
+// שואלות שאלות שונות, וזה נכון:
+//
+//   ישיר  — קוראים את אות החיים ש**השרת כתב על עצמו** ל-Supabase. הדשבורד
+//           עצמו אינו נוגע בשרת, ולכן זו הדרך היחידה לדעת עליו משהו.
+//   שרת   — עצם ההגעה ל-/health היא התשובה. אין צורך בחותם.
+//
+// ⚠️ והמקרה שבגללו זה נבנה קיים **רק בזרוע הישירה**: שם הדשבורד עובד מצוין
+// מול Supabase בזמן שהקליטה מתה, ומציג נתוני אתמול כאילו הם של עכשיו.
+export async function fetchServerHealth(staleAfterSeconds = 300) {
+  if (!useDirect) return apiFetchServerHealth();
+  return fetchServerHealthDirect(staleAfterSeconds);
 }

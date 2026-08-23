@@ -457,3 +457,25 @@ export async function cancelMaintenance(code) {
   if (!res.ok) return parseError(res, "שגיאה בביטול תחזוקה");
   return res.json();
 }
+// ============================================================
+// בריאות השרת — הזרוע דרך השרת
+// ============================================================
+// ⚠️ **כאן הבדיקה היא ההגעה עצמה, ולא חותם זמן.** במצב הזה הדשבורד קורא
+// *הכול* דרך השרת, ולכן שרת מת מתבטא ממילא בכל מסך. הפונקציה קיימת כדי
+// ששני צידי המתג יחזירו את אותו מבנה, וכדי שהבאנר יעבוד גם כאן.
+//
+// ⚠️ ולכן `catch` מחזיר `alive:false` ואינו זורק: כשל רשת **הוא התשובה**
+// שאנחנו מחפשים, ולא תקלה שצריך לדווח עליה למעלה.
+export async function fetchServerHealth() {
+  try {
+    const res = await fetch(`${API_ROOT}/health`, { cache: "no-store" });
+    if (!res.ok) return { alive: false, ageSeconds: null, lastBeatAt: null, unknown: false };
+    const body = await res.json().catch(() => ({}));
+    // /health מדווח גם על MQTT: שרת שעונה אבל אינו קולט אינו "חי" לצורך
+    // המסך הזה — הנתונים יתיישנו בדיוק כמו בשרת שנפל.
+    const ok = body.healthy !== false;
+    return { alive: ok, ageSeconds: 0, lastBeatAt: null, unknown: false };
+  } catch {
+    return { alive: false, ageSeconds: null, lastBeatAt: null, unknown: false };
+  }
+}

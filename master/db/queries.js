@@ -2620,3 +2620,8 @@ async function getSuppressedFaults(siteIds, { from, to }) {
 
 module.exports.insertSuppressedFault = insertSuppressedFault;
 module.exports.getSuppressedFaults = getSuppressedFaults;
+
+// ⚠️ `setSetting` היה מוגדר ולא מיוצא. אות החיים של השרת (keep-alive
+// ב-master.js) קורא לו, ובלי השורה הזו הוא `undefined` — כלומר שגיאה כל 20
+// שניות בלוג, ובאנר "הנתונים אינם מתעדכנים" שנדלק על מערכת תקינה לגמרי.
+module.exports.setSetting = setSetting;
