@@ -212,6 +212,7 @@ function App() {
         sites={sites}
         loading={loading}
         error={error}
+        onRetry={reload}
         activeFilters={activeFilters}
         typeFilter={typeFilter}
         tierFilter={tierFilter}

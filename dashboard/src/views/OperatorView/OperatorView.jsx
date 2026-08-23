@@ -6,7 +6,7 @@ import { fuzzyMatch } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
 import "./OperatorView.css";
 
-function OperatorView({ sites, loading, error, activeFilters = [], typeFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
+function OperatorView({ sites, loading, error, onRetry, activeFilters = [], typeFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
   // ============================================================
   // ⚠️ שגיאה **אינה** מוחקת מסך שיש בו נתונים
   // ============================================================
@@ -19,7 +19,17 @@ function OperatorView({ sites, loading, error, activeFilters = [], typeFilter = 
   // "מסך שנראה תקין ומשקר" הוא הכשל הגרוע ביותר במסך ניטור. לכן הנתונים
   // נשארים, והשגיאה עוברת לפס עליון שאומר במפורש שהמוצג אינו טרי.
   if (loading && sites.length === 0) return <div className="app-loading">טוען אתרים...</div>;
-  if (error && sites.length === 0) return <div className="app-error">שגיאה: {error}</div>;
+  // ⚠️ **כפתור, ולא רק הודעה.** מסך ריק שאומר "שגיאה" ואינו מציע דבר
+  // גורר רענון ידני של הדף — ורענון מאבד את הסינון, את הגלילה ואת
+  // התצוגה שנבחרה. ניסיון חוזר במקום עולה לחיצה אחת ואינו מאבד כלום.
+  if (error && sites.length === 0) {
+    return (
+      <div className="app-error">
+        <div>{error}</div>
+        <button className="app-error-retry" onClick={onRetry}>נסה שוב</button>
+      </div>
+    );
+  }
 
   const filtered = sites.filter((site) => {
     // רשימה ריקה = בלי סינון. אחרת: האתר צריך להיות באחד מהמצבים שנבחרו.
