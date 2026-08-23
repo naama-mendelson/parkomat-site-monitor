@@ -117,6 +117,47 @@ if (bypass.length) {
 }
 console.log("✅ אף רכיב אינו עוקף את המתג\n");
 
+// ============================================================
+// ⚠️ הכיוון ההפוך: מי בכלל נוגע בשרת
+// ============================================================
+// הסריקה שלמעלה שואלת "מי עוקף את המתג לכיוון Supabase". השאלה הזו היא
+// המשלימה, והיא זו שנשאלה במפורש: **מה עוד רץ דרך ה-master חוץ מהבוט.**
+//
+// נמדד בדפדפן אמיתי — מעבר על שלוש התצוגות, כרטיס אתר, פירוט מלא וניהול
+// אתרים — **אפס בקשות לשרת**. הבדיקה כאן מקבעת את זה: מדידה חד-פעמית
+// מוכיחה מצב, ורק שער מונע ממנו להישחק.
+//
+// שלושת המותרים, וכל אחד מנימוק אחר:
+//   dataSource.js  — **הוא המתג עצמו**. זרוע השרת חייבת להיות שם, וזו
+//                    דלת היציאה: היום היא רדומה, ביום פורענות היא הדרך חזרה.
+//   ChatAssistant  — הבוט. מחזיק GROQ_API_KEY, שאסור לו להגיע לדפדפן.
+//   useSSE.js      — API_ROOT בלבד, לזרוע ה-EventSource של המתג. במצב
+//                    ישיר הוא מנוי על Supabase Realtime ואינו נוגע בשרת.
+const SERVER_IMPORT_ALLOWED = new Set([
+  "services/dataSource.js",
+  "components/ChatAssistant/ChatAssistant.jsx",
+  "hooks/useSSE.js",
+]);
+
+const serverUsers = [];
+for (const file of walkDir(SRC_DIR)) {
+  const rel = file.replace(SRC_DIR + "/", "");
+  if (rel === "services/api.js") continue;              // המודול עצמו
+  const text = fs.readFileSync(file, "utf8");
+  // ייבוא מ-services/api, או קריאת fetch ישירה ל-/api/…
+  const importsApi = /from\s*["'][^"']*services\/api["']/.test(text);
+  const fetchesApi = /fetch\(\s*[`"'][^`"']*\/api\//.test(text);
+  if ((importsApi || fetchesApi) && !SERVER_IMPORT_ALLOWED.has(rel)) serverUsers.push(rel);
+}
+
+if (serverUsers.length) {
+  console.log("❌ רכיבים שפונים ל-master מחוץ למותר:");
+  for (const s of serverUsers) console.log("   " + s);
+  console.log("\nה-master אמור לשמש ל-MQTT ולבוט בלבד.\n");
+  process.exit(1);
+}
+console.log("✅ ל-master פונים רק המתג, הבוט ו-SSE\n");
+
 const fns = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
 console.log(`נמצאו ${fns.length} מסלולים במתג\n`);
 
