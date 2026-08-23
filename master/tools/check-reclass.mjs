@@ -107,6 +107,33 @@ try {
       after.out.repair.total === before.out.repair.total - 1],
   ];
 
+  // ============================================================
+  // ⚠️ הבדיקה שנולדה מבאג אמיתי: **כל** צרכן, לא רק הזמינות
+  // ============================================================
+  // הגרסה הראשונה של השער בדקה רק את הציר ואת הזמינות, ועברה — בזמן
+  // ש-11 שאילתות אחרות עדיין קראו `status = 'error'` גולמי. כלומר הכרטיס
+  // הציג "התקלה האחרונה" על מקטע שהלוג כבר קרא לו תחזוקה, והדוחות ספרו
+  // אותו כתקלה ולא כתחזוקה.
+  //
+  // ⚠️ ו-parity לא יכול לתפוס את זה: הוא משווה JS מול SQL, והבאג היה
+  // **בשתי הזרועות**. שער התנהגותי הוא הדרך היחידה.
+  const globalsFor = async () => {
+    const g = await rpc("site_globals", { p_site_ids: [T.site_id] });
+    return (g.body || [])[0] || {};
+  };
+  const gAfter = await globalsFor();
+  const errsAfter = await rpc("recent_errors", { p_limit: 200 });
+  const listed = (errsAfter.body || []).some((e) => String(e.id ?? e.site_id) && e.started_at === T.started_at);
+
+  console.log(`\n  site_globals.last_fault_at : ${gAfter.last_fault_at}`);
+  console.log(`  המקטע ברשימת התקלות        : ${listed ? "כן" : "לא"}`);
+
+  checks.push(
+    ["⚠️ 'התקלה האחרונה' בכרטיס אינה מצביעה על המקטע שסווג",
+      gAfter.last_fault_at !== T.started_at],
+    ["⚠️ המקטע ירד מרשימת התקלות האחרונות", !listed],
+  );
+
   const undo = await rpc("reclassify_status", { p_id: T.id, p_to: null });
   const back = await timelineFor();
   checks.push(["ביטול מחזיר לתקלה", undo.status === 200 && back.row?.status === "error"

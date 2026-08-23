@@ -342,10 +342,31 @@ ALTER TABLE maintenance_windows
 
 -- ⚠️ **רק 'maintenance'.** הפיכת תקלה ל'מוכן' הייתה מוחקת אירוע במקום
 -- לסווגו מחדש — ואת זה כבר עושה סימון הניסוי, שם במפורש ותחת השם הנכון.
--- ה-DROP לפני ה-ADD הוא מה שהופך את זה לניתן להרצה חוזרת.
-ALTER TABLE status_history DROP CONSTRAINT IF EXISTS status_history_reclass_chk;
-ALTER TABLE status_history ADD CONSTRAINT status_history_reclass_chk
-  CHECK (reclassified_to IS NULL OR reclassified_to = 'maintenance');
+--
+-- ============================================================
+-- ⚠️ נוצר פעם אחת, ולא בכל עלייה — וזה תוקן אחרי שנמדד
+-- ============================================================
+-- כאן היה `DROP CONSTRAINT IF EXISTS` ואחריו `ADD CONSTRAINT`, בלי תנאי.
+-- זה אכן ניתן להרצה חוזרת, אבל המחיר הוסתר: **כל `db.init()` הפיל את
+-- האילוץ ובנה אותו מחדש**, וכל בנייה כזו נועלת את status_history ב-
+-- ACCESS EXCLUSIVE וסורקת אותה במלואה כדי לאמת.
+--
+-- ⚠️ ו-`db.init()` רץ בכל עלייה של השרת **ובכל שער** — כלומר נעילה בלעדית
+-- על הטבלה החמה ביותר, בזמן שהקליטה כותבת אליה. נמדד בפועל: `deadlock
+-- detected` בשני שערים באותה ריצה, בזמן שהשרת במשרד קלט.
+--
+-- ⚠️ ויש כאן גם חלון של ממש: בין ה-DROP ל-ADD **אין אילוץ**. אם התהליך
+-- נופל באמצע — וזה קרה לי כאן ביד — הטבלה נשארת בלי הגנה ואיש לא יודע.
+--
+-- התנאי למטה עולה שאילתת קטלוג אחת, ומריץ את ה-DDL פעם אחת בחיי המסד.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'status_history_reclass_chk') THEN
+    ALTER TABLE status_history ADD CONSTRAINT status_history_reclass_chk
+      CHECK (reclassified_to IS NULL OR reclassified_to = 'maintenance');
+  END IF;
+END
+$$;
 
 -- ============================================================
 -- ⚠️ ON DELETE SET NULL על שני ה-FK הפנימיים — בלעדיו אין מחיקה

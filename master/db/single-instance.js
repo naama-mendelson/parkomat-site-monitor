@@ -61,6 +61,40 @@ const sessionUrlFor = (connectionString) => connectionString.replace(":6543/", "
  * שהמערכת עובדת כשורה — כלומר שער שאי אפשר להריץ בדיוק כשהכול תקין.
  * בקוד הייצור אף אחד אינו מעביר את הארגומנט הזה.
  */
+// ============================================================
+// ⚠️ פינג על **חיבור הנעילה עצמו** — בלעדיו ההגנה מתה אחרי 60 שניות
+// ============================================================
+// זהו התיקון לבאג שנמדד בפועל: השער שמתחתיו מכריז על מחזיק כ"מת" אחרי
+// 60 שניות בסרק, וההנחה שהצדיקה זאת הייתה ש"שרת חי מריץ keep-alive כל 20
+// שניות ולכן ה-session שלו לעולם אינו מתיישן".
+//
+// ⚠️ **ההנחה אינה נכונה לחיבור הזה.** ה-keepalive שב-master.js מחמם את
+// חיבורי ה-**pool** (6543). הנעילה יושבת על חיבור **session** נפרד (5432)
+// שנפתח פעם אחת, תופס את הנעילה, ואז — לפי התכנון — אינו מריץ עוד שאילתה
+// לעולם. `state_change` שלו קופא ברגע העלייה.
+//
+// התוצאה שנמדדה: דקה אחרי שהשרת עלה, כל תהליך שני רואה את הנעילה שלו
+// כתקועה, מריץ `pg_terminate_backend` על ה-session החי, ועולה לצידו. שני
+// מאסטרים על אותו clientId — בדיוק מה שהקובץ הזה קיים כדי למנוע, והוא
+// עצמו הכלי שמאפשר את זה. נצפה בייצור, לא בתיאוריה.
+//
+// 20 שניות מול סף של 60 — שלוש החמצות רצופות לפני שמישהו נחשב מת, אותו
+// יחס שההערה למטה מתארת.
+//
+// ⚠️ `unref()` הוא חובה: בלעדיו הטיימר לבדו מחזיק את התהליך חי לנצח,
+// והשרת לא יסתיים לעולם ב-Ctrl+C או ב-SIGTERM של Docker.
+const LOCK_PING_MS = 20_000;
+
+function startLockPing(client) {
+  const id = setInterval(() => {
+    // כישלון פינג אינו מפיל דבר: אם החיבור מת, הנעילה ממילא השתחררה,
+    // וזו התנהגות נכונה. מה שאסור הוא לזרוק מתוך טיימר.
+    client.query("SELECT 1").catch(() => {});
+  }, LOCK_PING_MS);
+  id.unref?.();
+  return () => clearInterval(id);
+}
+
 async function acquireSingleInstanceLock(connectionString, keys = [LOCK_KEY_1, LOCK_KEY_2]) {
   const [k1, k2] = keys;
   const sessionUrl = sessionUrlFor(connectionString);
@@ -179,8 +213,10 @@ async function acquireSingleInstanceLock(connectionString, keys = [LOCK_KEY_1, L
           console.error("[single-instance] חיבור הנעילה נותק:", err.message);
         });
         holder = client;
+        const stopPing = startLockPing(client);
         return async () => {
           holder = null;
+          stopPing();
           await client.end().catch(() => {});
         };
       }
@@ -200,9 +236,16 @@ async function acquireSingleInstanceLock(connectionString, keys = [LOCK_KEY_1, L
   // ⚠️ ואם החיבור הזה ינותק אחר כך, הנעילה נופלת איתו והשרת ממשיך לרוץ בלי
   // הגנה עד להפעלה הבאה. מקובל: זה בדיוק המצב שהיה כאן תמיד, והחלופה —
   // להפיל שרת שקולט הודעות כי חיבור צדדי נותק — גרועה יותר.
+  //
+  // ⚠️ **הפינג כאן ולא רק במסלול השחרור.** זהו המסלול הרגיל — נעילה שנתפסה
+  // בניסיון הראשון — כלומר מה שקורה בכל עלייה תקינה בייצור. גרסה ראשונה של
+  // התיקון הוסיפה את הפינג רק למסלול השני, ואז ההגנה נשארה מתה בדיוק במקרה
+  // הנפוץ. ראה startLockPing למעלה.
   holder = client;
+  const stopPing = startLockPing(client);
   return async () => {
     holder = null;
+    stopPing();
     await client.end().catch(() => {});
   };
 }

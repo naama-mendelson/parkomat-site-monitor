@@ -112,7 +112,7 @@ async function supersedeInterruptedAttempt(siteId, entryExit, cardNumber, occurr
   const cut = await db.prepare(
     `SELECT o.id FROM operations o
       JOIN status_history h
-        ON h.site_id = o.site_id AND h.started_at = o.occurred_at AND h.status = 'error'
+        ON h.site_id = o.site_id AND h.started_at = o.occurred_at AND COALESCE(h.reclassified_to, h.status) = 'error'
      WHERE o.site_id = ? AND o.entry_exit = ? AND o.card_number = ?
        AND o.start_end = 'end' AND o.is_anomaly = 0
        AND o.superseded_by IS NULL
@@ -552,7 +552,7 @@ async function wasInMaintenance(siteId, ts) {
   const plc = await db
     .prepare(
       `SELECT 1 FROM status_history
-       WHERE site_id = ? AND status = 'maintenance'
+       WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'maintenance'
          AND started_at <= ?
          AND (ended_at IS NULL OR ended_at >= ?)
        LIMIT 1`
@@ -583,7 +583,7 @@ async function getSiteUptime(siteId, from, to = new Date().toISOString()) {
 // מתי התחילה התקלה האחרונה (null אם מעולם לא הייתה)
 async function getLastFaultAt(siteId) {
   return (await db
-    .prepare("SELECT MAX(started_at) AS t FROM status_history WHERE site_id = ? AND status = 'error'")
+    .prepare("SELECT MAX(started_at) AS t FROM status_history WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'error'")
     .get(siteId)).t;
 }
 
@@ -604,7 +604,7 @@ async function getSiteStats(siteId, { from = null, to = null } = {}) {
   if (from) { opsSql += " AND occurred_at >= ?"; opsParams.push(from); }
   if (to)   { opsSql += " AND occurred_at < ?"; opsParams.push(to); }
 
-  let errSql = "SELECT started_at FROM status_history WHERE site_id = ? AND status = 'error'";
+  let errSql = "SELECT started_at FROM status_history WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'error'";
   const errParams = [siteId];
   if (from) { errSql += " AND started_at >= ?"; errParams.push(from); }
   if (to)   { errSql += " AND started_at < ?"; errParams.push(to); }
@@ -631,7 +631,7 @@ async function getSiteStats(siteId, { from = null, to = null } = {}) {
     db.prepare(
       `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at
        FROM status_history
-       WHERE site_id = ? AND status = 'maintenance'
+       WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'maintenance'
          AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
     ).all(siteId, rangeTo, rangeFrom),
   ]);
@@ -1025,12 +1025,12 @@ async function getPeriodBreakdown(siteId, { from, to, granularity }) {
 
     db.prepare(
       `SELECT started_at FROM status_history
-       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND status = 'error'`
+       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND COALESCE(reclassified_to, status) = 'error'`
     ).all(siteId, from, to),
 
     db.prepare(
       `SELECT started_at FROM status_history
-       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND status = 'maintenance'`
+       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND COALESCE(reclassified_to, status) = 'maintenance'`
     ).all(siteId, from, to),
   ]);
 
@@ -1074,7 +1074,7 @@ async function getCardFaultCorrelation(siteId, { from, to, windowSeconds = 600, 
   const [errors, ops] = await Promise.all([
     db.prepare(
       `SELECT started_at FROM status_history
-       WHERE site_id = ? AND status = 'error' AND started_at >= ? AND started_at < ?
+       WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'error' AND started_at >= ? AND started_at < ?
        ORDER BY started_at ASC`
     ).all(siteId, from, to),
 
@@ -1563,7 +1563,7 @@ async function getAllSitesGlobals(siteIds) {
     // התקלה האחרונה + המקטע הראשון אי-פעם (ל-getSiteUptime)
     db.prepare(
       `SELECT site_id,
-              MAX(started_at) FILTER (WHERE status = 'error') AS "lastFaultAt",
+              MAX(started_at) FILTER (WHERE COALESCE(reclassified_to, status) = 'error') AS "lastFaultAt",
               MIN(started_at) AS "firstStatusAt"
        FROM status_history
        WHERE ${holes}
@@ -1596,14 +1596,14 @@ async function getAllSitesGlobals(siteIds) {
                 h.fault_text,
                 (SELECT e.fault_text FROM status_history e
                   WHERE e.site_id = h.site_id
-                    AND e.status = 'error'
+                    AND COALESCE(e.reclassified_to, e.status) = 'error'
                     AND e.ended_at = h.started_at
                   LIMIT 1)
               ) AS "faultText",
               EXISTS (
                 SELECT 1 FROM status_history e
                  WHERE e.site_id = h.site_id
-                   AND e.status = 'error'
+                   AND COALESCE(e.reclassified_to, e.status) = 'error'
                    AND e.ended_at = h.started_at
               ) AS "afterError"
        FROM status_history h
@@ -1625,7 +1625,7 @@ async function getAllSitesGlobals(siteIds) {
       `WITH last_fault AS (
          SELECT site_id, MAX(started_at) AS t
          FROM status_history
-         WHERE ${holes} AND status = 'error'
+         WHERE ${holes} AND COALESCE(reclassified_to, status) = 'error'
          GROUP BY site_id
        )
        SELECT o.site_id, COUNT(*) AS n
@@ -1932,12 +1932,12 @@ async function getRecentErrors({ limit = 10 } = {}) {
               h.fault_text AS "faultText"
        FROM status_history h
        JOIN sites s ON h.site_id = s.id
-       WHERE h.status = 'error'
+       WHERE COALESCE(h.reclassified_to, h.status) = 'error'
          -- "תחזוקה גוברת" — תקלה שהתחילה בתוך/בגבול תחזוקה לא מוצגת (כמו שהיא
          -- לא נספרת). מקור 1: מקטע maintenance מהבקר. גבול כולל כמו wasInMaintenanceMem.
          AND NOT EXISTS (
            SELECT 1 FROM status_history m
-           WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+           WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
              AND m.started_at <= h.started_at
              AND (m.ended_at IS NULL OR m.ended_at >= h.started_at)
          )

@@ -181,7 +181,7 @@ err_ends AS (
   FROM status_history h
   CROSS JOIN ok o
   WHERE o.valid
-    AND h.status = 'error'
+    AND COALESCE(h.reclassified_to, h.status) = 'error'
     AND h.ended_at IS NOT NULL
     AND (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
     AND h.started_at < o.w_to
@@ -508,7 +508,7 @@ classified AS (
      OR EXISTS (
        SELECT 1 FROM status_history m
         WHERE m.site_id = e.site_id
-          AND m.status = 'maintenance'
+          AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
           AND m.started_at <= e.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= e.started_at))
     ) AS in_maintenance
@@ -597,7 +597,7 @@ WITH ids AS (
 -- התקלה האחרונה + המקטע הראשון אי-פעם
 faults AS (
   SELECT h.site_id,
-         MAX(h.started_at) FILTER (WHERE h.status = 'error') AS last_fault_at,
+         MAX(h.started_at) FILTER (WHERE COALESCE(h.reclassified_to, h.status) = 'error') AS last_fault_at,
          MIN(h.started_at)                                   AS first_status_at
     FROM status_history h
     JOIN ids ON ids.site_id = h.site_id
@@ -626,14 +626,14 @@ open_seg AS (
            h.fault_text,
            (SELECT e.fault_text FROM status_history e
              WHERE e.site_id = h.site_id
-               AND e.status = 'error'
+               AND COALESCE(e.reclassified_to, e.status) = 'error'
                AND e.ended_at = h.started_at
              LIMIT 1)
          ) AS fault_text,
          EXISTS (
            SELECT 1 FROM status_history e
             WHERE e.site_id = h.site_id
-              AND e.status = 'error'
+              AND COALESCE(e.reclassified_to, e.status) = 'error'
               AND e.ended_at = h.started_at
          ) AS after_error
     FROM status_history h
@@ -765,10 +765,10 @@ AS $$
          h.fault_text
     FROM status_history h
     JOIN sites s ON s.id = h.site_id
-   WHERE h.status = 'error'
+   WHERE COALESCE(h.reclassified_to, h.status) = 'error'
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
-        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+        WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
@@ -826,9 +826,9 @@ AS $$
               AND abs(EXTRACT(EPOCH FROM (
                     o.occurred_at::timestamptz - h.started_at::timestamptz))) <= 5))
      -- כלל 2: תקלה בזמן תחזוקה אינה מוצגת. גבול כולל, כמו wasInMaintenanceMem.
-     AND NOT (h.status = 'error' AND (
+     AND NOT (COALESCE(h.reclassified_to, h.status) = 'error' AND (
            EXISTS (SELECT 1 FROM status_history m
-                    WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+                    WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
                       AND m.started_at <= h.started_at
                       AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
         OR EXISTS (SELECT 1 FROM maintenance_windows w
@@ -941,12 +941,12 @@ errs AS (
   SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
-     AND h.status = 'error'
+     AND COALESCE(h.reclassified_to, h.status) = 'error'
      AND h.started_at >= p_from
      AND h.started_at <  p_to
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
-        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+        WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
@@ -960,7 +960,7 @@ maint AS (
   SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS maintenance
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
-     AND h.status = 'maintenance'
+     AND COALESCE(h.reclassified_to, h.status) = 'maintenance'
      AND h.started_at >= p_from
      AND h.started_at <  p_to
    GROUP BY 1
@@ -1073,13 +1073,13 @@ cyc AS (
 err_rows AS (
   SELECT h.site_id, h.fault_text, h.started_at, h.ended_at
     FROM status_history h
-   WHERE h.status = 'error'
+   WHERE COALESCE(h.reclassified_to, h.status) = 'error'
      AND h.started_at < p_to
      AND (h.ended_at IS NULL OR h.ended_at > p_from)
      -- "תחזוקה גוברת" — אותו כלל בדיוק כמו בכל מדד אחר.
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
-        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+        WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
@@ -1125,7 +1125,7 @@ errs AS (
 mnt AS (
   SELECT h.site_id, COUNT(*)::int AS maintenance
     FROM status_history h
-   WHERE h.status = 'maintenance'
+   WHERE COALESCE(h.reclassified_to, h.status) = 'maintenance'
      AND h.started_at >= p_from AND h.started_at < p_to
    GROUP BY h.site_id
 )
@@ -1206,11 +1206,11 @@ errs AS (
   SELECT h.site_id, substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
-     AND h.status = 'error'
+     AND COALESCE(h.reclassified_to, h.status) = 'error'
      AND h.started_at >= p_from AND h.started_at < p_to
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
-        WHERE m.site_id = h.site_id AND m.status = 'maintenance'
+        WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (

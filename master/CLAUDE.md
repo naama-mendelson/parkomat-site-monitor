@@ -749,6 +749,66 @@ subscriber connects** — so the reconnect loop never begins.
   outage. But `pg_try_advisory_lock` returning `false` is the *correct answer*, not a
   transient fault, so retrying it would turn "another server is running" into a blind wait.
 
+### ⚠️ The lock connection must ping itself — without it the guard died after 60 seconds
+
+A holder idle for more than `STALE_AFTER_SECONDS` (60) is treated as a dead server whose
+pooler session lingered, and is killed with `pg_terminate_backend`. That release path is
+necessary — `docker compose restart` otherwise refuses to boot for up to half an hour.
+
+**The staleness test rested on an assumption that was false for this connection.** The
+comment justified it with *"a live server runs a keep-alive every 20 seconds, so its
+`state_change` never ages"* — but that keep-alive (`master.js`) warms the **pool** (6543).
+The lock sits on a **separate session connection** (5432) which, by design, takes the lock
+and then never runs another query. Its `state_change` freezes at boot.
+
+So one minute after any healthy server started, the next process to run would see its lock
+as stale, terminate the live session, and start alongside it. **Measured in production:
+idle 1,825 seconds on a server that was ingesting normally**, and a second master came up
+next to it — the exact outcome this file exists to prevent, produced by the guard itself.
+
+`startLockPing` now runs `SELECT 1` on the lock client every 20 s (`unref`'d, so it never
+holds the process open). Verified: after 75 seconds idle never exceeded 15 s.
+
+- **It must be called on *both* success paths** — lock taken immediately, and lock taken
+  after a stale release. The first version covered only the second, i.e. left the guard
+  dead in the common case. `check-single-instance` now asserts exactly two call sites.
+- Data survived the collision (0 duplicate operations, 0 doubly-open segments) — per-site
+  FIFO, `reported_at` dedup and the no-change guard in `applyStateChange` all held. That
+  is luck plus defence in depth, not a reason to relax the lock.
+
+## The effective status — `reclassified_to` must be read by *every* consumer
+
+A manager can reclassify a fault segment as maintenance (`public.reclassify_status`). The
+original `status` is never overwritten; `reclassified_to` is a layer above it. Therefore
+**every read of `status_history` must go through
+`COALESCE(<alias>.reclassified_to, <alias>.status)`.**
+
+⚠️ When the feature shipped, only `site_uptime` and `site_segments_collapsed` did. **Eleven
+other queries — across both arms — still filtered on raw `status`**, so reclassifying a
+fault moved availability and failure rate while the site card kept showing it as the last
+fault and the reports kept counting it as a fault and not as maintenance. Two numbers for
+one event.
+
+⚠️ **`npm run parity` cannot catch this class of bug**, and did not: it compares the JS arm
+against the SQL arm, and the omission was in *both*. They agreed perfectly. This is the same
+lesson `tests/availability.test.js` records — a parity gate proves two implementations match,
+never that the definition is right.
+
+Two gates cover it now:
+
+- **`check-effective-status`** — static scan of `functions.postgres.sql` and `queries.js`
+  for raw `status = '…'`, with an explicit allowlist (`v.` and `c.` are CTE outputs that are
+  already coalesced). It also fails if the count of coalesced reads drops below 20, so
+  "found nothing" cannot mean "looked at nothing".
+- **`check-reclass`** — behavioural, end to end: reclassify a real segment and assert the
+  timeline, the chips, `site_globals.last_fault_at` and `recent_errors` all move together.
+
+⚠️ **Apply the reclassification at the entry to `buildActivityLog`, not at the label.** Every
+downstream rule — `afterError`, `interruptedBy`, window suppression — must see the effective
+status, or the log shows a "maintenance" row next to an operation labelled "interrupted by
+fault" in the same second. Measured on one segment: faults 17→16, maintenance 2→4, repair
+4→3; the third number is the proof, and it does not move if the swap happens at the label.
+
 Nothing on the server side starts the process — that is deployment's job
 (`restart: unless-stopped` in `docker-compose.yml`). When it is not running, **no
 messages are lost**: HiveMQ keeps them (`clean:false` + fixed clientId) and delivers them
