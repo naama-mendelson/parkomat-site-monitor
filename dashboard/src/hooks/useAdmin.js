@@ -31,7 +31,8 @@ import { useState, useCallback } from "react";
 // ⚠️ מ-Supabase ולא מהשרת: בענן אין שרת, והנעילה פשוט נכשלה שם.
 // הגיבוב מושווה בתוך הפונקציה ב-SQL ולעולם אינו מגיע לדפדפן.
 import { verifyAdminCode } from "../services/dataSource";
-import { isUnlocked as getAdminCode, markUnlocked as storeAdminCode, lockAgain } from "../services/adminCodeDirect";
+import { isUnlocked as getAdminCode, markUnlocked as storeAdminCode, lockAgain,
+         reauthenticate, isDirectLocked, setDirectLocked } from "../services/adminCodeDirect";
 import { useDirect } from "../services/dataSource";
 import { useAuth } from "./useAuth";
 
@@ -45,7 +46,9 @@ export function useAdmin() {
   // ⚠️ "נעל" הוא הסתרה ולא הסרת הרשאה. במצב ישיר ההרשאה נגזרת מהתפקיד,
   // ולכן בלי המשתנה הזה הכפתור לא היה עושה כלום למנהל — הוא היה נפתח שוב
   // מיד. זה נשאר מנגנון נגד לחיצה מקרית, וזה כל מה שהוא היה תמיד.
-  const [dismissed, setDismissed] = useState(false);
+  // ⚠️ נקרא מ-sessionStorage ולא מאותחל ל-false: הערך חייב לשרוד פתיחה
+  // וסגירה של הפאנל, וזה בדיוק מה שהיה שבור.
+  const [directLocked, setDirectLockedState] = useState(() => isDirectLocked());
 
   const isManager = user?.role === "manager";
 
@@ -74,25 +77,75 @@ export function useAdmin() {
   const lock = useCallback(() => {
     lockAgain();
     setCodeUnlocked(false);
-    setDismissed(true);
+  }, []);
+
+  // ⚠️ הנעילה של הזרוע הישירה **נכתבת ל-sessionStorage**, ולא ל-state בלבד.
+  // זה כל התיקון: `onClose()` מפרק את AdminPanel מיד אחרי הלחיצה, ו-state
+  // מת יחד איתו — ולכן הכפתור לא עשה כלום.
+  const lockDirect = useCallback(() => {
+    setDirectLocked(true);
+    setDirectLockedState(true);
+  }, []);
+
+  // ============================================================
+  // ⚠️ פתיחה מחדש בזרוע הישירה — בסיסמה של החשבון
+  // ============================================================
+  // אין כאן קוד מנהל, וזה מכוון (ראה CLAUDE.md): ערך ברירת המחדל שלו נמצא
+  // בקוד הפתוח. הסיסמה קשורה ל**אדם**, ולכן היא מה שמוכיח שמי שחזר לעמדה
+  // הוא מי שנעל אותה.
+  const unlockByPassword = useCallback(async (password) => {
+    setChecking(true);
+    setError(null);
+    try {
+      const ok = await reauthenticate(password);
+      if (!ok) { setError("סיסמה שגויה"); return false; }
+      setDirectLocked(false);
+      setDirectLockedState(false);
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    } finally {
+      setChecking(false);
+    }
   }, []);
 
   if (useDirect) {
     return {
-      unlocked: isManager && !dismissed,
-      // ⚠️ מחזיר false ולא זורק: המסך אינו אמור להציע להקליד קוד כאן
-      // בכלל (`roleGated` אומר לו את זה), וקריאה שכן תגיע חייבת להסביר
-      // למה היא לא עוזרת — ולא להיכשל בשקט.
-      unlock: async () => {
-        setError("הפעולה מותרת למנהלים בלבד. קוד המנהל אינו רלוונטי יותר — הרשאות נקבעות לפי המשתמש.");
-        return false;
-      },
-      lock: () => setDismissed(true),
-      // בזמן טעינת הזהות עדיין לא ידוע אם מנהל. `checking` הוא מה שהמסך
-      // מציג כ"בודק…", ובלעדיו הוא היה מהבהב "אין הרשאה" לכל מנהל.
-      checking: loading,
+      // ============================================================
+      // ⚠️ הנעילה חייבת לשרוד את פירוק הרכיב
+      // ============================================================
+      // כאן היה `!dismissed` — useState רגיל — ולכן **"נעל" לא עשה כלום**:
+      // הוא סימן, ומיד אחריו `onClose()` פירק את AdminPanel
+      // (`{adminOpen && <AdminPanel/>}` ב-App.jsx), וה-state מת יחד איתו.
+      // הפתיחה הבאה בנתה רכיב חדש עם dismissed=false — כלומר פתוח.
+      //
+      // `directLocked` נשען על sessionStorage, ולכן הוא שורד פתיחה וסגירה.
+      // ⚠️ **ולא localStorage**: סגירת הלשונית נועלת מחדש — אותה החלטה
+      // שכבר תועדה בזרוע השנייה.
+      //
+      // ⚠️ ומפתח **נפרד** מזה של הזרוע ההיא: שם המשמעות היא "נפתח" (ברירת
+      // מחדל נעול), וכאן "ננעל" (ברירת מחדל פתוח למנהל). שימוש חוזר באותו
+      // מפתח היה נועל את המסך לכל מנהל בכל כניסה.
+      //
+      // ⚠️ ברירת המחדל נשמרה: מי שלא נעל מעולם נכנס בלי סיסמה, כמו היום.
+      // הסיסמה נדרשת **רק** אחרי נעילה מפורשת.
+      unlocked: isManager && !directLocked,
+      unlock: unlockByPassword,
+      lock: lockDirect,
+      checking: checking || loading,
       error,
-      roleGated: true,
+      // ============================================================
+      // ⚠️ roleGated רק כשבאמת אין תפקיד — וזה היה הבאג השני
+      // ============================================================
+      // כאן היה `true` קבוע, ולכן מנהל שנעל היה מקבל את מסך התפקיד:
+      // "התפקיד שלך: מנהל · לשינוי התפקיד יש לפנות למנהל אחר" — משפט חסר
+      // פשר במצב הזה, **ובלי שום דרך לפתוח בחזרה**. דלת שננעלה בלי מפתח.
+      //
+      // מנהל שנעל אינו חסום בגלל תפקידו אלא משום שביקש; הוא מגיע לטופס
+      // הסיסמה. בקר, שאין לו הרשאה בשום מצב, נשאר עם מסך התפקיד — שהוא
+      // התשובה הנכונה עבורו.
+      roleGated: !isManager,
       role: user?.role ?? null,
     };
   }

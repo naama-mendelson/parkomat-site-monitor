@@ -14,7 +14,7 @@
 // ⚠️ **והגיבוב לעולם אינו מגיע לדפדפן.** ההשוואה נעשית בתוך הפונקציה
 // ב-SQL; מה שנשלח הוא הקוד, ומה שחוזר הוא true/false. `settings` היא
 // הטבלה היחידה בלי מדיניות RLS בדיוק מהסיבה הזו.
-import { supabase } from "./supabase";
+import { supabase, isSupabaseConfigured } from "./supabase";
 
 const KEY = "parkomat-admin-unlocked";
 
@@ -52,3 +52,54 @@ export const markUnlocked = () => {
 export const lockAgain = () => {
   try { sessionStorage.removeItem(KEY); } catch { /* מצב פרטי */ }
 };
+
+// ============================================================
+// אימות מחדש — מה שכפתור "נעל" נועל בפועל
+// ============================================================
+// ⚠️ **הסיסמה של החשבון, ולא קוד מנהל.** קוד המנהל הוסר מהזרוע הישירה
+// במכוון (ראה CLAUDE.md): ערך ברירת המחדל שלו נמצא בקוד הפתוח, הוא משותף
+// לכולם, ומעולם לא הוחלף. להחזיר אותו כאן היה להחיות טעות מתועדת.
+//
+// הסיסמה קשורה ל**אדם**: מי שנעל וחזר מוכיח שהוא עדיין הוא, ומי שעבר ליד
+// עמדה פתוחה בחדר בקרה לא יכול פשוט להמשיך.
+//
+// ⚠️ **אין סיכון ל-session הקיים.** signInWithPassword עם אותו משתמש מחזיר
+// session חדש לאותו חשבון — כלומר החלפה שקופה. סיסמה שגויה מחזירה שגיאה
+// **בלי** לגעת ב-session, ולכן ניסיון כושל אינו מנתק את מי שכבר מחובר.
+export async function reauthenticate(password) {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error("אין משתמש מחובר");
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: String(password ?? ""),
+  });
+  // ⚠️ לא מחזירים את הודעת Supabase כמות שהיא: "Invalid login credentials"
+  // באנגלית, על מסך עברי, נקרא כתקלת מערכת ולא כ"טעית בסיסמה".
+  if (error) return false;
+  return true;
+}
+
+// ============================================================
+// דגל הנעילה של הזרוע הישירה — משמעות הפוכה, ובכוונה
+// ============================================================
+// ⚠️ המפתח שלמעלה אומר "**נפתח**", ומתאים לזרוע השרת שבה ברירת המחדל היא
+// נעול. כאן ברירת המחדל היא **פתוח** למנהל, ולכן הדגל הנכון הוא "ננעל
+// במפורש". שימוש חוזר במפתח ההוא היה הופך את המסך לנעול לכל מנהל בכל
+// כניסה — שינוי התנהגות שאיש לא ביקש.
+const LOCKED_KEY = "parkomat_admin_locked";
+
+/** האם המשתמשת נעלה במפורש בלשונית הזו. */
+export function isDirectLocked() {
+  try { return sessionStorage.getItem(LOCKED_KEY) === "1"; } catch { return false; }
+}
+
+/** `true` נועל, `false` פותח. sessionStorage — סגירת הלשונית נועלת ממילא. */
+export function setDirectLocked(locked) {
+  try {
+    if (locked) sessionStorage.setItem(LOCKED_KEY, "1");
+    else sessionStorage.removeItem(LOCKED_KEY);
+  } catch { /* מצב פרטי — נופל חזרה ל-state בזיכרון */ }
+}

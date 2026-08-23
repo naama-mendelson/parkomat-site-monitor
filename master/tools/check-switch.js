@@ -69,6 +69,15 @@ for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from/g)) {
 const ALLOWED_DIRECT = new Set([
   // עוזרי דפדפן בלבד — נעילת המושב. אין מקבילה בשרת.
   "isUnlocked", "markUnlocked", "lockAgain",
+  // ⚠️ אותו סוג בדיוק: קריאה וכתיבה ל-sessionStorage של הלשונית. זה אינו
+  // מסלול נתונים ואין לו צד שרת — "האם המשתמשת נעלה את המסך כאן" היא
+  // שאלה על הדפדפן הזה בלבד.
+  "isDirectLocked", "setDirectLocked",
+  // ⚠️ `reauthenticate` **כן** פונה ל-Supabase, ולכן היא נראית כמו חריגה —
+  // אבל היא נקראת רק מהזרוע הישירה. בזרוע השרת הפתיחה היא `unlockByCode`
+  // מול `verifyAdminCode`, שעובר במתג כרגיל. שתי דרכי פתיחה לשני מנגנוני
+  // הרשאה שונים — ולא מסלול אחד שעוקף.
+  "reauthenticate",
   // התראות push: אין זרוע שרת **בכוונה** — השולח אינו יכול להיות המחשב
   // שנופל, וזה בדיוק הרגע שבו ההתראה נחוצה. חריגה מוצהרת ב-EXIT-PLAN.md.
   // ⚠️ isInstalledApp היא בדיקת **סביבה בדפדפן** (display-mode: standalone),

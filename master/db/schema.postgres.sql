@@ -318,27 +318,61 @@ $$;
 -- ⚠️ וזה סותר את הכלל שהקובץ הזה בנוי עליו: **הקובץ הוא מצב היעד.** מרגע
 -- שיש עמודה בייצור שאינה כאן, "להריץ את הקובץ" כבר לא מייצר את המערכת.
 --
--- ADD COLUMN IF NOT EXISTS — בייצור זו פעולת ריק, ואינה כותבת מחדש את
--- הטבלה (עמודה בלי DEFAULT אינה מחייבת rewrite).
-ALTER TABLE status_history
-  ADD COLUMN IF NOT EXISTS fault_text        TEXT,   -- תיאור התקלה מהבקר. NULL = לא נקרא, '' = נקרא וריק
-  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,   -- סומן כניסוי — ואינו נספר באף מדד
-  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
-  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT,
-  -- סיווג מחדש: שכבה מעל `status`, שנשאר המקור לנצח.
-  ADD COLUMN IF NOT EXISTS reclassified_to   TEXT,
-  ADD COLUMN IF NOT EXISTS reclassified_by   TEXT,
-  ADD COLUMN IF NOT EXISTS reclassified_at   TEXT;
+-- ============================================================
+-- ⚠️ עטוף בתנאי — כי `IF NOT EXISTS` אינו חוסך את הנעילה
+-- ============================================================
+-- `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` על עמודה שכבר קיימת אינו
+-- משנה דבר — אבל הוא **עדיין תופס ACCESS EXCLUSIVE על הטבלה**. הוא ממתין
+-- לכל טרנזקציה פתוחה עליה, וחוסם כל טרנזקציה חדשה בינתיים.
+--
+-- ⚠️ ו-`db.init()` רץ בכל עלייה של השרת **ובכל שער**, כלומר נעילה בלעדית
+-- על שלוש הטבלאות החמות ביותר בזמן שהקליטה כותבת אליהן. נמדד בפועל:
+-- `deadlock detected` — "process A waits for AccessExclusiveLock ... blocked
+-- by process B; process B waits for AccessShareLock ... blocked by A".
+-- שני שערים נפלו על זה, ובדיקת דפדפן נפלה עליו שוב.
+--
+-- הבדיקה המקדימה עולה שאילתת קטלוג אחת ומריצה את ה-DDL פעם אחת בחיי המסד.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'status_history'
+       AND column_name = 'reclassified_to'
+  ) THEN
+    ALTER TABLE status_history
+      ADD COLUMN IF NOT EXISTS fault_text        TEXT,   -- תיאור התקלה מהבקר. NULL = לא נקרא, '' = נקרא וריק
+      ADD COLUMN IF NOT EXISTS excluded_at       TEXT,   -- סומן כניסוי — ואינו נספר באף מדד
+      ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+      ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT,
+      -- סיווג מחדש: שכבה מעל `status`, שנשאר המקור לנצח.
+      ADD COLUMN IF NOT EXISTS reclassified_to   TEXT,
+      ADD COLUMN IF NOT EXISTS reclassified_by   TEXT,
+      ADD COLUMN IF NOT EXISTS reclassified_at   TEXT;
+  END IF;
 
-ALTER TABLE operations
-  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
-  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
-  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'operations'
+       AND column_name = 'exclusion_reason'
+  ) THEN
+    ALTER TABLE operations
+      ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
+      ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+      ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+  END IF;
 
-ALTER TABLE maintenance_windows
-  ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
-  ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
-  ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'maintenance_windows'
+       AND column_name = 'exclusion_reason'
+  ) THEN
+    ALTER TABLE maintenance_windows
+      ADD COLUMN IF NOT EXISTS excluded_at       TEXT,
+      ADD COLUMN IF NOT EXISTS excluded_by       TEXT,
+      ADD COLUMN IF NOT EXISTS exclusion_reason  TEXT;
+  END IF;
+END
+$$;
 
 -- ⚠️ **רק 'maintenance'.** הפיכת תקלה ל'מוכן' הייתה מוחקת אירוע במקום
 -- לסווגו מחדש — ואת זה כבר עושה סימון הניסוי, שם במפורש ותחת השם הנכון.

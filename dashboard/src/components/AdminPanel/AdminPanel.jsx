@@ -9,6 +9,7 @@ import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
+import { useDirect } from "../../services/dataSource";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
 import "./AdminPanel.css";
 import Logo from "../Logo/Logo";
@@ -17,6 +18,9 @@ const CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function AdminPanel({ sites, onClose, onChanged }) {
   const { unlocked, unlock, lock, checking, error: unlockError, roleGated, role } = useAdmin();
+  // ⚠️ במצב ישיר אין קוד מנהל — פותחים בסיסמת החשבון. הטקסט חייב לומר
+  // את זה: מסך שמבקש "קוד מנהל" ממי שאין לו קוד הוא מסך שאי אפשר לעבור.
+  const byPassword = !roleGated && useDirect;
 
   const [code, setCode] = useState("");
   const [editing, setEditing] = useState(null);       // קוד האתר שנערך
@@ -167,12 +171,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
         <div className="adm-lock" onClick={(e) => e.stopPropagation()}>
           <div className="adm-lock-icon"><Logo size={40} /></div>
           <h2>ניהול אתרים</h2>
-          <p>הזן את קוד המנהל כדי להוסיף, לערוך או למחוק אתרים.</p>
+          <p>{byPassword
+            ? "המסך ננעל. הזיני את סיסמת החשבון שלך כדי להמשיך."
+            : "הזן את קוד המנהל כדי להוסיף, לערוך או למחוק אתרים."}</p>
 
           <form onSubmit={handleUnlock}>
             <input
               type="password"
-              placeholder="קוד מנהל"
+              placeholder={byPassword ? "הסיסמה שלך" : "קוד מנהל"}
+              autoComplete="current-password"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               autoFocus
