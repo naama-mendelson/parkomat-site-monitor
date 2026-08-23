@@ -7,8 +7,19 @@ import { compareSitesByPriority } from "../../utils/sortSites";
 import "./OperatorView.css";
 
 function OperatorView({ sites, loading, error, activeFilters = [], typeFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
-  if (loading) return <div className="app-loading">טוען אתרים...</div>;
-  if (error) return <div className="app-error">שגיאה: {error}</div>;
+  // ============================================================
+  // ⚠️ שגיאה **אינה** מוחקת מסך שיש בו נתונים
+  // ============================================================
+  // כאן היה `if (error)` יחיד, והוא היה היחיד מבין שלוש התצוגות שמתנהג כך:
+  // SupervisorView ו-ExecutiveView שניהם בודקים `error && !data`. התוצאה
+  // בפועל — תקלת רשת חולפת אחת החליפה 13 כרטיסי אתר תקינים, שכבר היו
+  // בזיכרון, בשורה אדומה אחת. הנתונים לא אבדו; רק הסירוב להציג אותם.
+  //
+  // ⚠️ אבל **לא פשוט להסתיר את השגיאה.** בדיוק מזה מזהיר ההערה ב-App.jsx:
+  // "מסך שנראה תקין ומשקר" הוא הכשל הגרוע ביותר במסך ניטור. לכן הנתונים
+  // נשארים, והשגיאה עוברת לפס עליון שאומר במפורש שהמוצג אינו טרי.
+  if (loading && sites.length === 0) return <div className="app-loading">טוען אתרים...</div>;
+  if (error && sites.length === 0) return <div className="app-error">שגיאה: {error}</div>;
 
   const filtered = sites.filter((site) => {
     // רשימה ריקה = בלי סינון. אחרת: האתר צריך להיות באחד מהמצבים שנבחרו.
@@ -24,6 +35,14 @@ function OperatorView({ sites, loading, error, activeFilters = [], typeFilter = 
 
   return (
     <div className="operator-view">
+      {/* ⚠️ הפס נשאר עד שהשליפה הבאה מצליחה — הוא אינו מודעה חולפת אלא
+          מצב. רענון רץ כל 60 שניות, ולכן הוא נעלם מעצמו כשהרשת חוזרת. */}
+      {error && (
+        <div className="op-stale" role="status">
+          ⚠️ העדכון האחרון נכשל — ייתכן שהמוצג אינו מעודכן
+          <span className="op-stale-detail">{error}</span>
+        </div>
+      )}
       <SiteGrid sites={ordered} onSiteClick={onSiteClick} />
     </div>
   );

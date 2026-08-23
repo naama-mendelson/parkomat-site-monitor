@@ -12,3 +12,29 @@
 @media (prefers-reduced-motion: reduce) {
   .operator-view { animation: none; }
 }
+
+/* ===== פס "המידע אינו טרי" ===== */
+
+/* ⚠️ ענבר ולא אדום, וזו הבחנה שנושאת מידע: אדום במסך הזה שמור לתקלה
+   **באתר**. שגיאת רשת בדפדפן שלנו אינה אומרת דבר על המתקנים, וצביעתה
+   באותו צבע הייתה מייצרת בהלה על משהו שאינו קורה בשטח. */
+.op-stale {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-block-end: 0.9rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+}
+
+/* הודעת השגיאה הגולמית — נוכחת למי שמחפש אותה, ולא צועקת. */
+.op-stale-detail {
+  font-size: 0.82rem;
+  opacity: 0.75;
+  font-family: ui-monospace, "Courier New", monospace;
+}
