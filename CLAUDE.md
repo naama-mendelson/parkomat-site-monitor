@@ -42,7 +42,7 @@ escape path exists in the repo, written and tested but inactive.
 | C — identity + RLS | **Built.** `app.current_actor()` / `app.current_role()`; RLS enabled on all 7 tables, read granted to `authenticated`, `settings` deliberately policy-less. Real users exist. `POST /api/users/invite` and `GET /api/users` are behind `requireAuth` — token only. Verified adversarially: anon reads return `401`, `settings` returns `403` even with a valid token, writes from the browser return `403`. |
 | D — dashboard queries directly | **Built and live.** `getAllSitesGlobals` is now `site_globals` in SQL — that was the last blocker. `useSites` goes through `services/dataSource.js`; the site list is read straight from PostgREST. |
 | D' — writes go directly too | **Built and live.** `db/writes.postgres.sql`: maintenance (`start`/`cancel`), sites (`register`/`update`/`delete`), users (`list`/`set_active`/`set_role`), plus `public.my_role()`. All reachable from the browser through PostgREST; the server is not involved. 59 live checks in `tools/check-writes.js`. **Invite and delete-user stay on the server** — they need the Secret key, which must never reach a browser. |
-| E — delete the read API | **Deliberately not done — see below.** |
+| E — delete the read API | **Deliberately not done — see below.** The *other* half of E, moving the daily job to `pg_cron`, **is done.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
 
 **What still runs the old way.** `supervisor`, `executive`, `analytics`, `insights` and the
@@ -167,19 +167,34 @@ database. Supabase Auth replaces the shared admin code, and the operator / super
 executive roles become real instead of a client-side `useState`.
 
 **The server.** MQTT ingestion (dedup, plausibility, timestamps, transactions, FIFO) plus
-the assistant. **Three of the daily job's four steps can move to `pg_cron`** — monthly summary,
-cleanup over a year, and the 7-day `events` prune are all pure SQL.
+the assistant. **The daily job is gone from it entirely** — `dailyMaintenance` was removed from
+`master.js`; `pg_cron` 1.6.4 is installed and `db/cron.postgres.sql` schedules what survived.
 
-⚠️ **`pg_cron` is *available* but NOT installed** — measured: `pg_available_extensions` offers
-1.6.4, `installed_version` is `null`, and `cron.job` does not exist. This file previously said it
-was "already running on the instance", which was wrong. Moving the job therefore starts with
-`CREATE EXTENSION`, a production DDL step, not with writing a schedule.
+Each of the four steps got its own verdict, and only two moved:
 
-⚠️ **And the fourth step cannot move at all.** `runBackup` writes a file to our own disk — that
-file *is* the data half of the exit door, and `pg_cron` runs inside Postgres with no access to
-our filesystem. So the daily job shrinks; it does not disappear, and the server still has to run
-daily for the backup. Which also caps the value of the move: the three SQL steps would survive
-server downtime, and that is the whole gain.
+- **Backup — deleted, nothing to move.** ⚠️ This file used to claim it "writes a file to our own
+  disk" and therefore could not move. **That was wrong**: `tools/backup-db.js` is a deliberate
+  no-op that logs one line. The local backup was disabled during the Supabase migration —
+  copying the SQLite file after the data left it would have produced *the illusion of a backup*,
+  which is worse than none. Supabase backs the database up itself.
+- **`events` prune (7 days) and cleanup (12 months) — moved.** ⚠️ Stopping the prune was never an
+  option: `events` is the table Realtime subscribes to, and unpruned it grows forever.
+- **Monthly summary — deleted, not moved, and that is a decision.** `monthly_summary` is read only
+  by two dormant server routes the dashboard never calls, and it is documented as wrong
+  (`report_monthly` was moved off it to live computation for exactly that reason). Measured why:
+  it cuts months on the **local** clock while everything else uses UTC — July 801 vs 806. Porting
+  a wrong computation into SQL would have set it in stone.
+
+**What the move bought:** the old timer was `setTimeout(10s)` at boot then `setInterval(24h)`, so
+the hour drifted with every restart, a server restarted more often than daily never reached the
+24h timer at all, and a server that was **down** at the appointed hour simply skipped — on
+2026-08-22 it was down 14.7 hours. `pg_cron` runs at a fixed hour inside Postgres regardless.
+
+⚠️ **Schedules live in `db/cron.postgres.sql`, never in the Supabase UI** (rule 6). A schedule
+that exists only in the dashboard does not travel in `pg_dump` and is not in git. Applying it is
+wrapped in `try` on purpose: `pg_cron` may be absent on a fresh instance or on non-Supabase
+Postgres, and maintenance that failed to schedule is a loss — ingestion that failed to start is
+damage.
 
 **The dashboard.** `fetch('/api/sites')` becomes a Supabase query through PostgREST.
 Live updates come from a new `events` table: ingestion writes one row per semantic event,
@@ -234,7 +249,7 @@ system better than before.
 | B | `events` table (~1 day; improves the current system immediately). |
 | C | RLS + Supabase Auth, with the `app.current_actor()` indirection from the start. |
 | D | Dashboard queries directly, behind the existing `services/` seam. |
-| E | Delete the read API; move the daily job to `pg_cron`. |
+| E | ⚠️ **Split in half.** The daily job **has** moved to `pg_cron`. Deleting the read API is **cancelled** — it is the exit door. |
 | F | Dormant self-hosted auth — **deliberately last**, after real users exist. |
 
 Phase F is last on purpose. There are no users today (role is React state), so building a
