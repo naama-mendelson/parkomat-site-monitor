@@ -30,7 +30,7 @@ async function f(url, opt) {
 // כך שהשורה נולדת כבקר. `app_metadata: manager` לבדו אינו מספיק.
 const { createRequire } = await import("node:module");
 const { gateToken } = createRequire(import.meta.url)("./lib/gate-user");
-const { token, cleanup: dropUser } = await gateToken(SB, ANON, SECRET, f);
+const { token, email, cleanup: dropUser } = await gateToken(SB, ANON, SECRET, f);
 
 const H = { apikey: ANON, Authorization: `Bearer ${token}` };
 const get = async (q) => (await f(`${SB}/rest/v1/${q}`, { headers: H })).json();
@@ -41,7 +41,25 @@ const rpc = async (fn, body) => {
   return { status: r.status, body: await r.json() };
 };
 
-const cleanup = () => dropUser();
+// ============================================================
+// ⚠️ הניקוי מוחק גם את שורות הביקורת, ולא רק את המשתמש
+// ============================================================
+// `reclassify_status` כותב שורת ביקורת בכל קריאה — גם על הסיווג וגם על
+// ביטולו. הן נשארות אחרי שהמשתמש נמחק, ואז מופיעות ביומן הביקורת של
+// **אתר אמיתי** כפעולה שאיש לא עשה, בידי כתובת שכבר אינה קיימת.
+//
+// ⚠️ נמדד בשער check-no-residue: שתי שורות נשארו אחרי כל ריצה, והצטברו.
+// אותו דפוס בדיוק שהותיר 62 חלונות תחזוקה ב-check-writes.
+const cleanup = async () => {
+  try {
+    const { createRequire } = await import("node:module");
+    const db = createRequire(import.meta.url)("../db/db");
+    // ⚠️ לפי actor_name ולא לפי target: המקטע עצמו הוא של אתר אמיתי, ורק
+    // הפעולה היא של השער. מחיקה לפי היעד הייתה מוחקת היסטוריה אמיתית.
+    await db.prepare("DELETE FROM audit_log WHERE actor_name = ?").run(email);
+  } catch { /* ניקוי אינו מפיל את השער */ }
+  await dropUser();
+};
 
 try {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
