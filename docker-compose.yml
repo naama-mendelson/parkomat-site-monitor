@@ -47,7 +47,7 @@ services:
     # היה מזריק קוד ל-JS בדרך וקורא את האסימון. נשאר על loopback כדי
     # שניפוי תקלות **בשרת עצמו** יישאר אפשרי.
     ports:
-      - "127.0.0.1:8080:80"
+      - "${BIND_ADDR:-0.0.0.0}:8080:80"
 
     # ⚠️ אינו תלוי ב-app: הדשבורד קורא מ-Supabase, לא מהשרת. depends_on
     # היה יוצר תלות שאינה קיימת — ומעכב את עליית המסך בגלל תהליך שאין לו
@@ -120,7 +120,7 @@ services:
     # היה מזריק קוד ל-JS בדרך וקורא את האסימון. נשאר על loopback כדי
     # שניפוי תקלות **בשרת עצמו** יישאר אפשרי.
     ports:
-      - "127.0.0.1:4000:4000"
+      - "${BIND_ADDR:-0.0.0.0}:4000:4000"
 
     # הסודות מגיעים מקובץ .env שיושב לצד ה-compose ואינו נכנס ל-git
     # ולא לתמונה (ראה .dockerignore). ראה .env.docker.example.
@@ -259,6 +259,12 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: parkomat-tunnel
+    # ⚠️ **פרופיל, ולא שירות רגיל.** בלי דומיין ב-Cloudflare אין מנהרה,
+    # ובלי הגדרה כזו `docker compose up` היה נכשל על אסימון חסר — כלומר
+    # תיקון אבטחה שמונע פריסה של כל השאר.
+    #
+    # להפעיל: docker compose --profile tunnel up -d
+    profiles: ["tunnel"]
     restart: unless-stopped
     depends_on:
       - proxy
@@ -267,7 +273,7 @@ services:
     # מערכת ההפעלה בכל פעם שמישהו מסתכל על רשימת התהליכים.
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?חסר CLOUDFLARE_TUNNEL_TOKEN ב-.env}
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     security_opt:
       - no-new-privileges:true
     mem_limit: 128m

@@ -39,11 +39,13 @@ function SetKey($key, $value) {
 
 # ⚠️ בלי האסימון אין מנהרה, ובלי מנהרה אין גישה בכלל — לא מבחוץ וגם לא
 # מהמשרד, כי הפורטים סגורים לרשת. נכשלים כאן, מוקדם ובבירור.
+# ⚠️ המנהרה אופציונלית. בלי דומיין ב-Cloudflare אין אסימון — וזה לא סיבה
+# למנוע את פריסת הגיבוי, ה-2FA ושאר התיקונים. בלי אסימון: הדשבורד ממשיך
+# להיות מוגש ב-HTTP ברשת המשרד, בדיוק כמו קודם.
 $token = GetKey "CLOUDFLARE_TUNNEL_TOKEN"
-if (-not $token) {
-  Die "חסר CLOUDFLARE_TUNNEL_TOKEN ב-.env. צור מנהרה ב-Cloudflare Zero Trust והדבק את האסימון."
-}
-Ok "אסימון המנהרה קיים"
+$useTunnel = [bool]$token
+if ($useTunnel) { Ok "אסימון המנהרה קיים — HTTPS יופעל" }
+else { Warn "אין אסימון מנהרה — הדשבורד יוגש ב-HTTP ברשת המשרד (ללא הצפנה)" }
 
 $public = GetKey "PUBLIC_URL"
 if (-not $public) { Warn "PUBLIC_URL לא מוגדר — הבדיקה בסוף תדולג" }
@@ -60,7 +62,15 @@ Set-Content .env -Value $lines -Encoding utf8
 Ok "ההגדרות הקודמות: .env.bak"
 
 Say "3. בנייה והרמה"
-docker compose up -d --build
+if ($useTunnel) {
+  # ⚠️ עם מנהרה הפורטים נסגרים לרשת: כל התעבורה עוברת ב-HTTPS, ופורט
+  # HTTP פתוח הוא בדיוק הנתיב שההצפנה באה לסגור.
+  SetKey "BIND_ADDR" "127.0.0.1"
+  Set-Content .env -Value $lines -Encoding utf8
+  docker compose --profile tunnel up -d --build
+} else {
+  docker compose up -d --build
+}
 if ($LASTEXITCODE -ne 0) { Die "הבנייה נכשלה" }
 
 Say "4. המתנה לבריאות"
@@ -79,10 +89,12 @@ Ok "כל השירותים רצים"
 Say "5. בדיקות"
 $fail = 0
 
-$tn = docker compose logs --tail=60 tunnel 2>&1 | Out-String
+if ($useTunnel) {
+  $tn = docker compose logs --tail=60 tunnel 2>&1 | Out-String
 if ($tn -match "Registered tunnel connection|connection established|Connection .* registered") {
   Ok "המנהרה מחוברת ל-Cloudflare"
 } else { Warn "המנהרה לא אישרה חיבור — docker compose logs tunnel"; $fail++ }
+}
 
 $bk = docker compose logs --tail=40 backup 2>&1 | Out-String
 if ($bk -match "אומת") { Ok "הגיבוי רץ ואומת" }
@@ -95,7 +107,7 @@ else { Warn "קליטת MQTT לא אושרה"; $fail++ }
 
 # ⚠️ הבדיקה מהחוץ ולא מבפנים: פנייה ל-127.0.0.1 הייתה עוקפת את Cloudflare
 # ומאשרת בדיוק את מה שלא נבדק.
-if ($public) {
+if ($public -and $useTunnel) {
   try {
     $r = Invoke-WebRequest "$public/health" -TimeoutSec 30 -UseBasicParsing
     if ($r.StatusCode -eq 200) { Ok "HTTPS דרך Cloudflare עונה · /health = 200" }
@@ -107,8 +119,8 @@ if ($public) {
 # הנתיב שכל המהלך הזה בא לסגור.
 $exposed = (docker compose ps --format json | ConvertFrom-Json) |
   ForEach-Object { $_.Publishers } | Where-Object { $_.URL -eq "0.0.0.0" }
-if ($exposed) { Warn "יש פורטים פתוחים לרשת — צפוי loopback בלבד"; $fail++ }
-else { Ok "אין פורטים פתוחים לרשת המשרד" }
+if ($exposed -and $useTunnel) { Warn "יש פורטים פתוחים לרשת — צפוי loopback בלבד"; $fail++ }
+elseif ($useTunnel) { Ok "אין פורטים פתוחים לרשת המשרד" }
 
 Say "סיכום"
 if ($fail -eq 0) {
