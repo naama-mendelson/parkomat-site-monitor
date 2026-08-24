@@ -1900,6 +1900,26 @@ app.get("/health", (req, res) => {
   const mqttHealthy = mqttUp === null || mqttUp || mqttDown < MQTT_UNHEALTHY_AFTER_SECONDS;
   const healthy = dbReady && mqttHealthy;
 
+  // ============================================================
+  // ⚠️ פירוט רק ללולאה המקומית — /health הפך לנגיש מהאינטרנט
+  // ============================================================
+  // עד המנהרה הנתיב הזה היה מוגן ברשת: פורט מקומי בלבד. מרגע שהדשבורד
+  // מוגש דרך Cloudflare, גם /health מוגש — והוא מדווח uptime, מצב DB,
+  // מצב MQTT ומספר חיבורי SSE לכל מי ששואל.
+  //
+  // ⚠️ אין כאן נתונים עסקיים, ולכן זו אינה דליפה חמורה — אבל "מתי
+  // הקליטה למטה" הוא בדיוק המידע שמועיל למי שמנסה לזייף הודעות MQTT,
+  // והצירוף בין השניים אינו מקרי.
+  //
+  // ⚠️ **הנתיב עצמו נשאר פתוח בכוונה, ולא הוסר.** זרוע השרת של המתג
+  // (fetchServerHealth ב-api.js) קוראת לו, וזו דלת היציאה. הסרתו הייתה
+  // שוברת אותה בשקט — והלקוח ממילא משתמש רק בקוד ה-HTTP.
+  const raw = req.socket?.remoteAddress || "";
+  const loopback = !req.headers["cf-connecting-ip"] &&
+    (raw === "127.0.0.1" || raw === "::1" || raw === "::ffff:127.0.0.1");
+  if (!loopback) {
+    return res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "unhealthy" });
+  }
   res.status(healthy ? 200 : 503).json({
     status: healthy ? "ok" : "unhealthy",
     uptimeSeconds: Math.round(process.uptime()),
