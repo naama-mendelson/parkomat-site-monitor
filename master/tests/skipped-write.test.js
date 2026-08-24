@@ -37,6 +37,7 @@ const stub = (filename, exports) => {
  */
 function loadHandler(applyResult) {
   const published = [];
+  const drops = [];
   const calls = { applyStateChange: 0, lastSeen: 0 };
 
   stub(QUERIES, {
@@ -46,24 +47,33 @@ function loadHandler(applyResult) {
     getOpenStatusStartedAt: async () => "2026-01-01T00:00:00.000Z",
     getActiveMaintenance: async () => null,
     insertSuppressedFault: async () => {},
+    // ⚠️ חייב להיות ב-stub: מרגע שהמטפל רושם זריקות, חסרונו הופך את
+    // הקריאה לשגיאה — כלומר הבדיקה נופלת על ה-mock ולא על הקוד.
+    recordIngestDrop: (row) => { drops.push(row); },
   });
   stub(BUS, { publish: (msg) => published.push(msg) });
   delete require.cache[STATE_HANDLER];
   const { handleState } = require(STATE_HANDLER);
 
-  return { handleState, published, calls };
+  return { handleState, published, calls, drops };
 }
 
 const SITE = { id: 7, code: "1284", status: "operating" };
 const ERROR_MSG = { state: "error", timestamp: 1787481855 };
 
 test("⚠️ כתיבה שנחסמה (backfill) — לא משודרת לדשבורד", async () => {
-  const { handleState, published, calls } = loadHandler({ skipped: "backfill" });
+  const { handleState, published, calls, drops } = loadHandler({ skipped: "backfill" });
   await handleState(SITE, ERROR_MSG);
 
   assert.equal(calls.applyStateChange, 1, "applyStateChange לא נקרא בכלל");
   // ⚠️ זו השורה שנפלה לפני התיקון: המצב שודר למרות שלא נכתב.
   assert.deepEqual(published, [], "שודר אירוע על מצב שלא נכתב למסד");
+
+  // ⚠️ ולא רק "לא שודר" — היא גם **נרשמה**. בלי זה ההודעה נעלמת בשקט,
+  // וזה בדיוק מה שמנע אבחון של תקלה שאבדה.
+  assert.equal(drops.length, 1, "הזריקה לא נרשמה ל-ingest_drops");
+  assert.equal(drops[0].reason, "state_backfill");
+  assert.equal(drops[0].siteCode, "1284");
 });
 
 test("⚠️ כתיבה שנחסמה (no_change) — לא משודרת לדשבורד", async () => {

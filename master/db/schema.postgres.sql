@@ -483,3 +483,43 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_at    ON audit_log(at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, at DESC);
+
+-- ============================================================
+-- ingest_drops — כל הודעה שהגיעה ולא נכתבה
+-- ============================================================
+-- ⚠️ **נולד מאובדן אמיתי.** אתר היה בתקלה שלוש שעות והמסך הראה "בפעולה".
+-- הסוכן שידר, Mosquitto העביר, HiveMQ אישר ב-`PUBACK RC:0` — וההודעה
+-- נעלמה אצלנו. שש שעות חקירה על שלושה מחשבים, ולבסוף התשובה לא נמצאה:
+-- הקונטיינר נוצר מחדש והלוג נמחק איתו.
+--
+-- ⚠️ **וזה לא היה מקרה חד-פעמי אלא תכונה של המערכת.** בקליטה יש אחד-עשר
+-- מסלולי זריקה שקטים (אתר לא רשום, state לא חוקי, חותם זמן פסול, גארד
+-- backfill, ועוד), וכולם כותבים `console.log` בלבד. ומעל כולם: כשעיבוד
+-- **נכשל**, המנוי מאשר את ההודעה ל-HiveMQ בכל זאת — כדי שהודעה תקולה לא
+-- תחסום את התור — ולכן היא נמחקת משם לנצח. הראיה היחידה היא שורה בלוג של
+-- תהליך, ולוג של תהליך מת בהפעלה מחדש.
+--
+-- ⚠️ **המטען נשמר במלואו, וזה העיקר.** בלעדיו יש "משהו נזרק"; איתו אפשר
+-- לראות מה בדיוק שודר, להשוות למה שהסוכן חושב ששלח, ובמקרה הצורך לשדר
+-- מחדש ביד.
+--
+-- ⚠️ אין FK ל-sites: הודעה מאתר **לא רשום** היא בדיוק אחת מהסיבות לזריקה,
+-- ו-FK היה מונע את רישומה — כלומר מסתיר את המקרה שהכי צריך לראות.
+CREATE TABLE IF NOT EXISTS ingest_drops (
+  id         BIGSERIAL PRIMARY KEY,
+  at         TEXT NOT NULL,              -- ISO 8601 UTC, כמו כל התאריכים כאן
+  topic      TEXT NOT NULL,
+  site_code  TEXT,                       -- נגזר מה-topic; NULL אם לא היה ניתן לפרסר
+  kind       TEXT,                       -- state / operation / bridge / unknown
+  reason     TEXT NOT NULL,              -- מפתח קצר וקבוע, לסינון וספירה
+  detail     TEXT,                       -- הסבר חופשי / הודעת השגיאה
+  payload    TEXT                        -- ⚠️ המטען כפי שהגיע, לא מפורסר
+);
+
+-- החיפוש הראשון הוא תמיד "מה נזרק אצל אתר X לאחרונה".
+CREATE INDEX IF NOT EXISTS idx_ingest_drops_site_time
+  ON ingest_drops(site_code, at DESC);
+
+-- והשני "איזה סוג זריקה גדל" — ספירה לפי סיבה על טווח זמן.
+CREATE INDEX IF NOT EXISTS idx_ingest_drops_reason_time
+  ON ingest_drops(reason, at DESC);

@@ -124,3 +124,36 @@ $$;
 
 SELECT cron.schedule('parkomat-prune-events', '17 3 * * *', 'SELECT app.prune_events(7)');
 SELECT cron.schedule('parkomat-cleanup-old',  '37 3 * * *', 'SELECT app.cleanup_old_data(12)');
+
+-- ============================================================
+-- גריפת ingest_drops — רטנציה של 14 יום
+-- ============================================================
+-- ⚠️ ארוך יותר מ-`events` (שבוע) ובכוונה: זו טבלת אבחון, והשאלה שנשאלת
+-- ממנה היא "מה נזרק אצל אתר X בשבוע שעבר". רטנציה של שבוע הייתה מוחקת את
+-- התשובה בדיוק כשמישהו מתחיל לחפש אותה — וזה מה שקרה עם לוג הקונטיינר.
+CREATE OR REPLACE FUNCTION app.prune_ingest_drops(p_retention_days integer DEFAULT 14)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_cutoff text;
+  v_n integer;
+BEGIN
+  v_cutoff := to_char((now() - make_interval(days => p_retention_days)) AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  DELETE FROM ingest_drops WHERE at < v_cutoff;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END;
+$$;
+
+DO $$
+BEGIN
+  PERFORM cron.unschedule('parkomat-prune-ingest-drops');
+EXCEPTION WHEN OTHERS THEN NULL;
+END
+$$;
+
+SELECT cron.schedule('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.prune_ingest_drops(14)');

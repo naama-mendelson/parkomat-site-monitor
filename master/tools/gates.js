@@ -46,6 +46,9 @@ const GATES = [
   // status גולמי — ו-parity היה ירוק, כי הבאג היה בשתי הזרועות.
   { name: "check-effective-status", what: "כל קורא רואה את הסטטוס האפקטיבי", noEnv: true },
   { name: "check-heartbeat",     what: "המסך יודע לומר שהוא מציג נתונים ישנים" },
+  // ⚠️ נכתב אחרי אובדן אמיתי: תקלה שודרה, HiveMQ אישר, והשרת לא רשם —
+  // וה"למה" נמחק יחד עם הלוג של הקונטיינר.
+  { name: "check-drops",        what: "הודעה שנזרקה משאירה עקבות" },
   { name: "check-docker",      what: "הקשר הבנייה של Docker שלם", noEnv: true },
 ];
 

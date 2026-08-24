@@ -1,6 +1,6 @@
 // ingestion/dispatcher.js — מקבל הודעה, מפענח, בודק רישום, ומנתב
 
-const { findSiteByCode } = require("../db/queries");
+const { findSiteByCode, recordIngestDrop } = require("../db/queries");
 const { handleState } = require("./state-handler");
 const { handleOperation } = require("./operation-handler");
 const { handleBridgeState } = require("./bridge-handler");
@@ -131,12 +131,18 @@ async function dispatch(topic, raw) {
     const site = await findSiteByCode(siteCode);
     if (!site) {
       console.log(`[dispatcher] נדחתה הודעה מאתר לא רשום: code=${siteCode}`);
+      // ⚠️ נרשם למרות שאין site_id — ולכן אין FK בטבלה הזו. אתר שמשדר
+      // ואינו רשום הוא בדיוק המקרה שצריך לראות: זה קרה עם 1416, שהודעותיו
+      // נזרקו שבועות בשקט. הזיכרון הקצר ב-recordIngestDrop מונע הצפה.
+      recordIngestDrop({ topic, siteCode, kind, reason: "site_not_registered", payload: raw });
       return;
     }
 
     // 4. אכיפת state חוקי — בשני סוגי ההודעות יש שדה state
     if (!VALID_STATES.includes(data.state)) {
       console.log(`[dispatcher] נדחתה הודעה עם state לא חוקי '${data.state}' מאתר ${siteCode}`);
+      recordIngestDrop({ topic, siteCode, kind, reason: "invalid_state",
+                         detail: String(data.state), payload: raw });
       return;
     }
 
@@ -170,6 +176,12 @@ async function dispatch(topic, raw) {
         console.warn(
           `[dispatcher] ⛔ נדחתה הודעת ${kind} מאתר ${siteCode}: ${verdict.reason}. ` +
           `בדוק את שעון המחשב באתר (סוללת RTC / סנכרון NTP).`);
+        // ⚠️ הגארד הזה **נועד** לתפוס שעון שגוי באתר — וכשהוא תופס, ההודעה
+        // נעלמת. בלי רישום אין שום דרך לדעת שזו הסיבה, ובדיוק זה מה שחיפשנו
+        // שש שעות. נשמר עם `verdict.reason` והמטען, כדי שאפשר יהיה להשוות
+        // לחותם שהסוכן חושב ששלח.
+        recordIngestDrop({ topic, siteCode, kind, reason: "timestamp_rejected",
+                           detail: verdict.reason, payload: raw });
         return;
       }
 

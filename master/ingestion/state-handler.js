@@ -1,7 +1,7 @@
 // ingestion/state-handler.js — מטפל בהודעת state: מעדכן מצב נוכחי + היסטוריה
 
 const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance,
-        insertSuppressedFault } = require("../db/queries");
+        insertSuppressedFault, recordIngestDrop } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
 // ⚠️ מודול טהור בלי תלויות — כך הוא נבדק בלי מסד. ראה fault-text.js.
@@ -90,6 +90,18 @@ async function handleState(site, data) {
   const openStartedAt = await getOpenStatusStartedAt(site.id);
   if (openStartedAt && occurredAt < openStartedAt) {
     console.log(`[state] אתר ${site.code}: הודעת state מאוחרת (${occurredAt} < ${openStartedAt}) — התעלמנו`);
+    // ⚠️ הגארד הזה הוא החשוד המרכזי באובדן תקלה: הודעת `no_comm` נחתמת
+    // ב"עכשיו" של השרת, ולכן די בכך שהודעת מצב אמיתית תגיע שנייה אחריה עם
+    // חותם מוקדם ממנה — והיא נזרקת בשקט. עכשיו זה נשאר רשום, עם שני
+    // החותמים, כדי שאפשר יהיה לראות בדיוק בכמה היא "אחרה".
+    recordIngestDrop({
+      topic: `sites/${site.code}/state`,
+      siteCode: site.code,
+      kind: "state",
+      reason: "state_late_vs_open_segment",
+      detail: `occurredAt=${occurredAt} < openStartedAt=${openStartedAt}`,
+      payload: JSON.stringify(data),
+    });
     return;
   }
 
@@ -145,6 +157,18 @@ async function handleState(site, data) {
       `[state] ⚠️ אתר ${site.code}: ${newStatus} **לא נרשם** — ${result.skipped}` +
       ` (sites.status=${site.status}, occurredAt=${occurredAt})`
     );
+
+    // ⚠️ ולטבלה, לא רק ללוג: זו הודעה שהגיעה, אושרה ל-HiveMQ ונמחקה משם.
+    // שורת console מתה עם הקונטיינר, וזה בדיוק מה שמנע מאיתנו לאבחן תקלה
+    // שאבדה. ראה ingest_drops ב-schema.postgres.sql.
+    recordIngestDrop({
+      topic: `sites/${site.code}/state`,
+      siteCode: site.code,
+      kind: "state",
+      reason: `state_${result.skipped}`,
+      detail: `sites.status=${site.status} · occurredAt=${occurredAt}`,
+      payload: JSON.stringify(data),
+    });
     return;
   }
 

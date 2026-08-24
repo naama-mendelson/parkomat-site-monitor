@@ -2625,3 +2625,62 @@ module.exports.getSuppressedFaults = getSuppressedFaults;
 // ב-master.js) קורא לו, ובלי השורה הזו הוא `undefined` — כלומר שגיאה כל 20
 // שניות בלוג, ובאנר "הנתונים אינם מתעדכנים" שנדלק על מערכת תקינה לגמרי.
 module.exports.setSetting = setSetting;
+
+// ============================================================
+// ingest_drops — רישום כל הודעה שהגיעה ולא נכתבה
+// ============================================================
+// ⚠️ **נולד מאובדן אמיתי.** אתר היה בתקלה שלוש שעות והמסך הראה "בפעולה".
+// הסוכן שידר, HiveMQ אישר ב-PUBACK, וההודעה נעלמה אצלנו — ואת ה"למה"
+// איבדנו כי הקונטיינר נוצר מחדש והלוג נמחק איתו.
+//
+// ⚠️ **הכתיבה כאן לעולם אינה מפילה את הקליטה.** זהו רישום לאבחון, ולא
+// נתון שמשהו נשען עליו. הודעה שאבדה בגלל הכשל **ברישום** של הודעה שאבדה
+// היא בדיוק האבסורד שהטבלה הזו קיימת כדי למנוע. אותו נימוק בדיוק כמו
+// ב-insertSuppressedFault.
+//
+// ⚠️ **ולא await בשרשרת הקליטה** — ראה dispatcher: הקריאה היא fire-and-
+// forget. עיכוב ברישום אינו אמור לעכב את ה-PUBACK, ובעיקר אינו אמור
+// להיכנס לתור ה-FIFO של האתר, שם משימה תקועה חוסמת את האתר לנצח.
+//
+// ⚠️ ומינון: אתר לא רשום שמשדר כל שנייה היה מייצר אלפי שורות ביום. הזיכרון
+// הקצר למטה בולע חזרות של אותו (topic, reason) בתוך דקה. הוא **בזיכרון
+// בלבד** ובכוונה: הפעלה מחדש מאפסת אותו, וזה עדיף על שאילתת בדיקה לכל
+// הודעה נזרקת.
+const DROP_DEDUP_MS = 60_000;
+const dropSeen = new Map();   // "topic|reason" → חותם אחרון
+
+function shouldRecordDrop(topic, reason) {
+  const key = `${topic}|${reason}`;
+  const now = Date.now();
+  const last = dropSeen.get(key);
+  if (last && now - last < DROP_DEDUP_MS) return false;
+  dropSeen.set(key, now);
+  // ניקוי עצמי — אחרת המפה גדלה לנצח על אתרים שמשדרים זבל.
+  if (dropSeen.size > 500) {
+    for (const [k, t] of dropSeen) if (now - t > DROP_DEDUP_MS) dropSeen.delete(k);
+  }
+  return true;
+}
+
+/**
+ * רושם הודעה שהגיעה ולא נכתבה. אינו זורק ואינו מחזיר דבר משמעותי.
+ * `payload` נשמר **כפי שהגיע** — מחרוזת גולמית, לא מפורסרת.
+ */
+async function recordIngestDrop({ topic, siteCode = null, kind = null, reason, detail = null, payload = null }) {
+  try {
+    if (!shouldRecordDrop(topic, reason)) return;
+    await db.prepare(
+      `INSERT INTO ingest_drops (at, topic, site_code, kind, reason, detail, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      new Date().toISOString(), topic, siteCode, kind, reason,
+      detail === null ? null : String(detail).slice(0, 500),
+      payload === null ? null : String(payload).slice(0, 2000),
+    );
+  } catch (err) {
+    // ⚠️ console בלבד, ובכוונה: אם גם הרישום נכשל, אין לאן לרשום את זה.
+    console.error("[ingest-drop] הרישום נכשל —", err.message);
+  }
+}
+
+module.exports.recordIngestDrop = recordIngestDrop;
