@@ -330,6 +330,11 @@ BEGIN
   IF NOT app.is_manager() THEN
     RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE = 'insufficient_privilege';
   END IF;
+  -- ⚠️ הגורם השני נבדק **אחרי** התפקיד ולא לפניו: מי שאינו מנהל צריך
+  -- לשמוע שהפעולה אינה שלו, לא שחסר לו קוד. הודעה על MFA למי שממילא
+  -- אינו מורשה מזמינה אותו להירשם ל-TOTP ולנסות שוב לשווא.
+  PERFORM app.require_mfa();
+
   RETURN v_name;
 END;
 $fn$;

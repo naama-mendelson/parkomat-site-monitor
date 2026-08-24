@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { currentUser, signOut, changePassword, MIN_PASSWORD_LENGTH } from "../../services/auth";
 import "./AccountMenu.css";
+import MfaSetup from "./MfaSetup";
 
 // ⚠️ שתי קבוצות בלבד. supervisor/executive הן דרגות שבוטלו — הן נשארות
 // במפה כדי שאסימון ישן שעדיין נושא אותן יציג "מנהל" ולא את המחרוזת
@@ -36,6 +37,7 @@ function AccountMenu() {
   const [user, setUser] = useState(null);
   const [open, setOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
+  const [mfaOpen, setMfaOpen] = useState(false);
   const wrapRef = useRef(null);
   const triggerRef = useRef(null);
 
@@ -107,6 +109,7 @@ function AccountMenu() {
   function close() {
     setOpen(false);
     setPwOpen(false);   // הטופס נסגר יחד עם התפריט, ולא נשאר מלא בסיסמאות
+    setMfaOpen(false);  // ואותו טעם: לא נפתחים בפעם הבאה באמצע רישום QR
   }
 
   if (!user) return null;
@@ -146,6 +149,16 @@ function AccountMenu() {
           )}
 
           {pwOpen && <PasswordForm onDone={close} />}
+
+          {/* ⚠️ הגורם השני יושב ליד שינוי הסיסמה ולא במסך אחר: שתי
+              הפעולות עונות על אותה שאלה — מה אני מחזיק כדי להיכנס. */}
+          {!mfaOpen && !pwOpen && (
+            <button className="account-item" role="menuitem" onClick={() => setMfaOpen(true)}>
+              אימות דו-שלבי
+            </button>
+          )}
+
+          {mfaOpen && <MfaSetup onChanged={close} />}
 
           <button className="account-item account-item--exit" role="menuitem" onClick={signOut}>
             יציאה

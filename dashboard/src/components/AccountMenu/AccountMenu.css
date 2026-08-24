@@ -177,3 +177,80 @@
   color: var(--text-primary);
   font-size: 0.85rem;
 }
+
+/* ── אימות דו-שלבי ─────────────────────────────────────────── */
+.account-mfa {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+.account-mfa-status {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0 9px;
+}
+.account-mfa-status--on {
+  color: var(--accent);
+  font-weight: 600;
+}
+.account-mfa-step {
+  margin: 0;
+  padding: 0 9px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+/* ⚠️ רקע לבן קבוע ולא var(--bg-card): ה-QR הוא SVG שחור, ובערכת נושא
+   כהה הוא נעלם לחלוטין על רקע כהה — קוד שאי אפשר לסרוק ובלי שום שגיאה. */
+.account-mfa-qr {
+  align-self: center;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+  max-width: 100%;
+  height: auto;
+}
+.account-mfa-secret {
+  display: block;
+  margin: 0 9px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  /* מפתח base32 ארוך — נשבר לשורות במקום לגלוש מהתפריט */
+  word-break: break-all;
+  user-select: all;
+  color: var(--text-primary);
+}
+.account-mfa-code {
+  margin: 0 9px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 1.05rem;
+  text-align: center;
+  letter-spacing: 0.35em;
+}
+.account-mfa-link {
+  border: none;
+  background: none;
+  padding: 2px 9px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  text-align: start;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.account-mfa-link:hover { color: var(--text-primary); }
+.account-mfa-error {
+  margin: 0;
+  padding: 0 9px;
+  font-size: 0.78rem;
+  color: #ef4444;
+}

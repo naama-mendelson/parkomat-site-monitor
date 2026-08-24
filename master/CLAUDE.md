@@ -815,3 +815,63 @@ messages are lost**: HiveMQ keeps them (`clean:false` + fixed clientId) and deli
 all with their original timestamps on the next start. Measured: 15 hours down, 240
 messages, zero lost. What *is* lost is knowing — the dashboard showed 15-hour-old state
 with no indication anything was wrong.
+
+## אימות דו-שלבי (TOTP) — נבנה, נאכף ב-SQL, ועדיין כבוי
+
+Written in English like the rest of this file; the code comments stay Hebrew.
+
+**The threat this closes.** RLS is `USING (true)` for `authenticated` — a documented product
+decision ("every user sees every site"). So a single stolen password reads every business
+table. Measured at the time of writing: **all 8 users are `manager`**, tokens arrive as
+`aal1` / `amr: ["password"]`, and `app.require_manager()` gates the irreversible operations
+(delete site, rename site, change roles). One phished account could delete a site and its
+entire history.
+
+**The enforcement is in Postgres, not in the browser.** `AuthGate` shows a challenge screen,
+but that is UX: it reopens in devtools in three seconds, and PostgREST takes requests with no
+dashboard at all. The real gate is `PERFORM app.require_mfa()` inside `app.require_manager()`.
+
+| Function | Role |
+|---|---|
+| `app.current_aal()` | reads the `aal` claim from `request.jwt.claims` |
+| `app.came_from_token()` | did this call arrive with a JWT at all |
+| `app.mfa_required()` | reads the `mfa_required_for_manager` settings key |
+| `app.require_mfa()` | raises `insufficient_privilege` when required and not `aal2` |
+
+⚠️ **`NULL` is not `aal1`, and the difference is load-bearing.** No JWT claims means the call
+did **not** come from a browser — it is the server (connecting as `postgres`) or a gate
+injecting identity through the `app.user_id` GUC. Both already hold **database credentials**,
+a stronger factor than TOTP, not a weaker one. Demanding `aal2` from them would have stopped
+MQTT ingestion and every gate while adding no protection. Hence `came_from_token()`.
+
+⚠️ **It ships behind a flag, and that is not timidity.** On the day it was written not one of
+the eight managers had enrolled. Enforcing immediately would have locked all of them out of
+site management *and* user management — **including the ability to turn the flag back off**.
+A security fix that produces a total outage is a worse outcome than the risk it closes.
+
+The order is: screens ship → everyone enrols → then
+
+```sql
+INSERT INTO settings (key, value, updated_at)
+VALUES ('mfa_required_for_manager', 'true', now()::text)
+ON CONFLICT (key) DO UPDATE SET value = 'true';
+```
+
+**Why TOTP and not the two things that were asked for by name:**
+
+- **Email-based anything is not available here.** No SMTP is configured, so Supabase falls back
+  to its built-in mailer — rate-limited, and it **only delivers to project members**. This is
+  the same measured reason magic-link and password-reset were removed from `auth.js`
+  (`429 over_email_send_rate_limit` on the first request). A second factor that depends on
+  email would fail exactly when it is needed.
+- **Passkeys (WebAuthn) are not supported by Supabase GoTrue today.** Implementing them would
+  mean running the challenge-signature dance on our own server — putting back into the server
+  precisely the authentication role that was taken out of it.
+
+**`check-mfa` proves the whole cycle, not half of it.** ⚠️ A gate that only proves the block
+exists would look identical to one where the block cannot be passed at all — which is not
+security but a lock-out, and it would be green. So the gate enrols a real factor, computes a
+real code (`tools/lib/totp.js`, validated against the four RFC 6238 vectors), and asserts the
+same manager who was refused a line earlier now gets `200`. It also restores the flag **to the
+value it found** on every exit path including failure — restoring to a hard `false` would
+silently disable enforcement the day someone turns it on.

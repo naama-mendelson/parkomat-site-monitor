@@ -22,6 +22,8 @@ import { isSupabaseConfigured } from "../../services/supabase";
 import Login from "./Login";
 import ResetPassword from "./ResetPassword";
 import { onPasswordRecovery } from "../../services/auth";
+import { challengeRequired } from "../../services/mfaDirect";
+import MfaChallenge from "./MfaChallenge";
 import { useEffect, useState } from "react";
 
 function AuthGate({ children }) {
@@ -39,6 +41,29 @@ function AuthGate({ children }) {
   // בא לפתור.
   const [recovering, setRecovering] = useState(false);
   useEffect(() => onPasswordRecovery(() => setRecovering(true)), []);
+
+  // ============================================================
+  // ⚠️ הבדיקה כאן היא **חוויה, לא אכיפה** — וההבחנה חשובה
+  // ============================================================
+  // מסך שנחסם בדפדפן נפתח מחדש בכלי פיתוח בשלוש שניות. מה שבאמת מגן הוא
+  // `app.require_manager()` ב-Postgres, שדורש aal2 לפעולות ההרסניות; המסך
+  // הזה קיים כדי שהמשתמש יעבור את האתגר **לפני** שילחץ על כפתור שייכשל,
+  // ולא אחרי.
+  //
+  // ⚠️ ולכן `challengeRequired` נכשלת פתוח: קריאה שנכשלה ברשת אינה עילה
+  // לנעול משתמש מחוץ למסך שלו, כשהצד שאוכף ממילא אינו כאן.
+  const [needsMfa, setNeedsMfa] = useState(false);
+  const [mfaChecked, setMfaChecked] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (!user) { setNeedsMfa(false); setMfaChecked(false); return; }
+    challengeRequired().then((need) => {
+      if (!alive) return;
+      setNeedsMfa(need);
+      setMfaChecked(true);
+    });
+    return () => { alive = false; };
+  }, [user]);
 
   // הגדרה חסרה — אומרים מה חסר, ולא נותנים טופס שלא יכול לעבוד.
   if (!isSupabaseConfigured) {
@@ -60,6 +85,12 @@ function AuthGate({ children }) {
   }
 
   if (!user) return <Login />;
+
+  // לפני שהבדיקה חזרה לא מציגים כלום — הבהוב של הדשבורד ואז מסך אתגר
+  // קורא כמו תקלה.
+  if (!mfaChecked) return <div className="app-loading">בודק אימות…</div>;
+
+  if (needsMfa) return <MfaChallenge onVerified={() => setNeedsMfa(false)} />;
 
   // אחרי user ולפני children: הגעה מקישור איפוס חוסמת את הדשבורד עד
   // שנקבעת סיסמה.

@@ -650,3 +650,84 @@ GRANT EXECUTE ON FUNCTION public.my_role() TO authenticated;
 -- ⚠️ אחרי שהמדיניות שוחזרו: הפונקציה כבר אינה בשימוש ונמחקת כאן, לא
 -- למעלה. מחיקה לפני שחזור המדיניות הייתה נכשלת על תלות.
 DROP FUNCTION IF EXISTS app.can_see_site(integer);
+
+-- ============================================================
+-- אימות דו-שלבי — רמת הביטחון של האסימון
+-- ============================================================
+-- ⚠️ **החסימה בדפדפן אינה אבטחה.** AuthGate מציג מסך אתגר, וזו חוויית
+-- משתמש: הוא נפתח מחדש בכלי פיתוח בשלוש שניות, ו-PostgREST ממילא מקבל
+-- בקשות ישירות בלי שום דשבורד. מה שמגן הוא הבדיקה כאן.
+--
+-- GoTrue מטביע באסימון תביעת `aal`: `aal1` = סיסמה בלבד, `aal2` = נוסף
+-- גורם שני שאומת באותה התחברות.
+
+CREATE OR REPLACE FUNCTION app.current_aal()
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $fn$
+  SELECT NULLIF(current_setting('request.jwt.claims', true)::json ->> 'aal', '');
+$fn$;
+
+-- ============================================================
+-- ⚠️ שני מצבים שונים לגמרי — NULL אינו "aal1"
+-- ============================================================
+-- אין תביעות JWT כלל = הקריאה **לא** הגיעה מדפדפן. זהו השרת (מתחבר
+-- כ-postgres) או שער בדיקה שמזריק זהות דרך ה-GUC `app.user_id`. שני
+-- אלה כבר מחזיקים **פרטי גישה למסד** — גורם חזק יותר מ-TOTP, לא חלש
+-- ממנו. לדרוש מהם aal2 היה עוצר את הקליטה ואת השערים בלי להוסיף הגנה.
+--
+-- ולכן הכלל הוא: **מי שהגיע עם אסימון — נמדד לפיו. מי שהגיע בלי — לא
+-- עבר דרך GoTrue מלכתחילה.**
+CREATE OR REPLACE FUNCTION app.came_from_token()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $fn$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '') <> '';
+$fn$;
+
+-- ============================================================
+-- ⚠️ דגל, ולא אכיפה מיידית — וזה מה שמונע נעילה של כל השמונה
+-- ============================================================
+-- ביום שהפונקציה הזו נכתבה אף אחד משמונת המנהלים לא היה רשום ל-TOTP.
+-- אכיפה מיד הייתה חוסמת את **כולם** מניהול האתרים ומניהול המשתמשים —
+-- כולל את היכולת לבטל את האכיפה — כלומר תיקון אבטחה שמייצר תקלה מלאה.
+--
+-- הסדר הנכון: המסכים עולים, כולם נרשמים, ורק אז הדגל נדלק:
+--     INSERT INTO settings (key, value, updated_at)
+--     VALUES ('mfa_required_for_manager', 'true', now()::text)
+--     ON CONFLICT (key) DO UPDATE SET value = 'true';
+CREATE OR REPLACE FUNCTION app.mfa_required()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+  SELECT COALESCE(
+    (SELECT lower(value) = 'true' FROM public.settings
+      WHERE key = 'mfa_required_for_manager'),
+    false);
+$fn$;
+
+-- הבדיקה עצמה. נקראת מתוך app.require_manager().
+CREATE OR REPLACE FUNCTION app.require_mfa()
+RETURNS void
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  IF NOT app.mfa_required() THEN RETURN; END IF;
+  IF NOT app.came_from_token() THEN RETURN; END IF;
+  IF COALESCE(app.current_aal(), 'aal1') <> 'aal2' THEN
+    RAISE EXCEPTION 'הפעולה דורשת אימות דו-שלבי — הקלד את הקוד מאפליקציית המאמת'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+END;
+$fn$;
+
+COMMENT ON FUNCTION app.require_mfa() IS
+  'דורש aal2 לפעולות מנהל, אם הדגל mfa_required_for_manager דלוק. פטור לקריאות שלא הגיעו מאסימון.';
