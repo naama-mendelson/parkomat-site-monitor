@@ -274,3 +274,44 @@ At the current site count (12) the Supabase free tier is a non-issue: ~1 MB of a
 `DELETE` does not return disk to the OS, so retention plateaus at the high-water mark
 rather than sawtoothing down. If the exit is ever triggered, cost is the likely reason —
 and unlike most migration triggers, this one is predictable well in advance.
+
+## How the dashboard is reached — Cloudflare Tunnel, and why not a local CA
+
+```
+דפדפן/טלפון → Cloudflare (TLS) → cloudflared → Caddy → web | parkomat:4000
+```
+
+**No port is published to the office network.** `cloudflared` opens an *outbound* connection to
+Cloudflare, so there is no inbound port, no port-forwarding, and nothing to scan. `8080` and
+`4000` are bound to `127.0.0.1` only — reachable on the server itself for debugging, and from
+nowhere else.
+
+⚠️ **A local CA was built first and rejected, for two reasons that are worth keeping.** The
+first version used Caddy's `tls internal`: a private CA whose root had to be installed on every
+machine. It was turned down as impractical — and it was also *wrong*:
+
+- **Phones.** Installing a root CA on iOS/Android is impractical across a company, and teaching
+  people to accept certificate warnings is worse than no warning at all: a real attacker's
+  forged certificate produces the identical warning.
+- **The dashboard is a PWA** (`manifest.json`, `sw.js`, web push). Browsers refuse to register a
+  service worker over plain `http://`, so **the app on a phone could not work at all** — and an
+  untrusted certificate does not fix that. Only a real one does.
+
+The domain is already on Cloudflare (`rafe`/`gabe.ns.cloudflare.com`), so this needed no DNS
+migration and nothing installed on any device.
+
+**One origin, so CORS does not exist.** `services/api.js` uses relative URLs when
+`VITE_API_BASE` is empty, and Caddy routes `/api/*` and `/health` to the server and everything
+else to the static dashboard. ⚠️ `VITE_API_BASE` **must stay empty** — it is baked in at build
+time, and any explicit value makes the browser block the requests. The screen loads, the data
+does not arrive, and there is no comprehensible error. `deploy.ps1` clears it for exactly this
+reason.
+
+⚠️ **`trust proxy` had to grow, and without it two things break silently.** The chain now ends
+at Caddy, so `req.ip` became the proxy container's address — *the same address for every person
+in the company*. That silently erases the IP half of attribution (see *attribution, not
+prevention*), and both rate limiters, which key on IP, would let one person lock out everyone.
+`clientIp()` prefers `CF-Connecting-IP` — Cloudflare sets it and strips any client-supplied
+value — and `tests/client-ip.test.js` pins all of it, including that the helper must not call
+itself: a blanket `req.ip` → `clientIp(req)` replacement once turned it into infinite recursion
+that would have crashed the server on every request lacking the header.

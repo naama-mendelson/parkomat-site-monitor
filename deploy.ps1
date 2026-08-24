@@ -1,9 +1,13 @@
 ﻿# ============================================================
 # deploy.ps1 — פריסה מלאה בפקודה אחת, ב-DELL008
 # ============================================================
-# ⚠️ הסקריפט הזה קיים כי הפריסה דרשה שמונה צעדים ידניים, ואחד מהם —
-# ריקון VITE_API_BASE — נכשל בשקט: המסך נטען, הנתונים לא מגיעים, ואין
-# שום שגיאה מובנת. צעד שנכשל בשקט בתוך רשימה ידנית הוא רק שאלה של זמן.
+# ⚠️ קיים כי הפריסה דרשה שמונה צעדים ידניים, ואחד מהם — ריקון
+# VITE_API_BASE — נכשל בשקט: הדף נטען, מנסה לפנות לכתובת מפורשת, הדפדפן
+# חוסם, והמסך מציג ממשק בלי נתונים ובלי שום שגיאה מובנת.
+#
+# ⚠️ **נשמר עם BOM במכוון.** PowerShell 5.1 קורא UTF-8 בלי BOM כ-ANSI,
+# והעברית הופכת לבתים ששוברים מחרוזות — הגרסה בלי BOM נכשלה ב-10 שגיאות
+# תחביר שכולן היו קידוד ולא קוד.
 #
 # בטוח להריץ שוב ושוב: כל שלב בודק את מצבו לפני שהוא נוגע במשהו.
 $ErrorActionPreference = "Stop"
@@ -16,42 +20,44 @@ function Die($t) { Write-Host "  XX  $t" -ForegroundColor Red; exit 1 }
 
 Say "1. משיכת הקוד"
 git pull origin main
-$sha = (git log --oneline -1)
-Ok "גרסה: $sha"
+Ok "גרסה: $(git log --oneline -1)"
 
 Say "2. הגדרות"
 if (-not (Test-Path .env)) { Die ".env חסר. העתק מ-.env.docker.example ומלא את הערכים." }
-
-# ⚠️ גיבוי לפני נגיעה. הקובץ הזה מחזיק את כל פרטי הגישה של המערכת.
 Copy-Item .env ".env.bak" -Force
 $lines = @(Get-Content .env)
 
-# כתובת האתר — מזוהה אוטומטית אם לא הוגדרה
-$ip = (Get-NetIPAddress -AddressFamily IPv4 |
-       Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
-       Select-Object -First 1).IPAddress
-if (-not $ip) { Die "לא נמצאה כתובת IPv4" }
-
+function GetKey($key) {
+  $m = $lines | Where-Object { $_ -match "^\s*$key=" } | Select-Object -First 1
+  if ($m) { return ($m -replace "^\s*$key=", "").Trim() }
+  return $null
+}
 function SetKey($key, $value) {
   $script:lines = @($script:lines | Where-Object { $_ -notmatch "^\s*$key=" })
   $script:lines += "$key=$value"
 }
 
-$existing = ($lines | Where-Object { $_ -match "^\s*SITE_ADDRESS=" })
-if ($existing) { Ok "SITE_ADDRESS כבר מוגדר: $($existing -replace '^\s*SITE_ADDRESS=','')" }
-else { SetKey "SITE_ADDRESS" "https://$ip"; Ok "SITE_ADDRESS נקבע ל-https://$ip" }
+# ⚠️ בלי האסימון אין מנהרה, ובלי מנהרה אין גישה בכלל — לא מבחוץ וגם לא
+# מהמשרד, כי הפורטים סגורים לרשת. נכשלים כאן, מוקדם ובבירור.
+$token = GetKey "CLOUDFLARE_TUNNEL_TOKEN"
+if (-not $token) {
+  Die "חסר CLOUDFLARE_TUNNEL_TOKEN ב-.env. צור מנהרה ב-Cloudflare Zero Trust והדבק את האסימון."
+}
+Ok "אסימון המנהרה קיים"
 
-# ⚠️ זה הצעד שנכשל בשקט. VITE_API_BASE נצרב לחבילה בזמן הבנייה; אם הוא
-# מצביע ל-http://...:4000, דף שנטען ב-HTTPS ינסה לקרוא ל-HTTP והדפדפן
-# יחסום כתוכן מעורב — בלי שגיאה שמישהו יבין.
-$api = ($lines | Where-Object { $_ -match "^\s*VITE_API_BASE=" })
-if ($api -and ($api -notmatch "^\s*VITE_API_BASE=\s*$")) {
-  SetKey "VITE_API_BASE" ""
-  Warn "VITE_API_BASE היה '$($api -replace '^\s*VITE_API_BASE=','')' — רוקן (חובה ל-origin אחד)"
-} else { SetKey "VITE_API_BASE" ""; Ok "VITE_API_BASE ריק" }
+$public = GetKey "PUBLIC_URL"
+if (-not $public) { Warn "PUBLIC_URL לא מוגדר — הבדיקה בסוף תדולג" }
+else { Ok "כתובת ציבורית: $public" }
+
+# ⚠️ הצעד שנכשל בשקט. VITE_API_BASE נצרב לחבילה בזמן הבנייה; ערך מפורש
+# בו שובר את ה-origin האחד והדפדפן יחסום את הבקשות.
+$api = GetKey "VITE_API_BASE"
+if ($api) { Warn "VITE_API_BASE היה '$api' — רוקן (חובה ל-origin אחד)" }
+SetKey "VITE_API_BASE" ""
+if ($public) { SetKey "DASHBOARD_ORIGIN" $public }
 
 Set-Content .env -Value $lines -Encoding utf8
-Ok "גיבוי ההגדרות הקודמות: .env.bak"
+Ok "ההגדרות הקודמות: .env.bak"
 
 Say "3. בנייה והרמה"
 docker compose up -d --build
@@ -63,49 +69,56 @@ do {
   Start-Sleep -Seconds 5
   $ps = docker compose ps --format json | ConvertFrom-Json
   $bad = @($ps | Where-Object { $_.State -ne "running" })
-  $left = [int]($deadline - (Get-Date)).TotalSeconds
 } while ($bad.Count -gt 0 -and (Get-Date) -lt $deadline)
 if ($bad.Count -gt 0) {
   $bad | ForEach-Object { Warn "$($_.Service): $($_.State)" }
-  Die "לא כל השירותים עלו. docker compose logs"
+  Die "לא כל השירותים עלו. הרץ: docker compose logs"
 }
 Ok "כל השירותים רצים"
 
-Say "5. תעודת השורש"
-# ⚠️ בלי זה הדפדפן מזהיר בכל כניסה, המשתמשים לומדים ללחוץ 'המשך בכל
-# זאת', והתקיפה שה-HTTPS בא למנוע חוזרת לעבוד — כי בדיוק כך היא נראית.
-docker compose exec -T proxy cat /data/caddy/pki/authorities/local/root.crt |
-  Set-Content parkomat-ca.crt -Encoding ascii
-if (-not (Test-Path parkomat-ca.crt)) { Die "חילוץ התעודה נכשל" }
-certutil -addstore -f "ROOT" parkomat-ca.crt | Out-Null
-Ok "התעודה הותקנה במחשב הזה · הקובץ: parkomat-ca.crt"
-
-Say "6. בדיקות"
+Say "5. בדיקות"
 $fail = 0
 
-try {
-  $r = Invoke-WebRequest "https://$ip/health" -TimeoutSec 20 -UseBasicParsing
-  if ($r.StatusCode -eq 200) { Ok "HTTPS עונה · /health = 200" } else { Warn "HTTPS החזיר $($r.StatusCode)"; $fail++ }
-} catch { Warn "HTTPS לא ענה: $($_.Exception.Message)"; $fail++ }
+$tn = docker compose logs --tail=60 tunnel 2>&1 | Out-String
+if ($tn -match "Registered tunnel connection|connection established|Connection .* registered") {
+  Ok "המנהרה מחוברת ל-Cloudflare"
+} else { Warn "המנהרה לא אישרה חיבור — docker compose logs tunnel"; $fail++ }
 
 $bk = docker compose logs --tail=40 backup 2>&1 | Out-String
 if ($bk -match "אומת") { Ok "הגיבוי רץ ואומת" }
 elseif ($bk -match "כבר קיים גיבוי מהיום") { Ok "גיבוי מהיום כבר קיים" }
-else { Warn "הגיבוי טרם הופיע בלוג — בדוק: docker compose logs backup"; $fail++ }
+else { Warn "הגיבוי טרם הופיע בלוג — docker compose logs backup"; $fail++ }
 
 $mq = docker compose logs --tail=60 parkomat 2>&1 | Out-String
-if ($mq -match "listening to sites") { Ok "קליטת MQTT פעילה" } else { Warn "קליטת MQTT לא אושרה"; $fail++ }
+if ($mq -match "listening to sites") { Ok "קליטת MQTT פעילה" }
+else { Warn "קליטת MQTT לא אושרה"; $fail++ }
+
+# ⚠️ הבדיקה מהחוץ ולא מבפנים: פנייה ל-127.0.0.1 הייתה עוקפת את Cloudflare
+# ומאשרת בדיוק את מה שלא נבדק.
+if ($public) {
+  try {
+    $r = Invoke-WebRequest "$public/health" -TimeoutSec 30 -UseBasicParsing
+    if ($r.StatusCode -eq 200) { Ok "HTTPS דרך Cloudflare עונה · /health = 200" }
+    else { Warn "החזיר $($r.StatusCode)"; $fail++ }
+  } catch { Warn "לא ענה: $($_.Exception.Message)"; $fail++ }
+}
+
+# ⚠️ מוודאים שהפורטים באמת נסגרו לרשת. פורט HTTP פתוח למשרד הוא בדיוק
+# הנתיב שכל המהלך הזה בא לסגור.
+$exposed = (docker compose ps --format json | ConvertFrom-Json) |
+  ForEach-Object { $_.Publishers } | Where-Object { $_.URL -eq "0.0.0.0" }
+if ($exposed) { Warn "יש פורטים פתוחים לרשת — צפוי loopback בלבד"; $fail++ }
+else { Ok "אין פורטים פתוחים לרשת המשרד" }
 
 Say "סיכום"
 if ($fail -eq 0) {
-  Write-Host "  הכל עבר. הדשבורד: https://$ip" -ForegroundColor Green
+  Write-Host "  הכל עבר." -ForegroundColor Green
+  if ($public) { Write-Host "  הדשבורד: $public" -ForegroundColor Green }
 } else {
   Write-Host "  $fail בדיקות לא עברו — ראה למעלה" -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "  מה שנשאר, ולא נעשה כאן:" -ForegroundColor Cyan
-Write-Host "   - להעתיק parkomat-ca.crt לשאר המחשבים ולהריץ שם:"
-Write-Host "       certutil -addstore -f ""ROOT"" parkomat-ca.crt"
 Write-Host "   - שכל משתמש ירשם לאימות דו-שלבי (תפריט החשבון)"
 Write-Host "   - פרטי גישה נפרדים ל-MQTT לכל אתר (קונסולת HiveMQ)"
 Write-Host ""

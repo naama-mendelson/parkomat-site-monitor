@@ -31,11 +31,40 @@ const { runChat, isChatConfigured } = require("../ai/chat");
 
 const app = express();
 
-// סומכים רק על proxy מקומי (loopback) לצורך X-Forwarded-For. כך req.ip נכון
+// סומכים רק על proxy מקומי (loopback) לצורך X-Forwarded-For. כך clientIp(req) נכון
 // כשהדשבורד עובר דרך ה-proxy של Vite (localhost), ובו-זמנית לקוח חיצוני לא יכול
 // לזייף כתובת דרך הכותרת ולעקוף את מגביל-הקצב של הצ'אט. לא סומכים על proxy
 // שרירותי — הגדרה שמרנית ובטוחה כברירת מחדל.
-app.set("trust proxy", "loopback");
+// ⚠️ **הורחב כשנכנס Cloudflare Tunnel, ובלי זה שני דברים נשברים בשקט.**
+// השרשרת היום היא: דפדפן ← Cloudflare ← cloudflared ← Caddy ← כאן. כלומר
+// clientIp(req) הוא כתובת הקונטיינר של ה-proxy — **אותה כתובת לכל אדם בחברה**:
+//   1. כל שורת ביקורת הייתה רושמת 172.x.x.x חסר משמעות. ה-IP הוא אחד
+//      משני הדברים שעליהם נשענת ההסבה (השני הוא השם).
+//   2. שני מגבילי הקצב מגבילים לפי IP — אדם אחד שמגיע לתקרה היה חוסם
+//      את **כל** החברה.
+//
+// uniquelocal מכסה את 172.16/12 שהוא טווח רשתות ה-Docker. עדיין לא
+// "סמוך על כל proxy" — הגדרה תחומה.
+app.set("trust proxy", ["loopback", "uniquelocal"]);
+
+// ============================================================
+// ⚠️ CF-Connecting-IP קודם, ולמה זה בטוח כאן
+// ============================================================
+// Cloudflare מציב את הכותרת הזו בעצמו **ומוחק** כל ערך שהלקוח שלח, ולכן
+// היא אינה ניתנת לזיוף מהאינטרנט. היא כן ניתנת לזיוף בידי מי שמגיע
+// לשרת ישירות — אבל אחרי המעבר למנהרה, 4000 חשוף רק ל-127.0.0.1 ולרשת
+// ה-Docker הפנימית.
+//
+// ⚠️ החלופה אינה "בטוחה יותר" אלא **שבורה**: לרשום את כתובת ה-proxy
+// לכל אדם היא לא זהירות, היא מחיקת המידע.
+function clientIp(req) {
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf.trim()) return cf.trim();
+  // ⚠️ req.ip ולא clientIp — ההחלפה הגורפת פגעה כאן פעם אחת והפכה את
+  // הפונקציה לרקורסיה אינסופית. כל בקשה בלי כותרת Cloudflare הייתה
+  // מפילה את השרת, כולל ה-healthcheck של הקונטיינר.
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
 
 // ניתן להגדרה כדי שאפשר יהיה להריץ מופע API לבדיקות על פורט אחר, בלי להתנגש
 // בשרת שרץ (ובלי להעלות Master שני — שני מופעים עם אותו MASTER_CLIENT_ID
@@ -196,7 +225,7 @@ const ADMIN_RATE_WINDOW_MS = 5 * 60_000;
 const adminHits = new Map();
 
 function adminRateLimit(req, res, next) {
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const ip = clientIp(req);
   const now = Date.now();
   const hits = (adminHits.get(ip) || []).filter((t) => now - t < ADMIN_RATE_WINDOW_MS);
 
@@ -476,7 +505,7 @@ const inviteHits = new Map();
 function inviteRateLimit(req, res, next) {
   // המפתח הוא **המשתמש** ולא ה-IP: הגבלה לפי IP הייתה חוסמת משרד שלם
   // מאחורי NAT אחד, ובו-זמנית לא חוסמת מי שמחליף רשתות.
-  const who = req.actor?.userId || req.ip || "unknown";
+  const who = req.actor?.userId || clientIp(req) || "unknown";
   const now = Date.now();
   const hits = (inviteHits.get(who) || []).filter((t) => now - t < INVITE_RATE_WINDOW_MS);
 
@@ -558,7 +587,7 @@ app.post("/api/users/invite", requireAuth, requireManager, inviteRateLimit, asyn
       actorId: req.actor.appUserId, actorName: req.actor.name,
       actorRole: req.actor.role, trust: "token",
       targetType: "user", targetId: appUser?.id ?? null, targetName: result.user.email,
-      details: { email: result.user.email, role: wantRole }, ip: req.ip,
+      details: { email: result.user.email, role: wantRole }, ip: clientIp(req),
     });
 
     res.json({
@@ -676,7 +705,7 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
         actorId: req.actor.appUserId, actorName: req.actor.name,
         actorRole: req.actor.role, trust: "token",
         targetType: "user", targetId: id, targetName: target.email,
-        details: { email: target.email, from: target.role, to: role }, ip: req.ip,
+        details: { email: target.email, from: target.role, to: role }, ip: clientIp(req),
       });
 
       console.log(`[api] ${target.email} → ${role} בידי ${req.actor.name}`);
@@ -717,7 +746,7 @@ app.patch("/api/users/:id", requireAuth, requireManager, async (req, res) => {
       actorId: req.actor.appUserId, actorName: req.actor.name,
       actorRole: req.actor.role, trust: "token",
       targetType: "user", targetId: id, targetName: target.email,
-      details: { email: target.email, is_active }, ip: req.ip,
+      details: { email: target.email, is_active }, ip: clientIp(req),
     });
 
     console.log(
@@ -787,7 +816,7 @@ app.delete("/api/users/:id", requireAuth, requireManager, async (req, res) => {
       actorId: req.actor.appUserId, actorName: req.actor.name,
       actorRole: req.actor.role, trust: "token",
       targetType: "user", targetId: id, targetName: target.email,
-      details: { email: target.email, role: target.role }, ip: req.ip,
+      details: { email: target.email, role: target.role }, ip: clientIp(req),
     });
 
     console.log(`[api] משתמש ${target.email} **נמחק** בידי ${req.actor.name}`);
@@ -1195,7 +1224,7 @@ app.post("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
     console.log(
       `[maintenance] אתר ${site.code}: הופעלה ל-${duration_hours} שעות ` +
       `ע"י "${setBy.trim()}" (אמון: ${req.actor?.trust || "unknown"}, ` +
-      `IP: ${req.ip || "?"})${reason ? ` — ${reason}` : ""}`);
+      `IP: ${clientIp(req) || "?"})${reason ? ` — ${reason}` : ""}`);
 
     // חובה לשדר: תחזוקה משנה את המצב האפקטיבי של האתר (applyMaintenanceStatus),
     // ובלי האירוע הזה המטמון לא מתנקה ושאר הדשבורדים לא יודעים.
@@ -1232,7 +1261,7 @@ app.delete("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
     console.log(
       `[maintenance] אתר ${site.code}: בוטלה ע"י ` +
       `"${req.actor?.name || "לא צוין"}" (אמון: ${req.actor?.trust || "unknown"}, ` +
-      `IP: ${req.ip || "?"})`);
+      `IP: ${clientIp(req) || "?"})`);
 
     bus.publish({ type: "maintenance", code: site.code, action: "cancel" });
 
@@ -1542,7 +1571,7 @@ const CHAT_RATE_WINDOW_MS = 60_000;  // לדקה
 const chatHits = new Map();          // ip → number[] (חותמות זמן)
 
 function chatRateLimit(req, res, next) {
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const ip = clientIp(req);
   const now = Date.now();
 
   const hits = (chatHits.get(ip) || []).filter((t) => now - t < CHAT_RATE_WINDOW_MS);
