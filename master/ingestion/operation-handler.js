@@ -200,8 +200,17 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
       console.log(
         `[operation] אתר ${site.code}: פעולה בזמן תחזוקה — הסטטוס לא שונה (התחזוקה גוברת)`);
     } else {
-      await applyStateChange(site.id, data.state, occurredAt);
-      console.log(`[operation] אתר ${site.code}: state סונכרן מ-start ${site.status} → ${data.state}`);
+      // ⚠️ אותו תיקון כמו ב-state-handler: הודעה שהגארד חסם אינה "סונכרנה".
+      // הלוג הישן הכריז על סנכרון שלא קרה, וזה הופך חקירה של מצב שגוי
+      // במסך למרדף אחרי שורה שמשקרת.
+      const synced = await applyStateChange(site.id, data.state, occurredAt);
+      if (synced?.skipped) {
+        console.warn(
+          `[operation] ⚠️ אתר ${site.code}: סנכרון state ל-${data.state} **לא בוצע** — ${synced.skipped}`
+        );
+      } else {
+        console.log(`[operation] אתר ${site.code}: state סונכרן מ-start ${site.status} → ${data.state}`);
+      }
     }
   }
 

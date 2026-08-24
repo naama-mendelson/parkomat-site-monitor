@@ -118,7 +118,36 @@ async function handleState(site, data) {
   // בעוד '' אומר "נקרא והיה ריק". שני דברים שונים, ובמסך הם נראים אחרת.
   const faultText = extractFaultText(newStatus, data);
 
-  await applyStateChange(site.id, newStatus, occurredAt, faultText);
+  // ============================================================
+  // ⚠️ בודקים אם הכתיבה **באמת** קרתה — וזה תיקון לבאג אמיתי
+  // ============================================================
+  // `applyStateChange` מחזיר `{skipped}` כשגארד בתוך הטרנזקציה חסם את
+  // הכתיבה: `backfill` (ההודעה קדמה לתחילת המקטע הפתוח) או `no_change`
+  // (המקטע הפתוח כבר באותו מצב). הערך הזה **הוזנח כאן**, ולכן:
+  //
+  //   1. הלוג הדפיס "(שינוי נרשם)" כשלא נרשם דבר — כלומר **הלוג שיקר**,
+  //      וזה בדיוק מה שהופך אבחון של תקלה שאבדה לבלתי אפשרי.
+  //   2. `bus.publish` שידר לדשבורד מצב שאינו במסד. הכרטיס במסך התהפך,
+  //      וברענון חזר לאחור — מסך ומסד שחולקים שני מצבים שונים.
+  //
+  // ⚠️ ו-bridge-handler.js **כן** בדק את זה, עם הערה שמסבירה למה זה חובה.
+  // מקום אחד למד את הלקח והשני לא, וזו הסתירה שתוקנה.
+  const result = await applyStateChange(site.id, newStatus, occurredAt, faultText);
+
+  if (result?.skipped) {
+    // ⚠️ warn ולא log: זו הודעה שהגיעה, אושרה ל-HiveMQ, ולא נרשמה. היא
+    // נעלמת מכאן והלאה, ולכן זו השורה היחידה שתעיד עליה.
+    //
+    // ⚠️ ו-`site.status` מול המקטע הפתוח יכולים להיפרד: הגארד שלמעלה
+    // משווה ל-`sites.status`, והגארד שבתוך הטרנזקציה למקטע. `no_change`
+    // כאן פירושו שהשניים אינם מסונכרנים — מידע שכדאי לראות.
+    console.warn(
+      `[state] ⚠️ אתר ${site.code}: ${newStatus} **לא נרשם** — ${result.skipped}` +
+      ` (sites.status=${site.status}, occurredAt=${occurredAt})`
+    );
+    return;
+  }
+
   console.log(
     `[state] אתר ${site.code}: ${site.status} → ${newStatus} (שינוי נרשם)` +
     (faultText ? ` · "${faultText}"` : "")

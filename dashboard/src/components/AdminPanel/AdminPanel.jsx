@@ -20,7 +20,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
   const { unlocked, unlock, lock, checking, error: unlockError, roleGated, role } = useAdmin();
   // ⚠️ במצב ישיר אין קוד מנהל — פותחים בסיסמת החשבון. הטקסט חייב לומר
   // את זה: מסך שמבקש "קוד מנהל" ממי שאין לו קוד הוא מסך שאי אפשר לעבור.
-  const byPassword = !roleGated && useDirect;
+  // ⚠️ שתי הזרועות מבקשות עכשיו את **קוד המנהל**, ולכן אין יותר טקסט מותנה.
 
   const [code, setCode] = useState("");
   const [editing, setEditing] = useState(null);       // קוד האתר שנערך
@@ -171,14 +171,12 @@ function AdminPanel({ sites, onClose, onChanged }) {
         <div className="adm-lock" onClick={(e) => e.stopPropagation()}>
           <div className="adm-lock-icon"><Logo size={40} /></div>
           <h2>ניהול אתרים</h2>
-          <p>{byPassword
-            ? "המסך ננעל. הזיני את סיסמת החשבון שלך כדי להמשיך."
-            : "הזן את קוד המנהל כדי להוסיף, לערוך או למחוק אתרים."}</p>
+          <p>הזיני את קוד המנהל כדי להוסיף, לערוך או למחוק אתרים.</p>
 
           <form onSubmit={handleUnlock}>
             <input
               type="password"
-              placeholder={byPassword ? "הסיסמה שלך" : "קוד מנהל"}
+              placeholder="קוד מנהל"
               autoComplete="current-password"
               value={code}
               onChange={(e) => setCode(e.target.value)}
@@ -217,7 +215,9 @@ function AdminPanel({ sites, onClose, onChanged }) {
                 שנה קוד מנהל
               </button>
             )}
-            <button className="adm-btn-ghost" onClick={() => { lock(); onClose(); }}>נעל</button>
+            {/* ⚠️ כפתור "נעל" הוסר. המסך נעול בכל פתיחה ממילא, ולכן
+                כפתור שנועל אותו שוב הוא הבטחה ריקה — הוא לא עשה דבר
+                מלבד לסגור. */}
             <button className="adm-close" onClick={onClose} aria-label="סגירה">✕</button>
           </div>
         </header>
