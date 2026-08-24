@@ -157,3 +157,125 @@ END
 $$;
 
 SELECT cron.schedule('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.prune_ingest_drops(14)');
+
+-- ============================================================
+-- שומר הקליטה — ההתראה שהייתה חוסכת יום שלם
+-- ============================================================
+-- ב-22.08 השרת היה למטה 14.7 שעות. ב-23.08 אתר היה בתקלה שלוש שעות והמסך
+-- הראה "בפעולה". בשני המקרים לא אבד נתון — אבד **הזמן עד שמישהו ידע**.
+--
+-- ============================================================
+-- ⚠️ למה **לא** מתריעים על שתיקה, למרות שזה המתבקש
+-- ============================================================
+-- נמדד על שבוע נתונים אמיתי, ושתי המדידות שללו את התכנון הראשון:
+--
+--   • **פער p95 לכל אתר: 5 עד 40 שעות.** הסוכן משדר רק ב**שינוי** MODE,
+--     ולכן חניון שקט בלילה מייצר אפס הודעות. כל סף שהיה תופס את 1284
+--     בשלוש שעות היה מצייץ על אתרים תקינים לחלוטין.
+--   • **גם גלובלית זה לא עבד:** בשבוע אחד היו 5 פערים מעל 3 שעות ו-8
+--     מעל שעתיים — לילות וסופי שבוע. סף כזה מלמד להתעלם ממנו תוך ימים.
+--
+-- ============================================================
+-- ⚠️ ולכן שני אותות **ודאיים** במקום אחד סטטיסטי
+-- ============================================================
+--   1. **גיל אות החיים.** השרת כותב שורה על עצמו כל 20 שניות, **בלי קשר
+--      לתנועה**. שקט בלילה אינו משפיע עליו — ולכן זהו האות היחיד שמבחין
+--      בין "אין מה לדווח" לבין "אין מי שידווח".
+--   2. **שורות ב-ingest_drops.** הודעה שנזרקה היא **אירוע**, לא היעדר
+--      אירוע. אפס התראות שווא, ובדיוק המקרה של 23.08.
+--
+-- ⚠️ **וזה חייב לרוץ ב-Postgres ולא ב-master.** שומר שיושב בתוך התהליך
+-- שהוא בא לשמור עליו מת יחד איתו — וזה בדיוק המצב שבו הוא נחוץ.
+CREATE OR REPLACE FUNCTION app.check_ingestion_health(
+  p_heartbeat_stale_minutes integer DEFAULT 10,
+  p_drop_window_minutes     integer DEFAULT 15
+)
+RETURNS TABLE (alerted text, detail text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_beat      text;
+  v_age_min   numeric;
+  v_drops     integer;
+  v_last      text;
+  v_now       text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_key       text;
+BEGIN
+  -- ============================================================
+  -- 1. השרת חדל לדווח על עצמו
+  -- ============================================================
+  SELECT value INTO v_beat FROM settings WHERE key = 'server_heartbeat';
+
+  -- ⚠️ NULL אינו "מת": שרת שטרם נפרס עם התכונה לא כתב מעולם, והתראה עליו
+  -- הייתה מצייצת על מערכת תקינה — כלומר בדיוק ההתראה שמלמדת להתעלם.
+  IF v_beat IS NOT NULL THEN
+    v_age_min := EXTRACT(EPOCH FROM (now() - v_beat::timestamptz)) / 60;
+
+    IF v_age_min > p_heartbeat_stale_minutes THEN
+      -- ⚠️ דה-דופ: בלעדיו ההתראה חוזרת בכל הרצה, וטלפון שמצייץ כל עשר
+      -- דקות כל הלילה הוא טלפון שמשתיקים — ואז גם ההתראה הבאה תושתק.
+      SELECT value INTO v_last FROM settings WHERE key = 'alert_last_heartbeat';
+      IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
+        PERFORM net.http_post(
+          url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
+          headers := jsonb_build_object(
+            'Content-Type', 'application/json',
+            'Authorization', 'Bearer ' || current_setting('app.push_anon_key', true)),
+          body    := jsonb_build_object(
+            'site_id', 0, 'site_code', '—', 'site_name', 'מערכת הניטור',
+            'kind', 'no_comm',
+            'fault_text', 'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת')
+        );
+        INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_heartbeat', v_now, v_now)
+          ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+        RETURN QUERY SELECT 'heartbeat_stale'::text, (round(v_age_min) || ' דקות')::text;
+      END IF;
+    END IF;
+  END IF;
+
+  -- ============================================================
+  -- 2. הודעות נזרקו בקליטה
+  -- ============================================================
+  -- ⚠️ **המקרה של 23.08 בדיוק.** אתר אחד הפסיק להיקלט בזמן שאחרים זרמו,
+  -- ושום מנגנון לא התלונן. שורה ב-ingest_drops היא ראיה חד-משמעית.
+  SELECT COUNT(*)::int INTO v_drops FROM ingest_drops
+   WHERE at > to_char((now() - make_interval(mins => p_drop_window_minutes)) AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+     -- ⚠️ אתר לא רשום אינו תקלה בקליטה אלא סוכן שצריך לכבות בשטח. הכללתו
+     -- הייתה הופכת את ההתראה לרעש קבוע — נמדד עם 1416.
+     AND reason <> 'site_not_registered';
+
+  IF v_drops > 0 THEN
+    SELECT value INTO v_last FROM settings WHERE key = 'alert_last_drops';
+    IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
+      PERFORM net.http_post(
+        url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
+        headers := jsonb_build_object(
+          'Content-Type', 'application/json',
+          'Authorization', 'Bearer ' || current_setting('app.push_anon_key', true)),
+        body    := jsonb_build_object(
+          'site_id', 0, 'site_code', '—', 'site_name', 'מערכת הניטור',
+          'kind', 'fault',
+          'fault_text', v_drops || ' הודעות נזרקו בקליטה — ייתכן שמצב אתר אינו מעודכן')
+      );
+      INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_drops', v_now, v_now)
+        ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+      RETURN QUERY SELECT 'drops'::text, (v_drops || ' הודעות')::text;
+    END IF;
+  END IF;
+END;
+$fn$;
+
+DO $$
+BEGIN
+  PERFORM cron.unschedule('parkomat-ingestion-health');
+EXCEPTION WHEN OTHERS THEN NULL;
+END
+$$;
+
+-- כל 10 דקות. ⚠️ לא כל דקה: ההתראה נמדדת בשעות, ובדיקה תכופה רק מגדילה
+-- את הסיכוי שריצה תיפול על עומס חולף ותצייץ סתם.
+SELECT cron.schedule('parkomat-ingestion-health', '*/10 * * * *',
+                     'SELECT app.check_ingestion_health(10, 15)');
