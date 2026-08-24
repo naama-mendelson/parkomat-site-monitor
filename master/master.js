@@ -43,17 +43,63 @@ const { acquireSingleInstanceLock } = require("./db/single-instance");
 // מכונת מצבים), ואתרים שונים יכולים להתעבד במקביל בלי להפריע זה לזה.
 const queues = new Map();   // קוד אתר → ה-Promise האחרון בתור
 
+// ============================================================
+// ⚠️ תקרת זמן למשימה — כי תור לכל אתר הוא גם נקודת חסימה לכל אתר
+// ============================================================
+// התור הוא שרשרת Promise לכל קוד אתר, ו**משימה שאינה נפתרת עוצרת את
+// האתר הזה לנצח**: כל הודעה עתידית ממתינה לה, ואתרים אחרים ממשיכים
+// כרגיל. כלומר אתר אחד יכול להשתתק לגמרי בזמן שהמסך נראה בריא.
+//
+// ⚠️ **וזו בדיוק החתימה שנמדדה ב-22–23.08:** אתר 1284 הפסיק להיקלט
+// לחלוטין במשך שעות, בעוד 1343, 1416 ו-3456 זרמו באותן דקות. `last_seen`
+// שלו קפא, שום הודעה לא נרשמה, ואף מנגנון לא התלונן.
+//
+// התקרה אינה מתקנת את הסיבה — היא הופכת **חסימה בלתי מוגבלת** לכשל אחד
+// חסום בזמן, שנרשם ב-ingest_drops עם המטען, ומשחרר את התור אחריו.
+//
+// ⚠️ 90 שניות ולא 10: `handleMessage` מנסה חמש פעמים עם backoff מעריכי
+// (250ms→4s, בסך הכול ~7.75ש') ובכל ניסיון כותב למסד מול ה-pooler של
+// Supabase, שנמדד כמתנתק מיוזמתו. תקרה צמודה הייתה הופכת עומס חולף
+// לאובדן הודעות — כלומר ההגנה בעצמה נעשית התקלה.
+const TASK_TIMEOUT_MS = 90_000;
+
+function withTimeout(promise, topic) {
+  let timer;
+  const guard = new Promise((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`עיבוד ${topic} לא הסתיים ב-${TASK_TIMEOUT_MS / 1000}ש' — התור שוחרר`)),
+      TASK_TIMEOUT_MS,
+    );
+    // ⚠️ unref: בלי זה טיימר תלוי מחזיק את התהליך חי, ו-SIGTERM של Docker
+    // היה נגמר ב-SIGKILL אחרי ה-grace period.
+    timer.unref?.();
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
 function enqueue(topic, task) {
   const code = topic.split("/")[1] || "?";
 
   const previous = queues.get(code) || Promise.resolve();
-  const next = previous.then(task);
+  // ⚠️ **ה-catch על `previous` הוא מה שמונע קריסה.** משימה שנדחתה (למשל
+  // בתקרה) הופכת את השרשרת ל-rejected, וכל `then` שנתלה עליה אחריה יורש
+  // את הדחייה — כלומר כשל אחד היה מפיל את כל ההודעות הבאות מאותו אתר,
+  // ובלי מטפל הוא היה unhandled rejection.
+  const next = withTimeout(previous.catch(() => {}).then(task), topic);
   queues.set(code, next);
 
   // ניקוי כשהתור התרוקן — אחרת המפה גדלה לנצח
+  //
+  // ⚠️ **ה-`catch` בסוף חובה, וזה נעשה קריטי עם התקרה.** `next.finally(...)`
+  // מחזיר Promise **חדש** שיורש את הדחייה, ולאיש אין הפניה אליו — כלומר
+  // `unhandled rejection`, שב-Node מפיל את התהליך כברירת מחדל. עד עכשיו זה
+  // היה רדום כי דחיות כאן היו נדירות; מרגע שיש תקרת זמן הן צפויות.
+  //
+  // הדחייה עצמה **כן** מטופלת — היא מוחזרת ב-`return next` למנוי, שרושם
+  // אותה ב-ingest_drops ומאשר. כאן מדובר רק בהעתק שנוצר ל-finally.
   next.finally(() => {
     if (queues.get(code) === next) queues.delete(code);
-  });
+  }).catch(() => {});
 
   return next;
 }
