@@ -206,3 +206,46 @@ services:
       options:
         max-size: "5m"
         max-file: "3"
+
+  # ============================================================
+  # proxy — HTTPS, ו-origin אחד לדשבורד ול-API
+  # ============================================================
+  # ⚠️ הפרצה שזה סוגר היא **היחידה שעוקפת את האימות הדו-שלבי**: אסימון
+  # שכבר עבר אתגר נושא aal2 בעצמו, ומי שגונב אותו נכנס בלי אתגר. כל עוד
+  # הדשבורד מוגש ב-HTTP, מי שיושב על הרשת מזריק קוד ל-JS בדרך וקורא את
+  # האסימון מ-localStorage.
+  #
+  # ⚠️ **הפורטים 8080 ו-4000 נשארו פתוחים בכוונה, לעת עתה.** סגירתם היא
+  # הצעד שהופך את ה-HTTPS מאופציה לחובה — אבל היא גם נועלת את כולם החוצה
+  # אם משהו ב-proxy לא עובד. סוגרים אותם אחרי שה-HTTPS מוכח, לא לפניו.
+  proxy:
+    image: caddy:2-alpine
+    container_name: parkomat-proxy
+    restart: unless-stopped
+    depends_on:
+      - web
+      - parkomat
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-https://localhost}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # ⚠️ caddy_data חייב להיות volume קבוע: שם נשמר שורש ה-CA. בלעדיו
+      # כל הפעלה מחדש מייצרת CA חדש, וכל שמונת המחשבים צריכים להתקין
+      # אותו מחדש — כלומר משתמשים שלומדים להתעלם מאזהרות.
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:
