@@ -1,6 +1,28 @@
 // ingestion/dispatcher.js — מקבל הודעה, מפענח, בודק רישום, ומנתב
 
 const { findSiteByCode, recordIngestDrop } = require("../db/queries");
+
+// ============================================================
+// ⚠️ הרישום לעולם אינו משנה את מסלול הריצה — ועכשיו זה נאכף
+// ============================================================
+// `recordIngestDrop` נקרא מתוך ה-try של dispatch, ולכן **כל** זריקה ממנו
+// מתפשטת ל-handleMessage — שמפרש אותה כשגיאת עיבוד, מנסה חמש פעמים עם
+// backoff (3.75ש'), ואז רושם "נטישה". כלומר דחייה נקייה ומכוונת הייתה
+// הופכת לסערת ניסיונות ולדיווח שגוי על אובדן.
+//
+// ⚠️ **וזה נתפס בפועל:** שמונה בדיקות דיספאצ'ר שעברו קודם התחילו לקחת
+// 3,780ms כל אחת — בדיוק ה-backoff — כי ה-stub שלהן אינו כולל את הפונקציה,
+// ו-undefined(...) זורק לפני שנכנסים לגוף שלה.
+//
+// העוטף הופך את הכלל מהצהרה בהערה למשהו שנאכף בקוד. `?.` מכסה גם את
+// המקרה שהפונקציה כלל אינה קיימת.
+function noteDrop(row) {
+  try {
+    recordIngestDrop?.(row);
+  } catch (err) {
+    console.error("[dispatcher] רישום הזריקה נכשל —", err?.message);
+  }
+}
 const { handleState } = require("./state-handler");
 const { handleOperation } = require("./operation-handler");
 const { handleBridgeState } = require("./bridge-handler");
@@ -75,6 +97,37 @@ async function handleMessage(topic, raw) {
         console.error(
           `[dispatcher] אובדן הודעה מ-${topic} אחרי ${MAX_ATTEMPTS} ניסיונות:`,
           err.message);
+
+        // ============================================================
+        // ⚠️ **זה מסלול האובדן האמיתי, וכל האחרים הם רעש לידו**
+        // ============================================================
+        // `return` ולא `throw` — ובכוונה: הודעה תקולה שתיזרק שוב הייתה
+        // חוזרת בכל חיבור מחדש וחוסמת את התור אחריה. אבל התוצאה היא
+        // שהמנוי נכנס לענף ההצלחה, שולח PUBACK, וההודעה **נמחקת
+        // מ-HiveMQ לתמיד** — בזמן שהוא כלל לא ידע שמשהו נכשל.
+        //
+        // ⚠️ ולכן `recordIngestDrop` שהוסף במנוי **לא כיסה את זה**: הוא
+        // תלוי בזריקה, וכאן אין זריקה. הנקודה הסבירה ביותר לאובדן הייתה
+        // בדיוק זו שנשארה בלי תיעוד.
+        //
+        // ⚠️ **וזה נמדד, לא הוסק.** ב-23.08 שודרו שתי הודעות בהפרש שתי
+        // מילישניות; אחת נקלטה והשנייה נעלמה. הפער בין השידור לרישום היה
+        // **7.13 שניות** — וסך ה-backoff של חמישה ניסיונות הוא 3.75ש'
+        // בתוספת חמש כתיבות למסד (נמדדו 84–2400ms כל אחת), כלומר טווח של
+        // 4.2 עד 15.7 שניות. ההודעה השנייה המתינה בתור ה-FIFO של האתר עד
+        // שהראשונה ננטשה — ולכן היא נראתה מאוחרת.
+        //
+        // הכשל עצמו היה חולף: ECONNRESET מול ה-pooler של Supabase, שנמדד
+        // לאורך כל אותו יום. לא היה שום דבר מיוחד בהודעת ה-state; היא
+        // פשוט הייתה הראשונה בתור.
+        noteDrop({
+          topic,
+          siteCode: topic.split("/")[1] || null,
+          kind: topic.split("/")[2] || null,
+          reason: "gave_up_after_retries",
+          detail: `${MAX_ATTEMPTS} ניסיונות · ${err.message}`,
+          payload: raw,
+        });
         return;
       }
       // backoff מעריכי: 250ms, 500, 1000, 2000 (מוגבל ל-4s).
@@ -134,14 +187,14 @@ async function dispatch(topic, raw) {
       // ⚠️ נרשם למרות שאין site_id — ולכן אין FK בטבלה הזו. אתר שמשדר
       // ואינו רשום הוא בדיוק המקרה שצריך לראות: זה קרה עם 1416, שהודעותיו
       // נזרקו שבועות בשקט. הזיכרון הקצר ב-recordIngestDrop מונע הצפה.
-      recordIngestDrop({ topic, siteCode, kind, reason: "site_not_registered", payload: raw });
+      noteDrop({ topic, siteCode, kind, reason: "site_not_registered", payload: raw });
       return;
     }
 
     // 4. אכיפת state חוקי — בשני סוגי ההודעות יש שדה state
     if (!VALID_STATES.includes(data.state)) {
       console.log(`[dispatcher] נדחתה הודעה עם state לא חוקי '${data.state}' מאתר ${siteCode}`);
-      recordIngestDrop({ topic, siteCode, kind, reason: "invalid_state",
+      noteDrop({ topic, siteCode, kind, reason: "invalid_state",
                          detail: String(data.state), payload: raw });
       return;
     }
@@ -180,7 +233,7 @@ async function dispatch(topic, raw) {
         // נעלמת. בלי רישום אין שום דרך לדעת שזו הסיבה, ובדיוק זה מה שחיפשנו
         // שש שעות. נשמר עם `verdict.reason` והמטען, כדי שאפשר יהיה להשוות
         // לחותם שהסוכן חושב ששלח.
-        recordIngestDrop({ topic, siteCode, kind, reason: "timestamp_rejected",
+        noteDrop({ topic, siteCode, kind, reason: "timestamp_rejected",
                            detail: verdict.reason, payload: raw });
         return;
       }

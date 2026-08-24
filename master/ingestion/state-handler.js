@@ -7,6 +7,17 @@ const bus = require("../bus");
 // ⚠️ מודול טהור בלי תלויות — כך הוא נבדק בלי מסד. ראה fault-text.js.
 const { extractFaultText } = require("./fault-text");
 
+// ⚠️ אותה הגנה כמו ב-dispatcher, ומאותו נימוק: המטפל נקרא מתוך ה-try של
+// dispatch, ולכן זריקה מהרישום הייתה מתפשטת ל-handleMessage — שמפרש אותה
+// כשגיאת עיבוד ומנסה חמש פעמים. דחייה מכוונת הייתה הופכת לסערת ניסיונות.
+function noteDrop(row) {
+  try {
+    recordIngestDrop?.(row);
+  } catch (err) {
+    console.error("[state] רישום הזריקה נכשל —", err?.message);
+  }
+}
+
 async function handleState(site, data) {
   const newStatus = data.state;
 
@@ -94,7 +105,7 @@ async function handleState(site, data) {
     // ב"עכשיו" של השרת, ולכן די בכך שהודעת מצב אמיתית תגיע שנייה אחריה עם
     // חותם מוקדם ממנה — והיא נזרקת בשקט. עכשיו זה נשאר רשום, עם שני
     // החותמים, כדי שאפשר יהיה לראות בדיוק בכמה היא "אחרה".
-    recordIngestDrop({
+    noteDrop({
       topic: `sites/${site.code}/state`,
       siteCode: site.code,
       kind: "state",
@@ -161,7 +172,7 @@ async function handleState(site, data) {
     // ⚠️ ולטבלה, לא רק ללוג: זו הודעה שהגיעה, אושרה ל-HiveMQ ונמחקה משם.
     // שורת console מתה עם הקונטיינר, וזה בדיוק מה שמנע מאיתנו לאבחן תקלה
     // שאבדה. ראה ingest_drops ב-schema.postgres.sql.
-    recordIngestDrop({
+    noteDrop({
       topic: `sites/${site.code}/state`,
       siteCode: site.code,
       kind: "state",
