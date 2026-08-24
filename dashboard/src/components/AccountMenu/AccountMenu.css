@@ -254,3 +254,10 @@
   font-size: 0.78rem;
   color: #ef4444;
 }
+.account-mfa-hint {
+  margin: -2px 0 2px;
+  padding: 0 9px;
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
