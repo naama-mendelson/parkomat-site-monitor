@@ -161,3 +161,48 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ============================================================
+  # backup — עותק נתונים מחוץ ל-Supabase
+  # ============================================================
+  # ⚠️ **קונטיינר נפרד, ולא חזרה ל-master.** המשימה היומית הוצאה משם
+  # במכוון: master מחזיק קליטת MQTT ובוט, וזהו. גיבוי בתוכו היה מחזיר את
+  # מה שהוצא, וכל כשל בו היה נוגע בתהליך שמחזיק session פתוח מול HiveMQ.
+  #
+  # ⚠️ **והוא אינו מריץ db.init().** שני קונטיינרים שעולים יחד ומריצים את
+  # ה-DDL במקביל הוא בדיוק התרחיש שיצר deadlock מול הקליטה ואיבד הודעת
+  # תקלה מאתר 1284. הדיימון קורא בלבד.
+  #
+  # למה בכלל: Supabase מגבה את עצמו, אבל בתוכנית החינמית אין PITR — ומול
+  # `delete_site`, שמוחק אתר ואת כל ההיסטוריה שלו לצמיתות בלחיצה אחת
+  # ובידי כל אחד משמונת המנהלים, גיבוי יומי מקומי הוא ההבדל בין "טעות"
+  # לבין "אובדן".
+  backup:
+    image: parkomat:latest
+    container_name: parkomat-backup
+    restart: unless-stopped
+    depends_on:
+      - parkomat
+    working_dir: /app/master
+    command: ["node", "tools/backup-daemon.js"]
+    env_file:
+      - .env
+    environment:
+      BACKUP_DIR: /backups
+      # 14 עותקים אחורה. הקובץ הוא ~300KB דחוס, כלומר כל השמירה היא ~4MB.
+      BACKUP_KEEP: "14"
+
+    # ⚠️ נתיב מארח ולא volume מנוהל — הנקודה כאן היא **עותק מחוץ למערכת**.
+    # volume של Docker חי באותו דיסק ונמחק ב-`docker compose down -v`, כלומר
+    # הפקודה שמנקה את הסביבה הייתה מוחקת גם את הגיבוי.
+    volumes:
+      - ./backups:/backups
+
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
