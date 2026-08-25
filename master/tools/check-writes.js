@@ -98,19 +98,22 @@ const rpc = (fn, body, token) =>
   })).json()).access_token;
 
   // ---- 1. ⚠️ בלי אסימון ----
-  const anon = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1 }, null);
+  // ⚠️ p_performed_by הוא חובה מאז שהתווסף — שם ריק נדחה ב-check_violation.
+  // בלי להעביר אותו השער נופל על ולידציה במקום לבדוק את מה שהוא בא לבדוק,
+  // וכל שמונת הכשלים נראים כמו רגרסיה בהרשאות.
+  const anon = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1, p_performed_by: "שער בדיקה" }, null);
   add("⚠️ בלי אסימון — נדחה", anon.status, 401);
 
   // ---- 3. משך מעל התקרה ----
-  const tooLong = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 999 }, token);
+  const tooLong = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 999, p_performed_by: "שער בדיקה" }, token);
   add("משך 999 שעות נדחה", tooLong.status, 400);
 
   // ---- 4. אתר שאינו קיים ----
-  const noSite = await rpc("start_maintenance", { p_site_code: "___NOPE___", p_duration_hours: 1 }, token);
+  const noSite = await rpc("start_maintenance", { p_site_code: "___NOPE___", p_duration_hours: 1, p_performed_by: "שער בדיקה" }, token);
   add("⚠️ אתר שאינו קיים → 404, לא 500", noSite.status, 404);
 
   // ---- 2 + 5. בקר פותח, והשם מהזהות ----
-  const started = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1, p_reason: "שער" }, token);
+  const started = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1, p_reason: "שער", p_performed_by: "שער בדיקה" }, token);
   const sb = await started.json().catch(() => []);
   add("⚠️ בקר רגיל פותח חלון", started.status, 200);
   add("...והשם נגזר מהזהות", sb?.[0]?.set_by_name, EMAIL);
@@ -417,7 +420,7 @@ const rpc = (fn, body, token) =>
   // ---- 7. ⚠️ משתמש שהושבת ----
   // אותו אסימון בדיוק, שעדיין חתום כדין. זה מה ש-identifyActor לא בדק.
   await db.prepare("UPDATE app_users SET is_active = false WHERE LOWER(email) = LOWER(?)").run(EMAIL);
-  const afterOff = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1 }, token);
+  const afterOff = await rpc("start_maintenance", { p_site_code: CODE, p_duration_hours: 1, p_performed_by: "שער בדיקה" }, token);
   // ⚠️ **403 ולא 400, וזה הקוד הנכון.** הפונקציה מנפיקה
   // 'insufficient_privilege' (42501), ו-PostgREST ממפה אותו ל-403 —
   // "מזוהה, אבל אינו מורשה". 400 היה אומר "הבקשה שגויה", וזה לא המצב:
