@@ -1,4 +1,5 @@
 using Parkomat.Agent.Core.Configuration;
+using System.Threading;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Time;
 using Parkomat.Agent.Service.Diagnostics;
@@ -213,6 +214,39 @@ public class Worker : BackgroundService
             if (state != SiteState.Error) return null;
 
             FaultText ft = plc.ReadFaultText();
+
+            // ============================================================
+            // ⚠️ קריאה חוזרת כשהטקסט אינו קריא — תחרות תזמון מול הבקר
+            // ============================================================
+            // הטקסט יושב בכתובת 2 וה-MODE ב-290, ולכן הם **אינם נקראים
+            // באותו round-trip**. ההערה ב-PlcReader מקבלת את זה בטענה
+            // שהתיאור משתנה כשהתקלה משתנה ולא בתוכה — וזו ההנחה שנכשלה.
+            //
+            // ⚠️ נמדד באתר 1376, 20.08: הבקר עבר תחזוקה→תקלה תוך **12
+            // שניות**, והטקסט עוד לא נכתב. התוצאה הייתה רגיסטר זבל שהפך
+            // לתו סיני בשדה התקלה. באותו יום, מעברים של 25 שניות ומעלה
+            // החזירו עברית תקינה — כלומר זו תחרות ולא קידוד.
+            //
+            // ⚠️ המתנה קצרה ולא ארוכה: 250ms מספיקים לבקר לכתוב, ואינם
+            // מעכבים את שידור **המצב** — שכבר נשלח בנפרד. תקלה מגיעה
+            // למסך בזמן; רק התיאור שלה מחכה רבע שנייה.
+            if (ft.HadUnknown)
+            {
+                Thread.Sleep(250);
+                FaultText retry = plc.ReadFaultText();
+
+                // ⚠️ מחליפים רק אם השנייה **טובה יותר**. קריאה חוזרת
+                // גרועה יותר אינה שיפור, ודריסה עיוורת הייתה יכולה
+                // להחליף טקסט חלקי-קריא בזבל מלא.
+                if (retry.UnknownChars < ft.UnknownChars)
+                {
+                    _logger.LogInformation(
+                        "Fault text was unreadable on first read ({Before} unknown); " +
+                        "re-read after 250ms gave {After}. The PLC had not written it yet.",
+                        ft.UnknownChars, retry.UnknownChars);
+                    ft = retry;
+                }
+            }
 
             // ⚠️ אזהרה **פעם אחת בלבד**, ולא בכל תקלה: ערכים שהפענוח לא
             // הכיר הוחלפו ב-'?'. הטקסט אז יוצא **קריא למחצה** ולא ג'יבריש
