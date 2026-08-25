@@ -13,6 +13,13 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+# ⚠️ בלי זה PowerShell 5.1 קורא את פלט Docker ו-git בקידוד המערכת,
+# והעברית חוזרת כג'יבריש (╫⌐╫ó╫¿). זה לא רק מכוער — זה **שבר בדיקה**:
+# ההשוואה ל-"כבר קיים גיבוי מהיום" נכשלה למרות שהשורה הייתה שם, והסקריפט
+# דיווח על כשל בגיבוי תקין לחלוטין.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 function Say($t) { Write-Host "`n=== $t ===" -ForegroundColor Cyan }
 function Ok($t)  { Write-Host "  OK  $t" -ForegroundColor Green }
 function Warn($t){ Write-Host "  !!  $t" -ForegroundColor Yellow }
@@ -96,10 +103,16 @@ if ($tn -match "Registered tunnel connection|connection established|Connection .
 } else { Warn "המנהרה לא אישרה חיבור — docker compose logs tunnel"; $fail++ }
 }
 
-$bk = docker compose logs --tail=40 backup 2>&1 | Out-String
-if ($bk -match "אומת") { Ok "הגיבוי רץ ואומת" }
-elseif ($bk -match "כבר קיים גיבוי מהיום") { Ok "גיבוי מהיום כבר קיים" }
-else { Warn "הגיבוי טרם הופיע בלוג — docker compose logs backup"; $fail++ }
+# ⚠️ נבדק לפי **הקבצים** ולא לפי הלוג. תלות בטקסט עברי בפלט של Docker
+# היא בדיוק מה שנשבר כאן פעם אחת; קובץ על הדיסק הוא עובדה בלי קידוד.
+$today = (Get-Date).ToString("yyyy-MM-dd")
+$dumps = @(Get-ChildItem "backups" -Filter "parkomat-$today*.jsonl.gz" -ErrorAction SilentlyContinue)
+if ($dumps.Count -gt 0) {
+  $kb = [int]($dumps[-1].Length / 1KB)
+  Ok "גיבוי מהיום קיים: $($dumps[-1].Name) ($kb KB)"
+} else {
+  Warn "אין גיבוי מהיום בתיקיית backups — docker compose logs backup"; $fail++
+}
 
 $mq = docker compose logs --tail=60 parkomat 2>&1 | Out-String
 if ($mq -match "listening to sites") { Ok "קליטת MQTT פעילה" }
