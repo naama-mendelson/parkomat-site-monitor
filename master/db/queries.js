@@ -517,7 +517,10 @@ async function getActiveMaintenance(siteId) {
   return await db
     .prepare(
       `SELECT * FROM maintenance_windows
-       // ⚠️ גם started_at: חלון מתוזמן למחר אינו "פעיל" היום.
+       -- ⚠️ הערת SQL היא "--" ולא "//". הגרסה הקודמת כאן הפילה **כל**
+       -- הודעת תקלה: syntax error at or near "//", חמישה ניסיונות, ואז
+       -- ויתור — כלומר PUBACK ומחיקת ההודעה מ-HiveMQ לתמיד.
+       -- גם started_at: חלון מתוזמן למחר אינו "פעיל" היום.
        WHERE site_id = ? AND cancelled_at IS NULL AND started_at <= ? AND expires_at > ?
        ORDER BY expires_at DESC LIMIT 1`
     )
