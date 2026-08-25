@@ -18,7 +18,12 @@ function noteDrop(row) {
   }
 }
 
-async function handleState(site, data) {
+// ⚠️ `raw` הוא המחרוזת **כפי ששודרה**, לפני שהדיספצ'ר יישר את
+// ה-timestamp. שורות ingest_drops נשמרות כדי שאפשר יהיה להשוות מול מה
+// שהסוכן באמת שלח — ושמירת האובייקט המשונה מבטלת בדיוק את זה.
+async function handleState(site, data, raw) {
+  // נפילה חזרה כשהקורא לא העביר raw — עדיף תוכן משוער על שום תוכן.
+  const original = typeof raw === "string" ? raw : JSON.stringify(data);
   const newStatus = data.state;
 
   // ==========================================================
@@ -41,7 +46,7 @@ async function handleState(site, data) {
         kind: "state",
         reason: "no_comm_rejected",
         detail: `${verdict.reason} · silence=${verdict.silenceSeconds}s`,
-        payload: JSON.stringify(data),
+        payload: original,
       });
       return;
     }
@@ -123,7 +128,7 @@ async function handleState(site, data) {
       kind: "state",
       reason: "state_late_vs_open_segment",
       detail: `occurredAt=${occurredAt} < openStartedAt=${openStartedAt}`,
-      payload: JSON.stringify(data),
+      payload: original,
     });
     return;
   }
@@ -173,7 +178,7 @@ async function handleState(site, data) {
       kind: "state",
       reason: "fault_text_unreadable",
       detail: `אורך=${data.faultText.length}`,
-      payload: JSON.stringify(data),
+      payload: original,
     });
   }
 
@@ -214,7 +219,7 @@ async function handleState(site, data) {
       kind: "state",
       reason: `state_${result.skipped}`,
       detail: `sites.status=${site.status} · occurredAt=${occurredAt}`,
-      payload: JSON.stringify(data),
+      payload: original,
     });
     return;
   }

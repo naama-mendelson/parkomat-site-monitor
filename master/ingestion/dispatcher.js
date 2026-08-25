@@ -310,7 +310,7 @@ async function dispatch(topic, raw) {
       // await חיוני: ה-handlers אסינכרוניים עכשיו, ובלעדיו כשל בכתיבה ל-DB
       // היה הופך ל-unhandled rejection — ה-try/catch כאן לא היה תופס אותו,
       // וההודעה הייתה נעלמת בשקט.
-      await handleState(site, data);
+      await handleState(site, data, raw);
     } else if (kind === "operation") {
       const problem = validateOperation(data);
       if (problem) {

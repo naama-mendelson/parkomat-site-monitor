@@ -10,7 +10,11 @@ async function insertSite(code, siteName, meta = {}, isNewSite = 1) {
   return await db
     .prepare(
       `INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       -- ⚠️ שישה placeholders לשש עמודות. הגרסה הקודמת סיפקה שמונה,
+       -- ו-Postgres החזיר "INSERT has more expressions than target
+       -- columns" — כלומר POST /api/sites נכשל ב-500 **תמיד**. זה לא
+       -- נתפס כי אף שער לא רשם אתר; 14 האתרים נוספו דרך add-test-site.
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(code, siteName, now, plcType, isNewSite ? 1 : 0, tier);
 }
@@ -406,10 +410,16 @@ async function getStatusHistory(siteId, limit = 10) {
   // תקוע ב'בפעולה' 11 שעות, וזה לא הופיע בפאנל המצבים כלל — לא כשורה, ולא
   // כמצב הנוכחי. אותו כלל בדיוק כמו בציר הזמן המאוחד.
   const rows = await db.prepare(
-    `SELECT h.status, h.started_at, h.ended_at
+    // ⚠️ COALESCE ולא status גולמי: מקטע שסווג מחדש כתחזוקה עדיין
+    // נשא status='error', ולכן הפאנל הציג אותו כתקלה בזמן שהציר,
+    // הזמינות ו-site_status_history כבר קראו לו תחזוקה. אותה שורה,
+    // שני שמות, לפי המסך שמסתכלים בו.
+    `SELECT COALESCE(h.reclassified_to, h.status) AS status,
+            h.started_at, h.ended_at
        FROM status_history h
       WHERE h.site_id = ?
-        AND (h.status <> 'operating' OR ${noPairedStartSql("h")})
+        AND (COALESCE(h.reclassified_to, h.status) <> 'operating'
+             OR ${noPairedStartSql("h")})
       ORDER BY h.started_at DESC LIMIT ?`
   ).all(siteId, Math.max(limit * 4, 40));
 
@@ -1342,7 +1352,16 @@ async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter 
     ).all(from, to, LOG_FETCH_CAP),
 
     db.prepare(
-      `SELECT h.site_id, s.site_name, h.status, h.started_at, h.ended_at, h.fault_text
+      // ⚠️ **id, reclassified_* ו-excluded_* חייבים להיות כאן.** בלעדיהם
+      // buildActivityLog מקבל שורות בלי הסיווג ובלי הסימון, ואז החלפת
+      // הסיווג בכניסה היא no-op והמסנן 'ניסויים' ריק — ביומן **כל
+      // האתרים** בלבד, בזמן שהיומן הפר-אתרי כן שולף אותם.
+      //
+      // ⚠️ שני מסכים שמראים אותה שורה אחרת הם בדיוק מה שהופך חקירה
+      // למרדף: מי שסיווג תקלה מחדש ראה את זה באתר ולא ראה בכללי.
+      `SELECT h.id, h.site_id, s.site_name, h.status, h.started_at, h.ended_at, h.fault_text,
+              h.reclassified_to, h.reclassified_by, h.reclassified_at,
+              h.excluded_at, h.excluded_by, h.exclusion_reason
        FROM status_history h JOIN sites s ON h.site_id = s.id
        WHERE h.started_at >= ? AND h.started_at < ?
        ORDER BY h.started_at DESC LIMIT ?`
