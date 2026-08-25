@@ -107,7 +107,19 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       currentFaultText: g.current_fault_text ?? null,
       // ⚠️ חייב להיות זהה לזרוע השרת — check-switch מוודא בדיוק את זה.
       currentAfterError: g.current_after_error === true,
-      statusSince: g.status_since ?? null,
+      // ============================================================
+      // ⚠️ בתחזוקה ידנית — הזמן הוא של החלון, לא של מקטע הבקר
+      // ============================================================
+      // הסטטוס נדרס ל-'maintenance' כשיש חלון ידני פעיל, אבל הזמן
+      // נשאר של המקטע הפתוח מהבקר. התוצאה על הכרטיס: **"המצב השתנה
+      // לבתחזוקה — לפני 3 שעות"** בזמן שהחלון נפתח לפני שתי דקות.
+      //
+      // ⚠️ נמדד באתר 1348: מקטע ready פתוח מ-05:00, חלון תחזוקה נפתח
+      // ב-08:06, והכרטיס הציג 3 שעות. התווית והזמן הגיעו משני מקורות
+      // שונים — וזה נראה כמו נתון אמיתי, לא כמו תקלה.
+      statusSince: inMaintenance
+        ? (g.maintenance_started_at ?? g.status_since ?? null)
+        : (g.status_since ?? null),
       // השרת מחזיר אובייקט או null — ולא אובייקט עם שדות ריקים, שהיה נראה
       // למסך כמו "יש פעולה אחרונה" עם כל השדות undefined.
       lastOperation: g.last_op_occurred_at

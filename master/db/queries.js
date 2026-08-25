@@ -1769,7 +1769,13 @@ async function getAllSitesWithMetrics({ from, prevFrom = null }) {
       ),
       lastFaultAt: g.lastFaultAt,
       lastOperation: g.lastOperation,
-      statusSince: g.statusSince,
+      // ⚠️ אותו תיקון כמו בזרוע הישירה, ומאותה סיבה: הסטטוס נדרס
+      // ל-'maintenance' והזמן נשאר של מקטע הבקר, כך שהכרטיס הראה
+      // "השתנה לבתחזוקה לפני 3 שעות" על חלון בן שתי דקות.
+      // שתי הזרועות חייבות להחזיר את אותו ערך — check-switch מוודא.
+      statusSince: inMaintenance
+        ? (g.activeMaintenance?.started_at ?? g.statusSince)
+        : g.statusSince,
       // תיאור התקלה הנוכחית — או של זו שמטפלים בה כרגע. ראה getAllSitesGlobals.
       currentFaultText: g.currentFaultText ?? null,
       currentAfterError: g.currentAfterError === true,
