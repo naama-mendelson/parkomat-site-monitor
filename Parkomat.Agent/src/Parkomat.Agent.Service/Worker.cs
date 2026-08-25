@@ -190,8 +190,10 @@ public class Worker : BackgroundService
         // הוא נשלח בנפרד. התקלה מגיעה למסך בזמן; רק התיאור מחכה.
         // ⚠️ דגימה כל 100ms עד שנייה אחת. ברוב המקרים הטקסט זז מיד,
         // ואז אין עיכוב כלל — הלולאה יוצאת בדגימה הראשונה.
+        // ⚠️ דגימה כל 100ms, עד עשר פעמים. במקרה הרגיל שתי הקריאות
+        // הראשונות מסכימות והלולאה יוצאת אחרי 100ms אחת.
         const int FaultTextPollMs = 100;
-        const int FaultTextMaxWaitMs = 1000;
+        const int FaultTextMaxPolls = 10;
         bool faultTextPackingWarned = false;
 
         // ============================================================
@@ -215,63 +217,78 @@ public class Worker : BackgroundService
         // דווקא במקרה שהוא נועד לכסות.
         //
         // מחזיר null כשאין תיאור, כדי שהשדה יושמט מה-JSON לגמרי.
-        string? ReadFaultTextOrNull(SiteState state)
+        async Task<string?> ReadFaultTextOrNullAsync(SiteState state, CancellationToken ct)
         {
             if (state != SiteState.Error) return null;
 
             // ============================================================
-            // ⚠️ ממתינים עד שהטקסט **משתנה**, לא זמן קבוע
+            // ⚠️ ממתינים ל**יציבות**, לא ל**שינוי** — וההבדל מהותי
             // ============================================================
-            // הטקסט יושב בכתובת 2 וה-MODE ב-290 — שתי קריאות נפרדות.
-            // נמדד באתר 1376: הבקר עבר תחזוקה→תקלה תוך 12 שניות והטקסט
-            // עוד לא נכתב; מעברים של 25 שניות ומעלה החזירו עברית תקינה.
+            // הטקסט יושב בכתובת 2 וה-MODE ב-290, ולכן הם אינם נקראים באותו
+            // round-trip. נמדד באתר 1376: הבקר עבר תחזוקה→תקלה תוך 12
+            // שניות והטקסט עוד לא נכתב; מעברים של 25 שניות ומעלה החזירו
+            // עברית תקינה.
             //
-            // ⚠️ המתנה קבועה היא ניחוש. 250ms עבדו במדידה אחת — ואין שום
-            // ערובה שהם מספיקים לבקר אחר, ביום עמוס, או אחרי שדרוג.
+            // ⚠️ **הגרסה הקודמת חיכתה שהטקסט יזוז, וזו הייתה טעות.** במקרה
+            // הרגיל הבקר כותב **לפני** שהסוכן דוגם, ולכן הטקסט לעולם אינו
+            // זז — והלולאה שרפה שנייה שלמה ועשר קריאות של 80 רגיסטרים על
+            // **כל תקלה**, ואז הדפיסה אזהרה שקרית שהבקר לא כתב.
             //
-            // לכן: לוכדים את הערך **שהיה שם ברגע שהמצב הפך לתקלה** —
-            // הוא בהכרח הישן — ומחכים עד שהוא זז. ברגע שהוא זז, זה הטקסט
-            // החדש. ברוב המקרים זה קורה בדגימה הראשונה, ואז אין עיכוב
-            // בכלל.
-            FaultText stale = plc.ReadFaultText();
-            FaultText ft = stale;
+            // שתי קריאות שמסכימות = הבקר סיים. במקרה הרגיל זה יוצא אחרי
+            // דגימה אחת.
+            FaultText best = plc.ReadFaultText();
             bool settled = false;
 
-            for (int waited = 0; waited < FaultTextMaxWaitMs; waited += FaultTextPollMs)
+            for (int i = 0; i < FaultTextMaxPolls; i++)
             {
-                Thread.Sleep(FaultTextPollMs);
-                ft = plc.ReadFaultText();
-                if (ft.Text != stale.Text) { settled = true; break; }
+                // ⚠️ Task.Delay עם ה-token, ולא Thread.Sleep: השירות הוא
+                // BackgroundService, ו-Sleep התעלם מבקשת עצירה — כלומר
+                // כיבוי היה מתעכב עד שנייה על כל תקלה בטיפול.
+                await Task.Delay(FaultTextPollMs, ct);
+                FaultText next = plc.ReadFaultText();
+
+                // ⚠️ קריאה שנכשלה מחזירה ריק. זה **היעדר מידע**, לא שינוי —
+                // ובלי הדילוג הזה timeout אחד היה נראה כמו "הטקסט השתנה
+                // לריק", והתקלה הייתה מתפרסמת בלי תיאור שהקריאה הראשונה
+                // כבר קראה נכון.
+                if (string.IsNullOrEmpty(next.Text)) continue;
+
+                if (next.Text == best.Text) { settled = true; break; }
+                best = next;   // עדיין משתנה — הערך המאוחר קרוב יותר לאמת
+            }
+
+            FaultText ft = best;
+
+            // ⚠️ אזהרה **פעם אחת בלבד**: ערכים שהפענוח לא הכיר הוחלפו ב-'?'.
+            // הטקסט אז קריא-למחצה ונראה כמו תקלה בבקר ולא כמו טעות פענוח —
+            // בדיוק מה שקרה בז'בוטינסקי 91 (`?א?? ?א???`).
+            //
+            // אין תיקון אוטומטי של הפרשנות: ניחוש שקט הוא מה שיוצר בעיה
+            // כזו. השורה הזו היא מה שיאמר לנו לשנות את הפענוח ביודעין,
+            // והיא מדפיסה את הערכים **הגולמיים** — בלעדיהם אי אפשר לזהות
+            // את הקידוד מרחוק.
+            if (ft.HadUnknown && !faultTextPackingWarned)
+            {
+                faultTextPackingWarned = true;
+                _logger.LogWarning(
+                    "Fault text: {Count} register value(s) were not recognised and became '?'. " +
+                    "The text is half-readable and must not be trusted. Decoded: '{Text}' | raw: {Raw}",
+                    ft.UnknownChars, ft.Text, ft.RawHex);
             }
 
             // ============================================================
             // ⚠️ מה שנשאר לא ניתן להכרעה — ונאמר במפורש
             // ============================================================
-            // אם הטקסט לא זז עד הסוף, יש שתי אפשרויות שאי אפשר להפריד
-            // ביניהן מבחוץ: **אותה תקלה חזרה** (הערך נכון), או **הבקר
-            // מעולם לא כתב** (הערך ישן).
-            //
-            // ⚠️ אין כאן ניחוש. השורה בלוג היא מה שיאמר לנו אם זה קורה
-            // בכלל, וכמה — ורק PLC שיחשוף דגל 'טקסט עודכן' או מונה
-            // גרסה יכול לסגור את זה לגמרי. זו בקשה לצד הבקר, לא באג אצלנו.
+            // שתי קריאות שלא הסכימו עד הסוף פירושן שהחוצץ עדיין זז, או
+            // שהקריאות נכשלו. אין דרך להבחין מבחוץ בין "אותה תקלה חזרה"
+            // לבין "הבקר טרם כתב" — רק PLC שיחשוף דגל 'טקסט עודכן' יסגור
+            // את זה. זו בקשה לצד הבקר, לא באג אצלנו.
             if (!settled && !string.IsNullOrEmpty(ft.Text))
             {
                 _logger.LogWarning(
-                    "Fault text did not change within {Ms}ms of the fault. " +
-                    "It is either the same fault recurring, or the PLC has not written " +
-                    "the new text yet - these are indistinguishable. Value: '{Text}'",
-                    FaultTextMaxWaitMs, ft.Text);
-            }
-            if (ft.HadUnknown && !faultTextPackingWarned)
-            {
-                faultTextPackingWarned = true;
-                // ⚠️ **הערכים הגולמיים, לא רק הטקסט.** ההערה מעל טענה
-                // שהם מודפסים — והקוד הדפיס את המפוענח בלבד. בלי הערכים
-                // אי אפשר לזהות את הקידוד מרחוק, וזו כל מטרת האזהרה.
-                _logger.LogWarning(
-                    "Fault text: {Count} register value(s) were not recognised and became '?'. " +
-                    "The text is half-readable and must not be trusted. Decoded: '{Text}' | raw: {Raw}",
-                    ft.UnknownChars, ft.Text, ft.RawHex);
+                    "Fault text never stabilised within {Ms}ms. It may be the previous " +
+                    "fault's text. Value: '{Text}'",
+                    FaultTextPollMs * FaultTextMaxPolls, ft.Text);
             }
 
             if (string.IsNullOrEmpty(ft.Text)) return null;
@@ -557,7 +574,7 @@ public class Worker : BackgroundService
                         State = resync.State,
                         // ⚠️ בלי זה, אתר שנפל **ואז** איבד תקשורת חוזר לשרת
                         // כתקלה חדשה וריקה — ראה ReadFaultTextOrNull.
-                        FaultText = ReadFaultTextOrNull(resync.State)
+                        FaultText = await ReadFaultTextOrNullAsync(resync.State, stoppingToken)
                     }, stoppingToken);
                     birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                 }
@@ -589,7 +606,7 @@ public class Worker : BackgroundService
                     // ריק, והתקלה משודרת בלי תיאור. **התקלה עצמה חשובה יותר
                     // מהתיאור שלה**, ובקר ישן שאין בו את הכתובת הזו חייב
                     // להמשיך לעבוד בדיוק כמו קודם.
-                    result.State.FaultText = ReadFaultTextOrNull(result.State.State);
+                    result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
 
                     _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
                     await mqtt.PublishStateAsync(result.State, stoppingToken);

@@ -159,7 +159,14 @@ async function handleState(site, data) {
   //
   // ⚠️ הרישום כאן ולא ב-fault-text.js: המודול ההוא נטול-תלויות במכוון,
   // וברגע שידרוש queries הוא יצא מכלל הבדיקות שרצות בלי מסד.
-  if (typeof data?.faultText === "string" && data.faultText.trim() !== "" && faultText === null) {
+  // ⚠️ **וגם `newStatus === "error"`.** בלי התנאי הזה כל הודעה שאינה
+  // תקלה ונושאת faultText הייתה נרשמת כ"תיאור לא קריא" — כי
+  // extractFaultText מחזיר null גם למצב שאינו error. סיבה שקרית
+  // שמצביעה על בעיית קידוד בבקר שאינה קיימת.
+  if (newStatus === "error"
+      && typeof data?.faultText === "string"
+      && data.faultText.trim() !== ""
+      && faultText === null) {
     noteDrop({
       topic: `sites/${site.code}/state`,
       siteCode: site.code,

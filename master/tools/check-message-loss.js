@@ -22,10 +22,14 @@ const findings = [];
   // ---- 1. כשלים מפורשים ----
   console.log("=".repeat(62));
   console.log("1. הודעות שהגיעו ונכשלו (ingest_drops)");
+  // ⚠️ fault_text_unreadable אינו אובדן הודעה: המצב **כן** נכתב, ורק
+  // התיאור נחתך. ספירתו כאן הייתה מציגה כשל קליטה במקום שאין בו כזה,
+  // ומנפחת את הדוח בדיוק בפריט שאינו דורש פעולה.
+  const NOT_A_LOSS = ["fault_text_unreadable"];
   const drops = await db.prepare(
     "SELECT reason, COUNT(*)::int AS n, MAX(at) AS last, MIN(detail) AS sample " +
-    "FROM ingest_drops WHERE at > ? GROUP BY reason ORDER BY n DESC"
-  ).all(since);
+    "FROM ingest_drops WHERE at > ? AND NOT (reason = ANY(?)) GROUP BY reason ORDER BY n DESC"
+  ).all(since, NOT_A_LOSS);
   if (!drops.length) console.log("   ✅ אין");
   for (const d of drops) {
     console.log(`   ${String(d.n).padStart(4)} × ${d.reason}  · אחרון ${d.last.slice(0,16)}`);
