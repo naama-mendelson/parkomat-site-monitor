@@ -1337,7 +1337,7 @@ async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter 
     ).all(from, to, LOG_FETCH_CAP),
 
     db.prepare(
-      `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at, w.performed_by
+      `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at, w.performed_by, w.cancelled_by
        FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
        WHERE w.started_at >= ? AND w.started_at < ?
        ORDER BY w.started_at DESC LIMIT ?`

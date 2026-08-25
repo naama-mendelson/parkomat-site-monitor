@@ -132,7 +132,7 @@ const rpc = (fn, body, token) =>
   add("⚠️ אירוע נרשם — אחרת אף מסך לא מתעדכן", ev.n > 0, true);
 
   // ---- ביטול ----
-  const cancelled = await rpc("cancel_maintenance", { p_site_code: CODE }, token);
+  const cancelled = await rpc("cancel_maintenance", { p_site_code: CODE, p_performed_by: "שער בדיקה" }, token);
   const cbody = await cancelled.json().catch(() => []);
   add("ביטול עובד", cancelled.status, 200);
   add("...וביטל שורה אחת", cbody?.[0]?.cancelled, 1);

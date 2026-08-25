@@ -274,6 +274,10 @@ function describe(e) {
       details.push(`משך מתוכנן: ${e.durationHours} שע'`);
     }
     if (e.reason) details.push(`סיבה: ${e.reason}`);
+    // ⚠️ מי ביטל מוצג רק כשבוטל — אחרת זו שורה ריקה בכל חלון פעיל.
+    // וזו הפעולה שמחזירה את האתר לספירה, ולכן היא ראויה לשם לא פחות
+    // מזו שפתחה את החלון.
+    if (cancelled && e.cancelledBy) details.push(`ביטל: ${e.cancelledBy}`);
 
     return {
       color: c.dot,

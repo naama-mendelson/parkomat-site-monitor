@@ -579,3 +579,21 @@ BEGIN
       ADD COLUMN IF NOT EXISTS performed_by TEXT;
   END IF;
 END $$;
+
+-- ============================================================
+-- מי ביטל את התחזוקה — אותו כלל כמו מי שהתחיל אותה
+-- ============================================================
+-- ⚠️ עד כה `cancelled_at` תיעד **מתי** בוטל ולא **מי**. וזו הפעולה
+-- שמחזירה אתר לספירה: מרגע הביטול תקלות נספרות שוב והזמינות מושפעת.
+-- מי שסוגר חלון מוקדם עושה החלטה תפעולית, ולא פחות מזו שפתחה אותו.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'maintenance_windows'
+       AND column_name = 'cancelled_by'
+  ) THEN
+    ALTER TABLE maintenance_windows
+      ADD COLUMN IF NOT EXISTS cancelled_by TEXT;
+  END IF;
+END $$;

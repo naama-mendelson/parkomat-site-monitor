@@ -251,8 +251,15 @@ COMMENT ON FUNCTION public.start_maintenance(text, numeric, text, text) IS
 -- ⚠️ נוגע ב-`cancelled_at` בלבד. זו הסיבה שזו פונקציה ולא `GRANT UPDATE`:
 -- הרשאת עמודה־כל היא רחבה מדי לפעולה שמשנה שדה אחד.
 DROP FUNCTION IF EXISTS public.cancel_maintenance(text);
+DROP FUNCTION IF EXISTS public.cancel_maintenance(text, text);
 
-CREATE OR REPLACE FUNCTION public.cancel_maintenance(p_site_code text)
+-- ⚠️ **גם הביטול דורש שם.** זו הפעולה שמחזירה אתר לספירה: מרגע
+-- הביטול תקלות נספרות שוב והזמינות מושפעת. מי שסוגר חלון מוקדם עושה
+-- החלטה תפעולית, ולא פחות מזו שפתחה אותו.
+CREATE OR REPLACE FUNCTION public.cancel_maintenance(
+  p_site_code    text,
+  p_performed_by text DEFAULT NULL
+)
 RETURNS TABLE (cancelled integer)
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -264,12 +271,20 @@ DECLARE
   v_role    text;
   v_now     text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_count   integer;
+  v_by      text;
 BEGIN
   v_name := app.actor_display_name();
   IF v_name IS NULL THEN
     RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
   END IF;
   v_role := app.current_app_role();
+
+  -- אותה אכיפה בדיוק כמו בפתיחה: ריק, רווח או תו בודד נדחים.
+  v_by := NULLIF(TRIM(COALESCE(p_performed_by, '')), '');
+  IF v_by IS NULL OR length(v_by) < 2 THEN
+    RAISE EXCEPTION 'חובה לציין מי מבטל את התחזוקה (שם מלא)'
+      USING ERRCODE = 'check_violation';
+  END IF;
 
   SELECT s.id INTO v_site_id FROM sites s WHERE s.code = p_site_code;
   IF v_site_id IS NULL THEN
@@ -278,7 +293,8 @@ BEGIN
 
   -- אותו תנאי בדיוק כמו ב-cancelMaintenance ב-JS: רק חלון פעיל ולא שפג.
   UPDATE maintenance_windows m
-     SET cancelled_at = v_now
+     SET cancelled_at = v_now,
+         cancelled_by = v_by
    WHERE m.site_id = v_site_id
      AND m.cancelled_at IS NULL
      AND m.expires_at > v_now;
@@ -300,7 +316,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.cancel_maintenance(text) IS
+COMMENT ON FUNCTION public.cancel_maintenance(text, text) IS
   'ביטול חלון תחזוקה פעיל מהדפדפן. נוגע ב-cancelled_at בלבד.';
 
 -- ============================================================
@@ -313,10 +329,10 @@ COMMENT ON FUNCTION public.cancel_maintenance(text) IS
 -- פונקציה חדשה, כלומר גם ל-`anon`. בלי ה-REVOKE כל מי שיש לו את המפתח
 -- הציבורי היה יכול להשתיק אתר בלי להתחבר בכלל.
 REVOKE ALL ON FUNCTION public.start_maintenance(text, numeric, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.cancel_maintenance(text)               FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cancel_maintenance(text, text)               FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.start_maintenance(text, numeric, text, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.cancel_maintenance(text)               TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_maintenance(text, text)               TO authenticated;
 
 -- ============================================================
 -- כתיבת אתרים — למנהלים בלבד

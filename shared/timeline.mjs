@@ -532,6 +532,8 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
       // ⚠️ מי **בפועל** — הצהרה מוקלדת, לצד החשבון המאומת ולא במקומו.
       // set_by_name עונה על "איזה חשבון"; performedBy על "מי עמד שם".
       performedBy: m.performed_by ?? null,
+      // ⚠️ ומי ביטל — הפעולה שמחזירה את האתר לספירה.
+      cancelledBy: m.cancelled_by ?? null,
       role: m.set_by_role,
       reason: m.reason,
       durationHours: m.duration_hours,

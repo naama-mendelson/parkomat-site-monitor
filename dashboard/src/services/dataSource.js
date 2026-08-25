@@ -389,9 +389,12 @@ export async function startMaintenance(code, name, durationHours, reason = "") {
 }
 
 /** ביטול חלון התחזוקה הפעיל. */
-export async function cancelMaintenance(code) {
-  if (!useDirect) return cancelMaintenanceViaServer(code);
-  return cancelMaintenanceDirect(code);
+// ⚠️ **גם הביטול נושא שם.** זו הפעולה שמחזירה אתר לספירה: מרגע
+// הביטול תקלות נספרות שוב והזמינות מושפעת. מי שסוגר חלון מוקדם עושה
+// החלטה תפעולית, ולא פחות מזו שפתחה אותו.
+export async function cancelMaintenance(code, name) {
+  if (!useDirect) return cancelMaintenanceViaServer(code, name);
+  return cancelMaintenanceDirect(code, name);
 }
 
 // ============================================================

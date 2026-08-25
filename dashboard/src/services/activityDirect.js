@@ -79,7 +79,7 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
     pageAll((a, b) => scoped(
       supabase
         .from("maintenance_windows")
-        .select("id, site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at, excluded_at, excluded_by, performed_by, sites(site_name)")
+        .select("id, site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at, excluded_at, excluded_by, performed_by, cancelled_by, sites(site_name)")
         .gte("started_at", from).lt("started_at", to)
         .order("started_at", { ascending: false })
         .range(a, b)

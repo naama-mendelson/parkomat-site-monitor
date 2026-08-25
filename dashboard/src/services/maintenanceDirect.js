@@ -71,11 +71,13 @@ export async function startMaintenanceDirect(code, durationHours, reason = "", p
 }
 
 /** ביטול החלון הפעיל. מחזיר כמה שורות בוטלו — 0 הוא תשובה תקינה. */
-export async function cancelMaintenanceDirect(code) {
+export async function cancelMaintenanceDirect(code, performedBy = "") {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
 
   const { data, error } = await supabase.rpc("cancel_maintenance", {
     p_site_code: String(code),
+    // ⚠️ ה-RPC דוחה שם ריק או בן תו אחד — אותה אכיפה כמו בפתיחה.
+    p_performed_by: performedBy ? String(performedBy).trim() : null,
   });
 
   if (error) throw new Error(messageFor(error));

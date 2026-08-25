@@ -87,9 +87,13 @@ function SiteFacts({ site, maintenance, onRefresh }) {
   }
 
   async function cancel() {
+    // ⚠️ **שם חובה גם כאן.** ה-RPC דוחה בלעדיו, ובלי הבקשה הזו
+    // המשתמש היה מקבל שגיאת שרת סתומה במקום שאלה מובנת.
+    const who = (maintName.trim() || window.prompt("מי מבטל את התחזוקה? (שם מלא)") || "").trim();
+    if (who.length < 2) return alert("יש להזין שם מלא כדי לבטל תחזוקה");
     setBusy(true);
     try {
-      await cancelMaintenance(site.code);
+      await cancelMaintenance(site.code, who);
       onRefresh?.();
     } catch (err) {
       alert("שגיאה: " + err.message);
