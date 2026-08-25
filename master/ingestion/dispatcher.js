@@ -147,6 +147,10 @@ async function dispatch(topic, raw) {
     const parts = topic.split("/");
     if (parts.length !== 3 || parts[0] !== "sites" || !parts[1]) {
       console.log(`[dispatcher] topic לא מוכר: ${topic}`);
+      // ⚠️ נראה בייצור: `sites//bridge` — קוד אתר ריק. עד כה זה נעלם
+      // עם הקונטיינר, ולכן איש לא ידע שיש מכשיר ששולח לכתובת שבורה.
+      noteDrop({ topic, siteCode: parts[1] || null, kind: parts[2] || null,
+                 reason: "unknown_topic", payload: raw });
       return;
     }
     const siteCode = parts[1];
@@ -160,6 +164,7 @@ async function dispatch(topic, raw) {
       const bridgeSite = await findSiteByCode(siteCode);
       if (!bridgeSite) {
         console.log(`[dispatcher] נדחתה הודעת גשר מאתר לא רשום: code=${siteCode}`);
+        noteDrop({ topic, siteCode, kind, reason: "bridge_site_not_registered", payload: raw });
         return;
       }
       await handleBridgeState(bridgeSite, raw);
@@ -172,11 +177,16 @@ async function dispatch(topic, raw) {
       data = JSON.parse(raw);
     } catch (e) {
       console.log(`[dispatcher] הודעה לא תקינה (לא JSON) מ-${topic}:`, raw);
+      // ⚠️ הודעה פגומה היא **אובדן אמיתי**: היא אושרה ל-HiveMQ ונמחקה,
+      // ואם לא נשמור אותה כאן אין שום דרך לדעת מה הבקר ניסה לומר.
+      noteDrop({ topic, siteCode, kind, reason: "malformed_json",
+                 detail: String(e?.message || "").slice(0, 120), payload: raw });
       return;
     }
 
     if (data === null || typeof data !== "object") {
       console.log(`[dispatcher] הודעה לא תקינה (לא אובייקט) מ-${topic}:`, raw);
+      noteDrop({ topic, siteCode, kind, reason: "payload_not_object", payload: raw });
       return;
     }
 
@@ -293,6 +303,8 @@ async function dispatch(topic, raw) {
       // state-handler גוזר לה את זמן הקליטה. שאר ההודעות חייבות חותם זמן תקין.
       if (data.state !== "no_comm" && !isValidTimestamp(data.timestamp)) {
         console.log(`[dispatcher] נדחתה הודעת state מאתר ${siteCode}: timestamp לא תקין (${data.timestamp})`);
+        noteDrop({ topic, siteCode, kind, reason: "state_bad_timestamp",
+                   detail: `timestamp=${data.timestamp}`, payload: raw });
         return;
       }
       // await חיוני: ה-handlers אסינכרוניים עכשיו, ובלעדיו כשל בכתיבה ל-DB
@@ -303,6 +315,8 @@ async function dispatch(topic, raw) {
       const problem = validateOperation(data);
       if (problem) {
         console.log(`[dispatcher] נדחתה הודעת operation מאתר ${siteCode}: ${problem}`);
+        noteDrop({ topic, siteCode, kind, reason: "operation_invalid",
+                   detail: String(problem).slice(0, 160), payload: raw });
         return;
       }
       await handleOperation(site, data);

@@ -31,6 +31,18 @@ async function handleState(site, data) {
     const verdict = shouldApplyNoComm(site.last_seen, Date.now());
     if (!verdict.apply) {
       console.warn(`[state] ⏮️ אתר ${site.code}: no_comm נדחתה — ${verdict.reason}`);
+      // ⚠️ הדחייה כאן נכונה (LWT שהגיע אחרי שהאתר כבר חזר לדבר), אבל היא
+      // הייתה שקטה לגמרי: רק console, שנעלם עם הקונטיינר. no_comm שנדחית
+      // בטעות פירושה אתר מנותק שמוצג כתקין — בדיוק הכשל שהמערכת קיימת
+      // כדי למנוע, ובלי עקבה אי אפשר לדעת שזה קרה.
+      noteDrop({
+        topic: `sites/${site.code}/state`,
+        siteCode: site.code,
+        kind: "state",
+        reason: "no_comm_rejected",
+        detail: `${verdict.reason} · silence=${verdict.silenceSeconds}s`,
+        payload: JSON.stringify(data),
+      });
       return;
     }
   }
