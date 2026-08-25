@@ -958,57 +958,26 @@ const { siteTrend } = require("../../shared/executive.mjs");
  * totalHours הוא סך הזמן ה*נמדד* (סכום המקטעים), ולא אורך החלון —
  * אתר שנרשם באמצע התקופה לא ייענש על זמן שלא היה קיים בו.
  */
+// ============================================================
+// ⚠️ עוטף את uptimeFromData — ולא מיישם מחדש
+// ============================================================
+// הגרסה הקודמת חישבה בעצמה, ו**שלושה כללים חסרו בה**: היא קראה status
+// גולמי (התעלמה מסיווג מחדש), שלפה excluded_at ומעולם לא בדקה אותו,
+// ולא טענה maintenance_windows בכלל.
+//
+// ⚠️ נמדד על הייצור לפני ההחלפה: **6 מתוך 14 אתרים** קיבלו זמינות
+// שונה בין הזרועות. אתר 1399 — 88.64% מול 91.23%. אתר 3501 — 1.58
+// שעות תחזוקה מול 3.57. כלומר אותו אתר, אותו טווח, שני מספרים,
+// לפי ערך של משתנה סביבה.
+//
+// ⚠️ וזה בדיוק מה ש-CLAUDE.md אוסר: "לזמינות יש הגדרה אחת בלבד".
+// מימוש שני אינו אופטימיזציה — הוא הגדרה שנייה שתסחף.
+//
+// המחיר: שלוש שאילתות במקום אחת. עבור אתר בודד זה זניח, והחלופה היא
+// לשכפל שלושה כללים ולתחזק אותם בשני מקומות.
 async function getUptimeBreakdown(siteId, { from, to }) {
-  // measuredHours נכלל כאן במפורש: מסלול ההצלחה מחזיר אותו, ובלעדיו מסלול
-  // החלון-הריק החזיר צורה *חלקית*. הבדיקה `measuredHours > 0` אצל הקורא
-  // נתנה במקרה את התוצאה הנכונה (undefined > 0 הוא false), ולכן הפער היה
-  // בלתי-נראה — עד שהשוואת ה-parity מול SQL חשפה אותו.
-  const empty = {
-    readyHours: 0, operatingHours: 0, errorHours: 0,
-    maintenanceHours: 0, noCommHours: 0,
-    totalHours: 0, measuredHours: 0, availabilityPercent: 0,
-  };
-
-  const nowIso = new Date().toISOString();
-  const rangeEnd = to < nowIso ? to : nowIso;   // לא סופרים אל תוך העתיד
-  const windowStart = Date.parse(from);
-  const windowEnd = Date.parse(rangeEnd);
-  if (!(windowEnd > windowStart)) return empty;
-
-  const rows = await db
-    .prepare(
-      // ⚠️ id ושדות הניסוי — הזרוע הישירה מחזירה אותם (site_status_history),
-      // ו-parity-shape דורש שתי זרועות בעלות אותו מבנה בדיוק.
-      `SELECT id, status, started_at, ended_at,
-              excluded_at, excluded_by, exclusion_reason FROM status_history
-       WHERE site_id = ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`
-    )
-    .all(siteId, rangeEnd, from);
-
-  const ms = { ready: 0, operating: 0, error: 0, maintenance: 0, no_comm: 0 };
-
-  for (const row of rows) {
-    if (ms[row.status] === undefined) continue;
-    const start = Math.max(Date.parse(row.started_at), windowStart);
-    const end = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    if (end > start) ms[row.status] += end - start;
-  }
-
-  const toHours = (v) => Math.round((v / 3600000) * 100) / 100;
-  const totalMs = Object.values(ms).reduce((a, b) => a + b, 0);
-  const { measuredMs, availabilityPercent } = availabilityFrom(ms);
-
-  return {
-    readyHours: toHours(ms.ready),
-    operatingHours: toHours(ms.operating),
-    errorHours: toHours(ms.error),
-    maintenanceHours: toHours(ms.maintenance),
-    noCommHours: toHours(ms.no_comm),
-    totalHours: toHours(totalMs),          // כל הזמן שנמדד, כולל תחזוקה (לתצוגה)
-    // המכנה של הזמינות — בלי תחזוקה. 0 = אין נתון, ולא "זמינות אפס".
-    measuredHours: toHours(measuredMs),
-    availabilityPercent,
-  };
+  const data = await loadRangeData([siteId], { from, to });
+  return uptimeFromData(data, siteId, { from, to });
 }
 
 /**
