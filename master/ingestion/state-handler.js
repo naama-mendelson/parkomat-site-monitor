@@ -153,6 +153,23 @@ async function handleState(site, data) {
   // בעוד '' אומר "נקרא והיה ריק". שני דברים שונים, ובמסך הם נראים אחרת.
   const faultText = extractFaultText(newStatus, data);
 
+  // ⚠️ הבקר שלח טקסט ולא נשאר ממנו כלום אחרי הניקוי — כלומר תיאור
+  // התקלה **אבד**, גם אם המצב נשמר. זה ראוי לעקבה: תיאור שנחתך שוב
+  // ושוב מצביע על בעיה בבקר או על קידוד שאיננו מכירים.
+  //
+  // ⚠️ הרישום כאן ולא ב-fault-text.js: המודול ההוא נטול-תלויות במכוון,
+  // וברגע שידרוש queries הוא יצא מכלל הבדיקות שרצות בלי מסד.
+  if (typeof data?.faultText === "string" && data.faultText.trim() !== "" && faultText === null) {
+    noteDrop({
+      topic: `sites/${site.code}/state`,
+      siteCode: site.code,
+      kind: "state",
+      reason: "fault_text_unreadable",
+      detail: `אורך=${data.faultText.length}`,
+      payload: JSON.stringify(data),
+    });
+  }
+
   // ============================================================
   // ⚠️ בודקים אם הכתיבה **באמת** קרתה — וזה תיקון לבאג אמיתי
   // ============================================================
