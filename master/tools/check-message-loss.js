@@ -132,7 +132,45 @@ const findings = [];
   else if (!flagged) console.log("   ✅ אין");
 
   console.log(String.fromCharCode(10) + "=".repeat(62));
-  console.log("6. אתרים שלא נשמעו זמן חריג");
+  console.log("6. ⚠️ סחיפת שעון — חותם הסוכן מול זמן הקליטה שלנו");
+  console.log("   הסוכן חותם כל הודעה בשעון שלו. שעון שסוחף מזיז משכים,");
+  console.log("   סדר, ואת שומר ה-backfill — ומעל 300ש' הודעות נדחות.");
+  const ev = await db.prepare(
+    "SELECT site_code, created_at, payload FROM events " +
+    "WHERE created_at > ? AND site_code IS NOT NULL ORDER BY id DESC LIMIT 800"
+  ).all(new Date(now - 24 * 3600e3).toISOString());
+  const bySite = new Map();
+  for (const r of ev) {
+    let pl; try { pl = typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload; } catch { continue; }
+    if (!pl?.occurredAt) continue;
+    const sk = (new Date(r.created_at) - new Date(pl.occurredAt)) / 1000;
+    if (!Number.isFinite(sk)) continue;
+    if (!bySite.has(r.site_code)) bySite.set(r.site_code, []);
+    bySite.get(r.site_code).push(sk);
+  }
+  const median = (arr) => { const q = [...arr].sort((x, y) => x - y); return q[Math.floor(q.length / 2)]; };
+  const perSite = [...bySite.entries()].map(([code, v]) => ({ code, m: median(v), n: v.length }));
+  if (!perSite.length) { console.log("   (אין אירועים בטווח)"); }
+  else {
+    // ⚠️ הבסיס נמדד ולא מונח: הוא כולל רשת, תור וכתיבה. חריגה מזוהה
+    // ביחס לחציון של **כל** האתרים, לא מול אפס — אחרת כל המערכת
+    // הייתה נראית סוחפת בכל פעם שהעומס עולה.
+    const base = median(perSite.map((x) => x.m));
+    console.log(`   בסיס המערכת: ${Math.round(base)} שניות`);
+    let odd = 0;
+    for (const x of perSite.sort((p1, p2) => Math.abs(p2.m - base) - Math.abs(p1.m - base))) {
+      const diff = Math.round(x.m - base);
+      if (Math.abs(diff) >= 10) {
+        odd++;
+        console.log(`   ⚠️ ${x.code}  ${diff > 0 ? "+" : ""}${diff} שניות מהבסיס  (חציון ${Math.round(x.m)}ש', ${x.n} אירועים)`);
+        findings.push(`אתר ${x.code}: שעון סוטה ב-${diff} שניות`);
+      }
+    }
+    if (!odd) console.log("   ✅ כל האתרים בטווח הבסיס");
+  }
+
+  console.log(String.fromCharCode(10) + "=".repeat(62));
+  console.log("7. אתרים שלא נשמעו זמן חריג");
   const quiet = await db.prepare(
     "SELECT code, site_name, status, last_seen FROM sites ORDER BY last_seen"
   ).all();
