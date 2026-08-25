@@ -1655,11 +1655,15 @@ async function getAllSitesGlobals(siteIds) {
 
     // תחזוקה ידנית פעילה כרגע
     db.prepare(
+      // ⚠️ started_at <= now: חלון שתוזמן למחר אינו פעיל היום.
+      // site_globals ב-SQL מחזיק את התנאי; כאן הוא היה חסר, ושתי
+      // הזרועות היו מציגות סטטוס שונה לאותו אתר.
       `SELECT DISTINCT ON (site_id) *
        FROM maintenance_windows
-       WHERE ${holes} AND cancelled_at IS NULL AND expires_at > ?
+       WHERE ${holes} AND cancelled_at IS NULL
+         AND started_at <= ? AND expires_at > ?
        ORDER BY site_id, expires_at DESC`
-    ).all(...ids, now),
+    ).all(...ids, now, now),
   ]);
 
   // at() ולא result.get(): כשקוראים עם null (כל האתרים) המפה מתחילה ריקה,
@@ -1999,10 +2003,12 @@ async function getActiveMaintenances() {
               m.expires_at AS "expiresAt"
        FROM maintenance_windows m
        JOIN sites s ON m.site_id = s.id
-       WHERE m.cancelled_at IS NULL AND m.expires_at > ?
+       -- ⚠️ גם started_at: פאנל "תחזוקות פעילות" הציג חלונות שטרם התחילו.
+       WHERE m.cancelled_at IS NULL
+         AND m.started_at <= ? AND m.expires_at > ?
        ORDER BY m.expires_at ASC`
     )
-    .all(now);
+    .all(now, now);
 }
 
 

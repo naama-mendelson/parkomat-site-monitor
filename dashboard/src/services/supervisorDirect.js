@@ -69,6 +69,10 @@ export async function fetchSupervisorDirect(fromIso, toIso = new Date().toISOStr
       .from("maintenance_windows")
       .select("started_at, expires_at, set_by_name, reason, sites(code, site_name)")
       .is("cancelled_at", null)
+      // ⚠️ **גם started_at.** בלעדיו חלון שתוזמן למחר מוצג כפעיל היום —
+      // ו-schedule_maintenance קיים, כלומר זה מצב שאפשר להגיע אליו.
+      // site_globals ב-SQL כבר מחזיק את התנאי הזה; כאן הוא חסר.
+      .lte("started_at", nowIso)
       .gt("expires_at", nowIso)
       .order("expires_at", { ascending: true }),
   ]);
