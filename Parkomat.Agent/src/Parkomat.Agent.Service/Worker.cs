@@ -226,10 +226,13 @@ public class Worker : BackgroundService
             if (ft.HadUnknown && !faultTextPackingWarned)
             {
                 faultTextPackingWarned = true;
+                // ⚠️ **הערכים הגולמיים, לא רק הטקסט.** ההערה מעל טענה
+                // שהם מודפסים — והקוד הדפיס את המפוענח בלבד. בלי הערכים
+                // אי אפשר לזהות את הקידוד מרחוק, וזו כל מטרת האזהרה.
                 _logger.LogWarning(
                     "Fault text: {Count} register value(s) were not recognised and became '?'. " +
-                    "The text is half-readable and must not be trusted. Decoded: '{Text}'",
-                    ft.UnknownChars, ft.Text);
+                    "The text is half-readable and must not be trusted. Decoded: '{Text}' | raw: {Raw}",
+                    ft.UnknownChars, ft.Text, ft.RawHex);
             }
 
             if (string.IsNullOrEmpty(ft.Text)) return null;

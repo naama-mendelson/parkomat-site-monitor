@@ -121,7 +121,26 @@ public class FaultTextTests
         // הגרסה הקודמת בשטח.
         var r = FaultTextDecoder.Decode(new ushort[] { 0x4142, 0x4344, 0 });
 
-        Assert.Equal("䅂䍄", r.Text);
+        // ============================================================
+        // ⚠️ ההחלטה עודכנה אחרי שהמציאות בדקה אותה — והיא נכשלה בחצי
+        // ============================================================
+        // הנימוק המקורי עומד: גיבריש גלוי עדיף על קריא-למחצה, כי "BD"
+        // נראה כמו קוד תקלה אמיתי ומישהו יאמין לו. זה נשאר נכון.
+        //
+        // ⚠️ **מה שנכשל הוא ההנחה שמישהו ידווח.** בייצור, אתר 1376 הציג
+        // תו סיני בשדה התקלה — במקום "מעלית לא בקומה בכניסה לאוטומט" —
+        // ואיש לא דיווח. הוא נמצא רק כשמישהו הסתכל על הכרטיס במקרה.
+        //
+        // ⚠️ וגרוע מכך: תו כזה **אינו נספר כתו לא-מזוהה**, ולכן האזהרה
+        // שנועדה בדיוק לזה מעולם לא ירתה. ההגנה הייתה תלויה בעין אנושית,
+        // ובדיוק העין הזו היא מה שהיא הייתה אמורה להחליף.
+        //
+        // (?) הוא גיבריש גלוי בדיוק כמו התו הסיני — ולא ניתן לבלבול עם
+        // קוד תקלה — אבל הוא **גם נספר**, ולכן מפעיל את האזהרה עם הערכים
+        // הגולמיים. אותה מטרה, רק שהמערכת מדווחת במקום לקוות שמישהו יבחין.
+        Assert.Equal("??", r.Text);
+        Assert.Equal(2, r.UnknownChars);          // <- זה מה שהיה חסר
+        Assert.Contains("4142", r.RawHex);        // <- וזה מה שמאפשר אבחון
         Assert.DoesNotContain("BD", r.Text);
     }
 
@@ -196,5 +215,58 @@ public class FaultTextTests
     {
         const string msg = "E-204 CARD READER TIMEOUT (LANE 2)";
         Assert.Equal(msg, FaultTextDecoder.Decode(Encode(msg, pad: 45)).Text);
+    }
+
+    // ============================================================
+    // ⚠️ ערך מעל 0xFF שאינו עברית — הבאג שהציג תו סיני בייצור
+    // ============================================================
+    // הגרסה הקודמת החזירה **כל** ערך מעל 0xFF כתו, בלי בדיקת טווח.
+    // נמדד באתר 1376: רגיסטר 0x73FC הפך ל-`珼`, והתקלה האמיתית —
+    // "מעלית לא בקומה בכניסה לאוטומט" — הוצגה כתו סיני יחיד.
+    //
+    // ⚠️ והנזק כפול: `珼` לא נספר כתו לא-מזוהה, ולכן האזהרה שאמורה
+    // לצעוק על קידוד שגוי מעולם לא ירתה. שגיאה שקטה שנראית כמו נתון.
+    [Fact]
+    public void Value_Above_FF_Outside_Hebrew_Becomes_Question()
+    {
+        var ft = FaultTextDecoder.Decode(new ushort[] { 0x73FC, 0 });
+
+        Assert.Equal("?", ft.Text);
+        Assert.Equal(1, ft.UnknownChars);
+        Assert.True(ft.HadUnknown);
+    }
+
+    // ⚠️ הגולמי נשמר רק כשיש תו לא מזוהה — בלעדיו אי אפשר לזהות קידוד
+    // מרחוק, וזו כל מטרת האזהרה בלוג.
+    [Fact]
+    public void Raw_Values_Are_Kept_When_Something_Was_Unknown()
+    {
+        var ft = FaultTextDecoder.Decode(new ushort[] { 0x73FC, 0x05DE, 0 });
+
+        Assert.Contains("73FC", ft.RawHex);
+        Assert.Contains("05DE", ft.RawHex);
+    }
+
+    // וכשהכל תקין — אין מחרוזת מיותרת בכל קריאה.
+    [Fact]
+    public void Raw_Values_Are_Empty_When_All_Recognised()
+    {
+        var ft = FaultTextDecoder.Decode(new ushort[] { 0x05DE, 0x05E2, 0 });
+
+        Assert.Equal("מע", ft.Text);
+        Assert.Equal(0, ft.UnknownChars);
+        Assert.Equal("", ft.RawHex);
+    }
+
+    // הבלוק העברי המלא עובר — כולל סופיות.
+    [Fact]
+    public void Full_Hebrew_Block_Passes()
+    {
+        // מעלית לא בקומה — ההודעה האמיתית מהבקר
+        var ft = FaultTextDecoder.Decode(new ushort[]
+            { 0x05DE, 0x05E2, 0x05DC, 0x05D9, 0x05EA, 0x0020, 0x05DC, 0x05D0, 0 });
+
+        Assert.Equal("מעלית לא", ft.Text);
+        Assert.Equal(0, ft.UnknownChars);
     }
 }

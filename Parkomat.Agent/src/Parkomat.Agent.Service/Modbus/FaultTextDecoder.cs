@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Parkomat.Agent.Service.Modbus;
 
 /// <summary>
@@ -6,9 +8,9 @@ namespace Parkomat.Agent.Service.Modbus;
 /// ⚠️ החזרת הדגל כערך ולא כמאפיין סטטי היא **תיקון לתכנון קודם**: מאפיין
 /// סטטי הוא מצב גלובלי שקריאה אחת דורסת לשנייה, ואינו בטוח בריבוי תהליכונים.
 /// </summary>
-public readonly record struct FaultText(string Text, int UnknownChars)
+public readonly record struct FaultText(string Text, int UnknownChars, string RawHex = "")
 {
-    public static readonly FaultText Empty = new("", 0);
+    public static readonly FaultText Empty = new("", 0, "");
 
     /// <summary>האם הפענוח נתקל בערכים שלא ידע לפרש (הוחלפו ב-'?').</summary>
     public bool HadUnknown => UnknownChars > 0;
@@ -75,7 +77,12 @@ public static class FaultTextDecoder
         }
 
         // רווחי ריפוד בקצוות נחתכים — בקרים מרפדים שדות ברווחים, וזה רעש.
-        return new FaultText(new string(chars.ToArray()).Trim(), unknown);
+        // ⚠️ הגולמי נשמר **רק כשיש תו לא מזוהה** — אחרת זו מחרוזת
+        // מיותרת בכל קריאה, על נתון שאיש לא יסתכל בו.
+        string rawHex = unknown > 0
+            ? string.Join(" ", registers.TakeWhile(x => x != 0).Select(x => x.ToString("X4")))
+            : "";
+        return new FaultText(new string(chars.ToArray()).Trim(), unknown, rawHex);
     }
 
     // ============================================================
@@ -102,7 +109,22 @@ public static class FaultTextDecoder
         // ⚠️ והכלל הזה חייב לבוא **ראשון**. אילו הבדיקה של 0xE0..0xFA
         // הייתה רצה על הבית הנמוך לפניו, 1504 היה נקרא כ-א (0xE0) במקום
         // כ-נ — וזו בדיוק הטעות שייצרה `?א?? ?א???` בשטח.
-        if (r > 0xFF) return (char)r;
+        // ⚠️ **ורק בטווח העברי.** הגרסה הקודמת החזירה כל ערך מעל 0xFF
+        // כתו, בלי לבדוק דבר. נמדד בייצור באתר 1376: רגיסטר בערך
+        // 0x73FC הפך ל-`珼`, והתקלה — "מעלית לא בקומה בכניסה לאוטומט" —
+        // הוצגה כתו סיני יחיד.
+        //
+        // ⚠️ והנזק כפול: לא רק שהטקסט שגוי, אלא ש-`珼` **אינו נספר
+        // כתו לא מזוהה**, ולכן האזהרה שאמורה לצעוק על קידוד לא ירתה.
+        // שגיאה שקטה שנראית כמו נתון.
+        //
+        // הבלוק 0x0590..0x05FF הוא כל העברית, כולל סופיות וניקוד.
+        // מה שמחוצה לו אינו טקסט שבקר ישראלי שולח.
+        if (r > 0xFF)
+        {
+            if (r >= 0x0590 && r <= 0x05FF) return (char)r;
+            return '?';
+        }
 
         // ASCII להדפסה — הרוב המכריע, ועובר כמות שהוא (32=רווח, 45=מקף).
         if (r >= 32 && r <= 126) return (char)r;
