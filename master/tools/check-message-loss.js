@@ -111,7 +111,28 @@ const findings = [];
 
   // ---- 5. אתרים ששותקים ----
   console.log("\n" + "=".repeat(62));
-  console.log("5. אתרים שלא נשמעו זמן חריג");
+  console.log("5. ⚠️ הגשר מחובר אבל האתר שותק — הסוכן חי ואינו מדווח");
+  console.log("   זה האות היחיד שמבדיל בין אתר שקט לאתר מת.");
+  const stuck = await db.prepare(
+    "SELECT code, site_name, status, last_seen, bridge_seen_at FROM sites " +
+    "WHERE bridge_connected = 1 ORDER BY last_seen"
+  ).all();
+  let flagged = 0;
+  for (const b of stuck) {
+    const mins = Math.round((now - new Date(b.last_seen)) / 60000);
+    // ⚠️ הסף גבוה בכוונה: נמדד שפערי שקט תקינים מגיעים ל-40 שעות. סף
+    // נמוך היה מצייץ על מערכות בריאות — כלומר מלמד להתעלם.
+    if (mins > 300) {
+      flagged++;
+      console.log(`   ⚠️ ${b.code}  ${b.status.padEnd(11)} שקט ${Math.floor(mins/60)} שעות · גשר מחובר (${String(b.bridge_seen_at).slice(0,16)})  ${b.site_name}`);
+      findings.push(`אתר ${b.code}: גשר מחובר אך שקט ${Math.floor(mins/60)} שעות`);
+    }
+  }
+  if (!stuck.length) console.log("   (טרם התקבל דיווח גשר — יתמלא אחרי הפריסה)");
+  else if (!flagged) console.log("   ✅ אין");
+
+  console.log(String.fromCharCode(10) + "=".repeat(62));
+  console.log("6. אתרים שלא נשמעו זמן חריג");
   const quiet = await db.prepare(
     "SELECT code, site_name, status, last_seen FROM sites ORDER BY last_seen"
   ).all();

@@ -19,9 +19,28 @@
 // והפורמט שלה קבוע ("1" או "0"). לכן היא הולכת ל-topic נפרד ולא ל-state,
 // שם החוזה מחייב JSON.
 
-const { applyStateChange } = require("../db/queries");
+const { applyStateChange, recordBridgeState, recordIngestDrop } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
+
+// ⚠️ כמו בדיספצ'ר: כשל ברישום הזריקה אינו מפיל את הקליטה.
+function noteDrop(row) {
+  try {
+    recordIngestDrop?.(row);
+  } catch (err) {
+    console.error("[bridge] רישום הזריקה נכשל —", err?.message);
+  }
+}
+
+// ⚠️ נשמר בכל הודעה, גם "מחובר". זה כל העניין: בלי הרשומה הזו אי אפשר
+// להבדיל בין אתר שקט לאתר מת.
+async function remember(site, connected) {
+  try {
+    await recordBridgeState(site.id, connected, new Date().toISOString());
+  } catch (err) {
+    console.error(`[bridge] אתר ${site.code}: שמירת מצב הגשר נכשלה —`, err?.message);
+  }
+}
 
 /**
  * @param site אובייקט האתר (כבר אומת שהוא רשום)
@@ -36,11 +55,14 @@ async function handleBridgeState(site, payload) {
   // זמן טרי ברגע שהוא מזהה שהגשר חזר (ראה Worker.cs). ניחוש כאן היה גורם
   // לאתר מושבת להיראות "מוכן" לרגע.
   if (connected) {
+    await remember(site, true);
     console.log(`[bridge] אתר ${site.code}: הגשר ל-HiveMQ מחובר`);
     return;
   }
 
   // ===== הגשר נפל =====
+  await remember(site, false);
+
   if (site.status === "no_comm") {
     return;   // כבר מסומן — אין מה לעשות
   }
@@ -52,6 +74,16 @@ async function handleBridgeState(site, payload) {
   const order = shouldApplyNoComm(site.last_seen, Date.now());
   if (!order.apply) {
     console.warn(`[bridge] ⏮️ אתר ${site.code}: הודעת נתק נדחתה — ${order.reason}`);
+    // ⚠️ הדחייה נכונה (will שהגיע אחרי שהאתר כבר חזר לדבר), אבל היא
+    // הייתה שקטה. נתק שנדחה בטעות = אתר מנותק שמוצג כתקין.
+    noteDrop({
+      topic: `sites/${site.code}/bridge`,
+      siteCode: site.code,
+      kind: "bridge",
+      reason: "bridge_disconnect_rejected",
+      detail: `${order.reason} · silence=${order.silenceSeconds}s`,
+      payload: String(payload),
+    });
     return;
   }
 
@@ -79,6 +111,16 @@ async function handleBridgeState(site, payload) {
   // משדרים אירוע SSE על שינוי שלא נרשם, והדשבורד היה מציג מצב שאינו ב-DB.
   if (result?.skipped) {
     console.log(`[bridge] אתר ${site.code}: דילוג (${result.skipped})`);
+    // ⚠️ נתק שנבלע בשומר = אתר מנותק שממשיך להיות מוצג כתקין. אותו
+    // כשל בדיוק כמו בנתיב ה-state, ולכן אותו טיפול.
+    noteDrop({
+      topic: `sites/${site.code}/bridge`,
+      siteCode: site.code,
+      kind: "bridge",
+      reason: `bridge_${result.skipped}`,
+      detail: `sites.status=${site.status} · occurredAt=${occurredAt}`,
+      payload: String(payload),
+    });
     return;
   }
 

@@ -246,14 +246,33 @@ function describe(e) {
 
   if (e.kind === "maintenance") {
     const c = STATUS_COLORS.maintenance;
+    // ============================================================
+    // ⚠️ "בוטל" אינו נכון — החלון רץ ואז הופסק
+    // ============================================================
+    // "ביטול" מתאר פעולה שלא קרתה. כאן התחזוקה **כן התקיימה**, פשוט
+    // הסתיימה לפני הזמן שתוכנן — ובזמן שהיא רצה היא השפיעה: תקלות
+    // הושמטו מהמדדים והאתר הוצא ממכנה הזמינות.
+    //
+    // ⚠️ ומי שקורא "בוטל" מסיק שלא הייתה תחזוקה בכלל, ואז אינו מבין
+    // למה יש תקלות מושמטות באותו טווח.
     const cancelled = Boolean(e.cancelledAt);
-    const details = [`הפעיל: ${e.setBy}`, `משך מתוכנן: ${e.durationHours} שע'`];
+    const details = [`הפעיל: ${e.setBy}`];
+    if (cancelled) {
+      // כמה באמת נמשך מול כמה תוכנן — זו השאלה שמישהו ישאל.
+      const actualSec = (new Date(e.cancelledAt) - new Date(e.at)) / 1000;
+      details.push(
+        Number.isFinite(actualSec) && actualSec >= 0
+          ? `נמשך ${fmtDuration(actualSec)} מתוך ${e.durationHours} שע' שתוכננו`
+          : `משך מתוכנן: ${e.durationHours} שע'`);
+    } else {
+      details.push(`משך מתוכנן: ${e.durationHours} שע'`);
+    }
     if (e.reason) details.push(`סיבה: ${e.reason}`);
 
     return {
       color: c.dot,
       icon: "⚙",
-      title: cancelled ? "חלון תחזוקה (בוטל)" : "חלון תחזוקה הופעל",
+      title: cancelled ? "חלון תחזוקה (התקצר)" : "חלון תחזוקה הופעל",
       details: details.join(" · "),
       badge: "תחזוקה ידנית",
       badgeTone: "normal",

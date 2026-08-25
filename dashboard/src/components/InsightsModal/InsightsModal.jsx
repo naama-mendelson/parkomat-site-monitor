@@ -843,7 +843,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                             </td>
                             <td>{w.durationHours} שע'</td>
                             <td className="muted">{w.reason || "—"}</td>
-                            <td>{w.cancelled ? "בוטל" : "הופעל"}</td>
+                            <td>{w.cancelled ? "התקצר" : "הופעל"}</td>
                           </tr>
                         ))}
                       </tbody>

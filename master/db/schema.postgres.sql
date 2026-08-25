@@ -523,3 +523,33 @@ CREATE INDEX IF NOT EXISTS idx_ingest_drops_site_time
 -- והשני "איזה סוג זריקה גדל" — ספירה לפי סיבה על טווח זמן.
 CREATE INDEX IF NOT EXISTS idx_ingest_drops_reason_time
   ON ingest_drops(reason, at DESC);
+
+-- ============================================================
+-- מצב הגשר לכל אתר — האות שמבדיל בין "שקט" ל"מת"
+-- ============================================================
+-- ⚠️ הגשר של Mosquitto מפרסם `sites/{code}/bridge` = "1"/"0", ו-HiveMQ
+-- מחזיק את ה-will שלו. עד כה השרת **טיפל רק ב-"0"**: "1" נכתב ללוג
+-- ונשכח, ולכן לא הייתה שום דרך לשאול "האם האתר הזה מחובר עכשיו".
+--
+-- ⚠️ וזה בדיוק הפער שהותיר את מגדל 1 שקט 22 שעות ומוצג "תקין": הסוכן
+-- משדר רק על שינוי, ולכן שקט אינו מעיד על כלום. מדדתי קודם שפערי שקט
+-- תקינים מגיעים ל-40 שעות, אז התראה על שקט לבדו הייתה מצייצת על מערכות
+-- בריאות — כלומר התראה שמלמדת להתעלם.
+--
+-- מצב הגשר הופך את זה לחד-משמעי:
+--   גשר מחובר + שקט ארוך  → הסוכן חי ואינו מדווח. **חריגה אמיתית.**
+--   גשר מנותק             → כבר מסומן no_comm.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'sites'
+       AND column_name = 'bridge_connected'
+  ) THEN
+    ALTER TABLE sites
+      -- NULL = מעולם לא דיווח. ⚠️ אינו "מנותק": אתר שטרם שודרג לגשר
+      -- שמדווח הוא לא-ידוע, והתראה עליו הייתה שקרית.
+      ADD COLUMN IF NOT EXISTS bridge_connected  INTEGER,
+      ADD COLUMN IF NOT EXISTS bridge_seen_at    TEXT;
+  END IF;
+END $$;

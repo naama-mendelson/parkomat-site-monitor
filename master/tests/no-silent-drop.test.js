@@ -17,9 +17,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DIR = path.join(__dirname, "..", "ingestion");
-const FILES = ["dispatcher.js", "state-handler.js"];
+const FILES = ["dispatcher.js", "state-handler.js", "bridge-handler.js"];
 
-const TRACE = /noteDrop|insertSuppressedFault|recordIngestDrop/;
+// ⚠️ `remember(` נחשב עקבה: הוא כותב את מצב הגשר ל-sites. יציאה אחרי
+// כתיבה אינה מוחקת מידע — היא **הוסיפה** אותו.
+const TRACE = /noteDrop|insertSuppressedFault|recordIngestDrop|remember/;
 const DISCARD = /console\.(log|warn|error)/;
 
 // ============================================================
@@ -65,6 +67,7 @@ test("⚠️ כל סיבת זריקה שמורה, כדי שאפשר יהיה ל�
     "bridge_site_not_registered", "malformed_json", "payload_not_object",
     "state_bad_timestamp", "operation_invalid", "no_comm_rejected",
     "state_late_vs_open_segment", "gave_up_after_retries",
+    "bridge_disconnect_rejected",
   ];
   const missing = expected.filter((r) => !all.includes(r));
   assert.deepEqual(missing, [], `סיבות זריקה שנעלמו: ${missing.join(", ")}`);

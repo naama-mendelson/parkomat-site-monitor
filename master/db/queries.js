@@ -512,6 +512,19 @@ async function startMaintenance(siteId, setByName, durationHours, reason = null,
   };
 }
 
+// ============================================================
+// מצב הגשר — האות היחיד שמבדיל בין 'שקט' ל'מת'
+// ============================================================
+// ⚠️ עד כה '1' (מחובר) נכתב ללוג ונשכח, ולכן לא הייתה דרך לשאול
+// 'האם האתר מחובר עכשיו'. מדדתי שפערי שקט תקינים מגיעים ל-40 שעות,
+// אז שקט לבדו אינו עדות לכלום — אבל **גשר מחובר + שקט ארוך** הוא
+// חריגה חד-משמעית: הסוכן חי ואינו מדווח.
+async function recordBridgeState(siteId, connected, at) {
+  return await db
+    .prepare("UPDATE sites SET bridge_connected = ?, bridge_seen_at = ? WHERE id = ?")
+    .run(connected ? 1 : 0, at, siteId);
+}
+
 async function getActiveMaintenance(siteId) {
   const now = new Date().toISOString();
   return await db
@@ -2368,6 +2381,7 @@ module.exports = {
   getFilteredOperations,
   startMaintenance,
   getActiveMaintenance,
+  recordBridgeState,
   cancelMaintenance,
   getSiteStats,
   getSiteUptime,
