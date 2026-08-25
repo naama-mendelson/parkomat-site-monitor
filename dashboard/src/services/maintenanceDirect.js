@@ -44,13 +44,17 @@ function messageFor(error) {
 }
 
 /** פתיחת חלון תחזוקה. זורק Error עם הודעה בעברית. */
-export async function startMaintenanceDirect(code, durationHours, reason = "") {
+export async function startMaintenanceDirect(code, durationHours, reason = "", performedBy = "") {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
 
   const { data, error } = await supabase.rpc("start_maintenance", {
     p_site_code: String(code),
     p_duration_hours: Number(durationHours),
     p_reason: reason ? String(reason) : null,
+    // ⚠️ נשלח **לצד** הזהות המאומתת ולא במקומה. ה-RPC דוחה שם ריק או
+    // בן תו אחד — שדה שרוב הזמן ריק גרוע מכלום, כי הוא מבטיח מידע
+    // שאינו שם.
+    p_performed_by: performedBy ? String(performedBy).trim() : null,
   });
 
   if (error) throw new Error(messageFor(error));

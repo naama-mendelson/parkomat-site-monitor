@@ -230,6 +230,37 @@ export function coveredMs(merged, start, end) {
 // ולכן היא מוחרגת מהספירה — בדיוק ההתנהגות הרצויה: תקלה בזמן/בגבול תחזוקה
 // אינה תקלה. (מהיום גם ה-ingestion זורק תקלות כאלה לחלוטין — ראה state-handler;
 // כאן זו הגנה על נתונים היסטוריים שכבר נרשמו.)
+// ============================================================
+// ⚠️ הסיווג מוחל **בכניסה**, ולא בכל קורא בנפרד
+// ============================================================
+// מנהל יכול לסווג מקטע תקלה מחדש כתחזוקה. `status` המקורי לעולם אינו
+// נדרס — `reclassified_to` הוא שכבה מעליו — ולכן **כל** קריאה חייבת
+// לעבור דרך COALESCE.
+//
+// ⚠️ הקובץ הזה לא הכיר את השדה בכלל: שמונה מקומות קראו status גולמי,
+// ולכן המנהל הכללי, המפקח והאנליטיקה התעלמו מסיווג מחדש — בזמן
+// שפונקציות ה-SQL, הציר והזמינות כבר כיבדו אותו. אותו אירוע, שני
+// מספרים, לפי המסך.
+//
+// ⚠️ **בכניסה ולא בתווית** — אותו כלל בדיוק כמו ב-buildActivityLog:
+// כללים במורד הזרם (רצף מקטעים, חפיפת תחזוקה, 'אחרי תקלה') חייבים
+// לראות את המצב האפקטיבי, אחרת יוצא מקטע 'תחזוקה' שמסומן 'אחרי תקלה'
+// בזמן שאין תקלה בסביבה.
+//
+// ⚠️ ונקודת גישה אחת ולא תיקון בשני בוני-המפה (loadRangeData בשרת,
+// loadRangeShape בדשבורד) — שני מקומות שצריך לסנכרן הם בדיוק הדפוס
+// שיצר את הפער הזה מלכתחילה.
+export function segmentsOf(data, siteId) {
+  // ⚠️ גישה ישירה למפה, ולא segmentsOf — ההחלפה הגורפת שהמירה את כל
+  // הקוראים פגעה גם כאן והפכה את הפונקציה לרקורסיה אינסופית. אותה
+  // טעות בדיוק כמו ב-clientIp, ובאותו יום.
+  const raw = data.segments.get(siteId) || [];
+  return raw.map((s) =>
+    s.reclassified_to
+      ? { ...s, status: s.reclassified_to, original_status: s.status }
+      : s);
+}
+
 export function wasInMaintenanceMem(data, siteId, ts) {
   for (const w of data.windows.get(siteId) || []) {
     // ⚠️ חלון שסומן כניסוי אינו קיים לצורך המדד. בלי זה תקלה שקרתה בתוכו
@@ -238,7 +269,7 @@ export function wasInMaintenanceMem(data, siteId, ts) {
     const end = w.cancelled_at || w.expires_at;
     if (w.started_at <= ts && end >= ts) return true;
   }
-  for (const s of data.segments.get(siteId) || []) {
+  for (const s of segmentsOf(data, siteId)) {
     if (s.status !== "maintenance") continue;
     if (s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts)) return true;
   }
@@ -273,7 +304,7 @@ export function statsFromData(data, siteId, { from, to }) {
   // הקיפול רץ על *כל* המקטעים הטעונים ולא רק על אלה שבטווח, וזה חיוני: תקלה
   // שהתחילה לפני ה-from, נותקה, וחזרה בתוך הטווח — היא המשך, ואסור שתיספר.
   // בלי המקטע הקודם אי אפשר לדעת זאת.
-  for (const s of collapseNoCommFlicker(data.segments.get(siteId) || [])) {
+  for (const s of collapseNoCommFlicker(segmentsOf(data, siteId))) {
     if (s.status !== "error") continue;
     // ⚠️ **אחרי הקיפול ולא לפניו.** מקטע שהוצא עדיין משתתף בקיפול ריצוד
     // הנתק כרגיל — הוא קרה, והוא ההקשר שקובע אם המקטע שאחריו הוא המשך או
@@ -359,12 +390,12 @@ export function uptimeFromData(data, siteId, { from, to }) {
   // ⚠️ החלון הידני נספר תמיד כ**מתוכננת**: מישהו לחץ על כפתור, וזו החלטה
   // לפי הגדרה. רק מקטע PLC יכול להיות תפעול תקלה.
   const errorEndSet = new Set(
-    (data.segments.get(siteId) || [])
+    (segmentsOf(data, siteId))
       .filter((r) => r.status === "error" && r.ended_at)
       .map((r) => r.ended_at)
   );
 
-  for (const row of data.segments.get(siteId) || []) {
+  for (const row of segmentsOf(data, siteId)) {
     if (ms[row.status] === undefined) continue;
 
     // ============================================================
@@ -776,7 +807,7 @@ export function computeAnalytics(data, siteId, { range, prev, granularity }) {
   // סדרת הגרף — התקופה הנוכחית בלבד, מאותם נתונים שכבר נטענו.
   // אותם מסננים בדיוק כמו השאילתות של getPeriodBreakdown.
   const inRange = (t) => t >= range.from && t < range.to;
-  const segs = data.segments.get(siteId) || [];
+  const segs = segmentsOf(data, siteId);
   const opsIso = (data.ops.get(siteId) || [])
     .filter((o) => o.is_anomaly === 0 && !o.superseded_by && o.start_end === "end" && inRange(o.occurred_at))
     .map((o) => o.occurred_at);

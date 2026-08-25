@@ -136,14 +136,33 @@ COMMENT ON FUNCTION app.actor_display_name() IS
 --
 -- ⚠️ ומה שכן נאכף: `is_active`. משתמש שהושבת אינו "בקר" — הוא אינו כלום.
 -- זה בדיוק מה ש-identifyActor **לא** בדק, ולכן מושבת יכול היה להשתיק אתר.
+-- ⚠️ **שתי החתימות נמחקות, וזה לא כפילות.** ההחלפה הגורפת ששינתה את
+-- ההפניות שינתה גם את ה-DROP הזה, ואז הגרסה בת שלושת הפרמטרים שרדה
+-- לצד החדשה — כלומר היה אפשר לקרוא לה ולעקוף את דרישת השם לגמרי.
 DROP FUNCTION IF EXISTS public.start_maintenance(text, numeric, text);
+-- ⚠️ גם החתימה בת ארבעת הפרמטרים: שינוי טיפוס ההחזרה מחייב DROP,
+-- ו-CREATE OR REPLACE לבדו נכשל על מסד שכבר מחזיק גרסה קודמת.
+DROP FUNCTION IF EXISTS public.start_maintenance(text, numeric, text, text);
 
 CREATE OR REPLACE FUNCTION public.start_maintenance(
   p_site_code      text,
   p_duration_hours numeric,
-  p_reason         text DEFAULT NULL
+  p_reason         text DEFAULT NULL,
+  -- ============================================================
+  -- ⚠️ מי בפועל — שדה נפרד, ולא תחליף לזהות המאומתת
+  -- ============================================================
+  -- `set_by_name` נגזר מהאסימון ולעולם לא מגוף הבקשה. זה הכלל שמפריד
+  -- בין ייחוס להצהרה, והוא לא משתנה. אבל הוא עונה על "איזה **חשבון**
+  -- עשה את זה", ולא על "**מי** עמד שם".
+  --
+  -- ⚠️ ובפועל: sherut@parkomat.co.il הוא תיבה משותפת, ולכל שמונת
+  -- המשתמשים אין full_name — כך שכל חלון נרשם על כתובת מייל שאינה
+  -- מזהה אדם. השדה הזה נשמר **לצד** החשבון ולא במקומו, כדי שמי שקורא
+  -- את היומן ידע מה מאומת ומה נאמר.
+  p_performed_by   text DEFAULT NULL
 )
-RETURNS TABLE (id integer, started_at text, expires_at text, set_by_name text)
+RETURNS TABLE (id integer, started_at text, expires_at text,
+               set_by_name text, performed_by text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, app, pg_temp
@@ -156,6 +175,7 @@ DECLARE
   v_started text;
   v_expires text;
   v_id      integer;
+  v_by      text;
 BEGIN
   -- ⚠️ ראשית הזהות, ולפני כל דבר אחר: SECURITY DEFINER עוקף RLS, ולכן
   -- זו ההגנה היחידה שיש כאן.
@@ -164,6 +184,15 @@ BEGIN
     RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
   END IF;
   v_role := app.current_app_role();
+
+  -- ⚠️ **חובה, ולא רשות.** בלי אכיפה השדה היה נשאר ריק ברוב הפעמים,
+  -- ואז הוא גרוע מכלום: הוא מבטיח מידע שאינו שם. שני תווים לפחות, כדי
+  -- שרווח בודד לא ייחשב תשובה.
+  v_by := NULLIF(TRIM(COALESCE(p_performed_by, '')), '');
+  IF v_by IS NULL OR length(v_by) < 2 THEN
+    RAISE EXCEPTION 'חובה לציין מי מבצע את התחזוקה (שם מלא)'
+      USING ERRCODE = 'check_violation';
+  END IF;
 
   -- ⚠️ אותה תקרה שבשרת (MAX_MAINTENANCE_HOURS = 720). 30 יום — מעבר לזה
   -- זו כבר לא תחזוקה, וזה גם משך שמשתיק אתר מהדוחות לחודש שלם.
@@ -192,26 +221,28 @@ BEGIN
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 
   INSERT INTO maintenance_windows
-    (site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at)
+    (site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at,
+     performed_by)
   VALUES
     (v_site_id, v_name, v_role, NULLIF(TRIM(COALESCE(p_reason, '')), ''),
-     v_started, p_duration_hours, v_expires)
+     v_started, p_duration_hours, v_expires, v_by)
   RETURNING maintenance_windows.id INTO v_id;
 
   PERFORM app.record_write_audit('maintenance.start', v_name, v_role,
                                  'site', p_site_code,
                                  jsonb_build_object('duration_hours', p_duration_hours,
-                                                    'expires_at', v_expires));
+                                                    'expires_at', v_expires,
+                                                    'performed_by', v_by));
   PERFORM app.record_write_event(p_site_code, 'maintenance',
                                  jsonb_build_object('type', 'maintenance',
                                                     'code', p_site_code,
                                                     'action', 'start'));
 
-  RETURN QUERY SELECT v_id, v_started, v_expires, v_name;
+  RETURN QUERY SELECT v_id, v_started, v_expires, v_name, v_by;
 END;
 $$;
 
-COMMENT ON FUNCTION public.start_maintenance(text, numeric, text) IS
+COMMENT ON FUNCTION public.start_maintenance(text, numeric, text, text) IS
   'פתיחת חלון תחזוקה מהדפדפן. השם נגזר מהזהות המאומתת; הזמנים מחושבים כאן.';
 
 -- ============================================================
@@ -281,10 +312,10 @@ COMMENT ON FUNCTION public.cancel_maintenance(text) IS
 -- ⚠️ ומבטלים מ-PUBLIC: ברירת המחדל של Postgres היא `EXECUTE` ל-PUBLIC על
 -- פונקציה חדשה, כלומר גם ל-`anon`. בלי ה-REVOKE כל מי שיש לו את המפתח
 -- הציבורי היה יכול להשתיק אתר בלי להתחבר בכלל.
-REVOKE ALL ON FUNCTION public.start_maintenance(text, numeric, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.start_maintenance(text, numeric, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.cancel_maintenance(text)               FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.start_maintenance(text, numeric, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.start_maintenance(text, numeric, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.cancel_maintenance(text)               TO authenticated;
 
 -- ============================================================

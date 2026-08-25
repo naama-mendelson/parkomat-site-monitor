@@ -529,6 +529,9 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
       excludedBy: m.excluded_by ?? null,
       at: m.started_at,
       setBy: m.set_by_name,
+      // ⚠️ מי **בפועל** — הצהרה מוקלדת, לצד החשבון המאומת ולא במקומו.
+      // set_by_name עונה על "איזה חשבון"; performedBy על "מי עמד שם".
+      performedBy: m.performed_by ?? null,
       role: m.set_by_role,
       reason: m.reason,
       durationHours: m.duration_hours,

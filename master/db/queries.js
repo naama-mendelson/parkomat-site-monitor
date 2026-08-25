@@ -1337,7 +1337,7 @@ async function getGlobalActivityLog({ from, to, limit = 300, offset = 0, filter 
     ).all(from, to, LOG_FETCH_CAP),
 
     db.prepare(
-      `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at
+      `SELECT w.site_id, s.site_name, w.set_by_name, w.set_by_role, w.reason, w.started_at, w.duration_hours, w.expires_at, w.cancelled_at, w.performed_by
        FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
        WHERE w.started_at >= ? AND w.started_at < ?
        ORDER BY w.started_at DESC LIMIT ?`
@@ -1465,14 +1465,20 @@ async function loadRangeData(siteIds, { from, to }) {
     // תורם 0ms ממילא. עדיף להביא יותר מדי מלפספס מקטע קצה.
     // id נשלף כדי לשמש שובר-שוויון למיון — ראה sortByStartedAt.
     db.prepare(
-      `SELECT id, site_id, status, started_at, ended_at, excluded_at
+      // ⚠️ reclassified_to חייב להישלף: segmentsOf ב-executive.mjs מחיל
+      // אותו, ובלי העמודה הוא undefined והסיווג נעלם בשקט.
+      `SELECT id, site_id, status, started_at, ended_at, excluded_at,
+              reclassified_to
        FROM status_history
        WHERE ${filter} AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
     ).all(...ids, to, from),
 
     // חלונות תחזוקה ידנית שחופפים לטווח (להחרגת תקלות שקרו בתחזוקה)
     db.prepare(
-      `SELECT site_id, started_at, expires_at, cancelled_at
+      // ⚠️ גם כאן excluded_at: חלון שסומן כניסוי אינו אמור להשפיע על
+      // הזמינות, ו-mergedWindows כבר מסנן לפיו — בלי העמודה הסינון עובר
+      // בשקט ולא מסנן כלום.
+      `SELECT site_id, started_at, expires_at, cancelled_at, excluded_at
        FROM maintenance_windows
        WHERE ${filter} AND started_at < ? AND COALESCE(cancelled_at, expires_at) >= ?`
     ).all(...ids, to, from),

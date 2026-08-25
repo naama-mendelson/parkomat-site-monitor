@@ -553,3 +553,29 @@ BEGIN
       ADD COLUMN IF NOT EXISTS bridge_seen_at    TEXT;
   END IF;
 END $$;
+
+-- ============================================================
+-- מי בפועל הכניס לתחזוקה — שם מוקלד, לצד הזהות המאומתת
+-- ============================================================
+-- ⚠️ `set_by_name` נגזר מהאסימון ולעולם לא מגוף הבקשה — זה הכלל שמפריד
+-- בין ייחוס לבין הצהרה, והוא לא משתנה. אבל הוא עונה על "איזה **חשבון**
+-- עשה את זה", ולא על "**מי** עמד שם".
+--
+-- ⚠️ ובפועל זה לא תיאורטי: החשבון `sherut@parkomat.co.il` הוא תיבה
+-- משותפת, ובנוסף לכל שמונת המשתמשים אין `full_name` — כך שכל חלון
+-- תחזוקה נרשם על כתובת מייל שאינה מזהה אדם.
+--
+-- `performed_by` הוא **שדה נפרד ולא תחליף**: הוא הצהרה של מי שלחץ, והוא
+-- מוצג לצד החשבון המאומת ולא במקומו. מי שקורא את היומן רואה את שניהם
+-- ויודע מה מאומת ומה נאמר.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'maintenance_windows'
+       AND column_name = 'performed_by'
+  ) THEN
+    ALTER TABLE maintenance_windows
+      ADD COLUMN IF NOT EXISTS performed_by TEXT;
+  END IF;
+END $$;

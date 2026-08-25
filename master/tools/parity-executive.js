@@ -89,6 +89,19 @@ const group = (rows) => {
   return m;
 };
 
+// ============================================================
+// ⚠️ זהו **העתק** של executiveDirect.js, לא ייבוא — וזה עלה
+// ============================================================
+// הקבצים בדשבורד הם מודולי דפדפן שמייבאים supabase-js; השער רץ ב-node
+// ומדבר עם PostgREST ישירות. לכן השאילתות משוכפלות כאן.
+//
+// ⚠️ **וזה בדיוק מה שהפך את השער לעיוור:** כשהתגלה שהזרוע הישירה לא
+// שולפת excluded_at ו-reclassified_to, התיקון נכנס ל-executiveDirect.js
+// והשער המשיך להריץ את הגרסה הישנה — כלומר הוא בדק העתק מיושן ולא את
+// הקוד שרץ בפועל, והמשיך לדווח על פער שכבר תוקן.
+//
+// כל שינוי ב-select של executiveDirect.js או supervisorDirect.js חייב
+// להשתקף כאן. אין מנגנון שאוכף את זה — רק ההערה הזו.
 /** בונה את הצד הישיר בדיוק כמו executiveDirect.js + supervisorDirect.js. */
 async function viaPostgrest(from, to, filters) {
   const [sites, stats, uptime, globals, ops, segments, windows] = await Promise.all([
@@ -96,11 +109,11 @@ async function viaPostgrest(from, to, filters) {
     rpc("site_stats", { p_site_ids: null, p_from: from, p_to: to }),
     rpc("site_uptime", { p_site_ids: null, p_from: from, p_to: to }),
     rpc("site_globals", { p_site_ids: null }),
-    rest(`operations?select=site_id,occurred_at,entry_exit,start_end,is_anomaly,superseded_by` +
+    rest(`operations?select=site_id,occurred_at,entry_exit,start_end,is_anomaly,superseded_by,excluded_at` +
          `&occurred_at=gte.${enc(from)}&occurred_at=lt.${enc(to)}&order=occurred_at.asc`),
-    rest(`status_history?select=site_id,status,started_at,ended_at,id` +
+    rest(`status_history?select=site_id,status,started_at,ended_at,id,excluded_at,reclassified_to` +
          `&started_at=lt.${enc(to)}&or=(ended_at.is.null,ended_at.gt.${enc(from)})&order=started_at.asc`),
-    rest(`maintenance_windows?select=site_id,started_at,expires_at,cancelled_at` +
+    rest(`maintenance_windows?select=site_id,started_at,expires_at,cancelled_at,excluded_at` +
          `&started_at=lt.${enc(to)}&order=started_at.asc`),
   ]);
 

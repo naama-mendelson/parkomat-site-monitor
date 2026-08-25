@@ -256,7 +256,13 @@ function describe(e) {
     // ⚠️ ומי שקורא "בוטל" מסיק שלא הייתה תחזוקה בכלל, ואז אינו מבין
     // למה יש תקלות מושמטות באותו טווח.
     const cancelled = Boolean(e.cancelledAt);
-    const details = [`הפעיל: ${e.setBy}`];
+    // ⚠️ מציגים את **שניהם** ולא רק אחד: השם המוקלד אומר מי עמד שם,
+    // והחשבון אומר מה מאומת. תיבה משותפת כמו sherut@parkomat.co.il
+    // אינה מזהה אדם, ושם מוקלד לבדו אינו מאומת — יחד הם עונים על שתי
+    // השאלות בלי להעמיד פנים שהאחת היא האחרת.
+    const details = [e.performedBy
+      ? `ביצע: ${e.performedBy} · חשבון: ${e.setBy}`
+      : `הפעיל: ${e.setBy}`];
     if (cancelled) {
       // כמה באמת נמשך מול כמה תוכנן — זו השאלה שמישהו ישאל.
       const actualSec = (new Date(e.cancelledAt) - new Date(e.at)) / 1000;

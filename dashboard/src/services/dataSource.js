@@ -371,10 +371,21 @@ export async function fetchAnalytics(code, period) {
 // ⚠️ ובזרוע השרת `name` **כן** חובה (400 בלעדיו), ולכן הוא נשאר בחתימה.
 // חתימה שונה בין הזרועות הייתה הופכת את המתג לשני מסלולי קוד במסך.
 
-/** פתיחת חלון תחזוקה. `name` נדרש רק בזרוע השרת — ראה למעלה. */
+// ============================================================
+// ⚠️ `name` עובר עכשיו **בשתי הזרועות**
+// ============================================================
+// קודם הוא נשלח רק לשרת, והזרוע הישירה זרקה אותו — כי `set_by_name`
+// נגזר מהאסימון ולא מגוף הבקשה. הכלל ההוא נכון ולא השתנה.
+//
+// ⚠️ אבל הוא עונה על "איזה **חשבון**", לא על "**מי**". החשבון
+// sherut@parkomat.co.il הוא תיבה משותפת, ולכל שמונת המשתמשים אין
+// full_name — כך שכל חלון תחזוקה נרשם על כתובת מייל שאינה מזהה אדם.
+//
+// עכשיו נשמרים **שניהם**: `set_by_name` המאומת, ו-`performed_by`
+// המוקלד. מי שקורא את היומן רואה את שניהם ויודע מה מאומת ומה נאמר.
 export async function startMaintenance(code, name, durationHours, reason = "") {
   if (!useDirect) return startMaintenanceViaServer(code, name, durationHours, reason);
-  return startMaintenanceDirect(code, durationHours, reason);
+  return startMaintenanceDirect(code, durationHours, reason, name);
 }
 
 /** ביטול חלון התחזוקה הפעיל. */

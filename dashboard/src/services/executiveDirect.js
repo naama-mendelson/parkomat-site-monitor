@@ -32,7 +32,9 @@ async function loadRangeShape(from, to) {
   const [ops, segments, windows] = await Promise.all([
     pageAll((a, b) => supabase
       .from("operations")
-      .select("site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by")
+      // ⚠️ excluded_at: פעולה שסומנה כניסוי אינה נספרת. הקוד המשותף
+      // כבר מסנן לפיה — בלי העמודה הסינון עובר בשקט ולא מסנן כלום.
+      .select("site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by, excluded_at")
       .gte("occurred_at", from).lt("occurred_at", to)
       .order("occurred_at", { ascending: true })
       .range(a, b), FETCH_CAP),
@@ -41,7 +43,11 @@ async function loadRangeShape(from, to) {
     // בתוך התקופה. בלעדיו אתר שהיה מושבת כל השבוע מקבל 100% זמינות.
     pageAll((a, b) => supabase
       .from("status_history")
-      .select("site_id, status, started_at, ended_at, id")
+      // ⚠️ **שתי העמודות האלה חסרו, וזה נמדד.** בלעדיהן המנהל הכללי
+      // סופר תקלות שסומנו כניסוי וגם תקלות שסווגו מחדש כתחזוקה, בעוד
+      // שזרוע השרת מחריגה אותן. נמדד ב-19.8: 16 תקלות מול 11, וזמינות
+      // 92.79% מול 94.71%. אותו יום, שני מספרים.
+      .select("site_id, status, started_at, ended_at, id, excluded_at, reclassified_to")
       .lt("started_at", to)
       .or(`ended_at.is.null,ended_at.gt.${from}`)
       .order("started_at", { ascending: true })
@@ -49,7 +55,7 @@ async function loadRangeShape(from, to) {
 
     pageAll((a, b) => supabase
       .from("maintenance_windows")
-      .select("site_id, started_at, expires_at, cancelled_at")
+      .select("site_id, started_at, expires_at, cancelled_at, excluded_at")
       .lt("started_at", to)
       .order("started_at", { ascending: true })
       .range(a, b), FETCH_CAP),
