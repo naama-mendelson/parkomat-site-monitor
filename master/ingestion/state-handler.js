@@ -1,6 +1,7 @@
 // ingestion/state-handler.js — מטפל בהודעת state: מעדכן מצב נוכחי + היסטוריה
 
 const { updateLastSeenIfNewer, applyStateChange, getOpenStatusStartedAt, getActiveMaintenance,
+        fillFaultTextIfMissing,
         insertSuppressedFault, recordIngestDrop } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
@@ -140,6 +141,36 @@ async function handleState(site, data, raw) {
       return;
     }
     await updateLastSeenIfNewer(site.id, occurredAt);
+
+    // ============================================================
+    // ⚠️ תיאור שהגיע באיחור — נכנס, ולא נבלע כ"אין שינוי"
+    // ============================================================
+    // הבקר מחזיק את ה-MODE בכתובת 290 ואת טקסט התקלה בכתובת 2, ואינו
+    // כותב אותם באותו רגע. הסוכן ממתין לטקסט שנייה אחת ואז משדר
+    // בלעדיו — דיווח על תקלה חשוב יותר מהתיאור שלה.
+    //
+    // ⚠️ נמדד על מטענים גולמיים: חלק מהודעות ה-error מגיעות עם
+    // faultText וחלק **בלי השדה כלל**. השרת לא דחה אף טקסט (0 שורות
+    // fault_text_unreadable) — הוא פשוט לא נשלח.
+    //
+    // ההודעה השנייה, זו שכן נושאת את הטקסט, נפלה בדיוק כאן: אותו מצב
+    // ⇒ "אין שינוי" ⇒ return. עכשיו היא ממלאת את המקטע הפתוח.
+    if (newStatus === "error") {
+      const late = extractFaultText(newStatus, data);
+      if (late) {
+        const filled = await fillFaultTextIfMissing(site.id, late);
+        if (filled.changes > 0) {
+          console.log(`[state] אתר ${site.code}: תיאור התקלה הושלם באיחור — "${late}"`);
+          // ⚠️ משדרים: הכרטיס מציג את התיאור, ובלי זה הוא היה נשאר ריק
+          // עד הרענון המלא הבא — כלומר בדיוק ברגע שהמידע הכי דחוף.
+          bus.publish({
+            type: "state", code: site.code, newStatus,
+            occurredAt, faultText: late,
+          });
+        }
+      }
+    }
+
     console.log(`[state] אתר ${site.code}: ${newStatus} (ללא שינוי, עודכן last_seen)`);
     return;
   }

@@ -325,6 +325,35 @@ async function insertStatusHistory(siteId, status, startedAt, faultText = null) 
 // שלוש הפונקציות הפנימיות ממשיכות לקרוא ל-db הגלובלי כרגיל; db.transaction
 // מנתב אותן לאותו client דרך AsyncLocalStorage (ראה db.js). לכן החתימות
 // שלהן לא השתנו.
+// ============================================================
+// ⚠️ תיאור שהגיע באיחור — ממלא, ולא נזרק
+// ============================================================
+// הבקר מחזיק את ה-MODE בכתובת 290 ואת טקסט התקלה בכתובת 2, והוא אינו
+// כותב אותם באותו רגע. הסוכן מחכה לטקסט **שנייה אחת** (10 דגימות) ואז
+// משדר בלעדיו — כי דיווח על תקלה חשוב יותר מהתיאור שלה.
+//
+// ⚠️ נמדד על מטענים גולמיים: חלק מהודעות ה-error מגיעות עם faultText
+// וחלק **בלי השדה כלל**. כלומר התיאור לא נדחה בשרת (0 שורות
+// fault_text_unreadable) — הוא פשוט לא נשלח, כי הבקר טרם כתב אותו.
+//
+// עד כה הודעה שנייה עם אותו מצב נבלעה כ"אין שינוי", ולכן התיאור
+// שהגיע רגע אחר כך לא היה לו לאן להיכנס. כאן הוא נכנס — **רק** לתוך
+// מקטע פתוח שאין לו תיאור, וכך תיאור נכון לעולם אינו נדרס.
+//
+// ⚠️ ההבחנה בין NULL ל-'' נשמרת: '' פירושו "נקרא והיה ריק" וזו תשובה,
+// ואילו NULL פירושו "לא נקרא". רק NULL ממולא.
+async function fillFaultTextIfMissing(siteId, faultText) {
+  if (typeof faultText !== "string" || faultText === "") return { changes: 0 };
+  return await db
+    .prepare(
+      `UPDATE status_history SET fault_text = ?
+        WHERE site_id = ? AND ended_at IS NULL
+          AND COALESCE(reclassified_to, status) = 'error'
+          AND fault_text IS NULL`
+    )
+    .run(faultText, siteId);
+}
+
 async function applyStateChange(siteId, newStatus, occurredAt, faultText = null) {
   return db.transaction(async () => {
     // ============================================================
@@ -2727,3 +2756,4 @@ async function recordIngestDrop({ topic, siteCode = null, kind = null, reason, d
 }
 
 module.exports.recordIngestDrop = recordIngestDrop;
+module.exports.fillFaultTextIfMissing = fillFaultTextIfMissing;

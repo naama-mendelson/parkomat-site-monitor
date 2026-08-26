@@ -204,6 +204,26 @@ public class Worker : BackgroundService
         bool faultTextPackingWarned = false;
 
         // ============================================================
+        // ⚠️ תקלה ששודרה בלי תיאור — ממשיכים לחפש אותו
+        // ============================================================
+        // ההמתנה לטקסט מוגבלת לשנייה במכוון: דיווח על תקלה חשוב יותר
+        // מהתיאור שלה, ובקר שטרם כתב אינו סיבה לעכב התראה.
+        //
+        // ⚠️ אבל עד כה זה היה סוף הסיפור — הטקסט שהבקר כתב שנייה אחר כך
+        // לא נשלח לעולם, כי המצב לא השתנה ואין מה לפרסם. נמדד בשרת:
+        // כמחצית מהודעות ה-error מגיעות **בלי שדה faultText כלל**.
+        //
+        // עכשיו ממשיכים לדגום בקצב הרגיל, ומשדרים שוב **פעם אחת** ברגע
+        // שהטקסט מופיע. השרת ממלא אותו לתוך המקטע הפתוח
+        // (fillFaultTextIfMissing) ואינו דורס תיאור קיים.
+        //
+        // ⚠️ תקרה של 120 דגימות ולא לנצח: אחריה ברור שהבקר לא יכתוב,
+        // והמשך דגימה של 80 רגיסטרים לכל סבב הוא עומס מיותר על הבקר.
+        const int LateFaultTextMaxPolls = 120;
+        bool awaitingLateFaultText = false;
+        int lateFaultTextPolls = 0;
+
+        // ============================================================
         // תיאור התקלה — נקרא בשני מקומות, ולכן יושב בפונקציה אחת
         // ============================================================
         // ⚠️ **שני מסלולים שונים מגיעים לשרת עם "תקלה", ושניהם חייבים לשאת
@@ -638,6 +658,48 @@ public class Worker : BackgroundService
                     _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
                     await mqtt.PublishStateAsync(result.State, stoppingToken);
                     _logger.LogInformation("-> Published STATE: {State}", result.State.State);
+
+                    // תקלה ששודרה בלי תיאור — ממשיכים לחפש (ראה למעלה).
+                    awaitingLateFaultText =
+                        result.State.State == SiteState.Error &&
+                        string.IsNullOrEmpty(result.State.FaultText);
+                    lateFaultTextPolls = 0;
+                }
+
+                // ============================================================
+                // התיאור שהגיע באיחור — שידור משלים אחד
+                // ============================================================
+                // ⚠️ **רק כשהמצב עדיין תקלה.** אם הבקר כבר התאושש, הטקסט
+                // שנקרא עכשיו הוא של תקלה שנגמרה — ושליחתו הייתה מדביקה
+                // תיאור שגוי למקטע הבא.
+                if (awaitingLateFaultText)
+                {
+                    // ⚠️ דרך ModeTranslator ולא `== 5`: מיפוי ה-MODE הוא
+                    // הגדרה אחת במערכת, ומספר קשיח כאן היה נשאר מאחור
+                    // ביום שהיא תשתנה.
+                    if (ModeTranslator.FromMode(reading.Mode) != SiteState.Error
+                        || ++lateFaultTextPolls > LateFaultTextMaxPolls)
+                    {
+                        awaitingLateFaultText = false;
+                    }
+                    else
+                    {
+                        FaultText late = plc.ReadFaultText();
+                        if (!string.IsNullOrEmpty(late.Text))
+                        {
+                            awaitingLateFaultText = false;
+                            _logger.LogInformation(
+                                "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
+                                lateFaultTextPolls, late.Text);
+
+                            await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(new StateMessage
+                            {
+                                Timestamp = clock.UnixNow(),
+                                State = SiteState.Error,
+                                FaultText = late.Text,
+                            }, stoppingToken), "late fault text", stoppingToken);
+                        }
+                    }
                 }
 
                 // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
