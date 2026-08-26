@@ -1479,3 +1479,51 @@ REVOKE ALL ON FUNCTION public.publish_announcement(text, text) FROM PUBLIC, anon
 REVOKE ALL ON FUNCTION public.pending_announcement()          FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.publish_announcement(text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.pending_announcement()           TO authenticated;
+
+-- ============================================================
+-- broadcast_reload — רענון יזום לכל מי שפתוח
+-- ============================================================
+-- ⚠️ **זו הפרעה כפויה, ולכן מנהלת בלבד.** הדף נטען מחדש מתחת לידיים של
+-- כל מי שמחובר, ומי שהיה באמצע כתיבה מאבד את מה שכתב. זה בדיוק מה שקרה
+-- היום כשמישהו איבד דיווח — ההבדל היחיד הוא שכאן זה יזום.
+--
+-- ⚠️ ולכן הטיוטה נשמרת מקומית לפני הרענון (ראה FieldReports). בלי זה
+-- הכלי הזה מייצר את התקלה שהוא נכתב אחריה.
+--
+-- ⚠️ דרך `events` ולא ערוץ משלו: זו טבלת חוזה האירועים של המערכת, כל
+-- דשבורד כבר מנוי עליה, ואירוע רענון אינו סוד — אין כאן מה להדליף.
+CREATE OR REPLACE FUNCTION public.broadcast_reload()
+RETURNS TABLE (id bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_id    bigint;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  -- ⚠️ site_code הוא NOT NULL, ולכן אירוע כלל-מערכתי מקבל סמן ולא NULL.
+  -- 'system' ולא קוד אתר אמיתי: applySiteUpdate בדשבורד מתאים אירועים
+  -- לפי הקוד, וקוד קיים היה גורם לו לעדכן אתר אקראי בטעות.
+  INSERT INTO events (site_code, type, payload, created_at)
+  VALUES ('system', 'reload',
+          jsonb_build_object('at', v_now, 'by', v_actor),
+          v_now)
+  RETURNING events.id INTO v_id;
+
+  PERFORM app.record_write_audit(
+    'dashboard.reload', v_actor, app.current_app_role(), 'dashboard', v_id::text, NULL);
+
+  RETURN QUERY SELECT v_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.broadcast_reload() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.broadcast_reload() TO authenticated;

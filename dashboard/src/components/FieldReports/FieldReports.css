@@ -144,6 +144,8 @@
 
 .fr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .fr-sent { color: #16a34a; font-weight: 600; }
+/* ⚠️ מסביר למה הכפתור מושבת. בלי זה "לא עובד" הוא התיאור הנכון. */
+.fr-hint { color: var(--text-muted); font-size: 0.85rem; }
 .fr-send {
   padding: 10px 22px;
   border: none;
@@ -223,3 +225,28 @@
   .fr-panel { max-height: 94vh; padding: 16px; }
   .fr-shots img { max-width: 100px; max-height: 100px; }
 }
+
+/* ============================================================
+   רענון לכולם — נראה אחרת כי הוא עושה משהו אחר
+   ============================================================
+   ⚠️ מסגרת כתומה ולא כחולה: הכפתור הזה טוען מחדש את הדף לכל אדם בחברה.
+   מראה זהה לכפתור הפרסום היה מזמין הקלקה על הלא נכון. */
+.fr-danger {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.07);
+  border-radius: 11px;
+  padding: 14px 16px;
+}
+.fr-danger strong { display: block; margin-bottom: 6px; }
+.fr-danger p { margin: 0 0 12px; font-size: 0.85rem; line-height: 1.5; color: var(--text-muted); }
+.fr-danger-btn {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 9px;
+  background: #f59e0b;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fr-danger-btn:disabled { opacity: 0.6; cursor: default; }

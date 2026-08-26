@@ -20,7 +20,37 @@ import { useAuth } from "../../hooks/useAuth";
 import {
   publishAnnouncement, fetchAnnouncements, MAX_TITLE, MAX_ANN_BODY,
 } from "../../services/announcementsDirect";
+import { broadcastReload } from "../../services/reloadDirect";
 import "./FieldReports.css";
+
+// ============================================================
+// ⚠️ הטיוטה שורדת רענון — כולל רענון כפוי
+// ============================================================
+// היום מישהו כתב דיווח, השליחה נכשלה, והטקסט נעלם. עכשיו יש גם
+// **רענון יזום לכולם**, כלומר הדף עלול להיטען מחדש מתחת לידיים של מי
+// שבאמצע כתיבה. בלי שמירה מקומית הכלי הזה מייצר בדיוק את התקלה שהוא
+// נכתב אחריה.
+//
+// ⚠️ localStorage ולא המסד: זו טיוטה, לא נתון. היא שייכת למכשיר
+// שכותבים בו, ושליחתה לשרת הייתה שומרת טקסט שאיש לא ביקש לשמור.
+const DRAFT_KEY = "parkomat.report.draft";
+
+function loadDraft() {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFT_KEY) || "null") || null;
+  } catch {
+    // ⚠️ localStorage זורק בגלישה פרטית ובחסימת אחסון. טיוטה שאבדה
+    // אינה סיבה למסך שבור.
+    return null;
+  }
+}
+
+function saveDraft(d) {
+  try {
+    if (d.body || d.reporter || d.siteCode) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch { /* אין לאן לשמור — ממשיכים */ }
+}
 
 const fmt = (iso) => {
   if (!iso) return "—";
@@ -40,9 +70,13 @@ export default function FieldReports({ sites = [], onClose }) {
   const [error, setError] = useState(null);
 
   // --- טופס ---
-  const [reporter, setReporter] = useState("");
-  const [body, setBody] = useState("");
-  const [siteCode, setSiteCode] = useState("");
+  // ⚠️ אתחול **מהטיוטה** ולא מריק: מי שרוענן באמצע כתיבה חוזר למה
+  // שכתב. התמונות אינן נשמרות — File אינו ניתן לסריאליזציה, וזה
+  // הפער היחיד שנשאר.
+  const draft = loadDraft();
+  const [reporter, setReporter] = useState(draft?.reporter ?? "");
+  const [body, setBody] = useState(draft?.body ?? "");
+  const [siteCode, setSiteCode] = useState(draft?.siteCode ?? "");
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -62,6 +96,13 @@ export default function FieldReports({ sites = [], onClose }) {
   }, []);
 
   useEffect(() => { if (tab === "inbox") load(); }, [tab, load]);
+
+  // ⚠️ בכל הקלדה ולא ב-beforeunload: רענון כפוי אינו עובר דרך
+  // beforeunload, וגם קריסת טאב לא. שמירה רציפה היא היחידה ששורדת
+  // את שני המקרים.
+  useEffect(() => {
+    saveDraft({ reporter, body, siteCode });
+  }, [reporter, body, siteCode]);
 
   // ⚠️ **נקודת כניסה אחת לשני המסלולים.** הכפתור והגרירה חייבים להתנהג
   // זהה — חיתוך לארבע, וסינון למה שהוא באמת תמונה. שני מסלולים עם שני
@@ -125,6 +166,9 @@ export default function FieldReports({ sites = [], onClose }) {
       await submitFieldReport({ body, siteCode: siteCode || null, files, reportedByName: reporter });
       setBody("");
       setSiteCode("");
+      // ⚠️ הטיוטה נמחקת רק אחרי שהשליחה **הצליחה**. מחיקה מוקדמת
+      // הייתה מוחקת בדיוק את הטקסט שצריך לשרוד כישלון.
+      saveDraft({ reporter, body: "", siteCode: "" });
       // ⚠️ השם **אינו** מתאפס. אותו אדם מדווח כמה פעמים ברצף, והכרחה
       // להקליד אותו מחדש בכל פעם היא בדיוק מה שגורם לאנשים להקליד
       // "א" ולעבור הלאה — כלומר לרוקן את השדה מתוכן.
@@ -435,7 +479,32 @@ function SystemMessage({ onError }) {
     }
   }
 
-  const ready = title.trim().length >= 2 && body.trim().length >= 5;
+  // ============================================================
+  // ⚠️ כפתור מושבת חייב לומר **למה**
+  // ============================================================
+  // הגרסה הקודמת פשוט השביתה אותו. מי שכתב כותרת קצרה לחץ, לא קרה
+  // כלום, ואין שום דבר על המסך שמסביר — וזה נקרא "הכפתור לא עובד".
+  // בדיוק אותה טעות שנמנעה בשדה השם ונכנסה כאן.
+  const missing =
+    title.trim().length < 2 ? "חסרה כותרת"
+    : body.trim().length < 5 ? "התוכן קצר מדי"
+    : null;
+  const ready = missing === null;
+
+  const [reloading, setReloading] = useState(false);
+  async function doReload() {
+    // ⚠️ אישור אחד, כי אין דרך חזרה: אחרי השליחה כל מי שמחובר נטען
+    // מחדש, ואי אפשר לבטל.
+    if (!window.confirm("לרענן את הדשבורד לכל מי שמחובר עכשיו?")) return;
+    setReloading(true);
+    try {
+      await broadcastReload();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setReloading(false);
+    }
+  }
 
   return (
     <div className="fr-form">
@@ -470,8 +539,26 @@ function SystemMessage({ onError }) {
 
       <div className="fr-actions">
         {sent && <span className="fr-sent">פורסם ✓</span>}
+        {!sent && missing && <span className="fr-hint">{missing}</span>}
         <button className="fr-send" onClick={publish} disabled={busy || !ready}>
           {busy ? "מפרסם…" : "פרסם לכולם"}
+        </button>
+      </div>
+
+      {/* ============================================================ */}
+      {/* ⚠️ רענון כפוי — מופרד מהפרסום, ובכוונה                        */}
+      {/* ============================================================ */}
+      {/* שני הכפתורים עושים דברים שונים לחלוטין: אחד מודיע, השני     */}
+      {/* טוען מחדש את הדף לכל מי שמחובר. סמיכות בלי הפרדה היא הדרך    */}
+      {/* להקליק על הלא נכון.                                          */}
+      <div className="fr-danger">
+        <strong>רענון לכולם</strong>
+        <p>
+          כל מי שמחובר יטען מחדש את הדשבורד תוך שנייה. משתמשים בזה אחרי פריסה,
+          כדי שכולם יקבלו את הגרסה החדשה בלי לבקש מהם לרענן.
+        </p>
+        <button className="fr-danger-btn" onClick={doReload} disabled={reloading}>
+          {reloading ? "נשלח…" : "רענן לכולם עכשיו"}
         </button>
       </div>
 

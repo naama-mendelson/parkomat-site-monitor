@@ -13,6 +13,7 @@
 import { useEffect, useState, useRef } from "react";
 import { pendingAnnouncement, markAnnouncementSeen } from "../../services/announcementsDirect";
 import { subscribeNewReports } from "../../services/reportsLiveDirect";
+import { subscribeReload } from "../../services/reloadDirect";
 import { useAuth } from "../../hooks/useAuth";
 import { announce, getAlertState, unlockAudio } from "../../utils/audio/alerts";
 import "./Announcement.css";
@@ -108,6 +109,21 @@ export default function Announcement() {
     });
     return stop;
   }, [user?.email]);
+
+  // ============================================================
+  // רענון יזום — הדף נטען מחדש
+  // ============================================================
+  // ⚠️ מושהה בשנייה, ובכוונה: שמירת הטיוטה ב-FieldReports היא effect,
+  // והיא חייבת להספיק לרוץ לפני שהדף מת. בלי ההשהיה הכלי הזה מוחק
+  // בדיוק את הטקסט שהוא נכתב כדי להציל.
+  //
+  // ⚠️ ואין כאן שאלה למשתמש. זו הייתה הבקשה המפורשת — רענון לכולם —
+  // וההגנה על מה שנכתב היא הטיוטה, לא דיאלוג שאפשר לבטל.
+  useEffect(() => {
+    return subscribeReload(() => {
+      setTimeout(() => window.location.reload(), 1000);
+    });
+  }, []);
 
   // ⚠️ ההודעה קודמת לדיווח: היא חד-פעמית ועוצרת, והדיווח יחכה שנייה.
   if (!item && reports.length === 0) return null;
