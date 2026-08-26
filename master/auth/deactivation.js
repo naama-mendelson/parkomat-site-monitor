@@ -35,8 +35,18 @@ function canDeactivate(users, targetId, actorId) {
   }
 
   if (target.role === "manager") {
-    const activeManagers = users.filter((u) => u.role === "manager" && u.is_active).length;
-    if (activeManagers <= 1) {
+    // ⚠️ **כמה יישארו אחרי הפעולה** — ולא כמה יש עכשיו.
+    //
+    // הספירה הגלובלית חסמה פעולה על מנהל **מושבת** כשיש מנהל פעיל אחד:
+    // המושבת אינו אחד מהפעילים, הוא אינו מגן על דבר, וההודעה "המנהל
+    // הפעיל האחרון" נאמרה עליו בשקר. התוצאה — אי אפשר היה למחוק או
+    // להוריד בתפקיד חשבון מנהל שכבר הושבת, בלי שום סיבה.
+    //
+    // ⚠️ ההגנה עצמה לא נחלשה: אם היעד הוא המנהל הפעיל היחיד, מה שנשאר
+    // הוא אפס — והפעולה נחסמת בדיוק כמו קודם.
+    const activeManagers = users.filter(
+      (u) => u.role === "manager" && u.is_active && u.id !== targetId).length;
+    if (activeManagers < 1) {
       return { allowed: false, reason: "לא ניתן להשבית את המנהל הפעיל האחרון" };
     }
   }
@@ -76,8 +86,18 @@ function canChangeRole(users, targetId, actorId, nextRole) {
     return { allowed: false, reason: "אי אפשר להוריד את עצמך מתפקיד מנהל" };
   }
 
-  const activeManagers = users.filter((u) => u.role === "manager" && u.is_active).length;
-  if (activeManagers <= 1) {
+  // ⚠️ **כמה יישארו אחרי הפעולה** — ולא כמה יש עכשיו.
+  //
+  // הספירה הגלובלית חסמה פעולה על מנהל **מושבת** כשיש מנהל פעיל אחד:
+  // המושבת אינו אחד מהפעילים, הוא אינו מגן על דבר, וההודעה "המנהל
+  // הפעיל האחרון" נאמרה עליו בשקר. התוצאה — אי אפשר היה למחוק או
+  // להוריד בתפקיד חשבון מנהל שכבר הושבת, בלי שום סיבה.
+  //
+  // ⚠️ ההגנה עצמה לא נחלשה: אם היעד הוא המנהל הפעיל היחיד, מה שנשאר
+  // הוא אפס — והפעולה נחסמת בדיוק כמו קודם.
+  const activeManagers = users.filter(
+    (u) => u.role === "manager" && u.is_active && u.id !== targetId).length;
+  if (activeManagers < 1) {
     return { allowed: false, reason: "לא ניתן להוריד את המנהל הפעיל האחרון" };
   }
 
@@ -112,8 +132,18 @@ function canDelete(users, targetId, actorId) {
   // ⚠️ נספרים מנהלים **פעילים**, כמו בשאר הכללים — מנהל מושבת אינו מי
   // שיציל את המערכת. מחיקת המנהל הפעיל היחיד משאירה מערכת בלי ניהול.
   if (target.role === "manager") {
-    const activeManagers = users.filter((u) => u.role === "manager" && u.is_active).length;
-    if (activeManagers <= 1) {
+    // ⚠️ **כמה יישארו אחרי הפעולה** — ולא כמה יש עכשיו.
+    //
+    // הספירה הגלובלית חסמה פעולה על מנהל **מושבת** כשיש מנהל פעיל אחד:
+    // המושבת אינו אחד מהפעילים, הוא אינו מגן על דבר, וההודעה "המנהל
+    // הפעיל האחרון" נאמרה עליו בשקר. התוצאה — אי אפשר היה למחוק או
+    // להוריד בתפקיד חשבון מנהל שכבר הושבת, בלי שום סיבה.
+    //
+    // ⚠️ ההגנה עצמה לא נחלשה: אם היעד הוא המנהל הפעיל היחיד, מה שנשאר
+    // הוא אפס — והפעולה נחסמת בדיוק כמו קודם.
+    const activeManagers = users.filter(
+      (u) => u.role === "manager" && u.is_active && u.id !== targetId).length;
+    if (activeManagers < 1) {
       return { allowed: false, reason: "לא ניתן למחוק את המנהל הפעיל האחרון" };
     }
   }

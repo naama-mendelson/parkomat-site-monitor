@@ -262,14 +262,22 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   }
 
   /** הפעולה שנושאת את אותו רגע פיזי כמו שינוי המצב, או null. */
+  // ⚠️ **הקרובה ביותר, ולא הראשונה ברשימה.** find מחזיר את הראשון שנכנס
+  // לסבילות לפי סדר המערך — ובחלון של כמה שניות יכולות ליפול שתי פעולות
+  // באותו כיוון. ההצמדה מזיזה את חותם השורה (at) ומסתירה שורות מיותרות,
+  // ולכן בחירה שגויה מזיזה אירוע לזמן של אירוע אחר — בלי שום סימן.
   const pairedOpFor = (s) => {
     const wants = PAIRED_OP[s.status];
     if (!wants) return null;
     const t = Date.parse(s.started_at);
-    return (opsBySite.get(s.site_id) || []).find(
-      (o) => o.start_end === wants &&
-             Math.abs(Date.parse(o.occurred_at) - t) <= OP_PAIR_TOLERANCE_SECONDS * 1000
-    ) || null;
+    const tol = OP_PAIR_TOLERANCE_SECONDS * 1000;
+    let best = null, bestGap = Infinity;
+    for (const o of opsBySite.get(s.site_id) || []) {
+      if (o.start_end !== wants) continue;
+      const gap = Math.abs(Date.parse(o.occurred_at) - t);
+      if (gap <= tol && gap < bestGap) { best = o; bestGap = gap; }
+    }
+    return best;
   };
 
   // ==========================================================
