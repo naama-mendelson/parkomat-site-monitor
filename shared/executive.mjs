@@ -468,6 +468,13 @@ export function directionFromData(data, siteIds, { from, to }) {
     for (const o of data.ops.get(id) || []) {
       // superseded_by: ניסיון שנקטע והוחלף בניסיון חוזר אינו מעבר נוסף.
       // בלעדיו פילוח הכניסות/יציאות סותר את ספירת הפעולות שלצידו על אותו מסך.
+      //
+      // ⚠️ **ו-excluded_at מאותה סיבה בדיוק.** statsFromData מדלגת עליו
+      // (שורה 301) וכאן לא — ולכן פעולה שמנהל הוציא ידנית ("הקפצנו את
+      // הדלת כדי לבדוק") נעלמה מ'סך הפעולות' והמשיכה להיספר בפילוח
+      // הכניסות/יציאות **שלצידו על אותו מסך**. כניסות+יציאות > פעולות,
+      // וזה נראה כמו טעות עיגול ולא כמו מקור שונה.
+      if (o.excluded_at) continue;
       if (o.is_anomaly !== 0 || o.superseded_by || o.start_end !== "end") continue;
       if (!(o.occurred_at >= from && o.occurred_at < to)) continue;
       if (o.entry_exit === "entry") entries++;
@@ -812,15 +819,21 @@ export function computeAnalytics(data, siteId, { range, prev, granularity }) {
   // אותם מסננים בדיוק כמו השאילתות של getPeriodBreakdown.
   const inRange = (t) => t >= range.from && t < range.to;
   const segs = segmentsOf(data, siteId);
+  // ⚠️ excluded_at — אותו דילוג כמו ב-statsFromData. בלעדיו גרף המגמה
+  // מצייר עמודה על פעולה שהמדד לצידו כבר לא סופר.
   const opsIso = (data.ops.get(siteId) || [])
-    .filter((o) => o.is_anomaly === 0 && !o.superseded_by && o.start_end === "end" && inRange(o.occurred_at))
+    .filter((o) => !o.excluded_at
+      && o.is_anomaly === 0 && !o.superseded_by && o.start_end === "end" && inRange(o.occurred_at))
     .map((o) => o.occurred_at);
   // תקלות בזמן תחזוקה מוחרגות גם מגרף המגמה — "תחזוקה גוברת". כך הגרף עקבי
   // עם stats.errors (שגם הוא מחריג דרך wasInMaintenanceMem) ולא מציג תקלה
   // שאיננה נספרת. מהיום ה-ingestion ממילא לא רושם תקלות כאלה; זו הגנה על היסטוריה.
   // אותו קיפול ריצוד כמו ב-statsFromData — אחרת הגרף היה מציג 107 תקלות
   // בזמן שהמדד לצידו מציג אחת, ושני המספרים היו סותרים זה את זה.
-  const counted = collapseNoCommFlicker(segs);
+  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול: הוא לא קרה, ולכן הוא גם
+  // אינו מפריד בין שני מקטעים שכן קרו. uptimeFromData כבר מתעלם ממנו,
+  // והגרף המשיך לצייר עליו עמודת תקלה.
+  const counted = collapseNoCommFlicker(segs.filter((x) => !x.excluded_at));
   const errIso = counted
     .filter((s) => s.status === "error" && inRange(s.started_at)
       && !wasInMaintenanceMem(data, siteId, s.started_at))

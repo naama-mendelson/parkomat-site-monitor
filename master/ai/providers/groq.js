@@ -168,10 +168,25 @@ async function readStream(res, onToken) {
   const raw = {
     role: "assistant",
     content: text || null,
-    ...(rawToolCalls.length ? { tool_calls: rawToolCalls } : {}),
   };
 
-  return { text: text || null, toolCalls: parseToolCalls(rawToolCalls), raw };
+  // ============================================================
+  // ⚠️ ההיסטוריה חייבת להכיל בדיוק את הכלים שנענו
+  // ============================================================
+  // parseToolCalls מדלגת על כלי עם JSON פגום — וזה נכון: עדיף כלי אחד
+  // חסר מאשר שיחה שנפלה. אבל `raw` נשלח להיסטוריה עם **כל** הקריאות,
+  // כולל זו שדולגה, ולה לעולם לא תיווצר הודעת tool תואמת.
+  //
+  // ⚠️ וה-API דוחה בדיוק את זה: הודעת assistant עם tool_calls חייבת
+  // להיות מלווה בהודעת tool לכל tool_call_id. כלומר ההודעה **הבאה**
+  // בשיחה נכשלת — לא זו שבה קרתה התקלה. הסימפטום מופיע צעד אחד אחרי
+  // הסיבה, ועל פניו נראה כמו תקלת רשת אקראית.
+  const toolCalls = parseToolCalls(rawToolCalls);
+  const kept = new Set(toolCalls.map((c) => c.id));
+  const rawKept = rawToolCalls.filter((tc) => kept.has(tc.id));
+  if (rawKept.length) raw.tool_calls = rawKept;
+
+  return { text: text || null, toolCalls, raw };
 }
 
 // ה-arguments מגיעים כמחרוזת JSON. מודל יכול להחזיר JSON פגום — ואז אנחנו
