@@ -71,7 +71,7 @@ export default function FieldReports({ sites = [], onClose }) {
     // ⚠️ השם נבדק **ראשון**, כי הוא השדה הראשון בטופס. בדיקה בסדר
     // אחר שולחת את המשתמש לתקן שדה שנמצא מעל זה שהוא מסתכל עליו.
     if (reporter.trim().length < MIN_NAME) {
-      setError("חובה למלא שם מלא");
+      setError("חובה למלא שם");
       return;
     }
     if (body.trim().length < 5) {
@@ -125,7 +125,7 @@ export default function FieldReports({ sites = [], onClose }) {
                   "מאיזו תיבה נשלח" ולא על "מי ראה". sherut@parkomat.co.il
                   היא תיבה משותפת ולאף משתמש אין full_name. אותו נימוק
                   בדיוק כמו בתחזוקה ידנית. */}
-              <span>שם מלא</span>
+              <span>שם</span>
               <input
                 type="text"
                 value={reporter}

@@ -95,3 +95,56 @@ test("⚠️ המדווח אינו רואה כפתור שייתן לו 403", () 
   assert.match(code, /isManager \?/, "כפתור 'סמן כטופל' מוצג לכולם");
   assert.match(code, /ממתין לטיפול/, "למדווח לא נאמר מה מצב הדיווח");
 });
+
+
+// ============================================================
+// ⚠️ אי אפשר לשלוח בלי שם — שלוש שכבות, ולא אחת
+// ============================================================
+// הזהות כבר מאומתת, ובכל זאת השם נדרש: `sherut@parkomat.co.il` היא תיבה
+// משותפת ולאף אחד מהמשתמשים אין full_name. החשבון עונה על "מאיזו תיבה
+// נשלח" ולא על "מי ראה".
+//
+// שלוש שכבות, וכל אחת לבדה אינה מספיקה:
+//   1. **הכפתור מושבת** — אומר מראש שחסר משהו, במקום לקבל לחיצה ולהיכשל
+//   2. **בדיקה ב-send()** — למקרה שהכפתור מופעל בדרך אחרת
+//   3. **ה-RPC דוחה** — הגבול היחיד שאי אפשר לעקוף מ-DevTools
+//
+// ⚠️ ורק השלישית היא הגנה. הראשונות שתיים הן נוחות, והבדיקה כאן שומרת
+// עליהן דווקא כדי שאיש לא יסיק מהן שאפשר לוותר על השלישית.
+test("⚠️ הכפתור מושבת בלי שם", () => {
+  const code = strip(COMPONENT);
+
+  assert.match(code, /disabled=\{busy \|\| reporter\.trim\(\)\.length < MIN_NAME\}/,
+    "כפתור השליחה פעיל גם בלי שם");
+});
+
+test("⚠️ ובנוסף נבדק בשליחה עצמה", () => {
+  const code = strip(COMPONENT);
+  const send = (code.match(/async function send\(\)[\s\S]*?\n  }/) || [""])[0];
+  assert.ok(send, "send() לא נמצאה");
+  assert.match(send, /reporter\.trim\(\)\.length < MIN_NAME/,
+    "אין בדיקת שם בשליחה — כפתור שיופעל בדרך אחרת יעבור");
+});
+
+test("⚠️ הסף אחד לשני הצדדים", () => {
+  // ⚠️ שני מספרים שונים היו יוצרים טופס שמאשר שם שהמסד דוחה — כלומר
+  // שגיאה אחרי לחיצה במקום לפניה.
+  const service = strip(SERVICE);
+  assert.match(service, /export const MIN_NAME = 2;/);
+
+  const sql = fs.readFileSync(
+    path.join(__dirname, "..", "db", "writes.postgres.sql"), "utf8");
+  const fn = (sql.match(/CREATE OR REPLACE FUNCTION public\.submit_field_report[\s\S]*?\n\$\$;/) || [""])[0];
+  assert.ok(fn, "submit_field_report לא נמצאה");
+  assert.match(fn, /length\(v_name\) < 2/, "הסף ב-SQL אינו 2");
+});
+
+test("⚠️ ה-DROP של החתימה הישנה קיים", () => {
+  // הוספת פרמטר יוצרת **עומס** ולא החלפה: הגרסה בת שלושת הפרמטרים הייתה
+  // שורדת לצד החדשה, וכל קורא שיפנה אליה עוקף את דרישת השם לגמרי. זה
+  // בדיוק מה שקרה פעם ב-start_maintenance.
+  const sql = fs.readFileSync(
+    path.join(__dirname, "..", "db", "writes.postgres.sql"), "utf8");
+  assert.match(sql, /DROP FUNCTION IF EXISTS public\.submit_field_report\(text, text, jsonb\);/,
+    "החתימה הישנה לא נמחקת — אפשר לעקוף את דרישת השם");
+});

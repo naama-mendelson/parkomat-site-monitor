@@ -1201,7 +1201,7 @@ BEGIN
   -- שרווח בודד לא ייחשב תשובה — אותו סף בדיוק כמו בתחזוקה.
   v_name := NULLIF(TRIM(COALESCE(p_reported_by_name, '')), '');
   IF v_name IS NULL OR length(v_name) < 2 THEN
-    RAISE EXCEPTION 'חובה לציין שם מלא' USING ERRCODE = 'check_violation';
+    RAISE EXCEPTION 'חובה לציין שם' USING ERRCODE = 'check_violation';
   END IF;
 
   v_body := NULLIF(TRIM(COALESCE(p_body, '')), '');
