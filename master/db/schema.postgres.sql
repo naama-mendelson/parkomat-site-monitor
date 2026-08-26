@@ -597,3 +597,76 @@ BEGIN
       ADD COLUMN IF NOT EXISTS cancelled_by TEXT;
   END IF;
 END $$;
+
+-- ============================================================
+-- field_reports — דיווח מהשטח, מאנשי תחזוקה אל המנהלת
+-- ============================================================
+-- ⚠️ **זו טבלת תוכן ולא טבלת מדידה, ואסור לערבב.** שום מדד אינו קורא
+-- ממנה: לא זמינות, לא אחוז כשל, ולא ספירת תקלות. דיווח הוא מה ש**אדם
+-- ראה**, ותקלה היא מה שה**בקר דיווח** — שני מקורות שונים לחלוטין, ומיזוגם
+-- היה מזהם את המספרים בהערכות אנוש.
+--
+-- אותו נימוק בדיוק שהפריד את suppressed_faults מ-status_history: טבלה
+-- נפרדת היא מה שמבטיח שאף מדד לא יוכל להיות מושפע ממנה בטעות.
+--
+-- ⚠️ site_id הוא **NULL מותר**, ובכוונה: לא כל ממצא שייך לאתר ("הרכב
+-- שלי נתקע ולא הבנתי איפה"). דרישה לבחור אתר הייתה מייצרת בחירה
+-- שרירותית, וזה גרוע מהיעדר שיוך — כי אז הדיווח מצטלב עם ההיסטוריה של
+-- אתר שאין לו קשר אליו.
+--
+-- ⚠️ ON DELETE SET NULL ולא CASCADE: מחיקת אתר לא מוחקת את מה שאנשים
+-- דיווחו עליו. הדיווח הוא עדות, והיא שורדת את מושא העדות.
+CREATE TABLE IF NOT EXISTS field_reports (
+  id           BIGSERIAL PRIMARY KEY,
+  site_id      INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+  body         TEXT NOT NULL,
+  -- ⚠️ הזהות **המאומתת** ולא שם מוקלד. הכניסה למסך היא דרך Supabase Auth,
+  -- ולכן אין כאן את הפשרה של "ייחוס במקום מנע" שקיימת בתחזוקה ידנית —
+  -- מי שכתב הוא מי שהתחבר, נקודה.
+  reported_by  TEXT NOT NULL,
+  -- מזהה ב-app_users. NULL אפשרי אם המשתמש נמחק מאוחר יותר; הדיווח נשאר,
+  -- והשם ב-reported_by נשמר כטקסט כדי שלא ייעלם איתו.
+  reported_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL,
+  -- 'open' | 'done'. שני מצבים ולא ארבעה: "בטיפול" ו"נדחה" נשמעים שימושיים
+  -- ומייצרים מסך שדורש תחזוקה משלו. אם יתברר שצריך — זה שינוי קטן.
+  status       TEXT NOT NULL DEFAULT 'open',
+  resolved_at  TEXT,
+  resolved_by  TEXT,
+  resolved_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_reports_status
+  ON field_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_field_reports_site
+  ON field_reports(site_id, created_at DESC);
+
+-- ============================================================
+-- field_report_files — צילומי המסך
+-- ============================================================
+-- ⚠️ **בתוך Postgres ולא ב-Supabase Storage**, וזה כלל 4 בקובץ ההנחיות:
+-- ל-Storage אין מקבילה ניידת, וקובץ ששמור שם אינו נוסע ב-pg_dump. תמונה
+-- בטבלה נוסעת עם כל השאר, ודלת היציאה נשארת פתוחה.
+--
+-- ⚠️ **TEXT ולא BYTEA, וזו בחירה מודעת.** bytea חוזר דרך PostgREST כמחרוזת
+-- hex ודורש המרה בשני הכיוונים; base64 הוא מה שהדפדפן ממילא מייצר
+-- (canvas.toDataURL) ומה שהוא ממילא מציג (src="data:..."). המחיר הוא 33%
+-- נפח, והתמורה היא שאין נקודת המרה שיכולה להישבר בשקט.
+--
+-- ⚠️ **התקרות אינן קישוט.** התוכנית החינמית היא 500MB, והמדידה בקובץ
+-- ההנחיות מראה ~1MB נתוני יישום בסך הכול. תמונה אחת לא דחוסה מהטלפון היא
+-- 2–5MB — כלומר בלי תקרה, עשרה דיווחים מכפילים את כל המסד. הדפדפן דוחס
+-- ל-1280px לפני השליחה, וה-RPC אוכף את התקרה שוב: לקוח אינו גבול.
+CREATE TABLE IF NOT EXISTS field_report_files (
+  id         BIGSERIAL PRIMARY KEY,
+  report_id  BIGINT NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
+  mime       TEXT NOT NULL,
+  -- base64 נטו, בלי הקידומת "data:image/png;base64," — הקידומת נבנית
+  -- בתצוגה מ-mime. שמירתה הייתה כופלת מידע שכבר יש בעמודה שלידה.
+  data_b64   TEXT NOT NULL,
+  byte_size  INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_files_report
+  ON field_report_files(report_id);

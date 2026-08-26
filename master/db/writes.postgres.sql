@@ -1150,3 +1150,165 @@ $fn$;
 
 REVOKE ALL ON FUNCTION public.reclassify_status(integer, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reclassify_status(integer, text) TO authenticated;
+
+-- ============================================================
+-- submit_field_report — דיווח מהשטח
+-- ============================================================
+-- ⚠️ **כל התקרות נאכפות כאן ולא בדפדפן.** הדפדפן דוחס תמונות לפני
+-- השליחה כי זה חוסך רשת, אבל הוא אינו גבול — DevTools פתוח עוקף כל בדיקה
+-- שיושבת שם. אותו עיקרון בדיוק כמו start_maintenance.
+CREATE OR REPLACE FUNCTION public.submit_field_report(
+  p_body      text,
+  p_site_code text  DEFAULT NULL,
+  -- מערך של {mime, data} — data הוא base64 נטו, בלי הקידומת data:.
+  p_files     jsonb DEFAULT '[]'::jsonb
+)
+RETURNS TABLE (id bigint, created_at text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor   text;
+  v_user_id integer;
+  v_site_id integer;
+  v_body    text;
+  v_now     text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_id      bigint;
+  v_file    jsonb;
+  v_bytes   integer;
+  v_count   integer := 0;
+  v_total   integer := 0;
+BEGIN
+  -- ⚠️ הזהות ראשונה: SECURITY DEFINER עוקף RLS, ולכן זו ההגנה היחידה כאן.
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  v_user_id := app.current_app_user();
+
+  v_body := NULLIF(TRIM(COALESCE(p_body, '')), '');
+  IF v_body IS NULL OR length(v_body) < 5 THEN
+    RAISE EXCEPTION 'הדיווח קצר מדי — כתוב לפחות כמה מילים'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- ⚠️ תקרה על הטקסט: בלי גבול, הדבקה של לוג שלם נכנסת לטבלה ומתפוצצת
+  -- על המסך שאמור להיות רשימה קריאה.
+  IF length(v_body) > 4000 THEN
+    RAISE EXCEPTION 'הדיווח ארוך מדי (מעל 4000 תווים)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- אתר אופציונלי. קוד שהוקלד ואינו קיים הוא טעות ולא "בלי אתר" —
+  -- שתיקה כאן הייתה מצמידה את הדיווח לשום מקום בלי שהמדווח ידע.
+  IF NULLIF(TRIM(COALESCE(p_site_code, '')), '') IS NOT NULL THEN
+    SELECT s.id INTO v_site_id FROM sites s WHERE s.code = TRIM(p_site_code);
+    IF v_site_id IS NULL THEN
+      RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404';
+    END IF;
+  END IF;
+
+  INSERT INTO field_reports (site_id, body, reported_by, reported_by_user_id, created_at, status)
+  VALUES (v_site_id, v_body, v_actor, v_user_id, v_now, 'open')
+  RETURNING field_reports.id INTO v_id;
+
+  -- ============================================================
+  -- ⚠️ הקבצים — תקרה לכל אחד, תקרה לסך הכול, ותקרה למספר
+  -- ============================================================
+  -- התוכנית החינמית היא 500MB וכל נתוני היישום הם ~1MB. תמונה אחת לא
+  -- דחוסה מהטלפון היא 2–5MB, כלומר בלי תקרה עשרה דיווחים מכפילים את כל
+  -- המסד. base64 מנפח ב-33%, ולכן הבדיקה על הגודל **אחרי** הפענוח.
+  FOR v_file IN SELECT * FROM jsonb_array_elements(COALESCE(p_files, '[]'::jsonb))
+  LOOP
+    v_count := v_count + 1;
+    IF v_count > 4 THEN
+      RAISE EXCEPTION 'אפשר לצרף עד 4 תמונות' USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF v_file->>'mime' IS NULL OR v_file->>'mime' NOT IN
+       ('image/png', 'image/jpeg', 'image/webp') THEN
+      -- ⚠️ רשימת היתר ולא רשימת איסור: קובץ שאינו תמונה נשמר כטקסט
+      -- ומוצג ב-<img>, כלומר במקרה הטוב לא עובד ובמקרה הרע הוא וקטור.
+      RAISE EXCEPTION 'סוג קובץ לא נתמך — רק PNG, JPEG או WEBP'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- אורך ה-base64 ×3/4 הוא גודל הבתים בפועל.
+    v_bytes := (length(COALESCE(v_file->>'data', '')) * 3) / 4;
+    IF v_bytes = 0 THEN
+      RAISE EXCEPTION 'קובץ ריק' USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_bytes > 2 * 1024 * 1024 THEN
+      RAISE EXCEPTION 'תמונה גדולה מדי (מעל 2MB אחרי דחיסה)'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    v_total := v_total + v_bytes;
+    IF v_total > 5 * 1024 * 1024 THEN
+      RAISE EXCEPTION 'סך התמונות גדול מדי (מעל 5MB)'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO field_report_files (report_id, mime, data_b64, byte_size, created_at)
+    VALUES (v_id, v_file->>'mime', v_file->>'data', v_bytes, v_now);
+  END LOOP;
+
+  -- ⚠️ שורת ביקורת, בדיוק כמו כל כתיבה אחרת מהדפדפן.
+  -- ⚠️ דרך app.record_write_audit ולא INSERT ישיר: העמודות האמיתיות הן
+  -- actor_name/actor_role/trust/target_*, ו-INSERT מומצא היה נכשל רק
+  -- **בזמן ריצה** — plpgsql אינו מאמת שמות עמודות ביצירת הפונקציה.
+  PERFORM app.record_write_audit(
+    'field_report.submit', v_actor, app.current_app_role(),
+    'field_report', v_id::text,
+    jsonb_build_object('site_code', p_site_code, 'files', v_count));
+
+  RETURN QUERY SELECT v_id, v_now;
+END;
+$$;
+
+-- ============================================================
+-- resolve_field_report — סימון "טופל"
+-- ============================================================
+-- ⚠️ מנהלת בלבד: הדיווח נשלח אליה, וסגירתו היא ההחלטה שלה. בלי הגבלה
+-- המדווח היה יכול לסגור את הדיווח של עצמו — ואז אין תיבה, יש רק רשימה.
+CREATE OR REPLACE FUNCTION public.resolve_field_report(
+  p_id   bigint,
+  p_note text DEFAULT NULL
+)
+RETURNS TABLE (updated integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_n     integer;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  UPDATE field_reports
+     SET status = 'done', resolved_at = v_now, resolved_by = v_actor,
+         resolved_note = NULLIF(TRIM(COALESCE(p_note, '')), '')
+   WHERE field_reports.id = p_id AND field_reports.status <> 'done';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  IF v_n > 0 THEN
+    PERFORM app.record_write_audit(
+      'field_report.resolve', v_actor, app.current_app_role(),
+      'field_report', p_id::text, NULL);
+  END IF;
+
+  -- ⚠️ 0 אינו כשל: ייתכן ששניים לחצו יחד, או שהוא כבר טופל. זריקה כאן
+  -- הייתה הופכת מקרה תקין לשגיאה על המסך.
+  RETURN QUERY SELECT v_n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.submit_field_report(text, text, jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.resolve_field_report(bigint, text)     FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.submit_field_report(text, text, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_field_report(bigint, text)     TO authenticated;

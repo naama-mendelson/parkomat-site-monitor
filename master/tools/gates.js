@@ -39,6 +39,7 @@ const GATES = [
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
   { name: "check-permissions",  what: "מי מורשה למה — מקצה לקצה" },
   { name: "check-writes",       what: "כתיבה ישירה ל-Supabase, בלי השרת" },
+  { name: "check-reports",      what: "דיווחי שטח — תקרות, זהות, ומי רואה את מה" },
   // ⚠️ .mjs ולא .js: הוא מייבא את shared/timeline.mjs — אותו מודול עצמו
   // שהוא בא לבדוק. עותק שני של הלוגיקה כאן היה בודק את העותק, לא את הקוד.
   { name: "check-reclass",      what: "סיווג מחדש — מוחל לפני החישוב", file: "check-reclass.mjs" },

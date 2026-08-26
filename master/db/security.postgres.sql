@@ -731,3 +731,46 @@ $fn$;
 
 COMMENT ON FUNCTION app.require_mfa() IS
   'דורש aal2 לפעולות מנהל, אם הדגל mfa_required_for_manager דלוק. פטור לקריאות שלא הגיעו מאסימון.';
+
+-- ============================================================
+-- field_reports — קריאה למנהלת, ולמי שכתב את שלו
+-- ============================================================
+-- ⚠️ **זו החריגה היחידה מ-"כל משתמש רואה הכול".** הכלל הזה נכון לנתוני
+-- האתרים — הם תיאור של מתקנים משותפים. דיווח מהשטח הוא **מכתב לאדם**,
+-- והבקשה הייתה מפורשת: "שיגיע רק אליי".
+--
+-- ⚠️ ומי שכתב רואה את שלו, וזה לא ויתור על הכלל אלא חלק ממנו: בלי זה אין
+-- לו שום דרך לדעת שהדיווח נקלט, והוא ישלח אותו שוב. תיבה שבולעת בשקט
+-- מייצרת כפילויות ומאבדת אמון.
+--
+-- ⚠️ **אין מדיניות INSERT/UPDATE/DELETE בכלל.** הכתיבה עוברת רק דרך
+-- ה-RPC (submit_field_report / resolve_field_report), בדיוק כמו התחזוקה:
+-- כך התקרות, הזהות והביקורת נאכפות במקום אחד ואי אפשר לעקוף אותן
+-- בפתיחת DevTools.
+ALTER TABLE field_reports ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS field_reports_read ON field_reports;
+CREATE POLICY field_reports_read ON field_reports
+  FOR SELECT TO authenticated
+  USING (
+    app.is_active_user()
+    AND (app.is_manager() OR reported_by_user_id = app.current_app_user())
+  );
+
+-- הקבצים יורשים את ההרשאה של הדיווח שהם שייכים אליו. ⚠️ בלי ה-EXISTS
+-- הזה תמונה הייתה נגישה לכל מאומת שינחש מזהה — כלומר הגבלת הקריאה על
+-- הטבלה שמעל הייתה חסרת ערך, כי כל התוכן האמיתי יושב כאן.
+ALTER TABLE field_report_files ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS field_report_files_read ON field_report_files;
+CREATE POLICY field_report_files_read ON field_report_files
+  FOR SELECT TO authenticated
+  USING (
+    app.is_active_user()
+    AND EXISTS (
+      SELECT 1 FROM field_reports r
+       WHERE r.id = field_report_files.report_id
+         AND (app.is_manager() OR r.reported_by_user_id = app.current_app_user())
+    )
+  );
+
+GRANT SELECT ON field_reports      TO authenticated;
+GRANT SELECT ON field_report_files TO authenticated;
