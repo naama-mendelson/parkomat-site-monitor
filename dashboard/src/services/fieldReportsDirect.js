@@ -31,6 +31,9 @@ const JPEG_QUALITY = 0.82;
 
 export const MAX_FILES = 4;
 export const MAX_BODY = 4000;
+// ⚠️ אותו סף כמו ב-RPC. שני מספרים שונים היו יוצרים טופס שמאשר שם
+// שהמסד דוחה — כלומר שגיאה אחרי לחיצה במקום לפניה.
+export const MIN_NAME = 2;
 
 /**
  * דוחס תמונה ומחזיר { mime, data } — data הוא base64 **נטו**, בלי הקידומת
@@ -82,8 +85,15 @@ function messageFor(error) {
   return error.message || "הפעולה נכשלה";
 }
 
-/** שליחת דיווח. `files` הוא מערך של קבצים מהדפדפן (File), לפני דחיסה. */
-export async function submitFieldReport({ body, siteCode = null, files = [] }) {
+/**
+ * שליחת דיווח. `files` הוא מערך של קבצים מהדפדפן (File), לפני דחיסה.
+ *
+ * ⚠️ `reportedByName` הוא **חובה**, למרות שהזהות כבר מאומתת. הסיבה היא
+ * ש-`sherut@parkomat.co.il` היא תיבה משותפת ולאף אחד מהמשתמשים אין
+ * full_name — כלומר החשבון עונה על "מאיפה נשלח" ולא על "מי ראה".
+ * אותו שדה ואותו נימוק בדיוק כמו בתחזוקה ידנית.
+ */
+export async function submitFieldReport({ body, siteCode = null, files = [], reportedByName = "" }) {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
 
   // ⚠️ הדחיסה בטור ולא ב-Promise.all: ארבע תמונות במקביל על טלפון ישן
@@ -95,6 +105,9 @@ export async function submitFieldReport({ body, siteCode = null, files = [] }) {
 
   const { data, error } = await supabase.rpc("submit_field_report", {
     p_body: String(body ?? "").trim(),
+    // ⚠️ נשלח **לצד** הזהות ולא במקומה. ה-RPC דוחה שם ריק או בן תו אחד;
+    // הבדיקה כאן היא נוחות, לא גבול.
+    p_reported_by_name: String(reportedByName ?? "").trim() || null,
     p_site_code: siteCode ? String(siteCode) : null,
     p_files: compressed,
   });
@@ -117,7 +130,7 @@ export async function fetchFieldReports({ status = null, limit = 100 } = {}) {
 
   let q = supabase
     .from("field_reports")
-    .select("id, site_id, body, reported_by, created_at, status, resolved_at, resolved_by, resolved_note")
+    .select("id, site_id, body, reported_by, reported_by_name, created_at, status, resolved_at, resolved_by, resolved_note")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (status) q = q.eq("status", status);

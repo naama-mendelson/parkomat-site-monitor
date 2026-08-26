@@ -670,3 +670,18 @@ CREATE TABLE IF NOT EXISTS field_report_files (
 
 CREATE INDEX IF NOT EXISTS idx_field_report_files_report
   ON field_report_files(report_id);
+
+-- ============================================================
+-- ⚠️ מי **בפועל** — שדה נפרד, ולא תחליף לזהות המאומתת
+-- ============================================================
+-- `reported_by` נגזר מהאסימון ולעולם לא מגוף הבקשה. אבל הוא עונה על
+-- "איזה **חשבון** שלח", ולא על "**מי** ראה".
+--
+-- ⚠️ ובפועל: `sherut@parkomat.co.il` היא תיבה משותפת, ולכל שמונת
+-- המשתמשים אין full_name — כך שדיווח נרשם על כתובת מייל שאינה מזהה אדם.
+-- מי שקורא דיווח על דלת שמרעישה צריך לדעת את מי לשאול, לא לאיזו תיבה
+-- לכתוב.
+--
+-- אותו שדה ואותו נימוק בדיוק כמו `performed_by` בחלונות התחזוקה.
+ALTER TABLE field_reports
+  ADD COLUMN IF NOT EXISTS reported_by_name TEXT;

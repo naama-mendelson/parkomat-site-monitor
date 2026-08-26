@@ -108,33 +108,50 @@ const TINY_PNG =
 
   // ---- 1. אנונימי נחסם ----
   add("⚠️ בלי אסימון — נדחה",
-    (await rpc("submit_field_report", { p_body: "בדיקה אנונימית" }, null)).status, 401);
+    (await rpc("submit_field_report", { p_body: "בדיקה אנונימית", p_reported_by_name: "שער" }, null)).status, 401);
 
   // ---- 2. טקסט קצר מדי ----
   add("דיווח בן שני תווים נדחה",
-    (await rpc("submit_field_report", { p_body: "או" }, op.token)).status, 400);
+    (await rpc("submit_field_report", { p_body: "או", p_reported_by_name: "שער" }, op.token)).status, 400);
+
+  // ---- 2.5 שם חובה ----
+  // ⚠️ הזהות כבר מאומתת, ובכל זאת השם נדרש: sherut@parkomat.co.il היא
+  // תיבה משותפת ולאף משתמש אין full_name — החשבון עונה על "מאיפה נשלח"
+  // ולא על "מי ראה". אותו כלל בדיוק כמו p_performed_by בתחזוקה.
+  add("⚠️ בלי שם — נדחה",
+    (await rpc("submit_field_report", { p_body: "ראיתי משהו מוזר בשער" }, op.token)).status, 400);
+
+  add("⚠️ שם בן תו אחד נדחה",
+    (await rpc("submit_field_report",
+      { p_body: "ראיתי משהו מוזר בשער", p_reported_by_name: "א" }, op.token)).status, 400);
+
+  add("⚠️ רווחים בלבד נדחים",
+    (await rpc("submit_field_report",
+      { p_body: "ראיתי משהו מוזר בשער", p_reported_by_name: "   " }, op.token)).status, 400);
 
   // ---- 3. אתר שאינו קיים → 404 ולא 500 ----
   add("⚠️ אתר שאינו קיים → 404",
     (await rpc("submit_field_report",
-      { p_body: "יש כאן רעש מוזר", p_site_code: "___NOPE___" }, op.token)).status, 404);
+      { p_body: "יש כאן רעש מוזר", p_site_code: "___NOPE___", p_reported_by_name: "שער" }, op.token)).status, 404);
 
   // ---- 4. סוג קובץ לא נתמך ----
   add("קובץ שאינו תמונה נדחה",
     (await rpc("submit_field_report",
-      { p_body: "מצרף קובץ", p_files: [{ mime: "application/pdf", data: TINY_PNG }] },
+      { p_body: "מצרף קובץ", p_reported_by_name: "שער", p_files: [{ mime: "application/pdf", data: TINY_PNG }] },
       op.token)).status, 400);
 
   // ---- 5. יותר מארבע תמונות ----
   add("⚠️ חמש תמונות נדחות",
     (await rpc("submit_field_report", {
       p_body: "מצרף הרבה",
+      p_reported_by_name: "שער",
       p_files: Array.from({ length: 5 }, () => ({ mime: "image/png", data: TINY_PNG })),
     }, op.token)).status, 400);
 
   // ---- 6. דיווח תקין עם תמונה ----
   const okRes = await rpc("submit_field_report", {
     p_body: "הדלת מרעישה בכל פתיחה — צילום מצורף",
+    p_reported_by_name: "יוסי מהתחזוקה",
     p_site_code: CODE,
     p_files: [{ mime: "image/png", data: TINY_PNG }],
   }, op.token);
@@ -147,6 +164,7 @@ const TINY_PNG =
   add("...הזהות נגזרה מהאסימון", row && row.reported_by, op.email);
   add("...והשיוך לאתר נשמר", Boolean(row && row.site_id), true);
   add("...המצב הוא open", row && row.status, "open");
+  add("⚠️ והשם המוקלד נשמר לצד החשבון", row && row.reported_by_name, "יוסי מהתחזוקה");
 
   const files = await db
     .prepare("SELECT COUNT(*)::int AS n FROM field_report_files WHERE report_id = ?")
@@ -189,6 +207,16 @@ const TINY_PNG =
   const twice = await rpc("resolve_field_report", { p_id: id }, mgr.token);
   const tb = await twice.json().catch(() => []);
   add("⚠️ סגירה כפולה מחזירה 0 ולא שגיאה", tb && tb[0] ? tb[0].updated : null, 0);
+
+  // ---- 9. ⚠️ אין חתימה ישנה ששורדת ----
+  // הוספת פרמטר יוצרת **עומס** ולא החלפה. אם החתימה בת שלושת הפרמטרים
+  // שרדה, כל קורא שיפנה אליה עוקף את דרישת השם לגמרי — וזה בדיוק מה
+  // שקרה פעם ב-start_maintenance.
+  const sigs = await db.prepare(
+    "SELECT COUNT(*)::int AS n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace " +
+    "WHERE n.nspname='public' AND p.proname='submit_field_report'"
+  ).get();
+  add("⚠️ חתימה אחת בלבד — אין דרך לעקוף", sigs && sigs.n, 1);
 
   // ---- ניקוי ----
   await db.prepare("DELETE FROM field_reports WHERE id = ?").run(id);

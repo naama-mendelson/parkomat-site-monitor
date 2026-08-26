@@ -1157,11 +1157,19 @@ GRANT EXECUTE ON FUNCTION public.reclassify_status(integer, text) TO authenticat
 -- ⚠️ **כל התקרות נאכפות כאן ולא בדפדפן.** הדפדפן דוחס תמונות לפני
 -- השליחה כי זה חוסך רשת, אבל הוא אינו גבול — DevTools פתוח עוקף כל בדיקה
 -- שיושבת שם. אותו עיקרון בדיוק כמו start_maintenance.
+-- ⚠️ **ה-DROP חובה, ואינו קישוט.** הוספת פרמטר יוצרת **עומס** ולא
+-- החלפה: הגרסה בת שלושת הפרמטרים הייתה שורדת לצד החדשה, וכל קורא
+-- שיפנה אליה עוקף את דרישת השם לגמרי. זה בדיוק מה שקרה פעם
+-- ב-start_maintenance, ולכן שם יש שני DROP ולא אחד.
+DROP FUNCTION IF EXISTS public.submit_field_report(text, text, jsonb);
+
 CREATE OR REPLACE FUNCTION public.submit_field_report(
   p_body      text,
   p_site_code text  DEFAULT NULL,
   -- מערך של {mime, data} — data הוא base64 נטו, בלי הקידומת data:.
-  p_files     jsonb DEFAULT '[]'::jsonb
+  p_files     jsonb DEFAULT '[]'::jsonb,
+  -- מי **בפועל**. חובה — ראה ההסבר ליד העמודה בסכימה.
+  p_reported_by_name text DEFAULT NULL
 )
 RETURNS TABLE (id bigint, created_at text)
 LANGUAGE plpgsql
@@ -1173,6 +1181,7 @@ DECLARE
   v_user_id integer;
   v_site_id integer;
   v_body    text;
+  v_name    text;
   v_now     text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_id      bigint;
   v_file    jsonb;
@@ -1186,6 +1195,14 @@ BEGIN
     RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
   END IF;
   v_user_id := app.current_app_user();
+
+  -- ⚠️ **חובה, ולא רשות.** בלי אכיפה השדה היה נשאר ריק ברוב הפעמים,
+  -- ואז הוא גרוע מכלום: הוא מבטיח מידע שאינו שם. שני תווים לפחות, כדי
+  -- שרווח בודד לא ייחשב תשובה — אותו סף בדיוק כמו בתחזוקה.
+  v_name := NULLIF(TRIM(COALESCE(p_reported_by_name, '')), '');
+  IF v_name IS NULL OR length(v_name) < 2 THEN
+    RAISE EXCEPTION 'חובה לציין שם מלא' USING ERRCODE = 'check_violation';
+  END IF;
 
   v_body := NULLIF(TRIM(COALESCE(p_body, '')), '');
   IF v_body IS NULL OR length(v_body) < 5 THEN
@@ -1208,8 +1225,9 @@ BEGIN
     END IF;
   END IF;
 
-  INSERT INTO field_reports (site_id, body, reported_by, reported_by_user_id, created_at, status)
-  VALUES (v_site_id, v_body, v_actor, v_user_id, v_now, 'open')
+  INSERT INTO field_reports (site_id, body, reported_by, reported_by_name,
+                             reported_by_user_id, created_at, status)
+  VALUES (v_site_id, v_body, v_actor, v_name, v_user_id, v_now, 'open')
   RETURNING field_reports.id INTO v_id;
 
   -- ============================================================
@@ -1259,7 +1277,7 @@ BEGIN
   PERFORM app.record_write_audit(
     'field_report.submit', v_actor, app.current_app_role(),
     'field_report', v_id::text,
-    jsonb_build_object('site_code', p_site_code, 'files', v_count));
+    jsonb_build_object('site_code', p_site_code, 'files', v_count, 'by', v_name));
 
   RETURN QUERY SELECT v_id, v_now;
 END;
@@ -1308,7 +1326,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.submit_field_report(text, text, jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.submit_field_report(text, text, jsonb, text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.resolve_field_report(bigint, text)     FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.submit_field_report(text, text, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_field_report(text, text, jsonb, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.resolve_field_report(bigint, text)     TO authenticated;

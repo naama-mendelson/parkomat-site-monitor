@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   submitFieldReport, fetchFieldReports, fetchReportImage,
-  resolveFieldReport, MAX_FILES, MAX_BODY,
+  resolveFieldReport, MAX_FILES, MAX_BODY, MIN_NAME,
 } from "../../services/fieldReportsDirect";
 import { useAuth } from "../../hooks/useAuth";
 import "./FieldReports.css";
@@ -37,6 +37,7 @@ export default function FieldReports({ sites = [], onClose }) {
   const [error, setError] = useState(null);
 
   // --- טופס ---
+  const [reporter, setReporter] = useState("");
   const [body, setBody] = useState("");
   const [siteCode, setSiteCode] = useState("");
   const [files, setFiles] = useState([]);
@@ -67,6 +68,12 @@ export default function FieldReports({ sites = [], onClose }) {
   }
 
   async function send() {
+    // ⚠️ השם נבדק **ראשון**, כי הוא השדה הראשון בטופס. בדיקה בסדר
+    // אחר שולחת את המשתמש לתקן שדה שנמצא מעל זה שהוא מסתכל עליו.
+    if (reporter.trim().length < MIN_NAME) {
+      setError("חובה למלא שם מלא");
+      return;
+    }
     if (body.trim().length < 5) {
       setError("כתוב לפחות כמה מילים");
       return;
@@ -74,9 +81,12 @@ export default function FieldReports({ sites = [], onClose }) {
     setBusy(true);
     setError(null);
     try {
-      await submitFieldReport({ body, siteCode: siteCode || null, files });
+      await submitFieldReport({ body, siteCode: siteCode || null, files, reportedByName: reporter });
       setBody("");
       setSiteCode("");
+      // ⚠️ השם **אינו** מתאפס. אותו אדם מדווח כמה פעמים ברצף, והכרחה
+      // להקליד אותו מחדש בכל פעם היא בדיוק מה שגורם לאנשים להקליד
+      // "א" ולעבור הלאה — כלומר לרוקן את השדה מתוכן.
       setFiles([]);
       setSent(true);
       // ⚠️ ההודעה נעלמת מעצמה: "נשלח ✓" שנשאר על המסך לנצח קורא כאילו
@@ -110,6 +120,20 @@ export default function FieldReports({ sites = [], onClose }) {
 
         {tab === "new" ? (
           <div className="fr-form">
+            <label className="fr-field">
+              {/* ⚠️ הזהות כבר מאומתת, אז למה שם מוקלד: החשבון עונה על
+                  "מאיזו תיבה נשלח" ולא על "מי ראה". sherut@parkomat.co.il
+                  היא תיבה משותפת ולאף משתמש אין full_name. אותו נימוק
+                  בדיוק כמו בתחזוקה ידנית. */}
+              <span>שם מלא</span>
+              <input
+                type="text"
+                value={reporter}
+                placeholder="מי מדווח?"
+                onChange={(e) => setReporter(e.target.value)}
+              />
+            </label>
+
             <label className="fr-field">
               <span>מה ראית?</span>
               <textarea
@@ -167,7 +191,13 @@ export default function FieldReports({ sites = [], onClose }) {
 
             <div className="fr-actions">
               {sent && <span className="fr-sent">נשלח ✓</span>}
-              <button className="fr-send" onClick={send} disabled={busy}>
+              {/* ⚠️ מושבת ולא נכשל: עדיף שהכפתור יאמר מראש שחסר משהו
+                  מאשר שיקבל לחיצה ויחזיר שגיאה. */}
+              <button
+                className="fr-send"
+                onClick={send}
+                disabled={busy || reporter.trim().length < MIN_NAME}
+              >
                 {busy ? "שולח…" : "שלח דיווח"}
               </button>
             </div>
@@ -255,7 +285,11 @@ function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
         <div className="fr-item-main">
           <div className="fr-item-body">{r.body}</div>
           <div className="fr-item-meta">
-            {r.reported_by} · {fmt(r.created_at)}
+            {/* ⚠️ השם המוקלד קודם והחשבון אחריו, ולא להפך: מי שקורא
+                רוצה לדעת את מי לשאול. "מאיזו תיבה" הוא הפרט המשני. */}
+            <strong>{r.reported_by_name || r.reported_by}</strong>
+            {r.reported_by_name && <> ({r.reported_by})</>}
+            {" · "}{fmt(r.created_at)}
             {siteName && <> · <strong>{siteName}</strong></>}
             {r.files.length > 0 && <> · 📎 {r.files.length}</>}
           </div>

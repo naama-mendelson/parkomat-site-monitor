@@ -80,6 +80,7 @@
 .fr-field small { color: var(--text-muted); font-size: 0.78rem; }
 
 .fr-field textarea,
+.fr-field input[type="text"],
 .fr-field select {
   width: 100%;
   padding: 10px 12px;
