@@ -1251,7 +1251,29 @@ app.delete("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
       return res.status(404).json({ error: "אתר לא נמצא", code: req.params.code });
     }
 
-    const result = await cancelMaintenance(site.id);
+    // ============================================================
+    // ⚠️ שם חובה גם לביטול — ולא רק להפעלה
+    // ============================================================
+    // הזרוע הישירה כבר אוכפת את זה ב-SQL (cancel_maintenance דוחה שם קצר
+    // מ-2 תווים ב-check_violation). כאן לא נאכף כלום, ו-api.js אפילו לא
+    // **שלח** את השם — כלומר הכלל התקיים בזרוע אחת בלבד.
+    //
+    // ⚠️ וזו בדיוק הדרך שבה נתיב רדום מרקיב: VITE_SUPABASE_DIRECT=false
+    // הוא דלת היציאה, ומי שיעבור אליה היה מגלה שהדרישה נעלמה — בלי שום
+    // שגיאה, רק חלונות שנסגרים בלי שנדע מי סגר אותם.
+    //
+    // ⚠️ העדפה לזהות מאומתת על השם המוקלד — אותו כלל כמו set_by_name.
+    const performedBy = String(
+      req.actor?.trust === "token" && req.actor?.name
+        ? req.actor.name
+        : (req.body?.name ?? ""),
+    ).trim();
+
+    if (performedBy.length < 2) {
+      return res.status(400).json({ error: "חובה לציין מי מוציא מתחזוקה (שם מלא)" });
+    }
+
+    const result = await cancelMaintenance(site.id, performedBy);
     if (result.changes === 0) {
       return res.status(404).json({ error: "אין תחזוקה פעילה לביטול" });
     }
@@ -1260,7 +1282,7 @@ app.delete("/api/sites/:code/maintenance", identifyActor, async (req, res) => {
     // התקלות ולמכנה הזמינות. לכן הוא מתועד באותה מידה.
     console.log(
       `[maintenance] אתר ${site.code}: בוטלה ע"י ` +
-      `"${req.actor?.name || "לא צוין"}" (אמון: ${req.actor?.trust || "unknown"}, ` +
+      `"${performedBy}" (חשבון: ${req.actor?.name || "אנונימי"}, אמון: ${req.actor?.trust || "unknown"}, ` +
       `IP: ${clientIp(req) || "?"})`);
 
     bus.publish({ type: "maintenance", code: site.code, action: "cancel" });

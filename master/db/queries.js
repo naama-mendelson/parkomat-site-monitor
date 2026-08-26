@@ -550,14 +550,24 @@ async function getActiveMaintenance(siteId) {
     .get(siteId, now, now);
 }
 
-async function cancelMaintenance(siteId) {
+// ⚠️ **מי ביטל — חובה, ולא רשות.** הביטול מחזיר את האתר לספירת התקלות
+// ולמכנה הזמינות, כלומר הוא משנה מספרים בדוחות בדיוק כמו ההפעלה. השם
+// נשמר ב-cancelled_by, בדיוק כמו ב-RPC של הזרוע הישירה
+// (db/writes.postgres.sql), כדי ששתי הזרועות ירשמו את אותו הדבר.
+async function cancelMaintenance(siteId, performedBy) {
+  const by = String(performedBy ?? "").trim();
+  if (by.length < 2) {
+    const err = new Error("חובה לציין מי מוציא מתחזוקה (שם מלא)");
+    err.code = "NAME_REQUIRED";
+    throw err;
+  }
   const now = new Date().toISOString();
   return await db
     .prepare(
-      `UPDATE maintenance_windows SET cancelled_at = ?
+      `UPDATE maintenance_windows SET cancelled_at = ?, cancelled_by = ?
        WHERE site_id = ? AND cancelled_at IS NULL AND expires_at > ?`
     )
-    .run(now, siteId, now);
+    .run(now, by, siteId, now);
 }
 
 // ===== סטטיסטיקה =====

@@ -449,10 +449,14 @@ export async function startMaintenance(code, name, durationHours, reason = "") {
 
 // ביטול תחזוקה — מוגן גם הוא: הוא מחזיר את האתר לספירת התקלות ולמכנה
 // הזמינות, ולכן משנה מספרים בדיוק כמו ההפעלה.
-export async function cancelMaintenance(code) {
+// ⚠️ **name — והוא לא היה כאן.** dataSource קורא `cancelMaintenance(code, name)`
+// והחתימה קיבלה ארגומנט אחד, כך שהשם נזרק בשקט לפני היציאה לרשת. הזרוע
+// הישירה אוכפת שם ב-SQL, וכאן הוא לא נשלח כלל — אותה פעולה, שתי התנהגויות.
+export async function cancelMaintenance(code, name) {
   const res = await fetch(`${BASE}/sites/${code}/maintenance`, {
     method: "DELETE",
     headers: adminHeaders(),
+    body: JSON.stringify({ name }),
   });
   if (!res.ok) return parseError(res, "שגיאה בביטול תחזוקה");
   return res.json();
