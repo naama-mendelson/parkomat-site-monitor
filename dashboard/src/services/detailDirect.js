@@ -127,14 +127,18 @@ export async function fetchSiteAnalyticsDirect(code, { range, prev, granularity 
   const [ops, segments, windows] = await Promise.all([
     pageAll((a, b) => supabase
       .from("operations")
-      .select("site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by")
+      .select("site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by, excluded_at")
       .eq("site_id", siteId).gte("occurred_at", from).lt("occurred_at", to)
       .order("occurred_at", { ascending: true }).range(a, b), FETCH_CAP),
 
     // חפיפה ולא הכלה — מקטע שהתחיל לפני הטווח ונמשך לתוכו חייב להיספר.
     pageAll((a, b) => supabase
       .from("status_history")
-      .select("site_id, status, started_at, ended_at, id")
+      // ⚠️ בלי העמודות האלה **כל** שומר ב-executive.mjs עובר בשקט:
+      // segmentsOf לא מחיל סיווג, s.excluded_at תמיד false, והמסנן של
+      // החלונות אינו מסנן דבר. אותו אתר מציג errors ו-availability שונים
+      // לפי ערך של משתנה סביבה בלבד.
+      .select("site_id, status, started_at, ended_at, id, excluded_at, reclassified_to")
       .eq("site_id", siteId).lt("started_at", to)
       .or(`ended_at.is.null,ended_at.gt.${from}`)
       // ⚠️ id כשובר שוויון — sortByStartedAt בשרת עושה בדיוק את זה, וקיפול
@@ -145,7 +149,7 @@ export async function fetchSiteAnalyticsDirect(code, { range, prev, granularity 
 
     pageAll((a, b) => supabase
       .from("maintenance_windows")
-      .select("site_id, started_at, expires_at, cancelled_at, duration_hours")
+      .select("site_id, started_at, expires_at, cancelled_at, duration_hours, excluded_at")
       .eq("site_id", siteId).lt("started_at", to)
       .order("started_at", { ascending: true }).range(a, b), FETCH_CAP),
   ]);

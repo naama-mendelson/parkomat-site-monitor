@@ -543,7 +543,19 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
       longestPlannedHours: hrs(longestPlannedMs),
       manualWindows: windows.length,               // חלונות שהופעלו ידנית מהדשבורד
       cancelledWindows: windows.filter((w) => w.cancelled_at).length,
-      recentWindows: windows.slice(0, 5).map((w) => ({
+      // ============================================================
+      // ⚠️ ממיינים כאן ולא סומכים על הקורא
+      // ============================================================
+      // `slice(0,5)` לקח את סדר הקורא — ושתי הזרועות ממיינות הפוך:
+      // השרת ב-`ORDER BY started_at DESC`, והזרוע הישירה ב-ascending.
+      // כלומר במצב הישיר, שהוא מה שרץ היום, הפאנל "חלונות תחזוקה
+      // אחרונים" הציג את החמישה **הישנים ביותר**.
+      //
+      // ⚠️ ו-parity-insights לא יכול לתפוס את זה: שתי זרועותיו שולפות
+      // חלונות בלי ORDER BY בכלל, כך שהן הסכימו על סדר שרירותי.
+      recentWindows: [...windows]
+        .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0))
+        .slice(0, 5).map((w) => ({
         setBy: w.set_by_name,
         reason: w.reason,
         startedAt: w.started_at,

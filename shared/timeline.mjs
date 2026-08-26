@@ -204,7 +204,23 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
     maintBySite.get(siteId).push({ start, end });
   };
   for (const s of states) if (s.status === "maintenance") pushMaint(s.site_id, s.started_at, s.ended_at);
-  for (const w of maint) pushMaint(w.site_id, w.started_at, w.cancelled_at || w.expires_at);
+  // ============================================================
+  // ⚠️ חלון שסומן כניסוי אינו קיים — גם כאן, לא רק במדדים
+  // ============================================================
+  // `wasInMaintenanceMem` ב-executive.mjs מדלג עליו במפורש: "חלון
+  // שסומן כניסוי אינו קיים לצורך המדד". כאן הבדיקה חסרה, והתוצאה
+  // הפוכה ומסוכנת:
+  //
+  // ⚠️ המדדים מתחילים לספור את התקלות שבתוכו (אחוז הכשל עולה), בזמן
+  // ש-`isMaintError` עדיין מוחק את אותן שורות מהציר. הצ'יפ "תקלות"
+  // מראה 0 לצד כרטיס שמראה 3 — **והשורות נעלמות מהיומן בלי שום סימן
+  // ובלי מסנן שיכול להחזיר אותן.**
+  //
+  // כלומר לא רק אי-התאמה במספרים: מידע אמיתי נמחק מהמסך.
+  for (const w of maint) {
+    if (w.excluded_at) continue;
+    pushMaint(w.site_id, w.started_at, w.cancelled_at || w.expires_at);
+  }
   const inMaintenance = (ts, siteId) =>
     (maintBySite.get(siteId) || []).some((m) => m.start <= ts && (m.end === null || m.end >= ts));
 

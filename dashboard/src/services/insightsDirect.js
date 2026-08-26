@@ -52,7 +52,7 @@ export async function fetchInsightsDirect(code, { from, to }) {
     pageAll((a, b) => scoped(
       supabase
         .from("operations")
-        .select("site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at")
+        .select("site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at, excluded_at")
         .gte("occurred_at", from).lt("occurred_at", to)
         .order("occurred_at", { ascending: true })
         .range(a, b)
@@ -61,7 +61,12 @@ export async function fetchInsightsDirect(code, { from, to }) {
     pageAll((a, b) => scoped(
       supabase
         .from("status_history")
-        .select("site_id, status, started_at, ended_at")
+        // ⚠️ **COALESCE ועמודות הסימון — שניהם חסרו.** זרוע השרת
+        // (queries.js:1146) עושה COALESCE(reclassified_to, status);
+        // כאן נשלף status גולמי, ולכן תקלה שסווגה מחדש כתחזוקה עדיין
+        // נספרת כתקלה בדפדפן ולא נספרת בשרת. אותה מחלקה בדיוק שתוקנה
+        // ב-executiveDirect — התובנות פשוט לא תוקנו יחד איתה.
+        .select("site_id, status, started_at, ended_at, excluded_at, reclassified_to")
         // חפיפה, לא הכלה — ראה ההסבר למעלה.
         .lt("started_at", to)
         .or(`ended_at.is.null,ended_at.gt.${from}`)
@@ -72,7 +77,7 @@ export async function fetchInsightsDirect(code, { from, to }) {
     pageAll((a, b) => scoped(
       supabase
         .from("maintenance_windows")
-        .select("set_by_name, reason, started_at, duration_hours, cancelled_at")
+        .select("set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at")
         .gte("started_at", from).lt("started_at", to)
         .order("started_at", { ascending: true })
         .range(a, b)

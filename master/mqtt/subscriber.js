@@ -198,7 +198,21 @@ client.on("reconnect", () => {
 
 client.on("close", () => {
   connected = false;
-  disconnectedSince = Date.now();
+
+  // ============================================================
+  // ⚠️ רק בפעם הראשונה — אחרת הניתוק לעולם לא "מזדקן"
+  // ============================================================
+  // mqtt.js פולט `close` **בכל ניסיון חיבור מחדש**, וה-reconnectPeriod
+  // הוא שנייה. איפוס החותם בכל אירוע פירושו ש-downForSeconds() לעולם
+  // לא עובר ~1 שנייה — גם בניתוק בן שעות.
+  //
+  // ⚠️ **וזה מבטל את בדיקת הבריאות לגמרי.** /health מחזיר 200 כי
+  // `mqttDown < MQTT_UNHEALTHY_AFTER_SECONDS` תמיד מתקיים, וה-HEALTHCHECK
+  // ב-Dockerfile בודק בדיוק statusCode===200. כלומר הקונטיינר מדווח
+  // "בריא" לאורך ניתוק אינסופי מ-HiveMQ — בדיוק כשל ה"מגיש דפים ואינו
+  // קולט" שהבדיקה נכתבה כדי לתפוס, ושארך 14.7 שעות ב-22.08.
+  if (disconnectedSince === null) disconnectedSince = Date.now();
+
   console.log("subscriber: החיבור נסגר");
 });
 
