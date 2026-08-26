@@ -663,68 +663,39 @@ async function getLastOperation(siteId) {
 }
 
 // חשב מדדים לאתר: errors (ללא אלה שבתחזוקה), operations, אחוז כשל
+// ============================================================
+// ⚠️ עוטף את statsFromData — ולא מיישם מחדש
+// ============================================================
+// כאן ישב **מימוש שלישי** של "כמה תקלות", עם שאילתות משלו וסיווג
+// בזיכרון — ובלי שניים מהכללים שכל שאר המערכת מחילה:
+//
+//   • **קיפול ריצוד** — `error → no_comm → error` נספר כשתי תקלות
+//   • **excluded_at** — מקטע שמנהל סימן כניסוי נספר בכל זאת
+//
+// ⚠️ והוא מאכלס בדיוק את המסכים שנמצאים זה ליד זה: הכרטיס ברשימה מגיע
+// מ-`site_stats` (SQL, מאומת ב-parity), ומסך האתר עצמו הגיע מכאן. נמדד
+// בייצור על שבוע אחד — חמישה אתרים מתוך חמישה-עשר סתרו את עצמם:
+//
+//     אוסישקין 58   כרטיס 10   מסך האתר 11
+//     סוקולוב 10    כרטיס  4   מסך האתר  5
+//     הנוטרים 7     כרטיס  0   מסך האתר  1
+//
+// ⚠️ **וגם הבוט ענה מכאן** (ai/tools.js), כלומר על "כמה תקלות היו
+// באוסישקין החודש" הוא החזיר 22 בזמן שהמסך הראה 18 — מספר סמכותי
+// שסותר את המסך שלידו.
+//
+// ⚠️ שער ה-parity לא יכול היה לתפוס: הוא משווה `site_stats` מול
+// `statsFromData`, ושניהם עשו את זה נכון. הפונקציה הזו פשוט לא הייתה בשער.
+//
+// אותה תרופה בדיוק כמו ב-getUptimeBreakdown שלמטה: עוטפים את ההגדרה
+// המשותפת. שלושה מימושים הפכו לשניים, ושניהם מאומתים זה מול זה.
 async function getSiteStats(siteId, { from = null, to = null } = {}) {
-  let opsSql = "SELECT COUNT(*) AS n FROM operations WHERE site_id = ? AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'";
-  const opsParams = [siteId];
-  if (from) { opsSql += " AND occurred_at >= ?"; opsParams.push(from); }
-  if (to)   { opsSql += " AND occurred_at < ?"; opsParams.push(to); }
-
-  let errSql = "SELECT started_at FROM status_history WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'error'";
-  const errParams = [siteId];
-  if (from) { errSql += " AND started_at >= ?"; errParams.push(from); }
-  if (to)   { errSql += " AND started_at < ?"; errParams.push(to); }
-
-  // כאן היה N+1 נוסף: wasInMaintenance רץ *לכל תקלה*, ושלח שתי שאילתות בכל
-  // פעם. אתר עם 50 תקלות בחודש = 100 סיבובי רשת רק כדי לסווג אותן.
-  // עכשיו שולפים את חלונות התחזוקה ואת מקטעי ה-maintenance פעם אחת,
-  // ומסווגים בזיכרון — בדיוק אותם תנאי גבול (ראה wasInMaintenanceMem).
-  const rangeFrom = from || "";                       // בלי טווח: כל ההיסטוריה
+  // בלי טווח: כל ההיסטוריה. loadRangeData מצפה לגבולות, ולכן ממפים.
+  const rangeFrom = from || "0000-01-01T00:00:00.000Z";
   const rangeTo = to || "9999-12-31T23:59:59.999Z";
 
-  // ארבע השאילתות בלתי-תלויות זו בזו — סיבוב רשת אחד במקום ארבעה בטור.
-  // (היו כאן: ops בטור, errorRows בטור, ואז Promise.all על שתי האחרונות.)
-  const [opsRow, errorRows, windows, maintSegs] = await Promise.all([
-    db.prepare(opsSql).get(...opsParams),
-    db.prepare(errSql).all(...errParams),
-
-    db.prepare(
-      `SELECT site_id, started_at, expires_at, cancelled_at
-       FROM maintenance_windows
-       WHERE site_id = ? AND started_at < ? AND COALESCE(cancelled_at, expires_at) >= ?`
-    ).all(siteId, rangeTo, rangeFrom),
-
-    db.prepare(
-      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at
-       FROM status_history
-       WHERE site_id = ? AND COALESCE(reclassified_to, status) = 'maintenance'
-         AND started_at < ? AND (ended_at IS NULL OR ended_at >= ?)`
-    ).all(siteId, rangeTo, rangeFrom),
-  ]);
-  const operations = opsRow.n;
-
-  const mem = {
-    windows: new Map([[siteId, windows]]),
-    segments: new Map([[siteId, maintSegs]]),
-  };
-
-  let errors = 0;
-  let errorsInMaintenance = 0;
-  for (const row of errorRows) {
-    if (wasInMaintenanceMem(mem, siteId, row.started_at)) {
-      errorsInMaintenance++;
-    } else {
-      errors++;
-    }
-  }
-
-  const failureRate = operations > 0 ? (errors / operations) * 100 : 0;
-
-  return {
-    operations,
-    errors,
-    errorsInMaintenance,
-    failureRate: Math.round(failureRate * 100) / 100,
-  };
+  const data = await loadRangeData([siteId], { from: rangeFrom, to: rangeTo });
+  return statsFromData(data, siteId, { from: rangeFrom, to: rangeTo });
 }
 
 // ===== צבירה לסיכום חודשי =====
@@ -1046,34 +1017,31 @@ async function getSiteAnalyticsData(siteId, { range, prev, granularity }) {
   return computeAnalytics(data, siteId, { range, prev, granularity });
 }
 
+// ============================================================
+// ⚠️ מימוש אחד לגרף, ולא שניים שנפרדו
+// ============================================================
+// כאן היו שלוש שאילתות עצמאיות **בלי אף אחד מהמסננים** שכל שאר המערכת
+// מחילה: בלי excluded_at, בלי החרגת תקלה בזמן תחזוקה, ובלי קיפול ריצוד.
+// computeAnalytics — שהוא הגרף שהמסך באמת מצייר — מחיל את שלושתם.
+//
+// ⚠️ נמדד: נמל דולי בחודש האחרון — הכרטיס 12 תקלות, הפונקציה הזו 13.
+// ההפרש הוא בדיוק התקלה שנפלה בתוך חלון תחזוקה שנפתח עליה בדיעבד.
+//
+// ⚠️ וההערה שמעל computeAnalytics אמרה "אותם מסננים בדיוק כמו השאילתות
+// של getPeriodBreakdown" — משפט שהיה נכון פעם והפך לשקר בלי שאיש שם לב.
+//
+// אף מסלול חי אינו קורא לה כרגע (routes.js מייבא ואינו משתמש), ולכן זו
+// לא הייתה תקלה על המסך — אלא מלכודת דרוכה למי שישתמש בה הבא. במקום
+// לשכפל את המסננים בפעם השלישית היא עוברת דרך אותו מסלול בדיוק.
 async function getPeriodBreakdown(siteId, { from, to, granularity }) {
-  // שלוש השאילתות בלתי-תלויות — במקביל, סיבוב רשת אחד במקום שלושה בטור.
-  // תחזוקה: כמה פעמים האתר נכנס למצב תחזוקה באותו יום/חודש — מקביל ל-errors
-  // (כניסות למצב), כדי שהיחידות בגרף יישארו אחידות.
-  const [opsRows, errRows, maintRows] = await Promise.all([
-    db.prepare(
-      `SELECT occurred_at FROM operations
-       WHERE site_id = ? AND occurred_at >= ? AND occurred_at < ?
-         AND is_anomaly = 0 AND superseded_by IS NULL AND start_end = 'end'`
-    ).all(siteId, from, to),
-
-    db.prepare(
-      `SELECT started_at FROM status_history
-       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND COALESCE(reclassified_to, status) = 'error'`
-    ).all(siteId, from, to),
-
-    db.prepare(
-      `SELECT started_at FROM status_history
-       WHERE site_id = ? AND started_at >= ? AND started_at < ? AND COALESCE(reclassified_to, status) = 'maintenance'`
-    ).all(siteId, from, to),
-  ]);
-
-  return buildPeriodSeries(
-    opsRows.map((r) => r.occurred_at),
-    errRows.map((r) => r.started_at),
-    maintRows.map((r) => r.started_at),
-    { from, to, granularity },
-  );
+  const data = await loadRangeData([siteId], { from, to });
+  return computeAnalytics(data, siteId, {
+    range: { from, to },
+    // ההשוואה אינה נחוצה כאן — הפונקציה מחזירה את הסדרה בלבד. טווח באורך
+    // אפס היה מייצר חלוקה באפס במגמה, ולכן משכפלים את הטווח.
+    prev: { from, to },
+    granularity,
+  }).chart;
 }
 
 /**
@@ -1195,11 +1163,13 @@ async function getSiteInsights(siteId, { from, to }) {
   // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
   // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
   // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
-  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול, לא אחריו: הוא לא קרה, ולכן
-  // הוא גם אינו מפריד בין שני מקטעים שכן קרו. בלי זה הוא נספר כאירוע השבתה
-  // נוסף — בזמן שהזמינות כבר התעלמה ממנו לגמרי.
-  const kept = segments.filter((s) => !s.excluded_at);
-  const counted = collapseSegmentsBySite(kept);
+  // ⚠️ **הקיפול קודם, הסינון אחריו.** מקטע שסומן כניסוי עדיין משתתף
+  // בקיפול הריצוד — `excluded_at` אומר "אל תספור את זה", לא "זה לא קרה",
+  // והבקר באמת שינה מצב. הסרתו מוקדם מזיזה את גבולות המקטעים של שכניו,
+  // כלומר הוצאה של תקלה אחת משנה את הספירה של אחרת. אותו סדר בדיוק כמו
+  // ב-statsFromData וב-site_stats.
+  const counted = collapseSegmentsBySite(segments).filter((s) => !s.excluded_at);
+  const kept = segments;
   const errorRows = counted.filter((s) => s.status === "error");
   const maintRows = counted.filter((s) => s.status === "maintenance");
 
@@ -1243,11 +1213,13 @@ async function getGlobalInsights({ from, to }) {
   // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
   // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
   // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
-  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול, לא אחריו: הוא לא קרה, ולכן
-  // הוא גם אינו מפריד בין שני מקטעים שכן קרו. בלי זה הוא נספר כאירוע השבתה
-  // נוסף — בזמן שהזמינות כבר התעלמה ממנו לגמרי.
-  const kept = segments.filter((s) => !s.excluded_at);
-  const counted = collapseSegmentsBySite(kept);
+  // ⚠️ **הקיפול קודם, הסינון אחריו.** מקטע שסומן כניסוי עדיין משתתף
+  // בקיפול הריצוד — `excluded_at` אומר "אל תספור את זה", לא "זה לא קרה",
+  // והבקר באמת שינה מצב. הסרתו מוקדם מזיזה את גבולות המקטעים של שכניו,
+  // כלומר הוצאה של תקלה אחת משנה את הספירה של אחרת. אותו סדר בדיוק כמו
+  // ב-statsFromData וב-site_stats.
+  const counted = collapseSegmentsBySite(segments).filter((s) => !s.excluded_at);
+  const kept = segments;
   const errorRows = counted.filter((s) => s.status === "error");
   const maintRows = counted.filter((s) => s.status === "maintenance");
 

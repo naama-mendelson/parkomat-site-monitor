@@ -861,16 +861,29 @@ export function computeAnalytics(data, siteId, { range, prev, granularity }) {
   // שאיננה נספרת. מהיום ה-ingestion ממילא לא רושם תקלות כאלה; זו הגנה על היסטוריה.
   // אותו קיפול ריצוד כמו ב-statsFromData — אחרת הגרף היה מציג 107 תקלות
   // בזמן שהמדד לצידו מציג אחת, ושני המספרים היו סותרים זה את זה.
-  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול: הוא לא קרה, ולכן הוא גם
-  // אינו מפריד בין שני מקטעים שכן קרו. uptimeFromData כבר מתעלם ממנו,
-  // והגרף המשיך לצייר עליו עמודת תקלה.
-  const counted = collapseNoCommFlicker(segs.filter((x) => !x.excluded_at));
+  // ============================================================
+  // ⚠️ הקיפול **קודם**, והסינון אחריו — סדר ולא סגנון
+  // ============================================================
+  // כאן ישב `collapseNoCommFlicker(segs.filter(x => !x.excluded_at))` —
+  // כלומר סינון לפני הקיפול, בדיוק ההפך ממה ש-statsFromData עושה שלוש
+  // מאות שורות מעל, שם זה מנומק במפורש:
+  //
+  //   "מקטע שהוצא עדיין משתתף בקיפול ריצוד הנתק כרגיל — הוא קרה, והוא
+  //    ההקשר שקובע אם המקטע שאחריו הוא המשך או תקלה חדשה."
+  //
+  // ⚠️ וזה ההבדל המהותי: `excluded_at` אומר **"אל תספור את זה"**, לא
+  // "זה לא קרה". הבקר באמת שינה מצב. הסרתו מוקדם מזיזה את גבולות
+  // המקטעים של שכניו — כלומר הוצאה של תקלה אחת משנה את הספירה של אחרת.
+  //
+  // ⚠️ ושער ה-parity אינו יכול לתפוס את זה: הוא משווה statsFromData מול
+  // site_stats, ושניהם עושים את זה נכון. הגרף אינו בשער.
+  const counted = collapseNoCommFlicker(segs);
   const errIso = counted
-    .filter((s) => s.status === "error" && inRange(s.started_at)
+    .filter((s) => !s.excluded_at && s.status === "error" && inRange(s.started_at)
       && !wasInMaintenanceMem(data, siteId, s.started_at))
     .map((s) => s.started_at);
   const maintIso = counted
-    .filter((s) => s.status === "maintenance" && inRange(s.started_at))
+    .filter((s) => !s.excluded_at && s.status === "maintenance" && inRange(s.started_at))
     .map((s) => s.started_at);
   // *מקטעי* התחזוקה (לא רק כניסות) — כדי לסמן בגרף ימים שהאתר היה בתחזוקה
   // מתמשכת, גם בלי כניסה חדשה באותו יום.

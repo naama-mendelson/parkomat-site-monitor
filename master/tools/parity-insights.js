@@ -185,8 +185,8 @@ async function viaServer(siteId, from, to) {
 }
 
 const build = ({ ops, segments, windows }, from, to) => {
-  const kept = segments.filter((s) => !s.excluded_at);
-  const counted = collapseSegmentsBySite(kept);
+  const counted = collapseSegmentsBySite(segments).filter((s) => !s.excluded_at);
+  const kept = segments;
   return computeInsights({
     ops,
     errorRows: counted.filter((s) => s.status === "error"),
