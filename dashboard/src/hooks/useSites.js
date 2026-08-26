@@ -1,5 +1,5 @@
 // hooks/useSites.js — שליפת וניהול רשימת כל האתרים
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 // ה-hook לא יודע מאיפה הנתונים מגיעים — dataSource מכריע, והמבנה זהה
 // בשני המסלולים. ראה services/dataSource.js לתוכנית ב'.
 import { fetchSitesList } from "../services/dataSource";
@@ -54,15 +54,36 @@ export function useSites() {
   // אמיתי: מי שבאמת מנותק יראה את ההודעה, רק שש שניות מאוחר יותר.
   const RETRY_DELAYS = [1500, 4000];
 
+  // ============================================================
+  // ⚠️ שתי שליפות במקביל — והישנה עלולה לנצח
+  // ============================================================
+  // loadSites נקראת מארבעה מקומות: הטעינה הראשונית, הרענון התקופתי
+  // (60ש'), `online`, ו-`visibilitychange`. עם עד שני ניסיונות חוזרים
+  // ובהשהיה של 5.5 שניות, קל מאוד ששתיים ירוצו יחד — למשל מחשב שהתעורר
+  // משינה מפעיל את שניהם ברצף.
+  //
+  // ⚠️ ואז מי שמסיים אחרון קובע, ולא מי שהתחיל אחרון: שליפה איטית שהחלה
+  // לפני השינוי דורסת את התוצאה החדשה. המסך חוזר למצב ישן **אחרי**
+  // שהראה את החדש, בלי שגיאה ובלי סימן, עד הרענון הבא.
+  //
+  // ⚠️ וגם `setError(null)` נדרס כך: שליפה ישנה שנכשלה מציבה הודעת
+  // שגיאה על מסך שכבר קיבל נתונים תקינים.
+  const seq = useRef(0);
+
   const loadSites = useCallback(async () => {
+    const mine = ++seq.current;
+    const stale = () => mine !== seq.current;
+
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
         const data = await fetchSitesList();
+        if (stale()) return;          // שליפה חדשה יותר כבר בדרך
         setSites(data);
         setError(null);
         setLoading(false);
         return;
       } catch (err) {
+        if (stale()) return;
         if (attempt === RETRY_DELAYS.length) {
           setError(humanError(err));
           setLoading(false);
