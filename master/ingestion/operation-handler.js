@@ -230,6 +230,15 @@ async function persistOperation(site, data, { occurredAt, receivedAt, reportedAt
         `[operation] ⛔ אתר ${site.code}: נפילת מונה חשודה (${cycleResult.last} → ${cycleResult.current}) — ` +
         `גבוה מדי לאתחול בקר. לא נוספו ${cycleResult.ignoredAmount} מחזורים; מונה מצטבר נשאר ${cycleResult.total}. ` +
         `בדוק את כתובת רגיסטר המונה בהגדרות הסוכן.`);
+    } else if (cycleResult.mode === "jump_suspect") {
+      // ⚠️ קפיצה שאינה אפשרית פיזית — הכיוון ההפוך של reset_suspect,
+      // ובדיוק אותו טיפול: לא הוספנו כלום (ניפוח cycle_total הוא קבוע
+      // ובלתי הפיך), והבסיס כן הוזז. 65535 הוא הערך שקריאת Modbus כושלת
+      // מחזירה, ולכן הוא החשוד הראשון.
+      console.error(
+        `[operation] ⛔ אתר ${site.code}: קפיצת מונה חשודה (${cycleResult.last} → ${cycleResult.current}) — ` +
+        `מהירה מדי מכדי להיות אמיתית. לא נוספו ${cycleResult.ignoredAmount} מחזורים; מונה מצטבר נשאר ${cycleResult.total}. ` +
+        `אם הערך הוא 65535 — זו כמעט תמיד קריאת Modbus שנכשלה.`);
     } else if (cycleResult.mode === "invalid") {
       console.error(
         `[operation] ⛔ אתר ${site.code}: מונה בקר פסול (${cycleResult.current}) — התעלמנו. ` +

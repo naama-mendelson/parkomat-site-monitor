@@ -93,7 +93,9 @@ export const LOG_FILTERS = {
 
   // כל שינויי המצב — **כולל** 'בפעולה'. היסטוריית מצבים שחסר בה המצב הנפוץ
   // ביותר אינה היסטוריית מצבים; כאן זה התוכן ולא הרעש.
-  status: (e) => e.kind === "status",
+  // ⚠️ `!e.excludedAt` גם כאן: מקטע שסומן כניסוי אינו נספר בשום מדד,
+  // ואין סיבה שדווקא המונה הזה יספור אותו. ראה ההסבר ליד 'תקלות'.
+  status: (e) => e.kind === "status" && !e.excludedAt,
 
   // ==========================================================
   // תחזוקה ותפעול תקלה — שני מסננים, ובלי חפיפה
@@ -173,11 +175,11 @@ export const LOG_FILTERS = {
   reclassified: (e) => Boolean(e.reclassifiedTo),
 
   // ניתוקים — אירוע תפעולי בפני עצמו, ובלוג המצרף הוא נבלע בין אלפי פעולות.
-  no_comm: (e) => e.kind === "status" && e.status === "no_comm",
+  no_comm: (e) => e.kind === "status" && e.status === "no_comm" && !e.excludedAt,
 
   // אותו כלל בדיוק כמו operation — רכבים, לא שורות.
-  entry: (e) => e.kind === "operation" && e.startEnd === "end" && e.entryExit === "entry",
-  exit:  (e) => e.kind === "operation" && e.startEnd === "end" && e.entryExit === "exit",
+  entry: (e) => e.kind === "operation" && e.startEnd === "end" && e.entryExit === "entry" && !e.excludedAt,
+  exit:  (e) => e.kind === "operation" && e.startEnd === "end" && e.entryExit === "exit" && !e.excludedAt,
 };
 
 // בונה את ציר הזמן המאוחד מהשורות שנשלפו (טהור) — משרת אתר בודד ומצרף כלל-אתרי.

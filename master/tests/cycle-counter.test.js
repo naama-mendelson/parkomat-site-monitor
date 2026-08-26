@@ -157,3 +157,72 @@ test("רגרסיה: המקטע האמיתי של אתר 2439 מתנהג בדיו
   }
   assert.equal(state.total, 54, "נתונים תקינים נספרים בדיוק כמו לפני השינוי");
 });
+
+
+// ============================================================
+// ⚠️ הכיוון שלא היה חסום — קפיצה שאינה אפשרית פיזית
+// ============================================================
+// כל ההגנה מפני ניפוח נכתבה כלפי **מטה** (אתחול בקר), והכיוון ההפוך היה
+// פתוח לגמרי: `current >= last` הוסיף את ההפרש, יהיה אשר יהיה.
+//
+// המונה הוא 16 ביט, וקריאת Modbus כושלת מחזירה בדרך כלל 65535 (כל הביטים
+// דלוקים). באתר שהמונה שלו 2,464 זה מוסיף 63,071 מחזורי בלאי בפעולה אחת —
+// קבוע ובלתי הפיך, כי cycle_total לעולם אינו מחושב מחדש.
+//
+// ⚠️ הגבול הוא **קצב ולא כמות**, כי פער אמיתי אחרי נתק ארוך הוא אלפים
+// ותקרה מוחלטת הייתה חוסמת אותו.
+const { MAX_CYCLES_PER_MINUTE, JUMP_FLOOR } = require("../db/cycle-rules");
+
+const at = (min) => new Date(Date.UTC(2026, 6, 26, 12, min, 0)).toISOString();
+
+test("⚠️ קריאה פגומה של 65535 אינה מנפחת את המונה", () => {
+  const d = decideCycleUpdate({
+    last: 2464, lastTs: at(0), total: 25, isNewSite: 0, current: 65535, occurredAt: at(5),
+  });
+  assert.equal(d.mode, "jump_suspect");
+  assert.equal(d.total, 25, "63,071 מחזורים מדומים נכנסו למונה");
+  assert.equal(d.ignoredAmount, 63071);
+
+  // ⚠️ הבסיס **כן** זז: אחרת בקר שבאמת קפץ היה מייצר קפיצה בכל הודעה,
+  // ותקוע בלוג לנצח.
+  assert.equal(d.nextLast, 65535);
+  assert.equal(d.write, true);
+});
+
+test("⚠️ פער לגיטימי אחרי נתק ארוך **אינו** נחסם", () => {
+  // יממה מנותקת, והבקר המשיך לעבוד. נמדד בייצור: הקפיצה האמיתית הגדולה
+  // ביותר היא +99 ליום.
+  const dayMin = 24 * 60;
+  const d = decideCycleUpdate({
+    last: 8547, lastTs: at(0), total: 500, isNewSite: 0,
+    current: 8547 + 400, occurredAt: at(dayMin),
+  });
+  assert.equal(d.mode, "normal", "פער אמיתי אחרי נתק נחסם בטעות");
+  assert.equal(d.total, 900);
+});
+
+test("שתי פעולות באותה שנייה — הרצפה מגינה עליהן", () => {
+  // בלי JUMP_FLOOR כל delta היה נחסם כשהזמן שביניהן אפס.
+  const d = decideCycleUpdate({
+    last: 100, lastTs: at(0), total: 10, isNewSite: 0,
+    current: 100 + JUMP_FLOOR, occurredAt: at(0),
+  });
+  assert.equal(d.mode, "normal");
+  assert.equal(d.total, 10 + JUMP_FLOOR);
+});
+
+test("בלי חותם קודם אין קצב — ההתנהגות נשארת כשהייתה", () => {
+  const d = decideCycleUpdate({
+    last: 100, lastTs: null, total: 10, isNewSite: 0, current: 60000, occurredAt: at(1),
+  });
+  assert.equal(d.mode, "normal", "נחסם למרות שאין ממה לחשב קצב");
+});
+
+test("הקצב הוא באמת המדד — אותו delta, שני פערי זמן", () => {
+  const args = { last: 100, lastTs: at(0), total: 0, isNewSite: 0, current: 400 };
+  // 300 מחזורים בדקה אחת — בלתי אפשרי.
+  assert.equal(decideCycleUpdate({ ...args, occurredAt: at(1) }).mode, "jump_suspect");
+  // אותם 300 על פני שעתיים — 2.5 לדקה, מתחת לתקרה.
+  assert.equal(decideCycleUpdate({ ...args, occurredAt: at(120) }).mode, "normal");
+  assert.ok(MAX_CYCLES_PER_MINUTE >= 3, "התקרה הודקה — פער אמיתי עלול להיחסם");
+});

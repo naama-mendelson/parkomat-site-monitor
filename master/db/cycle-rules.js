@@ -26,6 +26,31 @@
 // שמפגר מעט ניתן להסביר ולתקן; מונה שניפח את עצמו ב-1000 הוא שקר קבוע.
 const RESET_PLAUSIBLE_MAX = 100;
 
+// ============================================================
+// ⚠️ וגם הכיוון השני — קפיצה שאינה אפשרית פיזית
+// ============================================================
+// כל ההסבר שלמעלה נכון **בדיוק באותה מידה** כלפי מעלה, והכיוון הזה לא
+// היה חסום כלל: `current >= last` נכנס ל-'normal' ומוסיף את ההפרש, יהיה
+// אשר יהיה. המונה הוא 16 ביט, וקריאת Modbus כושלת מחזירה בדרך כלל 65535
+// (כל הביטים דלוקים). באתר שהמונה שלו 2,464 זה מוסיף **63,071 מחזורי
+// בלאי בפעולה אחת** — קבוע ובלתי הפיך, כי cycle_total לעולם אינו מחושב
+// מחדש מהנתונים הגולמיים.
+//
+// ⚠️ **תקרה מוחלטת לא הייתה עובדת.** הסוכן יכול להיות מנותק שבועות,
+// והמונה בבקר ממשיך לרוץ — פער לגיטימי אחרי נתק ארוך הוא אלפים. נמדד
+// בייצור: הקפיצה הגדולה ביותר האמיתית היא +99, כולן ביום שבו האיסוף
+// התחיל.
+//
+// לכן הגבול הוא **קצב ולא כמות**: מחזור במכונת חניה נמשך דקות (נמדד:
+// פעולות של 3–7 דקות). שלושה מחזורים לדקה הם פי כמה עשרות מהמציאות,
+// ולכן פער אמיתי אחרי נתק לעולם אינו נחסם — יום שלם מתיר 4,320 — בעוד
+// קריאה פגומה של 65535 אחרי חמש דקות נחסמת ב-15.
+const MAX_CYCLES_PER_MINUTE = 3;
+
+// ⚠️ רצפה, כי שתי פעולות יכולות להירשם באותה שנייה: בלעדיה כל delta
+// לגיטימי קטן היה נחסם כשהזמן שביניהן אפס.
+const JUMP_FLOOR = 10;
+
 /**
  * ההחלטה על מונה המחזורים.
  *
@@ -60,9 +85,33 @@ function decideCycleUpdate({ last, lastTs, total, isNewSite, current, occurredAt
   }
 
   if (current >= last) {
+    const delta = current - last;
+
+    // בלי חותם קודם אין קצב לחשב לפיו — נופלים להתנהגות הקודמת.
+    const elapsedMin = lastTs === null
+      ? null
+      : Math.max(0, (Date.parse(occurredAt) - Date.parse(lastTs)) / 60000);
+    const allowed = elapsedMin === null
+      ? Infinity
+      : Math.max(JUMP_FLOOR, Math.ceil(elapsedMin * MAX_CYCLES_PER_MINUTE));
+
+    if (delta > allowed) {
+      // ⚠️ **לא מוסיפים כלום, אבל מזיזים את הבסיס** — בדיוק כמו
+      // reset_suspect. אילו נשארנו על הבסיס הישן, בקר שבאמת קפץ (החלפת
+      // בקר, אתחול מונה כלפי מעלה) היה מייצר "קפיצה" בכל הודעה ותקוע
+      // בלוג לנצח. מהבסיס החדש הספירה ממשיכה נכון.
+      return {
+        mode: "jump_suspect",
+        total,
+        nextLast: current,
+        write: true,
+        ignoredAmount: delta,
+      };
+    }
+
     return {
       mode: "normal",
-      total: total + (current - last),
+      total: total + delta,
       nextLast: current,
       write: true,
       ignoredAmount: 0,
@@ -94,4 +143,4 @@ function decideCycleUpdate({ last, lastTs, total, isNewSite, current, occurredAt
   };
 }
 
-module.exports = { decideCycleUpdate, RESET_PLAUSIBLE_MAX };
+module.exports = { decideCycleUpdate, RESET_PLAUSIBLE_MAX, MAX_CYCLES_PER_MINUTE, JUMP_FLOOR };
