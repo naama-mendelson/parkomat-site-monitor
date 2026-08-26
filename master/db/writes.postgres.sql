@@ -1527,3 +1527,77 @@ $$;
 
 REVOKE ALL ON FUNCTION public.broadcast_reload() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.broadcast_reload() TO authenticated;
+
+-- ============================================================
+-- reply_to_field_report — תשובה בשיחה, לשני הכיוונים
+-- ============================================================
+-- ⚠️ **לא רק מנהלת.** מי שדיווח יכול לענות בחזרה — אחרת זו הודעה ולא
+-- שיחה, ומי ששאלו אותו "באיזה שער בדיוק?" לא יכול לענות.
+--
+-- ⚠️ אבל **רק בשיחה שלו**: הבדיקה היא בדיוק זו שב-RLS — מנהלת, או בעל
+-- הדיווח. בלעדיה כל מאומת היה יכול להשתחל לשיחה של אחר.
+CREATE OR REPLACE FUNCTION public.reply_to_field_report(
+  p_report_id bigint,
+  p_body      text
+)
+RETURNS TABLE (id bigint, created_at text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor  text;
+  v_user   integer;
+  v_body   text;
+  v_now    text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_id     bigint;
+  v_owner  integer;
+  v_name   text;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  v_user := app.current_app_user();
+
+  v_body := NULLIF(TRIM(COALESCE(p_body, '')), '');
+  IF v_body IS NULL OR length(v_body) < 1 THEN
+    RAISE EXCEPTION 'התשובה ריקה' USING ERRCODE = 'check_violation';
+  END IF;
+  IF length(v_body) > 2000 THEN
+    RAISE EXCEPTION 'התשובה ארוכה מדי (מעל 2000 תווים)' USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT r.reported_by_user_id INTO v_owner
+    FROM field_reports r WHERE r.id = p_report_id;
+  IF NOT FOUND THEN
+    -- ⚠️ PT404 ולא no_data_found: PostgREST ממפה P0002 ל-500, כלומר
+    -- "תקלת שרת" על מזהה שכבר נמחק.
+    RAISE EXCEPTION 'הדיווח לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+
+  IF NOT (app.is_manager() OR v_owner = v_user) THEN
+    RAISE EXCEPTION 'אפשר לענות רק בשיחה שלך' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- ⚠️ השם המוקלד נלקח **מהדיווח עצמו** כשהמשיב הוא בעל הדיווח: הוא כבר
+  -- אמר מי הוא, ואין סיבה לשאול שוב בכל הודעה.
+  SELECT r.reported_by_name INTO v_name
+    FROM field_reports r WHERE r.id = p_report_id AND r.reported_by_user_id = v_user;
+
+  INSERT INTO field_report_replies (report_id, body, author, author_name, created_at)
+  VALUES (p_report_id, v_body, v_actor, v_name, v_now)
+  RETURNING field_report_replies.id INTO v_id;
+
+  -- ⚠️ תשובה **פותחת מחדש** דיווח שנסגר: אם מישהו הוסיף פרט אחרי הסגירה,
+  -- הוא הולך לאיבוד בתיבה של "טופל".
+  UPDATE field_reports r
+     SET status = 'open', resolved_at = NULL, resolved_by = NULL
+   WHERE r.id = p_report_id AND r.status = 'done' AND NOT app.is_manager();
+
+  RETURN QUERY SELECT v_id, v_now;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reply_to_field_report(bigint, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.reply_to_field_report(bigint, text) TO authenticated;

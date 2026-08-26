@@ -163,6 +163,35 @@ export async function fetchFieldReports({ status = null, limit = 100 } = {}) {
   return rows.map((r) => ({ ...r, files: byReport.get(r.id) || [] }));
 }
 
+// ============================================================
+// השיחה — שני הכיוונים
+// ============================================================
+// ⚠️ הבקשה המקורית הייתה "סוג של צ'אט", והגרסה הראשונה בנתה רק כיוון
+// אחד. מי שדיווח לא ידע אם מישהו ראה, ולא היה לו למי לענות — וזה בדיוק
+// מה שגורם לאנשים להפסיק לכתוב.
+
+/** כל התשובות בשיחה. RLS היא הסינון — שיחה של מישהו אחר אינה מגיעה. */
+export async function fetchReplies(reportId) {
+  if (!isSupabaseConfigured) return [];
+  const { data, error } = await supabase
+    .from("field_report_replies")
+    .select("id, report_id, body, author, author_name, created_at")
+    .eq("report_id", reportId)
+    .order("id", { ascending: true });
+  if (error) throw new Error(messageFor(error));
+  return data || [];
+}
+
+/** תשובה בשיחה. מנהלת, או בעל הדיווח — נאכף ב-RPC, לא כאן. */
+export async function replyToReport(reportId, body) {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+  const { error } = await supabase.rpc("reply_to_field_report", {
+    p_report_id: reportId,
+    p_body: String(body ?? "").trim(),
+  });
+  if (error) throw new Error(messageFor(error));
+}
+
 /** ה-base64 של תמונה בודדת — נשלף רק כשפותחים אותה. */
 export async function fetchReportImage(fileId) {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");

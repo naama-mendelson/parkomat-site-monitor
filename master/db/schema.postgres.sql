@@ -744,3 +744,39 @@ END $$;
 -- ⚠️ REPLICA IDENTITY FULL — נמדד שהוא חובה גם ל-INSERT. ראה ההסבר
 -- המלא ליד events ב-functions.postgres.sql.
 ALTER TABLE field_reports REPLICA IDENTITY FULL;
+
+-- ============================================================
+-- field_report_replies — השיחה, ולא רק ההודעה
+-- ============================================================
+-- ⚠️ הבקשה המקורית הייתה "סוג של צ'אט", והגרסה הראשונה בנתה רק כיוון
+-- אחד: אנשים כותבים והמנהלת קוראת. מי שדיווח על דלת שמרעישה לא ידע אם
+-- מישהו ראה, אם זה טופל, ולא היה לו למי לענות — וזה בדיוק מה שגורם
+-- לאנשים להפסיק לכתוב.
+--
+-- ⚠️ שני הכיוונים באותה טבלה ולא שתיים: תשובה של המנהלת ותגובה של המדווח
+-- הן אותו דבר — שורה בשיחה. מי כתב נשמר ב-author, והמסך מציג לפי זה.
+CREATE TABLE IF NOT EXISTS field_report_replies (
+  id         BIGSERIAL PRIMARY KEY,
+  report_id  BIGINT NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  -- הזהות המאומתת. ⚠️ בשונה מהדיווח עצמו אין כאן שם מוקלד: מי שעונה
+  -- כבר בתוך שיחה שיש בה שם, והוספת שדה שני הייתה מבקשת אותו שוב בכל
+  -- הודעה.
+  author     TEXT NOT NULL,
+  author_name TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_replies_report
+  ON field_report_replies(report_id, id);
+
+-- ⚠️ בפרסום Realtime: המדווח צריך לדעת שענו לו **בלי לרענן**. אותו
+-- נימוק כמו הדחיפה של דיווח חדש למנהלת, ואותה הגנה — RLS מכבדת.
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.field_report_replies;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE field_report_replies REPLICA IDENTITY FULL;

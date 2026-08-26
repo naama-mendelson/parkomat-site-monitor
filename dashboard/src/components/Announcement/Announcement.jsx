@@ -156,13 +156,32 @@ export default function Announcement() {
           <div className="ann-badge ann-badge-report">דיווח חדש</div>
           <h2>{r.reported_by_name || r.reported_by}</h2>
           <p className="ann-body">{r.body}</p>
-          <button
-            className="ann-ok"
-            onClick={() => setReports((cur) => cur.slice(1))}
-            autoFocus
-          >
-            {reports.length > 1 ? `הבא (עוד ${reports.length - 1})` : "סגור"}
-          </button>
+          {/* ============================================================ */}
+          {/* ⚠️ פתח — כי חלון שמראה טקסט ואי אפשר לענות בו הוא מבוי סתום */}
+          {/* ============================================================ */}
+          {/* הגרסה הראשונה הציגה את הדיווח וזהו: אי אפשר היה לראות את    */}
+          {/* התמונות ואי אפשר היה להשיב. מי שקיבל התראה נאלץ לזכור לפתוח */}
+          {/* את התיבה בעצמו — כלומר ההתראה יצרה עבודה במקום לחסוך אותה.  */}
+          <div className="ann-actions">
+            <button
+              className="ann-ok ann-ok-ghost"
+              onClick={() => setReports((cur) => cur.slice(1))}
+            >
+              {reports.length > 1 ? `הבא (עוד ${reports.length - 1})` : 'סגור'}
+            </button>
+            <button
+              className="ann-ok"
+              autoFocus
+              onClick={() => {
+                // אירוע חלון ולא prop: הכפתור יושב ב-App והחלונית ב-Header,
+                // והשחלת callback בין שני עצים היא צימוד שאין בו צורך.
+                window.dispatchEvent(new CustomEvent('parkomat:open-reports'));
+                setReports((cur) => cur.slice(1));
+              }}
+            >
+              פתח והשב
+            </button>
+          </div>
         </div>
       </div>
     );

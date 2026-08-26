@@ -788,3 +788,23 @@ CREATE POLICY announcements_read ON announcements
   FOR SELECT TO authenticated USING (app.is_active_user());
 
 GRANT SELECT ON announcements TO authenticated;
+
+-- ============================================================
+-- field_report_replies — יורש את ההרשאה של הדיווח
+-- ============================================================
+-- ⚠️ בדיוק כמו התמונות: בלי ה-EXISTS הזה כל מאומת שינחש מזהה היה קורא
+-- שיחה שאינה שלו, והגבלת הדיווח עצמו הייתה חסרת ערך.
+ALTER TABLE field_report_replies ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS field_report_replies_read ON field_report_replies;
+CREATE POLICY field_report_replies_read ON field_report_replies
+  FOR SELECT TO authenticated
+  USING (
+    app.is_active_user()
+    AND EXISTS (
+      SELECT 1 FROM field_reports r
+       WHERE r.id = field_report_replies.report_id
+         AND (app.is_manager() OR r.reported_by_user_id = app.current_app_user())
+    )
+  );
+
+GRANT SELECT ON field_report_replies TO authenticated;

@@ -49,6 +49,15 @@ function Header({
   const [usersOpen, setUsersOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
 
+  // ⚠️ נפתח גם מהחלון הקופץ של דיווח חדש. אירוע חלון ולא prop: הרכיב
+  // שם יושב ב-App, וזה ב-Header — השחלת callback בין שני עצים היא צימוד
+  // שאין בו צורך.
+  useEffect(() => {
+    const open = () => setReportsOpen(true);
+    window.addEventListener('parkomat:open-reports', open);
+    return () => window.removeEventListener('parkomat:open-reports', open);
+  }, []);
+
   // ============================================================
   // ⚠️ בטלפון השדר תפס יותר מחצי המסך
   // ============================================================

@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   submitFieldReport, fetchFieldReports, fetchReportImage,
-  resolveFieldReport, MAX_FILES, MAX_BODY, MIN_NAME,
+  resolveFieldReport, fetchReplies, replyToReport, MAX_FILES, MAX_BODY, MIN_NAME,
 } from "../../services/fieldReportsDirect";
 import { useAuth } from "../../hooks/useAuth";
 import {
@@ -350,6 +350,9 @@ function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
   const [open, setOpen] = useState(false);
   const [images, setImages] = useState(null);   // null = טרם נשלפו
   const [busy, setBusy] = useState(false);
+  const [replies, setReplies] = useState(null); // null = טרם נשלפו
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
 
   // ============================================================
   // ⚠️ ה-base64 נשלף רק כשפותחים
@@ -370,6 +373,36 @@ function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
     })();
     return () => { cancelled = true; };
   }, [open, images, r.files, onError]);
+
+  // ⚠️ נשלפת בפתיחה ולא ברשימה: שיחה של עשר הודעות לכל דיווח היא
+  // מגה-בייטים בתיבה שאיש לא פתח.
+  const loadReplies = useCallback(async () => {
+    try {
+      setReplies(await fetchReplies(r.id));
+    } catch (e) {
+      onError(e.message);
+    }
+  }, [r.id, onError]);
+
+  useEffect(() => { if (open && replies === null) loadReplies(); },
+    [open, replies, loadReplies]);
+
+  async function sendReply() {
+    if (!draft.trim()) return;
+    setSending(true);
+    try {
+      await replyToReport(r.id, draft);
+      setDraft('');
+      await loadReplies();
+      // ⚠️ מרעננים גם את הרשימה: תשובה של המדווח פותחת מחדש דיווח
+      // שנסגר, והכרטיס צריך להראות את זה.
+      onChanged();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function markDone() {
     setBusy(true);
@@ -419,6 +452,40 @@ function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
                   ))}
             </div>
           )}
+
+          {/* ============================================================ */}
+          {/* השיחה — שני הכיוונים                                        */}
+          {/* ============================================================ */}
+          <div className="fr-thread">
+            {replies === null ? (
+              <span className="fr-empty">טוען…</span>
+            ) : replies.length === 0 ? null : (
+              replies.map((v) => (
+                <div key={v.id} className="fr-msg">
+                  <div className="fr-msg-who">
+                    {v.author_name || v.author}
+                    {v.author_name && <> ({v.author})</>}
+                    {' · '}{fmt(v.created_at)}
+                  </div>
+                  <div className="fr-msg-body">{v.body}</div>
+                </div>
+              ))
+            )}
+
+            {/* ⚠️ פתוח גם למדווח וגם למנהלת: מי ששאלו אותו באיזה שער
+                בדיוק — חייב להיות מסוגל לענות. ה-RPC אוכף שזו השיחה שלו. */}
+            <div className="fr-reply">
+              <textarea
+                rows={2}
+                value={draft}
+                placeholder="כתוב תשובה…"
+                onChange={(e) => setDraft(e.target.value)}
+              />
+              <button onClick={sendReply} disabled={sending || !draft.trim()}>
+                {sending ? 'שולח…' : 'שלח'}
+              </button>
+            </div>
+          </div>
 
           {done ? (
             <div className="fr-resolved">
