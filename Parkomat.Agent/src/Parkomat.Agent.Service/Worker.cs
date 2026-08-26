@@ -19,6 +19,13 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
 
     // כמה קריאות כושלות רצופות עד שמכריזים על תקלת PLC.
+    /// <summary>
+    /// התיאור שנשלח כשהבקר אינו נענה. **קבוע ולא נוסח חופשי** — השרת שומר
+    /// אותו כמות שהוא, וזה מה שמאפשר להפריד אחר כך בין השבתת מכונה לבין
+    /// ניתוק תקשורת. שינוי הנוסח שובר את ההפרדה רטרואקטיבית.
+    /// </summary>
+    internal const string PlcUnreachableFault = "אין תקשורת עם הבקר";
+
     private const int MaxConsecutiveFailures = 10;
 
     public Worker(ILogger<Worker> logger)
@@ -409,10 +416,30 @@ public class Worker : BackgroundService
                         "PLC unresponsive for {Count} reads — reporting error state.",
                         consecutiveFailures);
 
+                    // ============================================================
+                    // ⚠️ תקלה — אבל היא **אומרת** שהיא ניתוק מהבקר
+                    // ============================================================
+                    // המצב נשאר Error במכוון, ולא הוחלף ב-no_comm: אתר שאיננו
+                    // רואים הוא בעיה, ו-no_comm נמצא **מחוץ למשוואת הזמינות**
+                    // לגמרי — כלומר העברה לשם הייתה מעלימה את התקלה מהמדדים
+                    // במקום להסביר אותה. תקלה נשארת תקלה ונספרת.
+                    //
+                    // ⚠️ **מה שהיה חסר הוא התיאור.** עד כה שודר Error עירום,
+                    // ולכן על המסך הופיע "מושבת" בלי מילה — ואי אפשר היה
+                    // להבחין בין "המכונה נשברה" לבין "אין לנו קשר אליה".
+                    // נמדד בשרת: 12 מקטעי תקלה בשבוע בלי תיאור ובלי מעבר MODE
+                    // שנרשם, ובהם שלושה שנמשכו 210–230 דקות. שתי הסיבות
+                    // דורשות שתי פעולות שונות לגמרי, והמסך נתן להן שם אחד.
+                    //
+                    // ⚠️ מחרוזת קבועה ולא נוסח חופשי: השרת שומר אותה כמות
+                    // שהיא ב-fault_text, וזה מה שמאפשר לשאול אחר כך "כמה
+                    // מזמן ההשבתה היה בכלל ניתוק". נוסח שמשתנה בין גרסאות
+                    // הופך את השאלה הזו לבלתי אפשרית.
                     var errorState = new StateMessage
                     {
                         Timestamp = clock.UnixNow(),
-                        State = SiteState.Error
+                        State = SiteState.Error,
+                        FaultText = PlcUnreachableFault
                     };
 
                     if (await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(errorState, stoppingToken),
