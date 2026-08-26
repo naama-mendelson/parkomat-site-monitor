@@ -32,7 +32,9 @@
 // יש לה פורט ל-SQL (public.site_segments_collapsed) שמאומת ב-parity.
 // שני עותקים שלה בשני מודולים משותפים היו נפרדים בשינוי הראשון, ואז
 // הזמינות והתובנות היו סופרות תקלות אחרת.
-import { collapseNoCommFlicker } from "./insights.mjs";
+import { collapseNoCommFlicker, mergedWindows, coveredMs } from "./insights.mjs";
+// יצוא-מחדש: queries.js מייבא אותן מכאן זה מכבר.
+export { mergedWindows, coveredMs };
 
 export const AVAILABLE_STATUSES = ["ready", "operating"];   // זמין לשירות
 // ============================================================
@@ -121,8 +123,31 @@ export function siteTrend(current, previous) {
  */
 
 export function getBucketRanges({ from, to, granularity }) {
-  const byMonth = granularity === "month";
-  const byWeek = granularity === "week";
+  // ============================================================
+  // ⚠️ טווח ארוך מדי **מגס** את הרזולוציה, ולא נחתך בשקט
+  // ============================================================
+  // כאן הייתה תקרת דליים (MAX) שפשוט הפסיקה את הלולאה. הגרף נגמר באמצע
+  // הטווח, בלי סימן ובלי הודעה — טווח יומי בן שנתיים הציג 400 ימים
+  // וה-330 האחרונים נעלמו, כולל **התקלות שבהם**. הכותרת עדיין אמרה את
+  // הטווח המלא, ולכן זה נקרא כ"לא קרה כלום" ולא כ"לא הוצג".
+  //
+  // ⚠️ וזה נעשה נגיש בדיוק עכשיו: עד היום הרזולוציה נגזרה מאורך הטווח
+  // ולכן לעולם לא חרגה. משנכבד את בורר הרזולוציה (ראה resolveRange),
+  // "יומית" על טווח של שנתיים היא בחירה לגיטימית של המשתמשת.
+  //
+  // חיתוך הוא איבוד נתונים; היגסה היא אותם נתונים בעמודות רחבות יותר.
+  const spanDays = Math.max(1, (Date.parse(to) - Date.parse(from)) / 86400000);
+
+  let effective = granularity;
+  if (effective !== "month") {
+    if (effective === "week" && spanDays / 7 > 120) effective = "month";
+    else if (effective !== "week" && spanDays > 400) {
+      effective = spanDays / 7 > 120 ? "month" : "week";
+    }
+  }
+
+  const byMonth = effective === "month";
+  const byWeek = effective === "week";
 
   const keyOf = (d) => {
     const y = d.getFullYear();
@@ -140,7 +165,9 @@ export function getBucketRanges({ from, to, granularity }) {
   if (byMonth) cursor.setDate(1);
   if (byWeek) cursor.setDate(cursor.getDate() - cursor.getDay());   // אחורה עד יום ראשון
 
-  const MAX = byMonth ? 36 : byWeek ? 120 : 400;
+  // רשת ביטחון בלבד — אחרי ההגסה למעלה אף טווח סביר אינו מגיע לכאן.
+  // חודשי מכסה 100 שנה, ולכן גם הוא אינו נחתך בפועל.
+  const MAX = byMonth ? 1200 : byWeek ? 130 : 410;
 
   while (ranges.length < MAX) {
     const start = new Date(cursor);
@@ -193,33 +220,10 @@ export function getBucketRanges({ from, to, granularity }) {
 // את החישוב לחסין לכך.
 //
 // נחתך מראש לגבולות החלון הנמדד, כך שהספירה בהמשך היא חיתוך פשוט.
-export function mergedWindows(windows, windowStart, windowEnd) {
-  const spans = [];
-  for (const w of windows) {
-    const s = Math.max(Date.parse(w.started_at), windowStart);
-    const e = Math.min(Date.parse(w.cancelled_at || w.expires_at), windowEnd);
-    if (e > s) spans.push([s, e]);
-  }
-  spans.sort((a, b) => a[0] - b[0]);
+// ⚠️ mergedWindows ו-coveredMs עברו ל-insights.mjs ומיובאות משם. הן נחוצות
+// **בשני** המודולים, ו-executive כבר מייבא מ-insights — הכיוון ההפוך היה
+// יוצר מעגל, והעתקה הייתה יוצרת הגדרה שנייה לאותו כלל.
 
-  const merged = [];
-  for (const span of spans) {
-    const last = merged[merged.length - 1];
-    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
-    else merged.push([span[0], span[1]]);
-  }
-  return merged;
-}
-
-export function coveredMs(merged, start, end) {
-  let total = 0;
-  for (const [s, e] of merged) {
-    if (e <= start) continue;
-    if (s >= end) break;              // ממוינים — אין טעם להמשיך
-    total += Math.min(e, end) - Math.max(s, start);
-  }
-  return total;
-}
 
 // האם ברגע ts האתר היה בתחזוקה — גרסת הזיכרון של wasInMaintenance.
 //

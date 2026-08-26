@@ -1142,12 +1142,12 @@ async function getSiteInsights(siteId, { from, to }) {
     // *כל* המצבים, לא רק error/maintenance — חייבים גם את מקטעי ה-no_comm כדי
     // לזהות המשכיות (`X → no_comm → X`). ומיון כרונולוגי, כי הקיפול תלוי בסדר.
     db.prepare(
-      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at FROM status_history
+      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at, excluded_at FROM status_history
        WHERE site_id = ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)
        ORDER BY started_at ASC`
     ).all(siteId, to, from),
     db.prepare(
-      `SELECT set_by_name, reason, started_at, duration_hours, cancelled_at
+      `SELECT site_id, set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at
        FROM maintenance_windows
        WHERE site_id = ? AND started_at >= ? AND started_at < ?
        ORDER BY started_at DESC`
@@ -1156,11 +1156,17 @@ async function getSiteInsights(siteId, { from, to }) {
   // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
   // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
   // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
-  const counted = collapseSegmentsBySite(segments);
+  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול, לא אחריו: הוא לא קרה, ולכן
+  // הוא גם אינו מפריד בין שני מקטעים שכן קרו. בלי זה הוא נספר כאירוע השבתה
+  // נוסף — בזמן שהזמינות כבר התעלמה ממנו לגמרי.
+  const kept = segments.filter((s) => !s.excluded_at);
+  const counted = collapseSegmentsBySite(kept);
   const errorRows = counted.filter((s) => s.status === "error");
   const maintRows = counted.filter((s) => s.status === "maintenance");
 
-  return computeInsights({ ops, errorRows, maintRows, windows, from, to });
+  // allRows = המקטעים ה**גולמיים**, לפני הקיפול. computeInsights סופרת
+  // אירועים לפי המקופלים וסוכמת זמן לפי הגולמיים — ראה ההסבר שם.
+  return computeInsights({ ops, errorRows, maintRows, windows, from, to, allRows: kept });
 }
 
 // אותה סטטיסטיקה מעמיקה, אך מצרפת על *כל* האתרים (מנהל כללי → "כל האתרים").
@@ -1184,12 +1190,12 @@ async function getGlobalInsights({ from, to }) {
     // collapseSegmentsBySite; רשימה מעורבת הייתה מקפלת מקטעים של אתרים שונים
     // זה לתוך זה.
     db.prepare(
-      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at FROM status_history
+      `SELECT site_id, COALESCE(reclassified_to, status) AS status, started_at, ended_at, excluded_at FROM status_history
        WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
        ORDER BY site_id ASC, started_at ASC`
     ).all(to, from),
     db.prepare(
-      `SELECT s.site_name, w.set_by_name, w.reason, w.started_at, w.duration_hours, w.cancelled_at
+      `SELECT s.site_name, w.site_id, w.set_by_name, w.reason, w.started_at, w.duration_hours, w.cancelled_at, w.excluded_at
        FROM maintenance_windows w JOIN sites s ON w.site_id = s.id
        WHERE w.started_at >= ? AND w.started_at < ?
        ORDER BY w.started_at DESC`
@@ -1198,7 +1204,11 @@ async function getGlobalInsights({ from, to }) {
   // מקפלים ריצוד תקשורת לפני הספירה: `X → no_comm → X` הוא אירוע אחד.
   // הקיפול חייב לרוץ על *כל* המקטעים יחד ולפי סדר זמן — אי אפשר להחליט על
   // מקטע error בלי לראות את ה-no_comm ואת ה-error שלפניו.
-  const counted = collapseSegmentsBySite(segments);
+  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול, לא אחריו: הוא לא קרה, ולכן
+  // הוא גם אינו מפריד בין שני מקטעים שכן קרו. בלי זה הוא נספר כאירוע השבתה
+  // נוסף — בזמן שהזמינות כבר התעלמה ממנו לגמרי.
+  const kept = segments.filter((s) => !s.excluded_at);
+  const counted = collapseSegmentsBySite(kept);
   const errorRows = counted.filter((s) => s.status === "error");
   const maintRows = counted.filter((s) => s.status === "maintenance");
 
@@ -1208,7 +1218,7 @@ async function getGlobalInsights({ from, to }) {
   const nameRows = await db.prepare("SELECT id, site_name FROM sites").all();
   const siteNames = new Map(nameRows.map((r) => [r.id, r.site_name]));
 
-  return computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames });
+  return computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames, allRows: kept });
 }
 
 

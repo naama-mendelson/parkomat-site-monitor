@@ -23,7 +23,7 @@
 export const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 // חישוב טהור — מקבל שורות שכבר נשלפו, ולכן משרת גם אתר בודד וגם מצרף כלל-אתרי.
-export function computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames }) {
+export function computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames, allRows }) {
   // ⚠️ מפה של id → שם אתר, אופציונלית. במצב אתר בודד היא מיותרת (כל השורות
   // מאותו אתר) ולכן היא לא נדרשת — אבל במצרפת בלעדיה "כרטיס 4" מופיע חמש
   // פעמים בלי שום דרך להבדיל בין המופעים.
@@ -346,20 +346,125 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   //
   // ⚠️ הסכומים נשמרים: טופלו + התאוששו = אירועי השבתה, תמיד. זה פילוח ולא
   // מדד חדש, ו-totalDownMs אינו זז.
-  const maintStartSet = new Set(maintRows.map((m) => m.started_at));
+  // ============================================================
+  // ⚠️ הספירה מקופלת, המשך **אינו** אירוע חדש — אבל הזמן שלו קיים
+  // ============================================================
+  // errorRows/maintRows שמגיעים לכאן עברו collapseNoCommFlicker, שמפילה
+  // המשכים: ב-`error → no_comm → error` השני נעלם, כי זו אותה השבתה ולא
+  // שתיים. לספירת אירועים זה **נכון**.
+  //
+  // ⚠️ אבל הסכומים רצו על אותה רשימה מקוצצת, ולכן כל דקה של כל מקטע
+  // המשך פשוט **נמחקה מהמדד**. נמדד באתר אמיתי: 'זמן השבתה' הראה 0.50
+  // שעות, בעוד uptimeFromData().errorHours על אותו אתר ואותה תקופה נתן
+  // 1.92 — **אותו מסך, שני מספרים שונים לאותו דבר**, וזה שנראה טוב יותר
+  // הוא זה שהיה שגוי.
+  //
+  // הפתרון: מקבצים כל מקטע המשך אל האירוע שהוא ממשיך. המונה נשאר מספר
+  // האירועים המקופלים; המשך נספר בזמן, לא באירועים.
+  const rawOf = (status) => (allRows
+    ? allRows.filter((r) => r.status === status)
+    : (status === "error" ? errorRows : maintRows));
+
+  // כל מקטע גולמי מקבל את העוגן (המקטע המקופל) שהוא שייך לו: העוגן
+  // האחרון **באותו אתר** שהתחיל לא אחריו. אתר חיוני — במצרפת המקטעים של
+  // כל האתרים מעורבים ברשימה אחת.
+  const incidentsOf = (kept, all) => {
+    const anchorsBySite = new Map();
+    for (const k of kept) {
+      if (!anchorsBySite.has(k.site_id)) anchorsBySite.set(k.site_id, []);
+      anchorsBySite.get(k.site_id).push(k);
+    }
+    for (const list of anchorsBySite.values()) {
+      list.sort((x, y) => (x.started_at < y.started_at ? -1 : 1));
+    }
+
+    const groups = new Map();          // עוגן → מקטעים גולמיים
+    for (const k of kept) groups.set(k, []);
+
+    for (const row of all) {
+      const list = anchorsBySite.get(row.site_id);
+      if (!list) continue;             // מקטע שאין לו עוגן כלל — סונן לפני
+      let anchor = null;
+      for (const k of list) {
+        if (k.started_at <= row.started_at) anchor = k; else break;
+      }
+      if (anchor) groups.get(anchor).push(row);
+    }
+    return groups;
+  };
+
+  // ============================================================
+  // ⚠️ אותם שני כללים שהזמינות כבר מחילה — לא הגדרה חדשה
+  // ============================================================
+  // 'זמן השבתה' כאן סכם כל שנייה של כל מקטע error, בעוד
+  // uptimeFromData().errorHours מחיל שני חריגים שכבר הוכרעו:
+  //
+  //   1. **מקטע שסומן כניסוי** (excluded_at) אינו נמדד כלל — לא במונה
+  //      ולא במכנה. מישהו קבע שהוא לא קרה.
+  //   2. **חלון תחזוקה ידני מכסה** את מה שנפל בתוכו: הזמן הזה הוא
+  //      תחזוקה, לא השבתה. זו בדיוק הסיבה שהחלון קיים.
+  //
+  // ⚠️ בלי שניהם אותו מסך הראה שני מספרים לאותו דבר. נמדד: ז'בוטינסקי
+  // 35.01 מול 29.84, אוסישקין 12.25 מול 10.00, נמל דולי 8.18 מול 7.00.
+  // וזה גרוע ממספר שגוי אחד — שני מספרים סבירים סותרים זה את זה, ואין
+  // דרך לדעת במי להאמין.
+  //
+  // ⚠️ הכיסוי נבנה **לכל אתר בנפרד**: במצרפת חלון באתר א' אינו מכסה
+  // דבר באתר ב'. חלון שסומן כניסוי אינו מכסה כלום — אותו כלל כמו שם.
+  const coverBySite = new Map();
+  for (const w of windows) {
+    if (w.excluded_at) continue;
+    if (!coverBySite.has(w.site_id)) coverBySite.set(w.site_id, []);
+    coverBySite.get(w.site_id).push(w);
+  }
+  for (const [id, list] of coverBySite) {
+    coverBySite.set(id, mergedWindows(
+      list.map((w) => ({
+        started_at: w.started_at,
+        cancelled_at: w.cancelled_at,
+        // חלונות מגיעים לכאן עם duration_hours ולא עם expires_at.
+        expires_at: new Date(
+          Date.parse(w.started_at) + (Number(w.duration_hours) || 0) * 3600000,
+        ).toISOString(),
+      })),
+      windowStart, windowEnd,
+    ));
+  }
+
+  // המשך של מקטע = הזמן שלו **בניכוי** מה שכוסה ומה שהוצא.
+  const clipped = (row) => {
+    if (row.excluded_at) return 0;
+    const s = Math.max(Date.parse(row.started_at), windowStart);
+    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
+    if (!(e > s)) return 0;
+    const cover = coverBySite.get(row.site_id);
+    return (e - s) - (cover ? coveredMs(cover, s, e) : 0);
+  };
+
+  const rawErrors = rawOf("error");
+  const rawMaint = rawOf("maintenance");
+
+  // ⚠️ החותמים נלקחים מהמקטעים ה**גולמיים**: התחזוקה שבאה לתקן נפתחת
+  // בדיוק כשהמקטע האחרון של האירוע נסגר — וזה בדרך כלל מקטע המשך, שלא
+  // היה ברשימה המקופלת. הזיהוי "תפעול תקלה" פספס בגללו אירועים שלמים.
+  const maintStartSet = new Set(rawMaint.map((m) => m.started_at));
+
+  const errIncidents = incidentsOf(errorRows, rawErrors);
 
   let totalDownMs = 0, longestMs = 0, longestAt = null;
   let handledCount = 0, handledMs = 0;
-  for (const row of errorRows) {
-    const s = Math.max(Date.parse(row.started_at), windowStart);
-    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    const span = e - s;
+  for (const [anchor, rows] of errIncidents) {
+    let span = 0;
+    for (const r of rows) span += clipped(r);
     if (span <= 0) continue;
     totalDownMs += span;
     if (span > longestMs) {
       longestMs = span;
-      longestAt = row.started_at;
+      longestAt = anchor.started_at;
     }
+    // סוף האירוע הוא סוף המקטע האחרון שלו, לא של העוגן.
+    const last = rows.reduce((a, b) => (a && a.started_at > b.started_at ? a : b), null);
+    const row = { ended_at: last ? last.ended_at : anchor.ended_at };
     // ⚠️ רק תקלה שנגמרה יכולה להיות "טופלה". תקלה פתוחה עדיין רצה, ואין
     // לה ended_at שאפשר להתאים אליו — היא תיספר כ"התאוששה" בטעות אם לא
     // נשמור על התנאי הזה.
@@ -394,7 +499,7 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   // ⚠️ **הזמן עצמו לא זז בין המדדים.** תפעול תקלה נשאר תחזוקה לצורך חישוב
   // הזמינות — הוא עדיין מוחרג מהמכנה, בדיוק כמו קודם. מה שהשתנה הוא רק
   // ה**סיווג** בתצוגה. שינוי הזמינות היה דורש parity חדש, וזו לא הבקשה.
-  const errorEnds = new Set(errorRows.map((e) => e.ended_at).filter(Boolean));
+  const errorEnds = new Set(rawErrors.map((e) => e.ended_at).filter(Boolean));
   const isRepair = (row) => errorEnds.has(row.started_at);
 
   let maintMs = 0, longestMaintMs = 0;
@@ -403,15 +508,15 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   // הכותרת "תחזוקה" גם כשהערך הגיע דווקא מתפעול תקלה — מספר נכון תחת שם
   // שגוי, וזה גרוע ממספר חסר.
   let longestRepairMs = 0, longestPlannedMs = 0;
-  for (const row of maintRows) {
-    const s = Math.max(Date.parse(row.started_at), windowStart);
-    const e = Math.min(row.ended_at ? Date.parse(row.ended_at) : windowEnd, windowEnd);
-    const span = e - s;
+  const maintIncidents = incidentsOf(maintRows, rawMaint);
+  for (const [anchor, rows] of maintIncidents) {
+    let span = 0;
+    for (const r of rows) span += clipped(r);
     if (span <= 0) continue;
     maintMs += span;
     if (span > longestMaintMs) longestMaintMs = span;
 
-    if (isRepair(row)) {
+    if (isRepair(anchor)) {
       repairMs += span; repairCount++;
       if (span > longestRepairMs) longestRepairMs = span;
     } else if (span > longestPlannedMs) {
@@ -565,6 +670,34 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
       })),
     },
   };
+}
+
+export function mergedWindows(windows, windowStart, windowEnd) {
+  const spans = [];
+  for (const w of windows) {
+    const s = Math.max(Date.parse(w.started_at), windowStart);
+    const e = Math.min(Date.parse(w.cancelled_at || w.expires_at), windowEnd);
+    if (e > s) spans.push([s, e]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+
+  const merged = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push([span[0], span[1]]);
+  }
+  return merged;
+}
+
+export function coveredMs(merged, start, end) {
+  let total = 0;
+  for (const [s, e] of merged) {
+    if (e <= start) continue;
+    if (s >= end) break;              // ממוינים — אין טעם להמשיך
+    total += Math.min(e, end) - Math.max(s, start);
+  }
+  return total;
 }
 
 export function collapseNoCommFlicker(segments) {

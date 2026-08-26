@@ -215,9 +215,27 @@ export async function fetchExecutive(params = {}) {
     : new Date().toISOString();
 
   const spanDays = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000));
-  const granularity = explicit
-    ? (spanDays > 90 ? "month" : "day")
-    : (period === "year" ? "month" : "day");
+
+  // ============================================================
+  // ⚠️ הרזולוציה שהמשתמשת בחרה — לא רק זו שנגזרת מאורך הטווח
+  // ============================================================
+  // params.granularity הגיע לכאן מ-FilterBar בכל בקשה, והשורות האלה
+  // דרסו אותו. כלומר **בורר הרזולוציה לא עשה כלום במצב הישיר** — שהוא
+  // המצב שרץ היום. בחרת "חודשית", קיבלת יומי, וכותרת המשנה אמרה "יומית"
+  // ליד בורר שמראה "חודשית".
+  //
+  // ⚠️ ובנוסף הגזירה עצמה נבדלה מהשרת: כאן 90 יום ⇐ חודשי, שם 31 ⇐ יומי
+  // ו-180 ⇐ שבועי, ו-"week" לא היה קיים כאן בכלל. אותו טווח בן 120 יום
+  // הצטייר בעמודות חודשיות בזרוע אחת ובשבועיות בשנייה. שתי הזרועות חייבות
+  // להחזיר את אותה צורה — זו כל התכלית של המתג.
+  const chosen = ["day", "week", "month"].includes(params.granularity)
+    ? params.granularity
+    : null;
+
+  const granularity = chosen
+    ?? (explicit
+      ? (spanDays <= 31 ? "day" : spanDays <= 180 ? "week" : "month")
+      : (period === "year" ? "month" : "day"));
 
   const filters = {
     siteCodes: params.sites, statuses: params.statuses,

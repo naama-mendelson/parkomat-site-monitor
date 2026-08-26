@@ -77,7 +77,9 @@ export async function fetchInsightsDirect(code, { from, to }) {
     pageAll((a, b) => scoped(
       supabase
         .from("maintenance_windows")
-        .select("set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at")
+        // ⚠️ site_id ו-excluded_at דרושים ל-computeInsights: הכיסוי נבנה לכל אתר
+        // בנפרד, וחלון שסומן כניסוי אינו מכסה דבר.
+        .select("site_id, set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at")
         .gte("started_at", from).lt("started_at", to)
         .order("started_at", { ascending: true })
         .range(a, b)
@@ -86,7 +88,11 @@ export async function fetchInsightsDirect(code, { from, to }) {
 
   // מקפלים ריצוד לפני הספירה, ולכל אתר בנפרד: רשימה מעורבת הייתה מקפלת
   // מקטעים של אתרים שונים זה לתוך זה.
-  const counted = collapseSegmentsBySite(segPage.rows);
+  // ⚠️ מקטע שסומן כניסוי מוסר **לפני** הקיפול, לא אחריו: הוא לא קרה, ולכן
+  // הוא גם אינו מפריד בין שני מקטעים שכן קרו. בלי זה הוא נספר כאירוע השבתה
+  // נוסף — בזמן שהזמינות כבר התעלמה ממנו לגמרי.
+  const kept = segPage.rows.filter((s) => !s.excluded_at);
+  const counted = collapseSegmentsBySite(kept);
 
   // ==========================================================
   // קטיעה חייבת להיאמר, לא להיבלע
@@ -105,6 +111,8 @@ export async function fetchInsightsDirect(code, { from, to }) {
       maintRows: counted.filter((s) => s.status === "maintenance"),
       windows: winPage.rows,
       from, to,
+      // ראה computeInsights: הזמן נסכם על המקטעים הגולמיים, לא המקופלים.
+      allRows: kept,
     }),
     capped: opsPage.capped || segPage.capped || winPage.capped,
   };

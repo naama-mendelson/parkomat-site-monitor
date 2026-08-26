@@ -146,13 +146,13 @@ async function viaPostgrest(siteCode, from, to) {
 
   // ⚠️ זהו הביטוי שהשער קיים בשבילו: חפיפה, לא הכלה.
   const segments = await rest(
-    `status_history?select=site_id,status,started_at,ended_at` +
+    `status_history?select=site_id,status,started_at,ended_at,excluded_at` +
     `&started_at=lt.${enc(to)}&or=(ended_at.is.null,ended_at.gt.${enc(from)})${siteFilter}` +
     `&order=started_at.asc&limit=20000`
   );
 
   const windows = await rest(
-    `maintenance_windows?select=set_by_name,reason,started_at,duration_hours,cancelled_at` +
+    `maintenance_windows?select=site_id,set_by_name,reason,started_at,duration_hours,cancelled_at,excluded_at` +
     `&started_at=gte.${enc(from)}&started_at=lt.${enc(to)}${siteFilter}&limit=20000`
   );
 
@@ -171,13 +171,13 @@ async function viaServer(siteId, from, to) {
   ).all(...p(from, to));
 
   const segments = await db.prepare(
-    `SELECT site_id, status, started_at, ended_at FROM status_history
+    `SELECT site_id, status, started_at, ended_at, excluded_at FROM status_history
       WHERE ${where}started_at < ? AND (ended_at IS NULL OR ended_at > ?)
       ORDER BY started_at ASC`
   ).all(...p(to, from));
 
   const windows = await db.prepare(
-    `SELECT set_by_name, reason, started_at, duration_hours, cancelled_at
+    `SELECT site_id, set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at
        FROM maintenance_windows WHERE ${where}started_at >= ? AND started_at < ?`
   ).all(...p(from, to));
 
@@ -185,12 +185,13 @@ async function viaServer(siteId, from, to) {
 }
 
 const build = ({ ops, segments, windows }, from, to) => {
-  const counted = collapseSegmentsBySite(segments);
+  const kept = segments.filter((s) => !s.excluded_at);
+  const counted = collapseSegmentsBySite(kept);
   return computeInsights({
     ops,
     errorRows: counted.filter((s) => s.status === "error"),
     maintRows: counted.filter((s) => s.status === "maintenance"),
-    windows, from, to,
+    windows, from, to, allRows: kept,
   });
 };
 

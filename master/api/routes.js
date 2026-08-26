@@ -1707,7 +1707,21 @@ const HE_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי
  * מחזיר null אם הטווח לא תקין — מי שקורא מחזיר 400.
  */
 function resolveRange(query) {
-  if (!query.from || !query.to) return resolvePeriod(query.period);
+  // ============================================================
+  // ⚠️ בורר הרזולוציה חל גם על תקופה בשם, לא רק על טווח חופשי
+  // ============================================================
+  // ה-<select> "רזולוציה" ב-FilterBar גלוי תמיד ונשלח תמיד, אבל הענף
+  // הזה החזיר את resolvePeriod כמות שהוא — ולתקופה בשם יש granularity
+  // קבוע משלה. כלומר בחירת "חודשית" על "30 הימים האחרונים" לא שינתה
+  // דבר: הגרף נשאר יומי, וכותרת המשנה המשיכה לומר "רזולוציה יומית"
+  // בזמן שהבורר הראה "חודשית" — פקד שסותר את המסך שהוא שולט בו.
+  const allowed = ["day", "week", "month"];
+  const chosen = allowed.includes(query.granularity) ? query.granularity : null;
+
+  if (!query.from || !query.to) {
+    const p = resolvePeriod(query.period);
+    return chosen ? { ...p, granularity: chosen } : p;
+  }
 
   // תאריכים מגיעים כ-YYYY-MM-DD (input type="date"). מפרשים בשעון מקומי,
   // ו-to כולל את היום כולו (עד סופו).
@@ -1727,10 +1741,8 @@ function resolveRange(query) {
   const days = Math.max(1, Math.round((to - from) / DAY_MS));
 
   // רזולוציה: מה שנבחר, אחרת נבחרת אוטומטית לפי אורך הטווח
-  const allowed = ["day", "week", "month"];
-  const granularity = allowed.includes(query.granularity)
-    ? query.granularity
-    : days <= 31 ? "day" : days <= 180 ? "week" : "month";
+  const granularity = chosen
+    ?? (days <= 31 ? "day" : days <= 180 ? "week" : "month");
 
   const fmt = (d) => `${d.getDate()} ב${HE_MONTHS[d.getMonth()]}`;
   const label =
