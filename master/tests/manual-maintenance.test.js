@@ -20,7 +20,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildTimeline } = require("../../shared/timeline.mjs");
+const { buildTimeline, buildActivityLog } = require("../../shared/timeline.mjs");
 
 const T = (h, m) => new Date(Date.UTC(2026, 7, 25, h, m, 0)).toISOString();
 const st = (status, h, m, end = null) =>
@@ -128,4 +128,33 @@ test("פעולות **אינן** מוסתרות — הן תנועת רכב אמי
   });
 
   assert.equal(tl.filter((e) => e.kind === "operation").length, 1);
+});
+
+
+// ============================================================
+// ⚠️ הצ'יפ חייב לרדת יחד עם השורות
+// ============================================================
+// זו הסכנה של כל הסתרה: הרשימה מתקצרת והמונה נשאר. הצ'יפ נראה סמכותי
+// ואינו קשור למה שנפתח — בדיוק הכשל שהופרדות המונים ל-SQL יצרה פעם,
+// והמעבר לספירה מהציר עצמו בא לתקן. הבדיקה מקבעת שזה עדיין נכון.
+test("⚠️ מונה שינויי המצב יורד יחד עם השורות שהוסתרו", () => {
+  const states = [
+    st("ready", 12, 0, T(13, 13)),
+    st("maintenance", 13, 13, T(13, 19)),   // בתוך החלון
+    st("ready", 13, 19, T(13, 20)),         // בתוך החלון
+    st("maintenance", 13, 20, T(13, 21)),   // בתוך החלון
+    st("ready", 13, 21, T(13, 46)),         // בתוך החלון
+    st("ready", 13, 46, null),              // בסיום — מוצג
+  ];
+
+  const log = buildActivityLog({
+    ops: [], states, maint: [WINDOW], suppressed: [], limit: 100, filter: "status",
+  });
+
+  assert.equal(log.total, log.entries.length, "המונה אינו שווה למספר השורות");
+  assert.equal(log.total, 2, "נספרו גם השורות שבתוך החלון");
+  assert.deepEqual(
+    log.entries.map((e) => e.at),
+    [T(13, 46), T(12, 0)],
+  );
 });
