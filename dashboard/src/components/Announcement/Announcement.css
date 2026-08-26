@@ -1,0 +1,82 @@
+/* components/Announcement/Announcement.css */
+
+.ann-backdrop {
+  position: fixed;
+  inset: 0;
+  /* כהה יותר משאר החלוניות — ההכרזה אמורה לעצור, לא להיפתח לצד. */
+  background: rgba(6, 14, 30, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* מעל כל השאר, כולל חלוניות אחרות שנשארו פתוחות מהפעם הקודמת. */
+  z-index: 200;
+  animation: ann-fade 0.25s ease-out;
+}
+
+.ann-card {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 30px 26px 24px;
+  text-align: center;
+  animation: ann-pop 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ann-badge {
+  display: inline-block;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  margin-bottom: 14px;
+}
+
+.ann-card h2 { margin: 0 0 12px; font-size: 1.3rem; }
+
+.ann-body {
+  /* הטקסט מגיע עם שורות ריקות שמפרידות בין הפסקאות — בלי זה הכול נדבק. */
+  white-space: pre-line;
+  margin: 0 0 22px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.ann-ok {
+  width: 100%;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ann-ok:disabled { opacity: 0.6; cursor: default; }
+
+@keyframes ann-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ann-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ⚠️ מי שהגדיר "פחות תנועה" מקבל את ההכרזה בלי האנימציה — היא קישוט,
+   והתוכן הוא העיקר. */
+@media (prefers-reduced-motion: reduce) {
+  .ann-backdrop, .ann-card { animation: none; }
+}
+
+@media (max-width: 600px) {
+  .ann-backdrop { padding: 14px; }
+  .ann-card { padding: 24px 18px 20px; }
+}

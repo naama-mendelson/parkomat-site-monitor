@@ -155,6 +155,7 @@ function ensureContext() {
       if (ctx && ctx.state === "running") {
         everRunning = true;
         flushPendingChime();
+        flushPendingAnnounce();
       }
       notify();
     };
@@ -202,6 +203,7 @@ export function unlockAudio(fromGesture = false) {
   if (c.state === "running") {
     everRunning = true;
     flushPendingChime();
+    flushPendingAnnounce();
     notify();
     return;
   }
@@ -217,7 +219,7 @@ export function unlockAudio(fromGesture = false) {
     if (result && typeof result.then === "function") {
       // ⚠️ מנקזים גם כאן ולא רק ב-onstatechange: לא כל דפדפן יורה את
       // האירוע, והפונקציה מוגנת בדגל ולכן קריאה כפולה אינה מצלצלת פעמיים.
-      result.then(() => { flushPendingChime(); notify(); }).catch(() => notify());
+      result.then(() => { flushPendingChime(); flushPendingAnnounce(); notify(); }).catch(() => notify());
     } else {
       notify();
     }
@@ -350,4 +352,67 @@ export function notifyFaults(codes) {
 export function testAlert() {
   unlockAudio(true);
   return playChime();
+}
+
+// ============================================================
+// צליל הכרזה — ארוך ומושך תשומת לב, ובכוונה שונה מהתקלה
+// ============================================================
+// ⚠️ **חייב להישמע אחרת מצליל התקלה.** מי שעובד מול המסך לומד את
+// הצליל תוך יום; הכרזה שנשמעת כמו תקלה תשלח אותו לחפש אתר מושבת.
+//
+// לכן: סולם **עולה** של שבע נקודות (התקלה היא שלוש), ~1.9 שניות במקום
+// חצי שנייה, ומסיים בקפיצה לאוקטבה — תבנית שנקראת "משהו חדש" ולא
+// "משהו נשבר".
+//
+// ⚠️ העוצמה נשארת באותו סדר גודל כמו התקלה (0.28–0.34). "מפתיע" הוא
+// **תבנית**, לא ווליום — צליל חזק יותר במסך בקרה פתוח כל היום הוא
+// הדרך המהירה ביותר לגרום למישהו להשתיק את הכל.
+const ANNOUNCE_NOTES = [
+  { freq: 523, dur: 0.22, gain: 0.26 },   // דו
+  { freq: 659, dur: 0.22, gain: 0.28 },   // מי
+  { freq: 784, dur: 0.22, gain: 0.30 },   // סול
+  { freq: 1047, dur: 0.30, gain: 0.32 },  // דו גבוה
+  { freq: 784, dur: 0.18, gain: 0.26 },
+  { freq: 1047, dur: 0.18, gain: 0.30 },
+  { freq: 1319, dur: 0.55, gain: 0.32 },  // מי גבוה — ההחזקה בסוף
+];
+const ANNOUNCE_GAP = 0.24;
+
+// ⚠️ אותו מנגנון השהיה כמו לתקלה, ומאותה סיבה: בטעינה טרייה הדפדפן
+// חוסם אודיו עד למחווה ראשונה. בלי התור ההכרזה הייתה **שקטה בדיוק**
+// אצל מי שרק פתח את הדשבורד — כלומר אצל כל מי שהיא מיועדת לו.
+let pendingAnnounce = false;
+
+function playAnnounce() {
+  const c = ensureContext();
+  if (!c || c.state !== "running") return false;
+
+  try {
+    const start = c.currentTime + 0.02;
+    ANNOUNCE_NOTES.forEach((note, i) => scheduleNote(c, start + i * ANNOUNCE_GAP, note));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * מנגן את צליל ההכרזה. אם האודיו עדיין חסום — נשמר וינוגן במחווה הראשונה.
+ *
+ * ⚠️ מחזיר true גם כשהוא רק נשמר בתור: הקורא אינו אמור לנסות שוב, אחרת
+ * ההכרזה תישמע פעמיים אצל מי שהאודיו שלו נפתח באמצע.
+ */
+export function announce() {
+  unlockAudio(false);
+  if (playAnnounce()) return true;
+  pendingAnnounce = true;
+  return true;
+}
+
+// ⚠️ מנוקז מאותם שני מקומות שמנקזים את צליל התקלה — onstatechange
+// ו-unlockAudio. לא כל דפדפן יורה את האירוע, ולכן שניהם.
+function flushPendingAnnounce() {
+  if (!pendingAnnounce) return;
+  pendingAnnounce = false;
+  playAnnounce();
 }

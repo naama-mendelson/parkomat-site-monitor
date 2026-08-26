@@ -44,6 +44,7 @@ export default function FieldReports({ sites = [], onClose }) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const fileInput = useRef(null);
+  const [dragging, setDragging] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,12 +60,49 @@ export default function FieldReports({ sites = [], onClose }) {
 
   useEffect(() => { if (tab === "inbox") load(); }, [tab, load]);
 
-  function pickFiles(e) {
-    const picked = Array.from(e.target.files || []);
+  // ⚠️ **נקודת כניסה אחת לשני המסלולים.** הכפתור והגרירה חייבים להתנהג
+  // זהה — חיתוך לארבע, וסינון למה שהוא באמת תמונה. שני מסלולים עם שני
+  // כללים הם בדיוק המקום שבו אחד מהם מפספס.
+  function addFiles(incoming) {
+    // ⚠️ סינון לפי type: גרירה מקבלת **כל** קובץ — PDF, תיקייה, קיצור
+    // דרך. ה-RPC ידחה אותם, אבל רק אחרי שהמשתמש כתב את כל הדיווח.
+    const images = Array.from(incoming || []).filter((f) => f.type?.startsWith("image/"));
+    if (images.length === 0) {
+      if ((incoming || []).length > 0) setError("אפשר לצרף תמונות בלבד");
+      return;
+    }
     // ⚠️ החיתוך כאן ולא רק ב-SQL: מי שבחר שש תמונות צריך לראות מיד שארבע
     // נכנסו, ולא לגלות את זה בשגיאה אחרי שלחץ "שלח".
-    setFiles((cur) => [...cur, ...picked].slice(0, MAX_FILES));
+    setFiles((cur) => [...cur, ...images].slice(0, MAX_FILES));
+  }
+
+  function pickFiles(e) {
+    addFiles(e.target.files);
     e.target.value = "";   // כדי שבחירה חוזרת של אותו קובץ תעבוד
+  }
+
+  // ============================================================
+  // ⚠️ הגרירה חייבת לבטל את ברירת המחדל **בשני** האירועים
+  // ============================================================
+  // בלי preventDefault ב-dragOver הדפדפן פשוט **פותח את התמונה** במקום
+  // הדף — כלומר המשתמש מאבד את כל מה שכתב. זה לא באג נדיר אלא
+  // התנהגות ברירת המחדל.
+  function onDragOver(e) {
+    e.preventDefault();
+    setDragging(true);
+  }
+
+  // ⚠️ relatedTarget: dragLeave נורה גם כשהעכבר עובר בין **ילדים** של
+  // אזור השחרור, וכיבוי הסימון שם גורם להבהוב מטורף תוך כדי גרירה.
+  function onDragLeave(e) {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragging(false);
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    setDragging(false);
+    addFiles(e.dataTransfer?.files);
   }
 
   async function send() {
@@ -156,7 +194,12 @@ export default function FieldReports({ sites = [], onClose }) {
               </select>
             </label>
 
-            <div className="fr-field">
+            <div
+              className={`fr-field fr-drop ${dragging ? "is-over" : ""}`}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+            >
               <span>צילומי מסך <em>(עד {MAX_FILES})</em></span>
               <input
                 ref={fileInput}
@@ -186,7 +229,9 @@ export default function FieldReports({ sites = [], onClose }) {
                 </ul>
               )}
               {/* ⚠️ נאמר מראש ולא כשגיאה אחרי השליחה. */}
-              <small>התמונות נדחסות לפני השליחה — לא צריך להקטין אותן.</small>
+              <small>
+                אפשר גם לגרור תמונות לכאן. הן נדחסות לפני השליחה — לא צריך להקטין אותן.
+              </small>
             </div>
 
             <div className="fr-actions">

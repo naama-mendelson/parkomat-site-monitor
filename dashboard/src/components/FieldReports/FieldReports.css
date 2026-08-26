@@ -92,6 +92,22 @@
   resize: vertical;
 }
 
+/* ============================================================
+   אזור השחרור
+   ============================================================
+   ⚠️ המסגרת קיימת **תמיד** ולא רק בזמן גרירה: אזור שחרור שנראה כמו
+   טקסט רגיל אינו מזמין אף אחד לגרור אליו, והתכונה נשארת בלתי ידועה.
+   מה שמשתנה בגרירה הוא הצבע והרקע, לא עצם קיום הגבול. */
+.fr-drop {
+  border: 1px dashed var(--border-color);
+  border-radius: 11px;
+  padding: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.fr-drop.is-over {
+  border-color: var(--accent, #2563eb);
+  background: rgba(37, 99, 235, 0.07);
+}
 .fr-attach {
   align-self: flex-start;
   padding: 8px 14px;

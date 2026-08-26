@@ -15,6 +15,7 @@ import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
+import Announcement from "./components/Announcement/Announcement";
 import { needsRefetch } from "./utils/sitePatch";
 import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
@@ -249,6 +250,11 @@ function App() {
         <StaleBanner />
         {renderView()}
       </main>
+
+      {/* ⚠️ **מחוץ ל-main ואחרון**, כדי שיישב מעל הכול — כולל חלוניות
+          שנשארו פתוחות מהפעם הקודמת. הרכיב מחזיר null כשאין מה להכריז,
+          ולכן הוא עולה תמיד ואינו עולה כלום כשאין הכרזה. */}
+      <Announcement />
 
       {/* הפאנל משותף — נפתח גם מהבקר וגם מטבלת מנהל הבקרה */}
       {/* ⚠️ **גם detail?.site ולא רק selectedCode.** השליפה אסינכרונית,

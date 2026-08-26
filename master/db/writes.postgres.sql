@@ -1330,3 +1330,68 @@ REVOKE ALL ON FUNCTION public.submit_field_report(text, text, jsonb, text) FROM 
 REVOKE ALL ON FUNCTION public.resolve_field_report(bigint, text)     FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.submit_field_report(text, text, jsonb, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.resolve_field_report(bigint, text)     TO authenticated;
+
+-- ============================================================
+-- mark_announcement_seen — "ראיתי, אל תציג לי שוב"
+-- ============================================================
+-- ⚠️ RPC ולא GRANT UPDATE על app_users. עם הרשאת עדכון ישירה הדפדפן היה
+-- יכול לשנות **כל** עמודה בשורה שלו — כולל `role` ו-`is_active`. אותו
+-- נימוק בדיוק שבגללו כל הכתיבות כאן הן פונקציות.
+CREATE OR REPLACE FUNCTION public.mark_announcement_seen(p_key text)
+RETURNS TABLE (seen text[])
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_user_id integer;
+  v_key     text;
+BEGIN
+  v_user_id := app.current_app_user();
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  v_key := NULLIF(TRIM(COALESCE(p_key, '')), '');
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'חסר מזהה הכרזה' USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- ⚠️ array_append לא היה מספיק: לחיצה כפולה (או שתי לשוניות פתוחות)
+  -- הייתה מוסיפה את אותו מפתח פעמיים והמערך היה גדל בלי גבול. התנאי
+  -- הופך את זה לאידמפוטנטי.
+  UPDATE app_users u
+     SET seen_announcements = array_append(u.seen_announcements, v_key)
+   WHERE u.id = v_user_id
+     AND NOT (v_key = ANY(u.seen_announcements));
+
+  RETURN QUERY
+    SELECT u.seen_announcements FROM app_users u WHERE u.id = v_user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.mark_announcement_seen(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mark_announcement_seen(text) TO authenticated;
+
+-- ============================================================
+-- my_seen_announcements — אילו הכרזות **אני** כבר ראיתי
+-- ============================================================
+-- ⚠️ RPC ולא `select` על app_users, ומלכודת מתועדת: הטבלה קריאה לכל
+-- מחובר, ולכן `.select("seen_announcements").limit(1)` מחזיר את **השורה
+-- הראשונה בטבלה** ולא את שלי. אותו באג בדיוק נפל פעם ב-pushDirect,
+-- והתסמין שם היה 403 שנראה כמו בעיית הרשאות ובאמת היה מזהה שגוי.
+--
+-- כאן התסמין היה גרוע יותר: אין שגיאה בכלל — ההכרזה פשוט לא הייתה קופצת
+-- למי שמישהו אחר כבר סגר אותה.
+CREATE OR REPLACE FUNCTION public.my_seen_announcements()
+RETURNS TABLE (seen text[])
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT u.seen_announcements FROM app_users u WHERE u.id = app.current_app_user();
+$$;
+
+REVOKE ALL ON FUNCTION public.my_seen_announcements() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.my_seen_announcements() TO authenticated;
