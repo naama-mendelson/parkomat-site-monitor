@@ -52,8 +52,15 @@ function Header({
   // ⚠️ נפתח גם מהחלון הקופץ של דיווח חדש. אירוע חלון ולא prop: הרכיב
   // שם יושב ב-App, וזה ב-Header — השחלת callback בין שני עצים היא צימוד
   // שאין בו צורך.
+  // ⚠️ המזהה נשמר, לא רק הפתיחה: בלעדיו החלונית נפתחת ולא ברור על
+  // מה בדיוק לחצו, ומי שיש לו עשרים דיווחים בתיבה מחפש אותו ביד.
+  const [openReportId, setOpenReportId] = useState(null);
+
   useEffect(() => {
-    const open = () => setReportsOpen(true);
+    const open = (e) => {
+      setOpenReportId(e?.detail?.reportId ?? null);
+      setReportsOpen(true);
+    };
     window.addEventListener('parkomat:open-reports', open);
     return () => window.removeEventListener('parkomat:open-reports', open);
   }, []);
@@ -233,7 +240,11 @@ function Header({
       {usersOpen && <UsersPanel onClose={() => setUsersOpen(false)} />}
 
       {reportsOpen && (
-        <FieldReports sites={sites} onClose={() => setReportsOpen(false)} />
+        <FieldReports
+          sites={sites}
+          openReportId={openReportId}
+          onClose={() => { setReportsOpen(false); setOpenReportId(null); }}
+        />
       )}
 
       {pushOpen && <PushSettings onClose={() => setPushOpen(false)} />}

@@ -92,3 +92,8 @@
   color: var(--text-muted);
   border: 1px solid var(--border-color);
 }
+
+/* ⚠️ מסמן שהכרטיס עצמו לחיץ. בלי הסימון הזה איש לא ינחש שאפשר ללחוץ
+   על הגוף, והכפתור נשאר הדרך היחידה — כלומר השיפור לא קיים בפועל. */
+.ann-card-click { cursor: pointer; transition: border-color 0.15s; }
+.ann-card-click:hover { border-color: var(--accent, #2563eb); }

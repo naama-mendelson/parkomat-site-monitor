@@ -150,35 +150,47 @@ export default function Announcement() {
   // "ראיתי את ההתראה", לא "טיפלתי" — ולכן אין כאן שום כתיבה למסד.
   if (!item && reports.length > 0) {
     const r = reports[0];
+
+    // ⚠️ פתיחה **וגם** הסרה מהתור: בלי ההסרה החלון היה נשאר פתוח מעל
+    // התיבה שהוא בדיוק פתח.
+    const openIt = () => {
+      // אירוע חלון ולא prop: הרכיב הזה יושב ב-App והחלונית ב-Header,
+      // והשחלת callback בין שני עצים היא צימוד שאין בו צורך.
+      window.dispatchEvent(new CustomEvent('parkomat:open-reports', {
+        detail: { reportId: r.id },
+      }));
+      setReports((cur) => cur.slice(1));
+    };
+
     return (
       <div className="ann-backdrop" role="dialog" aria-modal="true">
-        <div className="ann-card">
+        {/* ============================================================ */}
+        {/* ⚠️ כל החלון לחיץ — לא רק הכפתור                            */}
+        {/* ============================================================ */}
+        {/* מי שרואה הודעה קופצת לוחץ **עליה**, לא מחפש כפתור בתחתית.  */}
+        {/* הכפתור נשאר כי הוא אומר מה יקרה, והלחיצה על הגוף עושה את    */}
+        {/* אותו הדבר בדיוק.                                            */}
+        <div
+          className="ann-card ann-card-click"
+          role="button"
+          tabIndex={0}
+          onClick={openIt}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openIt(); }}
+        >
           <div className="ann-badge ann-badge-report">דיווח חדש</div>
           <h2>{r.reported_by_name || r.reported_by}</h2>
           <p className="ann-body">{r.body}</p>
-          {/* ============================================================ */}
-          {/* ⚠️ פתח — כי חלון שמראה טקסט ואי אפשר לענות בו הוא מבוי סתום */}
-          {/* ============================================================ */}
-          {/* הגרסה הראשונה הציגה את הדיווח וזהו: אי אפשר היה לראות את    */}
-          {/* התמונות ואי אפשר היה להשיב. מי שקיבל התראה נאלץ לזכור לפתוח */}
-          {/* את התיבה בעצמו — כלומר ההתראה יצרה עבודה במקום לחסוך אותה.  */}
+
           <div className="ann-actions">
+            {/* ⚠️ stopPropagation: בלעדיו "סגור" היה גם פותח, כי הלחיצה
+                מבעבעת אל הכרטיס שמעליו. */}
             <button
               className="ann-ok ann-ok-ghost"
-              onClick={() => setReports((cur) => cur.slice(1))}
+              onClick={(e) => { e.stopPropagation(); setReports((cur) => cur.slice(1)); }}
             >
               {reports.length > 1 ? `הבא (עוד ${reports.length - 1})` : 'סגור'}
             </button>
-            <button
-              className="ann-ok"
-              autoFocus
-              onClick={() => {
-                // אירוע חלון ולא prop: הכפתור יושב ב-App והחלונית ב-Header,
-                // והשחלת callback בין שני עצים היא צימוד שאין בו צורך.
-                window.dispatchEvent(new CustomEvent('parkomat:open-reports'));
-                setReports((cur) => cur.slice(1));
-              }}
-            >
+            <button className="ann-ok" autoFocus onClick={(e) => { e.stopPropagation(); openIt(); }}>
               פתח והשב
             </button>
           </div>

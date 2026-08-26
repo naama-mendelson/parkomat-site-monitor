@@ -60,11 +60,14 @@ const fmt = (iso) => {
   });
 };
 
-export default function FieldReports({ sites = [], onClose }) {
+export default function FieldReports({ sites = [], openReportId = null, onClose }) {
   const { user } = useAuth();
   const isManager = user?.role === "manager";
 
-  const [tab, setTab] = useState("new");     // new | inbox
+  // ⚠️ נפתח **בתיבה** כשהגיעו מהחלון הקופץ. הגרסה הקודמת נפתחה תמיד
+  // על לשונית הכתיבה, כלומר הכפתור שכתוב עליו "פתח והשב" הראה טופס
+  // ריק — בדיוק ההפך ממה שהוא הבטיח.
+  const [tab, setTab] = useState(openReportId ? "inbox" : "new");   // new | inbox | system
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -315,6 +318,7 @@ export default function FieldReports({ sites = [], onClose }) {
             loading={loading}
             isManager={isManager}
             sites={sites}
+            openReportId={openReportId}
             onChanged={load}
             onError={setError}
           />
@@ -324,7 +328,7 @@ export default function FieldReports({ sites = [], onClose }) {
   );
 }
 
-function ReportList({ reports, loading, isManager, sites, onChanged, onError }) {
+function ReportList({ reports, loading, isManager, sites, openReportId, onChanged, onError }) {
   if (loading) return <div className="fr-empty">טוען…</div>;
   if (reports.length === 0) return <div className="fr-empty">עדיין אין הודעות.</div>;
 
@@ -338,6 +342,7 @@ function ReportList({ reports, loading, isManager, sites, onChanged, onError }) 
           report={r}
           siteName={nameOf(r.site_id)}
           isManager={isManager}
+          defaultOpen={openReportId != null && Number(openReportId) === Number(r.id)}
           onChanged={onChanged}
           onError={onError}
         />
@@ -346,8 +351,10 @@ function ReportList({ reports, loading, isManager, sites, onChanged, onError }) 
   );
 }
 
-function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
-  const [open, setOpen] = useState(false);
+function ReportRow({ report: r, siteName, isManager, defaultOpen = false, onChanged, onError }) {
+  // ⚠️ נפתח מעצמו כשהגיעו אליו מההתראה — מי שלחץ על ההודעה רוצה
+  // לראות מה כתוב בה, לא לחפש אותה ברשימה וללחוץ שוב.
+  const [open, setOpen] = useState(defaultOpen);
   const [images, setImages] = useState(null);   // null = טרם נשלפו
   const [busy, setBusy] = useState(false);
   const [replies, setReplies] = useState(null); // null = טרם נשלפו
