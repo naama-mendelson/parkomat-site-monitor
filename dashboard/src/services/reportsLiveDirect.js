@@ -21,6 +21,19 @@ import { supabase, isSupabaseConfigured } from "./supabase";
  * @param onReport (row) => void — נקרא לכל דיווח חדש שהמנוי רשאי לראות
  * @returns פונקציית ניתוק
  */
+// ============================================================
+// ⚠️ דיווחי השערים אינם קופצים
+// ============================================================
+// `check-reports` יוצר דיווחים **אמיתיים בייצור** — זו כל הנקודה שלו,
+// כי רק פנייה אמיתית ל-PostgREST מוכיחה שההרשאות עובדות. אבל מרגע
+// שנוסף החלון הקופץ, כל הרצה שלו זרקה למנהלת חלון עם דיווח מדומה
+// בשם "יוסי מהתחזוקה". קרה שש פעמים ביום אחד.
+//
+// ⚠️ הסינון בתצוגה בלבד: השורה נשמרת, נספרת ומופיעה בתיבה כרגיל. מה
+// שנחסם הוא ההפרעה, לא הנתון — שער שמסתיר את מה שהוא כתב הופך את עצמו
+// לבלתי ניתן לאימות.
+const GATE_USER_RE = /^gatebot\d+/i;
+
 export function subscribeNewReports(onReport) {
   if (!isSupabaseConfigured) return () => {};
 
@@ -31,7 +44,9 @@ export function subscribeNewReports(onReport) {
       { event: "INSERT", schema: "public", table: "field_reports" },
       (msg) => {
         const row = msg?.new;
-        if (row) onReport(row);
+        if (!row) return;
+        if (GATE_USER_RE.test(row.reported_by || "")) return;
+        onReport(row);
       },
     )
     .subscribe();
