@@ -192,3 +192,58 @@ test("⚠️ מונה שינויי המצב יורד יחד עם השורות ש
     [T(13, 46), T(12, 0)],
   );
 });
+
+
+// ============================================================
+// ⚠️ תקלה שנרשמה אינה נמחקת — אותו מתקן, שתי תוצאות הפוכות
+// ============================================================
+// נמל דולי ונמל מסילות הם **אותו מתקן פיזי** עם שתי כניסות. ב-25.08
+// שניהם נפלו באותו אירוע, ורק אחד מהם הוצג:
+//
+//     דולי   תקלה 15:05:42 · חלון 15:00–16:00 (נפתח אחורה) ⇒ נעלמה
+//     מסילות תקלה 15:08:45 · חלון נפתח 15:09:58            ⇒ הוצגה
+//
+// ההבדל היחיד הוא **מתי מישהו לחץ על הכפתור ביחס לתקלה**. חלון אפשר
+// לפתוח אחורה (scheduleMaintenance מקבל זמן התחלה בעבר), ואז המקטע כבר
+// נכתב, אין לו שורת suppressedFault להחליף אותו, והסינון פשוט מחק אותו.
+//
+// הכלל: "לא נספרת" ו"לא קרתה" הם שני דברים שונים.
+test("⚠️ תקלה בתוך חלון מוצגת ומסומנת — לא נמחקת", () => {
+  const tl = buildTimeline({
+    ops: [],
+    states: [
+      st("error", 13, 5, T(13, 30)),      // בתוך החלון 12:46–13:46
+      st("ready", 13, 30, null),          // בתוך החלון — כן מוסתר
+    ],
+    maint: [WINDOW],
+  });
+
+  const errs = tl.filter((e) => e.kind === "status" && e.status === "error");
+  assert.equal(errs.length, 1, "התקלה נמחקה מהיומן");
+  assert.equal(errs[0].at, T(13, 5));
+  assert.equal(errs[0].suppressedByMaintenance, true, "התקלה לא סומנה");
+
+  // ומצב שקט בתוך החלון עדיין מוסתר — הכלל לא התהפך לגמרי.
+  assert.equal(tl.filter((e) => e.kind === "status" && e.status === "ready").length, 0);
+});
+
+
+test("⚠️ הצ'יפ 'תקלות' אינו סופר אותה — אחרת הוא סותר את אחוז הכשל", () => {
+  const args = {
+    ops: [],
+    states: [st("error", 13, 5, T(13, 30)), st("error", 14, 30, null)],
+    maint: [WINDOW], suppressed: [], limit: 100,
+  };
+
+  const asError = buildActivityLog({ ...args, filter: "error" });
+  assert.equal(asError.total, 1, "התקלה שבתוך התחזוקה נספרה ככשל");
+  assert.equal(asError.entries[0].at, T(14, 30));
+
+  // אבל היא כן נמצאת — תחת "בזמן תחזוקה", ותחת "הכל".
+  const asSuppressed = buildActivityLog({ ...args, filter: "suppressed" });
+  assert.equal(asSuppressed.total, 1);
+  assert.equal(asSuppressed.entries[0].at, T(13, 5));
+
+  const all = buildActivityLog({ ...args, filter: "all" });
+  assert.ok(all.entries.some((e) => e.at === T(13, 5)), "התקלה נעלמה מ'הכל'");
+});

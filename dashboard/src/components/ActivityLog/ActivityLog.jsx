@@ -290,7 +290,10 @@ function describe(e) {
   }
 
   // שינוי מצב
-  const c = STATUS_COLORS[e.status] || STATUS_COLORS.no_comm;
+  // ⚠️ תקלה בתוך חלון נצבעת בצבע תחזוקה — ראה ההסבר ליד ה-badge למטה.
+  const c = e.suppressedByMaintenance
+    ? STATUS_COLORS.maintenance
+    : (STATUS_COLORS[e.status] || STATUS_COLORS.no_comm);
   const label = STATUS_LABELS[e.status] || e.status;
   const dur = fmtDuration(e.durationSeconds);
   const isPlcMaintenance = e.status === "maintenance";
@@ -345,8 +348,21 @@ function describe(e) {
           ? `דווח מהבקר · ${e.endedAt ? `נמשך ${dur}` : "עדיין בתחזוקה"}`
           : e.endedAt ? `נמשך ${dur}` : "המצב הנוכחי",
     ].filter(Boolean).join(" · "),
-    badge: e.endedAt ? dur : "נוכחי",
-    badgeTone: e.status === "error" ? "danger" : isRepair ? "warn" : "normal",
+    // ============================================================
+    // ⚠️ תקלה שנרשמה ואז נכנסה לתוך חלון תחזוקה
+    // ============================================================
+    // חלון אפשר לפתוח **אחורה**, ואז מקטע התקלה כבר נכתב ואין לו שורת
+    // suppressedFault שתחליף אותו. עד עכשיו הציר פשוט מחק אותו — ואותו
+    // מתקן פיזי (נמל דולי ונמל מסילות, שתי כניסות) הראה שתי תוצאות
+    // הפוכות לאותו אירוע, לפי מתי מישהו לחץ על הכפתור.
+    //
+    // ⚠️ הצבע והתג זהים לשורת suppressedFault, כי המשמעות זהה: קרה,
+    // ואינו נספר. אדום היה קורא כאילו זו תקלה שנספרת ומי שסורק את הלוג
+    // היה סופר אותה — בדיוק הסתירה מול אחוז הכשל שהתג נועד למנוע.
+    badge: e.suppressedByMaintenance ? "אינה נספרת באחוז הכשל" : (e.endedAt ? dur : "נוכחי"),
+    badgeTone: e.suppressedByMaintenance
+      ? "normal"
+      : e.status === "error" ? "danger" : isRepair ? "warn" : "normal",
   };
 }
 
