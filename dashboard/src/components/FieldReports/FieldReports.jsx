@@ -17,6 +17,9 @@ import {
   resolveFieldReport, MAX_FILES, MAX_BODY, MIN_NAME,
 } from "../../services/fieldReportsDirect";
 import { useAuth } from "../../hooks/useAuth";
+import {
+  publishAnnouncement, fetchAnnouncements, MAX_TITLE, MAX_ANN_BODY,
+} from "../../services/announcementsDirect";
 import "./FieldReports.css";
 
 const fmt = (iso) => {
@@ -141,17 +144,28 @@ export default function FieldReports({ sites = [], onClose }) {
     <div className="fr-backdrop" onClick={onClose}>
       <div className="fr-panel" onClick={(e) => e.stopPropagation()}>
         <div className="fr-head">
-          <h2>דיווח מהשטח</h2>
+          {/* ⚠️ לא "דיווח תקלה": הכותרת היא מה שקובע מה אנשים מרגישים
+              שמותר לכתוב. מי שיש לו הערה על המסך לא ייכנס למקום שכתוב
+              עליו "תקלות". */}
+          <h2>כתבו לנו</h2>
           <button className="fr-x" onClick={onClose} aria-label="סגור">×</button>
         </div>
 
         <div className="fr-tabs">
           <button className={tab === "new" ? "on" : ""} onClick={() => setTab("new")}>
-            דיווח חדש
+            הודעה חדשה
           </button>
           <button className={tab === "inbox" ? "on" : ""} onClick={() => setTab("inbox")}>
-            {isManager ? "כל הדיווחים" : "הדיווחים שלי"}
+            {isManager ? "כל ההודעות" : "מה שכתבתי"}
           </button>
+          {/* ⚠️ רק למנהלת, ובכוונה גם בתצוגה: ה-RPC ידחה כל אחד אחר,
+              אבל לשונית שמובילה ל-403 היא הדרך האמינה לגרום למישהו
+              להסיק שהמערכת שבורה. ההגנה ב-SQL; זו רק כנות. */}
+          {isManager && (
+            <button className={tab === "system" ? "on" : ""} onClick={() => setTab("system")}>
+              הודעת מערכת
+            </button>
+          )}
         </div>
 
         {error && <div className="fr-error">{error}</div>}
@@ -173,12 +187,14 @@ export default function FieldReports({ sites = [], onClose }) {
             </label>
 
             <label className="fr-field">
-              <span>מה ראית?</span>
+              <span>מה רצית לומר?</span>
               <textarea
                 rows={6}
                 value={body}
                 maxLength={MAX_BODY}
-                placeholder="תאר את הממצא — מה קרה, איפה, ומתי"
+                // ⚠️ ה-placeholder הוא ההנחיה האמיתית. "תאר את הממצא"
+                // קורא כטופס תקלות, ומי שרצה להעיר על המסך סוגר את החלון.
+                placeholder="תקלה שראיתם, הערה על המסך, רעיון לשיפור — הכול מתקבל"
                 onChange={(e) => setBody(e.target.value)}
               />
               <small>{body.length} / {MAX_BODY}</small>
@@ -243,10 +259,12 @@ export default function FieldReports({ sites = [], onClose }) {
                 onClick={send}
                 disabled={busy || reporter.trim().length < MIN_NAME}
               >
-                {busy ? "שולח…" : "שלח דיווח"}
+                {busy ? "שולח…" : "שלח"}
               </button>
             </div>
           </div>
+        ) : tab === "system" ? (
+          <SystemMessage onError={setError} />
         ) : (
           <ReportList
             reports={reports}
@@ -264,7 +282,7 @@ export default function FieldReports({ sites = [], onClose }) {
 
 function ReportList({ reports, loading, isManager, sites, onChanged, onError }) {
   if (loading) return <div className="fr-empty">טוען…</div>;
-  if (reports.length === 0) return <div className="fr-empty">אין דיווחים.</div>;
+  if (reports.length === 0) return <div className="fr-empty">עדיין אין הודעות.</div>;
 
   const nameOf = (siteId) => sites.find((s) => s.id === siteId)?.site_name ?? null;
 
@@ -374,5 +392,106 @@ function ReportRow({ report: r, siteName, isManager, onChanged, onError }) {
         </div>
       )}
     </li>
+  );
+}
+
+
+// ============================================================
+// הודעת מערכת — כתיבה, ורשימת מה שנשלח
+// ============================================================
+// ⚠️ הרשימה כאן אינה קישוט: הודעה קופצת פעם אחת לכל אדם ואז נעלמת,
+// ולכן אחרי הפרסום אין שום מקום שבו אפשר לראות מה נכתב. בלי הרשימה
+// המנהלת שולחת הודעה ומאבדת אותה מיד.
+function SystemMessage({ onError }) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [past, setPast] = useState([]);
+
+  const load = useCallback(async () => {
+    try {
+      setPast(await fetchAnnouncements(20));
+    } catch (e) {
+      onError(e.message);
+    }
+  }, [onError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function publish() {
+    setBusy(true);
+    try {
+      await publishAnnouncement({ title, body });
+      setTitle("");
+      setBody("");
+      setSent(true);
+      setTimeout(() => setSent(false), 4000);
+      load();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const ready = title.trim().length >= 2 && body.trim().length >= 5;
+
+  return (
+    <div className="fr-form">
+      {/* ⚠️ נאמר לפני הכתיבה ולא אחריה: ההודעה עוצרת את כל מי שנכנס עד
+          שילחץ, וכדאי שמי שכותב אותה יידע את זה בזמן שהוא מנסח. */}
+      <div className="fr-note">
+        ההודעה תקפוץ פעם אחת לכל מי שייכנס לדשבורד, עם צליל, ולא תופיע לו שוב.
+      </div>
+
+      <label className="fr-field">
+        <span>כותרת</span>
+        <input
+          type="text"
+          value={title}
+          maxLength={MAX_TITLE}
+          placeholder="למשל: עדכון במסך התקלות"
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </label>
+
+      <label className="fr-field">
+        <span>תוכן</span>
+        <textarea
+          rows={7}
+          value={body}
+          maxLength={MAX_ANN_BODY}
+          placeholder="מה חשוב שכולם יידעו"
+          onChange={(e) => setBody(e.target.value)}
+        />
+        <small>{body.length} / {MAX_ANN_BODY}</small>
+      </label>
+
+      <div className="fr-actions">
+        {sent && <span className="fr-sent">פורסם ✓</span>}
+        <button className="fr-send" onClick={publish} disabled={busy || !ready}>
+          {busy ? "מפרסם…" : "פרסם לכולם"}
+        </button>
+      </div>
+
+      {past.length > 0 && (
+        <>
+          <div className="fr-field"><span>הודעות קודמות</span></div>
+          <ul className="fr-list">
+            {past.map((a) => (
+              <li key={a.id} className="fr-item">
+                <div className="fr-item-head" style={{ cursor: "default" }}>
+                  <div className="fr-item-main">
+                    <div className="fr-item-body"><strong>{a.title}</strong> — {a.body}</div>
+                    <div className="fr-item-meta">{a.created_by} · {fmt(a.created_at)}</div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }

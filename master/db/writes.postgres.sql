@@ -1395,3 +1395,87 @@ $$;
 
 REVOKE ALL ON FUNCTION public.my_seen_announcements() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.my_seen_announcements() TO authenticated;
+
+-- ============================================================
+-- publish_announcement — כתיבת הודעת מערכת
+-- ============================================================
+-- ⚠️ מנהלת בלבד. הודעה כזו קופצת על המסך של **כל** מי שנכנס ועוצרת אותו
+-- עד שילחץ — זו הפרעה יזומה לכל החברה, ולא הערה בפינה.
+CREATE OR REPLACE FUNCTION public.publish_announcement(
+  p_title text,
+  p_body  text
+)
+RETURNS TABLE (id bigint, created_at text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor text;
+  v_title text;
+  v_body  text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_id    bigint;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  v_title := NULLIF(TRIM(COALESCE(p_title, '')), '');
+  v_body  := NULLIF(TRIM(COALESCE(p_body, '')), '');
+  IF v_title IS NULL OR length(v_title) < 2 THEN
+    RAISE EXCEPTION 'חסרה כותרת להודעה' USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_body IS NULL OR length(v_body) < 5 THEN
+    RAISE EXCEPTION 'ההודעה קצרה מדי' USING ERRCODE = 'check_violation';
+  END IF;
+  IF length(v_title) > 120 OR length(v_body) > 2000 THEN
+    RAISE EXCEPTION 'ההודעה ארוכה מדי (כותרת עד 120, גוף עד 2000)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  INSERT INTO announcements (title, body, created_by, created_at)
+  VALUES (v_title, v_body, v_actor, v_now)
+  RETURNING announcements.id INTO v_id;
+
+  PERFORM app.record_write_audit(
+    'announcement.publish', v_actor, app.current_app_role(),
+    'announcement', v_id::text, jsonb_build_object('title', v_title));
+
+  RETURN QUERY SELECT v_id, v_now;
+END;
+$$;
+
+-- ============================================================
+-- pending_announcement — ההודעה הראשונה שטרם ראיתי
+-- ============================================================
+-- ⚠️ ההצטלבות נעשית **כאן ולא בדפדפן**. שליחת כל ההודעות ללקוח כדי שיסנן
+-- בעצמו הייתה עובדת, אבל היא גדלה בלי גבול עם השנים — ומי שנכנס בפעם
+-- הראשונה היה מקבל את כל ההיסטוריה ורואה אותה אחת-אחת.
+--
+-- ⚠️ ORDER BY id — הישנה ביותר קודם. מי שהיה בחופשה יראה אותן לפי הסדר
+-- שבו נכתבו, ולא מהסוף להתחלה.
+CREATE OR REPLACE FUNCTION public.pending_announcement()
+RETURNS TABLE (id bigint, title text, body text, created_at text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT a.id, a.title, a.body, a.created_at
+    FROM announcements a
+   WHERE a.is_active
+     AND NOT (a.id::text = ANY(
+           SELECT unnest(u.seen_announcements) FROM app_users u
+            WHERE u.id = app.current_app_user()))
+     AND app.current_app_user() IS NOT NULL
+   ORDER BY a.id
+   LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.publish_announcement(text, text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.pending_announcement()          FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.publish_announcement(text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.pending_announcement()           TO authenticated;

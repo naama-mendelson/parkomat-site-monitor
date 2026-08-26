@@ -72,6 +72,15 @@
 
 /* ===== הטופס ===== */
 
+.fr-note {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
 .fr-form { display: flex; flex-direction: column; gap: 16px; }
 
 .fr-field { display: flex; flex-direction: column; gap: 6px; }

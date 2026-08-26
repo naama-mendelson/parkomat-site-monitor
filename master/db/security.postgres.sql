@@ -774,3 +774,17 @@ CREATE POLICY field_report_files_read ON field_report_files
 
 GRANT SELECT ON field_reports      TO authenticated;
 GRANT SELECT ON field_report_files TO authenticated;
+
+-- ============================================================
+-- announcements — כולם קוראים, רק מנהלת כותבת
+-- ============================================================
+-- ⚠️ קריאה פתוחה לכל מאומת, ובכוונה: הודעת מערכת נועדה **להיקרא על ידי
+-- כולם**. זו אינה חריגה מהכלל אלא היישום שלו.
+--
+-- הכתיבה עוברת רק דרך `publish_announcement` — אין מדיניות INSERT.
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS announcements_read ON announcements;
+CREATE POLICY announcements_read ON announcements
+  FOR SELECT TO authenticated USING (app.is_active_user());
+
+GRANT SELECT ON announcements TO authenticated;

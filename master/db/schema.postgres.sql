@@ -698,3 +698,49 @@ ALTER TABLE field_reports
 -- מדיניות משלה היא מנגנון שלם עבור מחרוזת אחת.
 ALTER TABLE app_users
   ADD COLUMN IF NOT EXISTS seen_announcements TEXT[] NOT NULL DEFAULT '{}';
+
+-- ============================================================
+-- announcements — הודעות מערכת, שנכתבות מהמסך
+-- ============================================================
+-- ⚠️ **עברו מהקוד למסד, וזה שינוי מהותי.** בגרסה הראשונה ההכרזה הייתה
+-- מערך קבוע ב-JS: הכרזה חדשה = שינוי קוד + פריסה. זה היה מספיק להכרזה
+-- אחת, ומרגע שהמנהלת רוצה לכתוב בעצמה — הוא הופך את כל היכולת לבלתי
+-- שמישה, כי היא תלויה במפתח.
+--
+-- ⚠️ `seen_announcements` ממשיך להחזיק **מחרוזות**, ולא מזהים מספריים.
+-- זה מה שמאפשר למפתחות הישנים מהקוד ולמזהים החדשים לחיות זה לצד זה בלי
+-- מיגרציה של הנתונים: המזהה נשמר כ-text.
+CREATE TABLE IF NOT EXISTS announcements (
+  id         BIGSERIAL PRIMARY KEY,
+  title      TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  -- ⚠️ ביטול ולא מחיקה: מי שכבר ראה הודעה שנמחקה היה רואה אותה שוב אילו
+  -- מזהה כלשהו היה חוזר בשימוש, והשורה עצמה היא תיעוד של מה שנאמר.
+  is_active  BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_announcements_active
+  ON announcements(is_active, id);
+
+-- ============================================================
+-- ⚠️ דיווח חדש נדחף חי — למנהלת בלבד
+-- ============================================================
+-- אותה תבנית כמו `events`, ומאותה סיבה: Realtime מכבד RLS, ולכן מנוי
+-- מקבל שורה **רק אם המדיניות מתירה לו לקרוא אותה**. המדיניות על
+-- field_reports היא "מנהלת, או שלי" — כלומר הדחיפה מגיעה למי שצריך
+-- ולא לאחרים, בלי שום תנאי בקוד הלקוח.
+--
+-- ⚠️ ולכן **לא** דרך `events`: הטבלה ההיא קריאה לכל מאומת, ואירוע עליה
+-- היה מדליף לכולם שהוגש דיווח — ואת תוכנו, אם היה נכנס למטען.
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.field_reports;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;   -- כבר בפרסום
+  WHEN undefined_object THEN NULL;   -- אין פרסום (Postgres נקי, לא Supabase)
+END $$;
+
+-- ⚠️ REPLICA IDENTITY FULL — נמדד שהוא חובה גם ל-INSERT. ראה ההסבר
+-- המלא ליד events ב-functions.postgres.sql.
+ALTER TABLE field_reports REPLICA IDENTITY FULL;

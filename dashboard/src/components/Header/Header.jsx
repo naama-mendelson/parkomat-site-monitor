@@ -191,8 +191,8 @@ function Header({
           <button
             className="theme-toggle"
             onClick={() => setReportsOpen(true)}
-            title="דיווח מהשטח"
-            aria-label="דיווח מהשטח"
+            title="כתבו לנו — תקלה, הערה או רעיון"
+            aria-label="כתבו לנו"
           >
             📮
           </button>
