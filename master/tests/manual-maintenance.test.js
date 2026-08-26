@@ -116,19 +116,53 @@ test("חלון שבוטל מסתיר רק עד רגע הביטול", () => {
 });
 
 
-test("פעולות **אינן** מוסתרות — הן תנועת רכב אמיתית", () => {
-  // הסתרתן הייתה יוצרת סתירה חדשה בין הציר למונה הפעולות (statsFromData).
-  const tl = buildTimeline({
-    ops: [{
-      site_id: 1, occurred_at: T(13, 5), start_end: "start", entry_exit: "entry",
-      card_number: "4", is_anomaly: 0, superseded_by: null, state: "operating",
-    }],
-    states: [],
-    maint: [WINDOW],
+// ============================================================
+// ⚠️ הכלל הפוך ממה שהוא היה — וזו הכרעה, לא תיקון
+// ============================================================
+// בגרסה הראשונה הפעולות **נשארו** גלויות, בנימוק שהן תנועת רכב אמיתית
+// ושהסתרתן תיצור סתירה מול מונה הפעולות. הנימוק היה נכון בחציו והוחלף:
+//
+// בתחזוקה **מהבקר** ה-MODE הוא 0, ולכן הגלאי בסוכן אינו מייצר פעולות
+// כלל — אין שורות "יציאת רכב" בזמן תחזוקה, נקודה. "כמו תחזוקה מהבקר"
+// שמשאיר פעולות גלויות נכון רק לחצי מהשורות.
+//
+// והסתירה מול המונה נפתרה בכיוון השני: `opsOf` ב-executive.mjs מחיל את
+// אותו כלל על המדדים, ולכן הכרטיס והצ'יפ יורדים יחד.
+//
+// ⚠️ נמדד לפני האימוץ: 6 פעולות מתוך 6,194 (0.1%).
+test("⚠️ פעולות בתוך חלון ידני מוסתרות — כמו תחזוקה מהבקר", () => {
+  const op = (h, m) => ({
+    site_id: 1, occurred_at: T(h, m), start_end: "end", entry_exit: "exit",
+    card_number: "9", is_anomaly: 0, superseded_by: null, state: "operating",
   });
 
-  assert.equal(tl.filter((e) => e.kind === "operation").length, 1);
+  const tl = buildTimeline({
+    ops: [op(12, 30), op(13, 5), op(13, 46), op(14, 0)],
+    states: [],
+    maint: [WINDOW],                       // 12:46 → 13:46
+  });
+
+  const at = tl.filter((e) => e.kind === "operation").map((e) => e.at);
+  assert.deepEqual(at, [T(14, 0), T(13, 46), T(12, 30)],
+    "פעולה בתוך החלון עדיין מוצגת");
 });
+
+
+test("⚠️ והמונה יורד איתן — אחרת הצ'יפ סותר את הרשימה", () => {
+  const op = (h, m) => ({
+    site_id: 1, occurred_at: T(h, m), start_end: "end", entry_exit: "exit",
+    card_number: "9", is_anomaly: 0, superseded_by: null, state: "operating",
+  });
+
+  const log = buildActivityLog({
+    ops: [op(12, 30), op(13, 5), op(13, 30), op(14, 0)],
+    states: [], maint: [WINDOW], suppressed: [], limit: 100, filter: "operation",
+  });
+
+  assert.equal(log.total, log.entries.length);
+  assert.equal(log.total, 2, "נספרו גם הפעולות שבתוך החלון");
+});
+
 
 
 // ============================================================

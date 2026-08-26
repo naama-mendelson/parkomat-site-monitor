@@ -453,6 +453,37 @@ COMMENT ON FUNCTION public.site_segments_collapsed(integer[], text, text) IS
 -- **אחוז כשל = תקלות ÷ פעולות**, ולא מ-cycle_total. אתר ותיק עם מונה
 -- מכונה של מיליון ועם 500 פעולות נמדדות ו-5 תקלות הוא 1%, לא 0.0005%.
 -- אפס פעולות מחזיר 0 ולא חלוקה באפס.
+-- ============================================================
+-- ⚠️ פעולה בתוך חלון תחזוקה ידני אינה שירות
+-- ============================================================
+-- בתחזוקה **מהבקר** ה-MODE הוא 0, ולכן הגלאי בסוכן אינו מייצר פעולות
+-- כלל — אין מה לספור. חלון ידני לא עשה כלום מזה: הבקר המשיך להזיז
+-- רכבים והפעולות נספרו כשירות רגיל.
+--
+-- ההכרעה: חלון ידני מתנהג בדיוק כמו תחזוקה מהבקר. מה שקרה בתוכו הוא
+-- בדיקה, לא שירות — עקבי עם מה שכבר הוכרע לתקלות (מושמטות ונרשמות
+-- ב-suppressed_faults) ולזמן (הכיסוי הופך אותו לתחזוקה).
+--
+-- ⚠️ **חייבת להישאר זהה ל-opsOf ב-shared/executive.mjs.** שער ה-parity
+-- משווה את שתיהן; הוא תפס בדיוק את ההבדל הזה כשה-JS השתנה לבדו.
+--
+-- ⚠️ גבול חצי-פתוח (< end): פעולה ברגע שהחלון נגמר היא כבר שירות.
+-- ⚠️ חלון שסומן כניסוי אינו מכסה דבר — אותו כלל כמו בכל שאר המקומות.
+CREATE OR REPLACE FUNCTION app.op_served(p_site_id integer, p_occurred_at text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT NOT EXISTS (
+    SELECT 1 FROM public.maintenance_windows w
+     WHERE w.site_id = p_site_id
+       AND w.excluded_at IS NULL
+       AND p_occurred_at >= w.started_at
+       AND p_occurred_at <  COALESCE(w.cancelled_at, w.expires_at)
+  );
+$$;
+
 CREATE OR REPLACE FUNCTION public.site_stats(
   p_site_ids integer[],
   p_from     text,
@@ -479,6 +510,8 @@ WITH ops AS (
      AND o.start_end = 'end'
      -- מעבר פיזי אחד = פעולה אחת: ניסיון שנקטע והוחלף אינו נספר שוב
      AND o.superseded_by IS NULL
+     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served
+     AND app.op_served(o.site_id, o.occurred_at)
      -- לקסיקוגרפי על TEXT — idx_operations_site_time נשאר בשימוש
      AND o.occurred_at >= p_from
      AND o.occurred_at < p_to
@@ -1046,6 +1079,8 @@ ops AS (
     FROM operations o
    WHERE o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
      AND o.occurred_at >= p_from AND o.occurred_at < p_to
+     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served
+     AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY o.site_id
 ),
 -- המונה נמדד על **כל** הפעולות: בלאי מכני, לא ספירת חניות.

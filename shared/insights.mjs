@@ -23,7 +23,53 @@
 export const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 // חישוב טהור — מקבל שורות שכבר נשלפו, ולכן משרת גם אתר בודד וגם מצרף כלל-אתרי.
-export function computeInsights({ ops, errorRows, maintRows, windows, from, to, siteNames, allRows }) {
+export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, from, to, siteNames, allRows }) {
+  let ops = opsIn;
+
+  // ⚠️ גבולות הטווח מוגדרים כאן ולא למטה: coverBySite נבנה מיד אחריהם
+  // ומשתמש בהם. בסדר הקודם זו הייתה שגיאת TDZ שהייתה מתפוצצת רק כשיש
+  // חלון תחזוקה בטווח — כלומר בדיוק במקרה שהקוד נכתב בשבילו.
+  const nowMs = Date.now();
+  const windowStart = Date.parse(from);
+  const windowEnd = Math.min(Date.parse(to), nowMs);
+
+  // ============================================================
+  // ⚠️ כיסוי חלונות התחזוקה — נבנה **ראשון**, כי הפעולות תלויות בו
+  // ============================================================
+  // הגוש הזה ישב פעם למטה, ליד חישוב זמן ההשבתה. משנוסף עליו גם סינון
+  // הפעולות הוא היה חייב לעלות: לולאת הספירה (כרטיסים, שעות, ימים)
+  // רצה הרבה לפניו, ולכן הסינון היה מגיע **אחרי** שהכול כבר נספר —
+  // כלומר לא עושה כלום, בשקט, ובלי שאף בדיקה תיפול.
+  const coverBySite = new Map();
+  for (const w of windows) {
+    if (w.excluded_at) continue;
+    if (!coverBySite.has(w.site_id)) coverBySite.set(w.site_id, []);
+    coverBySite.get(w.site_id).push(w);
+  }
+  for (const [id, list] of coverBySite) {
+    coverBySite.set(id, mergedWindows(
+      list.map((w) => ({
+        started_at: w.started_at,
+        cancelled_at: w.cancelled_at,
+        // חלונות מגיעים לכאן עם duration_hours ולא עם expires_at.
+        expires_at: new Date(
+          Date.parse(w.started_at) + (Number(w.duration_hours) || 0) * 3600000,
+        ).toISOString(),
+      })),
+      windowStart, windowEnd,
+    ));
+  }
+
+  // ⚠️ **ופעולה בתוך חלון אינה נספרת כלל** — כמו תחזוקה מהבקר, שבה ה-MODE
+  // הוא 0 ולכן הסוכן אינו מייצר פעולות מלכתחילה. אותו כלל בדיוק כמו
+  // `opsOf` ב-executive.mjs ו-`servedOps` בציר; שלושתם חייבים להסכים,
+  // אחרת 'סך הפעולות' בכרטיס, בצ'יפ ובלוח התובנות ייתנו שלושה מספרים.
+  const opCovered = (ts, siteId) => {
+    const cover = coverBySite.get(siteId);
+    return cover ? coveredMs(cover, Date.parse(ts), Date.parse(ts) + 1) > 0 : false;
+  };
+  ops = ops.filter((o) => !opCovered(o.occurred_at, o.site_id));
+
   // ⚠️ מפה של id → שם אתר, אופציונלית. במצב אתר בודד היא מיותרת (כל השורות
   // מאותו אתר) ולכן היא לא נדרשת — אבל במצרפת בלעדיה "כרטיס 4" מופיע חמש
   // פעמים בלי שום דרך להבדיל בין המופעים.
@@ -319,9 +365,6 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   };
 
   // ===== השבתות (מקטעי error בטווח) — errorRows נשלף למעלה במקביל =====
-  const nowMs = Date.now();
-  const windowStart = Date.parse(from);
-  const windowEnd = Math.min(Date.parse(to), nowMs);
 
   // ============================================================
   // השבתה שהסתיימה בטיפול אינה כמו השבתה שנפתרה מעצמה
@@ -411,25 +454,6 @@ export function computeInsights({ ops, errorRows, maintRows, windows, from, to, 
   //
   // ⚠️ הכיסוי נבנה **לכל אתר בנפרד**: במצרפת חלון באתר א' אינו מכסה
   // דבר באתר ב'. חלון שסומן כניסוי אינו מכסה כלום — אותו כלל כמו שם.
-  const coverBySite = new Map();
-  for (const w of windows) {
-    if (w.excluded_at) continue;
-    if (!coverBySite.has(w.site_id)) coverBySite.set(w.site_id, []);
-    coverBySite.get(w.site_id).push(w);
-  }
-  for (const [id, list] of coverBySite) {
-    coverBySite.set(id, mergedWindows(
-      list.map((w) => ({
-        started_at: w.started_at,
-        cancelled_at: w.cancelled_at,
-        // חלונות מגיעים לכאן עם duration_hours ולא עם expires_at.
-        expires_at: new Date(
-          Date.parse(w.started_at) + (Number(w.duration_hours) || 0) * 3600000,
-        ).toISOString(),
-      })),
-      windowStart, windowEnd,
-    ));
-  }
 
   // המשך של מקטע = הזמן שלו **בניכוי** מה שכוסה ומה שהוצא.
   const clipped = (row) => {

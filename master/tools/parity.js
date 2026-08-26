@@ -693,11 +693,32 @@ const STATS_CASES = [
     expect: { operations: 1, errors: 1, errors_in_maintenance: 0, failure_rate: 100 },
   },
   {
+    // ⚠️ **operations: 0 ולא 1** — והשינוי הזה הוא הכרעה, לא תיקון.
+    // בתחזוקה מהבקר ה-MODE הוא 0 ולכן אין פעולות כלל; חלון ידני מתנהג
+    // עכשיו אותו דבר, ולכן פעולה בתוך החלון אינה שירות ואינה נספרת.
+    // ראה app.op_served ב-SQL ו-opsOf ב-shared/executive.mjs.
     name: "תקלה בתוך חלון תחזוקה ידני — מוחרגת",
     segments: (f) => [{ status: "error", started_at: iso(f + 2 * H), ended_at: iso(f + 3 * H) }],
     windows: (f) => [{ started_at: iso(f + 1 * H), expires_at: iso(f + 5 * H), cancelled_at: null }],
     ops: (f) => [{ occurred_at: iso(f + 1 * H), start_end: "end", is_anomaly: 0 }],
-    expect: { operations: 1, errors: 0, errors_in_maintenance: 1, failure_rate: 0 },
+    expect: { operations: 0, errors: 0, errors_in_maintenance: 1, failure_rate: 0 },
+  },
+  {
+    // ⚠️ הגבול חצי-פתוח: פעולה **ברגע** שהחלון נגמר היא כבר שירות.
+    // בלי זה כל חלון היה בולע גם את הפעולה הראשונה שאחריו.
+    name: "פעולה בדיוק בסיום החלון — נספרת",
+    segments: () => [],
+    windows: (f) => [{ started_at: iso(f + 1 * H), expires_at: iso(f + 2 * H), cancelled_at: null }],
+    ops: (f) => [{ occurred_at: iso(f + 2 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 0, failure_rate: 0 },
+  },
+  {
+    // ⚠️ חלון שסומן כניסוי אינו מכסה דבר — גם לא פעולות.
+    name: "פעולה בתוך חלון שסומן כניסוי — נספרת",
+    segments: () => [],
+    windows: (f) => [{ started_at: iso(f + 1 * H), expires_at: iso(f + 5 * H), cancelled_at: null, excluded_at: iso(f + 6 * H) }],
+    ops: (f) => [{ occurred_at: iso(f + 2 * H), start_end: "end", is_anomaly: 0 }],
+    expect: { operations: 1, errors: 0, errors_in_maintenance: 0, failure_rate: 0 },
   },
   {
     name: "תקלה בתוך מקטע תחזוקה של ה-PLC — מוחרגת",
@@ -811,9 +832,9 @@ async function parityStatsEdges() {
       }
       for (const w of windows) {
         await db.prepare(
-          `INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours, expires_at, cancelled_at)
-           VALUES (?, 'parity', ?, ?, ?, ?)`
-        ).run(siteId, w.started_at, 4, w.expires_at, w.cancelled_at);
+          `INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours, expires_at, cancelled_at, excluded_at)
+           VALUES (?, 'parity', ?, ?, ?, ?, ?)`
+        ).run(siteId, w.started_at, 4, w.expires_at, w.cancelled_at, w.excluded_at ?? null);
       }
 
       [sqlRow] = await db.prepare("SELECT * FROM public.site_stats(?, ?, ?)")

@@ -265,6 +265,37 @@ export function segmentsOf(data, siteId) {
       : s);
 }
 
+// ============================================================
+// ⚠️ פעולה בתוך חלון תחזוקה ידני אינה נספרת — כמו תחזוקה מהבקר
+// ============================================================
+// בתחזוקה **מהבקר** ה-MODE הוא 0, ולכן הגלאי בסוכן אינו מייצר פעולות
+// כלל — אין מה לספור ואין מה להציג. חלון ידני לא עשה כלום מזה: הבקר
+// המשיך להזיז רכבים, והפעולות נספרו כשירות רגיל.
+//
+// ההחלטה: חלון ידני מתנהג **בדיוק** כמו תחזוקה מהבקר. מה שקרה בתוכו
+// הוא בדיקה, לא שירות. זה עקבי עם מה שכבר הוכרע לתקלות (מושמטות
+// מהמדדים ונרשמות ב-suppressed_faults) ולזמן (coveredMs הופך את כל
+// הזמן שבחלון לתחזוקה).
+//
+// ⚠️ נמדד לפני האימוץ: **6 פעולות מתוך 6,194** (0.1%). זה לא שינוי
+// שמזיז מדדים — זו הסרת סתירה.
+//
+// ⚠️ גישה ישירה ל-data.ops כאן, ולא opsOf — ההחלפה הגורפת שהמירה את כל
+// הקוראים פגעה כבר פעמיים בגוף העוזרת עצמה והפכה אותה לרקורסיה אינסופית
+// (clientIp, ואז segmentsOf). לא פעם שלישית.
+export function opsOf(data, siteId) {
+  const raw = data.ops.get(siteId) || [];
+  const windows = (data.windows.get(siteId) || []).filter((w) => !w.excluded_at);
+  if (windows.length === 0) return raw;
+
+  // גבול חצי-פתוח, זהה לזה שבציר: פעולה ברגע שהחלון נגמר היא כבר שירות.
+  const inside = (ts) => windows.some((w) => {
+    const end = w.cancelled_at || w.expires_at;
+    return w.started_at <= ts && ts < end;
+  });
+  return raw.filter((o) => !inside(o.occurred_at));
+}
+
 export function wasInMaintenanceMem(data, siteId, ts) {
   for (const w of data.windows.get(siteId) || []) {
     // ⚠️ חלון שסומן כניסוי אינו קיים לצורך המדד. בלי זה תקלה שקרתה בתוכו
@@ -295,7 +326,7 @@ export function availabilityFrom(ms) {
 
 export function statsFromData(data, siteId, { from, to }) {
   let operations = 0;
-  for (const o of data.ops.get(siteId) || []) {
+  for (const o of opsOf(data, siteId)) {
     // ⚠️ הוצאה ידנית של מנהל — "הקפצנו את הדלת כדי לבדוק". נבדק כאן ולא
     // מוזג לתוך התנאי שמעליו כדי שיישאר קריא שזו החלטת אדם ולא שיפוט קליטה.
     if (o.excluded_at) continue;
@@ -465,7 +496,7 @@ export function uptimeFromData(data, siteId, { from, to }) {
 export function directionFromData(data, siteIds, { from, to }) {
   let entries = 0, exits = 0;
   for (const id of siteIds) {
-    for (const o of data.ops.get(id) || []) {
+    for (const o of opsOf(data, id)) {
       // superseded_by: ניסיון שנקטע והוחלף בניסיון חוזר אינו מעבר נוסף.
       // בלעדיו פילוח הכניסות/יציאות סותר את ספירת הפעולות שלצידו על אותו מסך.
       //
@@ -821,7 +852,7 @@ export function computeAnalytics(data, siteId, { range, prev, granularity }) {
   const segs = segmentsOf(data, siteId);
   // ⚠️ excluded_at — אותו דילוג כמו ב-statsFromData. בלעדיו גרף המגמה
   // מצייר עמודה על פעולה שהמדד לצידו כבר לא סופר.
-  const opsIso = (data.ops.get(siteId) || [])
+  const opsIso = opsOf(data, siteId)
     .filter((o) => !o.excluded_at
       && o.is_anomaly === 0 && !o.superseded_by && o.start_end === "end" && inRange(o.occurred_at))
     .map((o) => o.occurred_at);

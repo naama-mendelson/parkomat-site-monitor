@@ -270,6 +270,19 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   const visibleStates = states.filter(
     (s) => !isMaintError(s) && !insideWindow(s.started_at, s.site_id));
 
+  // ⚠️ **וגם הפעולות.** בתחזוקה מהבקר ה-MODE הוא 0, ולכן הגלאי בסוכן אינו
+  // מייצר פעולות כלל — אין שורות "יציאת רכב" בזמן תחזוקה, נקודה. חלון
+  // ידני חייב להיראות אותו דבר, אחרת "כמו תחזוקה מהבקר" נכון רק לחצי
+  // מהשורות.
+  //
+  // ⚠️ והמונה יורד יחד איתן מעצמו: total הוא אורך הקבוצה המסוננת מאותו ציר
+  // שנפתח. `opsOf` ב-executive.mjs מחיל את אותו כלל בדיוק על המדדים, כדי
+  // שהצ'יפ בלוג והמספר בכרטיס לא יסתרו זה את זה.
+  //
+  // ⚠️ שם נפרד ולא visibleOps — זה כבר תפוס למטה למשמעות אחרת לגמרי
+  // (איחוד ניסיונות שנקטעו), ודריסתו הייתה מחליפה שני כללים זה בזה.
+  const servedOps = ops.filter((o) => !insideWindow(o.occurred_at, o.site_id));
+
   // ============================================================
   // איזה שינוי מצב "מוסבר" על ידי פעולה — ולכן מיותר בציר המאוחד
   // ============================================================
@@ -299,7 +312,7 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   // הצמדה לפי אתר: במצרף כלל-אתרי שתי רשומות מאתרים שונים באותה שנייה אינן
   // מסבירות זו את זו. באתר בודד site_id === undefined לכל השורות → דלי יחיד.
   const opsBySite = new Map();
-  for (const o of ops) {
+  for (const o of servedOps) {
     if (!opsBySite.has(o.site_id)) opsBySite.set(o.site_id, []);
     opsBySite.get(o.site_id).push(o);
   }
@@ -446,8 +459,8 @@ export function buildTimeline({ ops, states, maint, suppressed = [] }) {
   //
   // ⚠️ מקרה קצה מקובל: אם הסגירה שאוחדה נפלה מחוץ לטווח הנטען והפתיחה בתוכו,
   // אין ממה לגזור. חלון האיחוד הוא 30 דקות לכל היותר, כך שזה רק גבול הטווח.
-  const mergedStartIds = new Set(ops.map((o) => o.superseded_by).filter(Boolean));
-  const visibleOps = ops.filter((o) => !o.superseded_by && !mergedStartIds.has(o.id));
+  const mergedStartIds = new Set(servedOps.map((o) => o.superseded_by).filter(Boolean));
+  const visibleOps = servedOps.filter((o) => !o.superseded_by && !mergedStartIds.has(o.id));
 
   // ==========================================================
   // פעולה שנפתחה ולא נסגרה — סימון, לא השמטה
