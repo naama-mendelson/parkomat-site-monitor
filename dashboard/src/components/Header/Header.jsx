@@ -15,6 +15,7 @@ import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import AlertBell from "../AlertBell/AlertBell";
 import UsersPanel from "../UsersPanel/UsersPanel";
+import FieldReports from "../FieldReports/FieldReports";
 import AccountMenu from "../AccountMenu/AccountMenu";
 import "./Header.css";
 
@@ -46,6 +47,7 @@ function Header({
   // בתפקיד — בשונה מ"ניהול אתרים" שמעליו. השרת הוא שאוכף בשני המקרים
   // (requireAuth ב-api/routes.js); הסתרה ב-UI אינה אבטחה.
   const [usersOpen, setUsersOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
 
   // ============================================================
   // ⚠️ בטלפון השדר תפס יותר מחצי המסך
@@ -183,6 +185,18 @@ function Header({
             </button>
           )}
 
+          {/* ⚠️ פתוח לכל מי שמחובר, ובכוונה: כל אחד מדווח, וגם המנהלת
+              בשטח לא פחות מהאחרים. מי רואה **מה** נקבע ב-RLS ולא כאן —
+              הסתרת כפתור אינה הרשאה. */}
+          <button
+            className="theme-toggle"
+            onClick={() => setReportsOpen(true)}
+            title="דיווח מהשטח"
+            aria-label="דיווח מהשטח"
+          >
+            📮
+          </button>
+
           <button
             className="theme-toggle"
             onClick={() => setUsersOpen(true)}
@@ -208,6 +222,10 @@ function Header({
       </div>
 
       {usersOpen && <UsersPanel onClose={() => setUsersOpen(false)} />}
+
+      {reportsOpen && (
+        <FieldReports sites={sites} onClose={() => setReportsOpen(false)} />
+      )}
 
       {pushOpen && <PushSettings onClose={() => setPushOpen(false)} />}
 

@@ -1,0 +1,199 @@
+/* components/FieldReports/FieldReports.css
+   נצמד למשתני העיצוב הקיימים (--bg-card, --border-color, --shadow) כדי
+   שהמסך יתנהג נכון גם במצב כהה בלי גרסה שנייה. */
+
+.fr-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 20, 40, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 60;
+}
+
+.fr-panel {
+  width: 100%;
+  max-width: 680px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+.fr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.fr-head h2 { margin: 0; font-size: 1.15rem; }
+
+.fr-x {
+  background: none;
+  border: none;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.fr-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.fr-tabs button {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-muted);
+}
+.fr-tabs button.on {
+  background: var(--accent, #2563eb);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.fr-error {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  color: #dc2626;
+  border-radius: 9px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+/* ===== הטופס ===== */
+
+.fr-form { display: flex; flex-direction: column; gap: 16px; }
+
+.fr-field { display: flex; flex-direction: column; gap: 6px; }
+.fr-field > span { font-size: 0.88rem; font-weight: 600; }
+.fr-field em { font-weight: 400; color: var(--text-muted); font-style: normal; }
+.fr-field small { color: var(--text-muted); font-size: 0.78rem; }
+
+.fr-field textarea,
+.fr-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-input, transparent);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.fr-attach {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px dashed var(--border-color);
+  background: transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.fr-attach:disabled { opacity: 0.45; cursor: default; }
+
+.fr-files { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.fr-files li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 0.84rem;
+}
+.fr-files button { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: var(--text-muted); }
+
+.fr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.fr-sent { color: #16a34a; font-weight: 600; }
+.fr-send {
+  padding: 10px 22px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fr-send:disabled { opacity: 0.6; cursor: default; }
+
+/* ===== הרשימה ===== */
+
+.fr-empty { color: var(--text-muted); padding: 18px 4px; text-align: center; }
+
+.fr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.fr-item { border: 1px solid var(--border-color); border-radius: 11px; overflow: hidden; }
+.fr-item.is-done { opacity: 0.72; }
+
+.fr-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.fr-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; flex: none; }
+.fr-dot.open { background: #f59e0b; }
+.fr-dot.done { background: #16a34a; }
+
+.fr-item-main { flex: 1; min-width: 0; }
+.fr-item-body {
+  /* ⚠️ שתי שורות ואז חיתוך: הרשימה היא סקירה. הטקסט המלא נפתח בלחיצה,
+     ובלי החיתוך דיווח בן 4000 תווים היה דוחף את כל השאר מהמסך. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+.fr-item-meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
+.fr-chev { color: var(--text-muted); font-size: 0.7rem; margin-top: 4px; }
+
+.fr-item-open { padding: 0 14px 14px 14px; border-top: 1px dashed var(--border-color); }
+
+.fr-shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.fr-shots img {
+  max-width: 150px;
+  max-height: 150px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  display: block;
+}
+
+.fr-resolved { color: #16a34a; font-size: 0.86rem; padding-top: 10px; }
+.fr-waiting { color: var(--text-muted); font-size: 0.86rem; padding-top: 10px; }
+
+.fr-done {
+  margin-top: 10px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 9px;
+  background: #16a34a;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.fr-done:disabled { opacity: 0.6; cursor: default; }
+
+/* בטלפון החלונית תופסת כמעט את כל המסך — זה המכשיר שממנו באמת מדווחים. */
+@media (max-width: 600px) {
+  .fr-backdrop { padding: 8px; }
+  .fr-panel { max-height: 94vh; padding: 16px; }
+  .fr-shots img { max-width: 100px; max-height: 100px; }
+}
