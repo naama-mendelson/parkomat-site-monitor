@@ -58,8 +58,12 @@ let coalesced = 0;
 
 // כל שינוי אמיתי בנתונים מרוקן את המטמון. אתר אחד שהשתנה משפיע על
 // האגרגציות של כל המערכת, ולכן אין טעם לנחש אילו מפתחות הושפעו.
+// ⚠️ **דור**, ולא רק ריקון. ראה write() למטה: בלעדיו הריקון מתבטל בעצמו.
+let generation = 0;
+
 bus.on("siteUpdate", () => {
   store.clear();
+  generation++;
 });
 
 function keyFor(req) {
@@ -133,6 +137,18 @@ function cache(ttlMs = DEFAULT_TTL_MS) {
     misses++;
     res.setHeader("X-Cache", "MISS");
 
+    // ============================================================
+    // ⚠️ הריקון התבטל בעצמו — הכתיבה שבדרך דרסה אותו
+    // ============================================================
+    // הרצף: בקשה נכנסת, המסלול שולף (~115ms מהענן), ובאמצע מגיעה הודעה
+    // מאתר. `siteUpdate` מרוקן את המטמון — ואז res.json חוזר וכותב את
+    // הגוף שחושב **לפני** השינוי, עם TTL מלא של 10 שניות.
+    //
+    // כלומר הביטול המפורש בוטל בשקט, והמסך הראה במשך 10 שניות את המצב
+    // שקדם לאירוע — בדיוק אחרי שה-SSE הודיע שהמצב השתנה. זה נראה כמו
+    // "הדשבורד לא התעדכן", והרענון הבא כבר מתקן — ולכן זה לא נחקר.
+    const gen = generation;
+
     let settle;
     const promise = new Promise((resolve, reject) => {
       settle = { resolve, reject };
@@ -149,7 +165,9 @@ function cache(ttlMs = DEFAULT_TTL_MS) {
     const originalJson = res.json.bind(res);
     res.json = (body) => {
       if (res.statusCode === 200) {
-        write(key, body, ttlMs);
+        // הנתונים השתנו בזמן השליפה ⟹ התשובה כבר לא עדכנית. מגישים אותה
+        // למי שביקש (הוא ביקש לפני השינוי) אבל **לא** שומרים אותה.
+        if (gen === generation) write(key, body, ttlMs);
         settle.resolve(body);
       } else {
         settle.reject(new Error(`status ${res.statusCode}`));
@@ -160,10 +178,16 @@ function cache(ttlMs = DEFAULT_TTL_MS) {
 
     // רשת ביטחון: אם המסלול סיים בלי res.json (שגיאה, ניתוק) — משחררים
     // את הממתינים, אחרת הם היו תקועים לנצח.
-    res.on("finish", () => {
+    // ⚠️ גם close ולא רק finish: לקוח שניתק באמצע (סגירת לשונית, ניווט)
+    // אינו מייצר finish כלל, והמפתח היה נשאר ב-inFlight עם הבטחה שלעולם
+    // לא נפתרת — כל בקשה עוקבת לאותו מפתח הייתה **נתלית לנצח**.
+    // שתי הקריאות בטוחות: settle כבר-פתור מתעלם, ו-done בודק זהות.
+    const release = () => {
       settle.reject(new Error("no json body"));
       done();
-    });
+    };
+    res.on("finish", release);
+    res.on("close", release);
 
     next();
   };

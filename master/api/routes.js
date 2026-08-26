@@ -1952,16 +1952,53 @@ app.get("/api/stream", requireAuthSse, async (req, res) => {
     "Connection": "keep-alive",
   });
 
-  res.write(": connected\n\n");
+  // ============================================================
+  // ⚠️ כתיבה לשקע מת מפילה את **כל** השרת
+  // ============================================================
+  // res.write על חיבור שכבר מת פולט אירוע error על ה-response, ול-
+  // ServerResponse אין מאזין error כברירת מחדל — כלומר unhandled error
+  // event, והתהליך יורד. עם restart: unless-stopped הוא עולה מחדש, אבל
+  // ⚠️ הוא מאבד את חיבור ה-MQTT ואת התור, וכל הדשבורדים מתנתקים.
+  //
+  // המרוץ צר אבל אמיתי: הלקוח מנתק, השקע מת, ו-req.close עוד לא נורה —
+  // ובדיוק בחלון הזה מגיעה הודעה מאתר ו-bus פולט siteUpdate. לקוח אחד
+  // שסוגר לשונית ברגע הלא נכון מפיל את השרת לכולם.
+  //
+  // ⚠️ וכישלון כתיבה הוא גם **הסימן היחיד** שהחיבור מת בלי close: בלעדיו
+  // המאזין וה-interval היו נשארים לנצח, ועם כל ניתוק כזה עוד אחד.
+  let closed = false;
+
+  // ניקוי אחד לשלושת המסלולים (close, error, וכישלון כתיבה).
+  // ⚠️ חייב להיות אידמפוטנטי — כולם יכולים לירות על אותו חיבור.
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    sseClients.delete(res);
+    bus.removeListener("siteUpdate", onSiteUpdate);
+    clearInterval(pingInterval);
+  }
+
+  const safeWrite = (chunk) => {
+    if (closed) return;
+    if (res.writableEnded || res.destroyed) { cleanup(); return; }
+    try {
+      res.write(chunk);
+    } catch (err) {
+      console.warn("api: כתיבת SSE נכשלה —", err?.message);
+      cleanup();
+    }
+  };
+
+  safeWrite(": connected\n\n");
 
   function onSiteUpdate(data) {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    safeWrite(`data: ${JSON.stringify(data)}\n\n`);
   }
 
   bus.on("siteUpdate", onSiteUpdate);
 
   const pingInterval = setInterval(() => {
-    res.write(": ping\n\n");
+    safeWrite(": ping\n\n");
   }, 25000);
 
   // נרשם כדי שכיבוי מסודר יוכל לסגור אותו. חיבור SSE נשאר פתוח לנצח מעצם
@@ -1970,10 +2007,15 @@ app.get("/api/stream", requireAuthSse, async (req, res) => {
   sseClients.add(res);
 
   req.on("close", () => {
-    sseClients.delete(res);
-    bus.removeListener("siteUpdate", onSiteUpdate);
-    clearInterval(pingInterval);
+    cleanup();
     console.log("api: SSE client disconnected");
+  });
+
+  // ⚠️ גם שגיאת שקע: היא מגיעה בלי close במקרי RST, ובלי מאזין היא
+  // מפילה את התהליך בעצמה — בדיוק מה שהעוטף למעלה בא למנוע.
+  res.on("error", (err) => {
+    console.warn("api: שגיאת חיבור SSE —", err?.message);
+    cleanup();
   });
 
   console.log("api: SSE client connected");
