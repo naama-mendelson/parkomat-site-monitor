@@ -31,6 +31,9 @@
 ; מיקום קבצי Mosquitto (על מחשב הפיתוח)
 #define MosquittoDir "C:\Program Files\mosquitto"
 
+; ה-runtime של Visual C++ — נשלח לצד mosquitto.exe (ראה [Files]).
+#define VcRuntimeDir "C:\Users\נעמהמנדלסון\Documents\parkomatProjects\Parkomat.Agent\vendor\vcruntime"
+
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -60,6 +63,32 @@ Source: "{#TrayPublishDir}\*"; DestDir: "{app}\tray"; Flags: recursesubdirs crea
 ; קבצי Mosquitto (כולל cacert.pem) — בתוך תיקיית ההתקנה שלנו. ה-Agent מעתיק את
 ; התעודה בזמן ריצה לנתיב ה-ASCII הקבוע (ProgramData) כדי ש-Mosquitto יקרא אותה.
 Source: "{#MosquittoDir}\*"; DestDir: "{app}\mosquitto"; Flags: recursesubdirs createallsubdirs ignoreversion
+; ============================================================
+; ⚠️ VCRUNTIME140.dll — בלעדיו Mosquitto לא עולה במחשב נקי
+; ============================================================
+; מחשב אתר טרי הוא Windows בלי כלום. Mosquitto נבנה עם MSVC, וכל
+; הבינאריים שלו (mosquitto.exe, mosquitto.dll, libcrypto, sqlite3,
+; pthreadVC3) מייבאים VCRUNTIME140.dll — שמגיע רק עם חבילת ה-Visual
+; C++ Redistributable. במחשב הפיתוח היא מותקנת, ולכן זה עבד כאן
+; ונכשל בשטח עם:
+;
+;   mosquitto.exe - System Error
+;   The code execution cannot proceed because VCRUNTIME140.dll was not found.
+;
+; ⚠️ **ולכן לא מריצים כאן vc_redist.exe.** ההתקנה הזו היא
+; PrivilegesRequired=lowest במכוון — בלי UAC, לתיקיית המשתמש. חבילת
+; ה-Redistributable היא התקנה מערכתית שדורשת מנהל, והוספתה הייתה
+; שוברת בדיוק את מה שמאפשר להתקין באתר בלי לקרוא למחלקת IT.
+;
+; במקום זה — app-local: Windows מחפש DLL קודם כול בתיקיית הקובץ
+; המריץ, ולכן די בהנחת העותק ליד mosquitto.exe. VCRUNTIME140 אינו
+; KnownDLL, כך שהחיפוש הזה באמת חל עליו.
+;
+; ⚠️ **רק הקובץ הזה, ולא כל החבילה.** נבדק על טבלת ה-imports של כל
+; בינארי בתיקיית Mosquitto: אף אחד אינו דורש MSVCP140 (זה C ולא C++)
+; ואף אחד אינו דורש VCRUNTIME140_1 (טיפול חריגות של C++). שאר
+; התלויות הן api-ms-win-crt-* — ה-UCRT, שהוא חלק מ-Windows 10 ומעלה.
+Source: "{#VcRuntimeDir}\VCRUNTIME140.dll"; DestDir: "{app}\mosquitto"; Flags: ignoreversion
 
 [Registry]
 ; הפעלה אוטומטית של ה-Tray בכניסת המשתמש (HKCU — לא דורש הרשאת מנהל).
