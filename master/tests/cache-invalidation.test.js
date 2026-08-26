@@ -102,14 +102,19 @@ test("⚠️ ניתוק לפני התשובה אינו תולה את המפתח 
     });
   });
 
-  // בקשה שנייה לאותו מפתח: חייבת להגיע למסלול, ולא להמתין להבטחה מתה.
+  // ============================================================
+  // ⚠️ סינכרוני ולא מרוץ טיימר
+  // ============================================================
+  // כאן היה `Promise.race` מול 300ms. הוא **נפל אחת משלוש ריצות** תחת
+  // עומס — לא כי הקוד שגוי אלא כי המכונה הייתה עסוקה. בדיקה שנופלת
+  // תחת עומס גרועה מאין בדיקה: היא מאמנת להתעלם מאדום.
+  //
+  // וההבחנה אינה צריכה זמן בכלל: במסלול ההחמצה ה-middleware קורא
+  // ל-next() **סינכרונית**, ובמסלול ההצטרפות הוא מחזיר `pending.then(…)`
+  // ולא קורא לו כלל. דגל שנבדק מיד אחרי הקריאה מפריד ביניהם בוודאות.
   const r2 = fakeRes();
-  const reached = await Promise.race([
-    new Promise((resolve) => {
-      mw(fakeReq("/api/stats/supervisor"), r2, () => resolve(true));
-    }),
-    new Promise((resolve) => setTimeout(() => resolve(false), 300)),
-  ]);
+  let reached = false;
+  mw(fakeReq("/api/stats/supervisor"), r2, () => { reached = true; });
 
   assert.equal(reached, true, "הבקשה נתלתה על inFlight שלעולם לא נפתר");
   assert.ok(getCacheStats().misses > before.misses);
