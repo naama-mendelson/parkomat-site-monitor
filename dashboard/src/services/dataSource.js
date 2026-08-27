@@ -736,3 +736,31 @@ export async function fetchServerHealth(staleAfterSeconds = 300) {
   if (!useDirect) return apiFetchServerHealth();
   return fetchServerHealthDirect(staleAfterSeconds);
 }
+
+// ============================================================
+// דיווחים והודעות מערכת — **אין להם זרוע שרת, וזה מוצהר**
+// ============================================================
+// ⚠️ הם עוברים דרך כאן ולא מיובאים ישירות ברכיבים, למרות שאין מה לבחור
+// ביניהם. הסיבה היא ה-seam עצמו: `check-switch` אוכף שכל גישה לנתונים
+// עוברת במקום אחד, וחריגה אחת שנראית מוצדקת היא בדיוק איך שהכלל נשחק.
+//
+// ⚠️ ומה שכן שונה כאן, ונאמר במפורש: **התכונות האלה קיימות רק במצב
+// הישיר.** הן נולדו אחרי שהמתג הוכרע ומעולם לא היה להן נתיב שרת; בנייתו
+// "לשלמות" הייתה יוצרת קוד רדום שאיש לא מריץ — וקובץ ההנחיות אומר בדיוק
+// מה קורה לנתיב כזה.
+//
+// לכן `VITE_SUPABASE_DIRECT=false` **מסתיר את הכפתור** (ראה Header) במקום
+// להציע מסך שייכשל. מסך שמציע פעולה שאינה אפשרית הוא הדרך האמינה לגרום
+// למישהו להסיק שהמערכת שבורה.
+export {
+  submitFieldReport, fetchFieldReports, fetchReportImage, resolveFieldReport,
+  fetchReplies, replyToReport, MAX_FILES, MAX_BODY, MIN_NAME,
+} from "./fieldReportsDirect";
+
+export {
+  pendingAnnouncement, markAnnouncementSeen, publishAnnouncement,
+  fetchAnnouncements, MAX_TITLE, MAX_ANN_BODY,
+} from "./announcementsDirect";
+
+export { subscribeNewReports } from "./reportsLiveDirect";
+export { subscribeReload, broadcastReload } from "./reloadDirect";

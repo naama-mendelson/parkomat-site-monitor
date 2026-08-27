@@ -16,6 +16,7 @@ import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import AlertBell from "../AlertBell/AlertBell";
 import UsersPanel from "../UsersPanel/UsersPanel";
 import FieldReports from "../FieldReports/FieldReports";
+import { useDirect } from "../../services/dataSource";
 import AccountMenu from "../AccountMenu/AccountMenu";
 import "./Header.css";
 
@@ -204,14 +205,19 @@ function Header({
           {/* ⚠️ פתוח לכל מי שמחובר, ובכוונה: כל אחד מדווח, וגם המנהלת
               בשטח לא פחות מהאחרים. מי רואה **מה** נקבע ב-RLS ולא כאן —
               הסתרת כפתור אינה הרשאה. */}
-          <button
-            className="theme-toggle"
-            onClick={() => setReportsOpen(true)}
-            title="כתבו לנו — תקלה, הערה או רעיון"
-            aria-label="כתבו לנו"
-          >
-            📮
-          </button>
+          {/* ⚠️ מוסתר במצב שרת: לתכונה הזו אין זרוע שרת — היא נולדה אחרי
+              שהמתג הוכרע. כפתור שנפתח למסך שייכשל הוא הדרך האמינה לגרום
+              למישהו להסיק שהמערכת שבורה. ראה dataSource. */}
+          {useDirect && (
+            <button
+              className="theme-toggle"
+              onClick={() => setReportsOpen(true)}
+              title="כתבו לנו — תקלה, הערה או רעיון"
+              aria-label="כתבו לנו"
+            >
+              📮
+            </button>
+          )}
 
           <button
             className="theme-toggle"

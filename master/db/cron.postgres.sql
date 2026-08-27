@@ -243,9 +243,36 @@ BEGIN
   SELECT COUNT(*)::int INTO v_drops FROM ingest_drops
    WHERE at > to_char((now() - make_interval(mins => p_drop_window_minutes)) AT TIME ZONE 'UTC',
                       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-     -- ⚠️ אתר לא רשום אינו תקלה בקליטה אלא סוכן שצריך לכבות בשטח. הכללתו
-     -- הייתה הופכת את ההתראה לרעש קבוע — נמדד עם 1416.
-     AND reason <> 'site_not_registered';
+     -- ============================================================
+     -- ⚠️ רשימה ולא סיבה אחת — השומר צעק זאב כל שעה
+     -- ============================================================
+     -- כאן סוננה סיבה **אחת** בלבד. בפועל נמדד ב-24 שעות:
+     --
+     --     bridge_site_not_registered   29   ← התריע
+     --     no_comm_rejected             11   ← התריע
+     --     unknown_topic                 3   ← התריע
+     --     site_not_registered           2   ← מסונן
+     --
+     -- כלומר ההתראה ירתה כל שעה על מכשירים שאינם שלנו ועל דחיות
+     -- שהמערכת עשתה **נכון** — וכל זה קבר את האות היחיד שחשוב:
+     -- הודעה שבאמת אבדה.
+     --
+     -- שתי משפחות שקטות, ולכל אחת נימוק אחר:
+     --   • *_not_registered / unknown_topic — מכשיר שאינו שלנו משדר.
+     --     זו משימה בשטח (לכבות אותו), לא תקלה בקליטה.
+     --   • *_rejected — הקליטה **דחתה נכון**: צוואה מאוחרת שהייתה
+     --     דורסת מצב טרי. התראה על הגנה שעבדה היא התראה על הצלחה.
+     --
+     -- ⚠️ רשימת **שקטים** ולא רשימת רועשים, ובכוונה: סיבה חדשה שתתווסף
+     -- בעתיד תתריע כברירת מחדל. עדיף רעש שמתקנים מאשר אובדן שקט —
+     -- זו אותה הכרעה שחוזרת בכל הקובץ הזה.
+     AND reason NOT IN (
+       'site_not_registered',
+       'bridge_site_not_registered',
+       'unknown_topic',
+       'no_comm_rejected',
+       'bridge_disconnect_rejected'
+     );
 
   IF v_drops > 0 THEN
     SELECT value INTO v_last FROM settings WHERE key = 'alert_last_drops';

@@ -230,6 +230,17 @@ const TINY_PNG =
 
   // ---- ניקוי ----
   await db.prepare("DELETE FROM field_reports WHERE id = ?").run(id);
+
+  // ============================================================
+  // ⚠️ גם שורות הביקורת — הן נתון אמיתי לכל דבר
+  // ============================================================
+  // audit_log קריא לכל משתמש פעיל, ושורה של משתמש סינתטי מופיעה שם
+  // כפעולה שאיש לא עשה. check-no-residue תפס 17 כאלה שהצטברו ביום אחד
+  // — כולן משערים שנכתבו כאן, וכולן היו נשארות לנצח.
+  //
+  // ⚠️ אותו לקח בדיוק שמתועד ב-check-no-residue על 297 שורות שהצטברו
+  // על אתר 1284: ניקוי חלקי הוא ניקוי שלא נעשה.
+  await db.prepare("DELETE FROM audit_log WHERE actor_name ~ ?").run("^gatebot[0-9]");
   for (const u of [op, mgr, other]) {
     const r = await db.prepare("SELECT supabase_uid FROM app_users WHERE email = ?").get(u.email);
     if (r && r.supabase_uid) {

@@ -46,10 +46,64 @@ let TOKEN = null;
 let cleanupUser = async () => {};
 const done = async (code) => { await cleanupUser(); process.exit(code); };
 
+// ============================================================
+// ⚠️ תיקו-עיגול — הלקח שהשער הראשי למד וזה לא
+// ============================================================
+// כאן הייתה השוואת JSON.stringify מדויקת, בלי שום סובלנות. התוצאה:
+// השער נצבע אדום על totalMaintenanceHours 86.24 מול 86.25 — הפרש של
+// **אגורה אחת** שאף צד אינו אשם בו.
+//
+// מקור ההפרש מתועד ב-parity.js: ערך גולמי זהה עד הספרה העשירית, והעיגול
+// נופל על גבול ה-.005. ב-JS המספר יושב מעט מתחת לחצי ב-double ולכן
+// Math.round יורד; Postgres מעגל ב-NUMERIC ולכן עולה. Postgres מדויק
+// יותר, והוא גם הצד שיישאר אחרי ההגירה.
+//
+// ⚠️ ושער שנצבע אדום מנתונים שזזו הוא שער שלומדים להתעלם ממנו — וזו
+// בדיוק הסיבה שהכלל הזה קיים בשער הראשי. אותו כלל, אותו קבוע.
+//
+// ⚠️ **שלמים אינם זכאים להקלה.** שם כל הפרש הוא באג בספירה.
+const TIE = 0.0100001;
+let ties = 0;
+const tieList = [];
+
+function sameWithTie(a, b, path, hits) {
+  if (a === b) return true;
+
+  if (typeof a === "number" && typeof b === "number"
+      && Number.isFinite(a) && Number.isFinite(b)) {
+    if (Math.abs(a - b) < 1e-9) return true;
+    // שלמים — השוואה מוחלטת. ספירה שזזה היא באג, לא עיגול.
+    if (Number.isInteger(a) && Number.isInteger(b)) return false;
+    if (Math.abs(a - b) <= TIE) { hits.push(`${path}: ${a} מול ${b}`); return true; }
+    return false;
+  }
+
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => sameWithTie(v, b[i], `${path}[${i}]`, hits));
+  }
+
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k)
+    && sameWithTie(a[k], b[k], path ? `${path}.${k}` : k, hits));
+}
+
 function compare(label, a, b) {
   checks++;
   const x = JSON.stringify(a ?? null), y = JSON.stringify(b ?? null);
   if (x === y) return;
+
+  const hits = [];
+  if (sameWithTie(a ?? null, b ?? null, label, hits)) {
+    ties += hits.length;
+    tieList.push(...hits);
+    return;
+  }
+
   failures++;
   fails.push(`${label}:\n      שרת = ${x.slice(0, 200)}\n      PostgREST = ${y.slice(0, 200)}`);
 }
@@ -327,5 +381,11 @@ async function viaPostgrest(from, to, filters) {
     await done(1);
   }
   console.log(`✅ שתי הזרועות זהות — ${checks} השוואות, 0 הבדלים`);
+  // ⚠️ התיקואים מוצגים ולא נבלעים: שער ששותק על הפרש, גם זעיר, מסתיר
+  // בדיוק את הסוג שאם יגדל יהפוך לבאג אמיתי.
+  if (ties) {
+    console.log(`   (${ties} תיקו-עיגול על גבול .005 — הערך הגולמי זהה בשני הצדדים)`);
+    for (const t of tieList.slice(0, 5)) console.log(`     ${t}`);
+  }
   await done(0);
 })().catch(async (e) => { console.error("parity-executive: נפל —", e.message); await done(1); });

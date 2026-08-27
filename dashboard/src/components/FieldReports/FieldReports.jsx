@@ -15,12 +15,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   submitFieldReport, fetchFieldReports, fetchReportImage,
   resolveFieldReport, fetchReplies, replyToReport, MAX_FILES, MAX_BODY, MIN_NAME,
-} from "../../services/fieldReportsDirect";
+} from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
 import {
   publishAnnouncement, fetchAnnouncements, MAX_TITLE, MAX_ANN_BODY,
-} from "../../services/announcementsDirect";
-import { broadcastReload } from "../../services/reloadDirect";
+} from "../../services/dataSource";
+import { broadcastReload } from "../../services/dataSource";
 import "./FieldReports.css";
 
 // ============================================================

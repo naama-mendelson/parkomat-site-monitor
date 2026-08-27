@@ -98,6 +98,36 @@ const path = require("node:path");
     ).run(NOW(), "sites/9999/state", "9999", "state", "site_not_registered");
   })).includes("drops"), false);
 
+  // ============================================================
+  // 5.1 ⚠️ שאר המשפחות השקטות — נמדדו כרעש אמיתי בייצור
+  // ============================================================
+  // הסינון היה על סיבה **אחת** בלבד, ובפועל ההתראה ירתה כל שעה על
+  // מכשירים שאינם שלנו ועל דחיות שהמערכת עשתה נכון. ב-24 שעות:
+  // bridge_site_not_registered ×29, no_comm_rejected ×11,
+  // unknown_topic ×3 — וכל זה קבר את האות היחיד שחשוב.
+  for (const reason of [
+    "bridge_site_not_registered",   // מכשיר שאינו שלנו — משימה בשטח
+    "unknown_topic",                // topic שבור, אותו דבר
+    "no_comm_rejected",             // הקליטה דחתה **נכון** צוואה מאוחרת
+    "bridge_disconnect_rejected",   // אותו נימוק
+  ]) {
+    add(`⚠️ ${reason} אינו מתריע`, (await scenario(async () => {
+      await clearDedup(); await setBeat(1);
+      await db.prepare(
+        "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
+      ).run(NOW(), "sites/9999/state", "9999", "state", reason);
+    })).includes("drops"), false);
+  }
+
+  // ⚠️ ואובדן אמיתי **כן** מתריע — בלי זה כל הסינון למעלה יכול היה
+  // להשתיק גם את מה שהשומר קיים בשבילו.
+  add("⚠️ הודעה שאבדה באמת — מתריע", (await scenario(async () => {
+    await clearDedup(); await setBeat(1);
+    await db.prepare(
+      "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
+    ).run(NOW(), "sites/9999/state", "9999", "state", "gave_up_after_retries");
+  })).includes("drops"), true);
+
   // 6. ⚠️ אין אות חיים בכלל → שותק. שרת שטרם נפרס עם התכונה אינו "מת",
   //    והתראה עליו הייתה מצייצת על מערכת תקינה.
   add("⚠️ אין אות חיים כלל — שותק", (await scenario(async () => {

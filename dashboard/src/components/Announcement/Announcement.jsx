@@ -11,13 +11,16 @@
 // כולל על "הבנתי". זו לא עקיפה של המדיניות אלא עבודה איתה, וזו גם הסיבה
 // שאין כאן טיפול שגיאה: אין מה לתפוס.
 import { useEffect, useState, useRef } from "react";
-import { pendingAnnouncement, markAnnouncementSeen } from "../../services/announcementsDirect";
-import { subscribeNewReports } from "../../services/reportsLiveDirect";
-import { subscribeReload } from "../../services/reloadDirect";
+import { pendingAnnouncement, markAnnouncementSeen } from "../../services/dataSource";
+import { subscribeNewReports } from "../../services/dataSource";
+import { subscribeReload } from "../../services/dataSource";
+import { useDirect } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
 import { announce, getAlertState, unlockAudio } from "../../utils/audio/alerts";
 import "./Announcement.css";
 
+// ⚠️ במצב שרת אין למי לפנות — ההודעות והדיווחים חיים ב-Supabase בלבד.
+// הרכיב מחזיר null מוקדם במקום לירות שלוש שאילתות שייכשלו.
 export default function Announcement() {
   const { user } = useAuth();
   const [item, setItem] = useState(null);
@@ -126,6 +129,7 @@ export default function Announcement() {
   }, []);
 
   // ⚠️ ההודעה קודמת לדיווח: היא חד-פעמית ועוצרת, והדיווח יחכה שנייה.
+  if (!useDirect) return null;
   if (!item && reports.length === 0) return null;
 
   async function dismiss() {
