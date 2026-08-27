@@ -32,7 +32,12 @@ test("⚠️ הרכיב אינו מייבא supabase-js — כלל 5", () => {
   const code = strip(COMPONENT);
   assert.doesNotMatch(code, /from\s+["'].*supabase["']/,
     "הרכיב מייבא את הלקוח ישירות במקום לעבור דרך services/");
-  assert.match(code, /from\s+["']\.\.\/\.\.\/services\/fieldReportsDirect["']/);
+  // ⚠️ **דרך dataSource ולא ישירות ל-*Direct.** הבדיקה הזו קיבעה בעבר
+  // את ההפך — היא דרשה ייבוא ישיר, שהוא בדיוק מה ש-check-switch אוסר.
+  // בניתי עקיפה של ה-seam בנימוק ש-אין זרוע שרת, והכלל קיים בדיוק כדי
+  // שחריגה שנראית מוצדקת לא תשחק אותו.
+  assert.match(code, /from\s+["']\..\/\..\/services\/dataSource["']/,
+    "הרכיב עוקף את ה-seam ומייבא ישירות מ-Direct");
 });
 
 
