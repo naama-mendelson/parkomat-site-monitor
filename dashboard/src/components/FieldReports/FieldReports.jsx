@@ -14,7 +14,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   submitFieldReport, fetchFieldReports, fetchReportImage,
-  resolveFieldReport, fetchReplies, replyToReport, MAX_FILES, MAX_BODY, MIN_NAME,
+  resolveFieldReport, deleteFieldReport, fetchReplies, replyToReport,
+  MAX_FILES, MAX_BODY, MIN_NAME,
 } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
 import {
@@ -411,6 +412,21 @@ function ReportRow({ report: r, siteName, isManager, defaultOpen = false, onChan
     }
   }
 
+  // ⚠️ אישור, כי אין דרך חזרה: הדיווח, התמונות והשיחה יורדים יחד —
+  // וגם בעל הדיווח מאבד אותם.
+  async function removeIt() {
+    if (!window.confirm('למחוק את הדיווח? התמונות והשיחה יימחקו איתו, ואין דרך חזרה.')) return;
+    setBusy(true);
+    try {
+      await deleteFieldReport(r.id);
+      onChanged();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function markDone() {
     setBusy(true);
     try {
@@ -494,19 +510,34 @@ function ReportRow({ report: r, siteName, isManager, defaultOpen = false, onChan
             </div>
           </div>
 
-          {done ? (
-            <div className="fr-resolved">
-              טופל ע"י {r.resolved_by} · {fmt(r.resolved_at)}
-              {r.resolved_note && <> · {r.resolved_note}</>}
-            </div>
-          ) : isManager ? (
-            <button className="fr-done" onClick={markDone} disabled={busy}>
-              {busy ? "מסמן…" : "סמן כטופל"}
-            </button>
-          ) : (
-            // ⚠️ למדווח נאמר מה מצב הדיווח, ולא מוצג כפתור שייתן לו 403.
-            <div className="fr-waiting">ממתין לטיפול</div>
-          )}
+          {/* ============================================================ */}
+          {/* ⚠️ מחיקה זמינה גם אחרי שטופל                              */}
+          {/* ============================================================ */}
+          {/* בגרסה הראשונה היא ישבה בענף ה-else, כלומר דיווח שסומן      */}
+          {/* כטופל לא היה ניתן למחיקה כלל — והתיבה הייתה מתמלאת בלי דרך */}
+          {/* לנקות אותה.                                                */}
+          <div className="fr-row-actions">
+            {done ? (
+              <span className="fr-resolved">
+                טופל ע"י {r.resolved_by} · {fmt(r.resolved_at)}
+                {r.resolved_note && <> · {r.resolved_note}</>}
+              </span>
+            ) : isManager ? (
+              <button className="fr-done" onClick={markDone} disabled={busy}>
+                {busy ? "מסמן…" : "סמן כטופל"}
+              </button>
+            ) : (
+              // ⚠️ למדווח נאמר מה מצב הדיווח, ולא מוצג כפתור שייתן לו 403.
+              <span className="fr-waiting">ממתין לטיפול</span>
+            )}
+
+            {/* ⚠️ נפרד ובצבע אחר: "טופל" הוא מצב, מחיקה היא סוף. */}
+            {isManager && (
+              <button className="fr-del" onClick={removeIt} disabled={busy}>
+                מחק
+              </button>
+            )}
+          </div>
         </div>
       )}
     </li>

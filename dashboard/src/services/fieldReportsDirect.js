@@ -206,6 +206,22 @@ export async function fetchReportImage(fileId) {
   return `data:${data.mime};base64,${data.data_b64}`;
 }
 
+/**
+ * מחיקת דיווח. מנהלת בלבד — נאכף ב-RPC, לא כאן.
+ *
+ * ⚠️ מחיקה אמיתית: התמונות והשיחה יורדות איתה ב-CASCADE. מה שנשמר
+ * הוא שורת ביקורת עם מי כתב, מתי ותחילת הטקסט — כדי שמחיקה לא תהיה
+ * היעלמות מוחלטת.
+ */
+export async function deleteFieldReport(id) {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+  const { data, error } = await supabase.rpc("delete_field_report", { p_id: id });
+  if (error) throw new Error(messageFor(error));
+  const row = Array.isArray(data) ? data[0] : data;
+  // ⚠️ 0 אינו כשל: שניים שלחצו יחד, או שכבר נמחק.
+  return { deleted: Number(row?.deleted ?? 0) };
+}
+
 /** סימון "טופל". מנהלת בלבד — נאכף ב-RPC, לא כאן. */
 export async function resolveFieldReport(id, note = "") {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");

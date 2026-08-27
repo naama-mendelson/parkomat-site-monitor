@@ -1601,3 +1601,66 @@ $$;
 
 REVOKE ALL ON FUNCTION public.reply_to_field_report(bigint, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reply_to_field_report(bigint, text) TO authenticated;
+
+-- ============================================================
+-- delete_field_report — מחיקה, ולא רק "טופל"
+-- ============================================================
+-- ⚠️ מנהלת בלבד: זו התיבה שלה. מחיקה בידי המדווח הייתה מאפשרת לו למחוק
+-- דיווח **אחרי** שנענה, ולהעלים את השיחה מתחת לידיים של מי שטיפל בו.
+--
+-- ⚠️ **מחיקה אמיתית ולא הסתרה.** דיווח אינו מדד — שום זמינות ושום אחוז
+-- כשל אינם נשענים עליו — ולכן אין כאן את השיקול שהוליד את `excluded_at`.
+-- הסתרה הייתה משאירה לבעל הדיווח שיחה פתוחה שהמנהלת כבר לא רואה, כלומר
+-- שני מסכים שמספרים דברים שונים על אותה שיחה.
+--
+-- ⚠️ אבל **הביקורת שומרת את מה שנמחק**: מי כתב, מתי, ותחילת הטקסט. בלי
+-- זה מחיקה היא היעלמות מוחלטת, ו-"לא נספר" ו"לא קרה" הם שני דברים שונים
+-- גם כאן. התמונות והשיחה יורדות ב-CASCADE.
+CREATE OR REPLACE FUNCTION public.delete_field_report(p_id bigint)
+RETURNS TABLE (deleted integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor  text;
+  v_row    field_reports%ROWTYPE;
+  v_files  integer;
+  v_count  integer;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  SELECT * INTO v_row FROM field_reports r WHERE r.id = p_id;
+  IF NOT FOUND THEN
+    -- ⚠️ 0 ולא שגיאה: שניים שלחצו יחד, או שכבר נמחק. זה לא כשל.
+    RETURN QUERY SELECT 0;
+    RETURN;
+  END IF;
+
+  SELECT COUNT(*)::int INTO v_files FROM field_report_files f WHERE f.report_id = p_id;
+
+  -- ⚠️ הביקורת **לפני** המחיקה: אחריה אין ממה לבנות אותה.
+  PERFORM app.record_write_audit(
+    'field_report.delete', v_actor, app.current_app_role(),
+    'field_report', p_id::text,
+    jsonb_build_object(
+      'by', COALESCE(v_row.reported_by_name, v_row.reported_by),
+      'account', v_row.reported_by,
+      'created_at', v_row.created_at,
+      'files', v_files,
+      -- מספיק כדי לזהות מה נמחק, ולא מספיק כדי לשמור עותק שלם.
+      'excerpt', left(v_row.body, 120)));
+
+  DELETE FROM field_reports r WHERE r.id = p_id;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  RETURN QUERY SELECT v_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.delete_field_report(bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.delete_field_report(bigint) TO authenticated;

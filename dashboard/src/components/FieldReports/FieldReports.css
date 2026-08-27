@@ -279,3 +279,15 @@
   background: var(--accent, #2563eb); color: #fff; font: inherit; cursor: pointer;
 }
 .fr-reply button:disabled { opacity: 0.5; cursor: default; }
+
+.fr-row-actions {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; flex-wrap: wrap;
+}
+/* ⚠️ אדום ומשני: מחיקה היא סוף, ולא צריכה להיראות כמו הפעולה הרגילה. */
+.fr-del {
+  padding: 8px 16px; border: 1px solid rgba(220,38,38,0.4);
+  border-radius: 9px; background: transparent; color: #dc2626;
+  font: inherit; cursor: pointer;
+}
+.fr-del:disabled { opacity: 0.5; cursor: default; }

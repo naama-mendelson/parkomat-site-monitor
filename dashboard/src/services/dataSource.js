@@ -753,7 +753,7 @@ export async function fetchServerHealth(staleAfterSeconds = 300) {
 // להציע מסך שייכשל. מסך שמציע פעולה שאינה אפשרית הוא הדרך האמינה לגרום
 // למישהו להסיק שהמערכת שבורה.
 export {
-  submitFieldReport, fetchFieldReports, fetchReportImage, resolveFieldReport,
+  submitFieldReport, fetchFieldReports, fetchReportImage, resolveFieldReport, deleteFieldReport,
   fetchReplies, replyToReport, MAX_FILES, MAX_BODY, MIN_NAME,
 } from "./fieldReportsDirect";
 
