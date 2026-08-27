@@ -57,6 +57,13 @@ const path = require("node:path");
     "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
   ).run("server_heartbeat", new Date(Date.now() - minutesAgo * 60000).toISOString(), NOW());
 
+  // ⚠️ **מנקה גם זריקות אמיתיות שנמצאות בחלון.** בלעדיה מספיקה זריקה
+  // אחת בייצור ב-15 הדקות האחרונות כדי שכל תרחיש "אינו מתריע" ייפול
+  // בטעות — וגרוע מזה: תרחיש "אובדן אמיתי מתריע" היה **עובר בזכותה**,
+  // כלומר נשאר ירוק גם אם gave_up_after_retries היה מושתק בטעות.
+  const clearDrops = () => db.prepare("DELETE FROM ingest_drops WHERE at > ?")
+    .run(new Date(Date.now() - 15 * 60000).toISOString());
+
   const clearDedup = () => db.prepare(
     "DELETE FROM settings WHERE key IN (?, ?)"
   ).run("alert_last_heartbeat", "alert_last_drops");
@@ -83,7 +90,7 @@ const path = require("node:path");
 
   // 4. זריקה בקליטה → מתריע
   add("זריקה בקליטה — מתריע", (await scenario(async () => {
-    await clearDedup(); await setBeat(1);
+    await clearDedup(); await setBeat(1); await clearDrops();
     await db.prepare(
       "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
     ).run(NOW(), "sites/9999/state", "9999", "state", "state_backfill");
@@ -92,7 +99,7 @@ const path = require("node:path");
   // 5. ⚠️ אתר לא רשום **אינו** מתריע — הוא סוכן שצריך לכבות בשטח, לא
   //    תקלה בקליטה. הכללתו הייתה הופכת את ההתראה לרעש קבוע (1416).
   add("⚠️ אתר לא רשום אינו מתריע", (await scenario(async () => {
-    await clearDedup(); await setBeat(1);
+    await clearDedup(); await setBeat(1); await clearDrops();
     await db.prepare(
       "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
     ).run(NOW(), "sites/9999/state", "9999", "state", "site_not_registered");
@@ -112,7 +119,7 @@ const path = require("node:path");
     "bridge_disconnect_rejected",   // אותו נימוק
   ]) {
     add(`⚠️ ${reason} אינו מתריע`, (await scenario(async () => {
-      await clearDedup(); await setBeat(1);
+      await clearDedup(); await setBeat(1); await clearDrops();
       await db.prepare(
         "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
       ).run(NOW(), "sites/9999/state", "9999", "state", reason);
@@ -122,7 +129,7 @@ const path = require("node:path");
   // ⚠️ ואובדן אמיתי **כן** מתריע — בלי זה כל הסינון למעלה יכול היה
   // להשתיק גם את מה שהשומר קיים בשבילו.
   add("⚠️ הודעה שאבדה באמת — מתריע", (await scenario(async () => {
-    await clearDedup(); await setBeat(1);
+    await clearDedup(); await setBeat(1); await clearDrops();
     await db.prepare(
       "INSERT INTO ingest_drops (at, topic, site_code, kind, reason) VALUES (?, ?, ?, ?, ?)"
     ).run(NOW(), "sites/9999/state", "9999", "state", "gave_up_after_retries");

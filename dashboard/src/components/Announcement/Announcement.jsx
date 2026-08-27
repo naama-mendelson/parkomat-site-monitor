@@ -20,7 +20,8 @@ import { announce, getAlertState, unlockAudio } from "../../utils/audio/alerts";
 import "./Announcement.css";
 
 // ⚠️ במצב שרת אין למי לפנות — ההודעות והדיווחים חיים ב-Supabase בלבד.
-// הרכיב מחזיר null מוקדם במקום לירות שלוש שאילתות שייכשלו.
+// כל אחד משלושת ה-effects יוצא מיד; ה-return null שבסוף הוא רשת
+// ביטחון לתצוגה בלבד ואינו מה שמונע את השאילתות.
 export default function Announcement() {
   const { user } = useAuth();
   const [item, setItem] = useState(null);
@@ -47,6 +48,20 @@ export default function Announcement() {
   // לראות את ההודעה. אז היא תעלה בשקט — עדיף הודעה בלי צליל מאשר הודעה
   // שלא מגיעה.
   useEffect(() => {
+    // ⚠️ **בתוך ה-effect ולא לפני ה-return.** השומר ישב אחרי שלושת
+    // ה-hooks, ולכן הוא מנע רק **ציור** — השאילתות, שני ערוצי Realtime
+    // והצליל רצו בכל מקרה.
+    //
+    // ⚠️ והמצב הזה אינו תיאורטי: VITE_SUPABASE_DIRECT=false עם מפתחות
+    // Supabase שנשארו ב-.env הוא **בדיוק** מסלול החזרה המתועד. שם
+    // useDirect כבוי אבל isSupabaseConfigured דלוק, ולכן גם השומרים
+    // שבתוך שירותי ה-*Direct אינם יורים.
+    //
+    // התוצאה הייתה צליל התראה על מסך ריק — בדיוק הכשל שהכותרת של
+    // הקובץ הזה מזהירה ממנו — וחוזר בכל טעינה, כי markAnnouncementSeen
+    // לעולם אינו נקרא.
+    if (!useDirect) return undefined;
+
     let cancelled = false;
     let timer = null;
 
@@ -103,6 +118,7 @@ export default function Announcement() {
   // ו-Realtime מכבד אותה. תנאי בקוד היה **נראה** כמו הגנה ומסתיר את
   // העובדה שההגנה האמיתית היא המדיניות.
   useEffect(() => {
+    if (!useDirect) return undefined;
     const stop = subscribeNewReports((row) => {
       // ⚠️ **לא קופץ על הדיווח של עצמי.** מי שלחץ "שלח" לפני שנייה כבר
       // יודע מה כתב, וחלון שקופץ עליו קורא כמו תקלה.
@@ -123,12 +139,17 @@ export default function Announcement() {
   // ⚠️ ואין כאן שאלה למשתמש. זו הייתה הבקשה המפורשת — רענון לכולם —
   // וההגנה על מה שנכתב היא הטיוטה, לא דיאלוג שאפשר לבטל.
   useEffect(() => {
+    // ⚠️ החמור מכולם: בלי השומר, `broadcastReload` של מנהלת הייתה
+    // מרעננת בכוח גם דשבורדים שרצים במצב שרת.
+    if (!useDirect) return undefined;
     return subscribeReload(() => {
       setTimeout(() => window.location.reload(), 1000);
     });
   }, []);
 
   // ⚠️ ההודעה קודמת לדיווח: היא חד-פעמית ועוצרת, והדיווח יחכה שנייה.
+  // ⚠️ השומר הזה הוא **רק** תצוגה — ההגנה האמיתית היא בראש כל effect
+  // למעלה. הוא נשאר כרשת ביטחון, ולא כהסבר.
   if (!useDirect) return null;
   if (!item && reports.length === 0) return null;
 
