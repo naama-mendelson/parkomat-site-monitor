@@ -1382,6 +1382,17 @@ COMMENT ON FUNCTION public.server_heartbeat() IS
 --
 -- זה לא כוונון — זו ההבחנה בין "נכון" ל"שמיש", ובלי מדידה היא נראית
 -- כמו אותו קוד.
+-- ⚠️ **הסרת החתימה הישנה חייבת לקדום.** `CREATE OR REPLACE` עם רשימת
+-- פרמטרים שונה **יוצר פונקציה חדשה** ומשאיר את הקודמת חיה לצידה. קרה
+-- כאן בפועל: הגרסה בת שני הפרמטרים — זו שנכשלה ב-parity על ספירת
+-- התקלות של מגדל 1 — נשארה במסד אחרי שהוחלפה, ו-`pg_get_functiondef`
+-- החזיר דווקא אותה.
+--
+-- ⚠️ שתי גרסאות של אותו מדד הן שני מספרים לאותו אירוע, וזה בדיוק הכשל
+-- שכל קובץ ההנחיות בנוי סביבו. אותו דפוס כבר קיים ב-writes.postgres.sql
+-- עבור submit_field_report.
+DROP FUNCTION IF EXISTS public.executive_series(integer[], jsonb);
+
 CREATE OR REPLACE FUNCTION public.executive_series(
   p_site_ids integer[],
   p_from     text,
