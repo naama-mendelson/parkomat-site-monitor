@@ -27,7 +27,7 @@ const { fetchRetry } = require("./lib/fetch-retry");
 const path = require("node:path");
 const db = require("../db/db");
 const { getExecutiveStatsFiltered } = require("../db/queries");
-const { computeExecutive } = require("../../shared/executive.mjs");
+const { computeExecutive, getBucketRanges } = require("../../shared/executive.mjs");
 const { resolvePeriod } = require("../api/periods");
 
 const ENV = fs.readFileSync(path.resolve(__dirname, "../../dashboard/.env"), "utf8");
@@ -158,17 +158,19 @@ const group = (rows) => {
 // להשתקף כאן. אין מנגנון שאוכף את זה — רק ההערה הזו.
 /** בונה את הצד הישיר בדיוק כמו executiveDirect.js + supervisorDirect.js. */
 async function viaPostgrest(from, to, filters) {
-  const [sites, stats, uptime, globals, ops, segments, windows] = await Promise.all([
+  // ⚠️ **הזרוע הישירה כבר אינה שולפת שורות גולמיות.** היא קוראת
+  // ל-executive_series, שמצטברת במסד: 10,630 שורות הפכו ל-480. העותק
+  // כאן חייב לעקוב, אחרת השער בודק מסלול שאיש כבר לא מריץ — וזה גרוע
+  // משער שנופל, כי הוא ירוק.
+  const buckets = getBucketRanges({ from, to, granularity: filters.granularity || "day" });
+  const withTotal = [...buckets.map((b) => ({ from: b.from, to: b.to })), { from, to }];
+
+  const [sites, stats, uptime, globals, series] = await Promise.all([
     rest("sites?select=*"),
     rpc("site_stats", { p_site_ids: null, p_from: from, p_to: to }),
     rpc("site_uptime", { p_site_ids: null, p_from: from, p_to: to }),
     rpc("site_globals", { p_site_ids: null }),
-    rest(`operations?select=site_id,occurred_at,entry_exit,start_end,is_anomaly,superseded_by,excluded_at` +
-         `&occurred_at=gte.${enc(from)}&occurred_at=lt.${enc(to)}&order=occurred_at.asc`),
-    rest(`status_history?select=site_id,status,started_at,ended_at,id,excluded_at,reclassified_to` +
-         `&started_at=lt.${enc(to)}&or=(ended_at.is.null,ended_at.gt.${enc(from)})&order=started_at.asc`),
-    rest(`maintenance_windows?select=site_id,started_at,expires_at,cancelled_at,excluded_at` +
-         `&started_at=lt.${enc(to)}&order=started_at.asc`),
+    rpc("executive_series", { p_site_ids: null, p_from: from, p_to: to, p_buckets: withTotal }),
   ]);
 
   const by = (rows) => new Map(rows.map((r) => [r.site_id, r]));
@@ -201,7 +203,7 @@ async function viaPostgrest(from, to, filters) {
 
   return computeExecutive({
     allRows,
-    data: { ops: group(ops), segments: group(segments), windows: group(windows) },
+    series,
     allSites: sorted.map((s) => ({ id: s.id, code: s.code, site_name: s.site_name })),
     from, to, ...filters,
   });

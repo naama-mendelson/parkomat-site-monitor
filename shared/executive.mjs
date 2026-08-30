@@ -557,7 +557,70 @@ export function getWorstPerformers(rows, limit = 5) {
  * הקלט הוא בדיוק מה שהשרת שולף ב-getSupervisorStatsWithData, ומה שהדשבורד
  * שולף מ-Supabase: שורות המסך, הנתונים הגולמיים לטווח, ורשימת האתרים.
  */
-export function computeExecutive({ allRows, data, allSites, from, to,
+
+// ============================================================
+// ⚠️ קלט חלופי: סדרה מצטברת במקום שורות גולמיות
+// ============================================================
+// `data` (שלוש מפות של שורות גולמיות) הוא הקלט המקורי, והוא **נשאר**
+// — זרוע השרת בנויה עליו והיא דלת היציאה.
+//
+// אבל הזרוע הישירה שילמה עליו ביוקר: נמדד על הייצור, תצוגת חודש —
+// **10,630 שורות ו-1.6MB** חצו את האינטרנט כדי להפיק גרף של 30 נקודות.
+// `public.executive_series` מחזירה את אותו דבר ב-**480 שורות ו-68KB**,
+// כי המסד מצטבר לפני ההעברה.
+//
+// ⚠️ **הפונקציה הזו אינה מגדירה שום מדד.** היא מסכמת מספרים שכבר
+// חושבו — בדיוק כמו הלולאה ב-computeExecutive שהיא מחליפה, ובאותו סדר
+// פעולות ובאותו עיגול. כל סטייה כאן תיתפס ב-parity, כי שני הקלטים
+// מוזנים לאותה computeExecutive.
+//
+// מבנה שורה: { bucket, site_id, operations, errors, entries, exits,
+//               maintenance_hours, availability_percent, measured_hours }
+// הדלי האחרון (אינדקס = מספר הדליים) הוא **כל הטווח**, לסיכומים.
+export function foldSeries(series, bucketCount, siteIds) {
+  const want = new Set(siteIds);
+  const byBucket = new Map();
+  for (const r of series) {
+    if (!want.has(r.site_id)) continue;
+    if (!byBucket.has(r.bucket)) byBucket.set(r.bucket, []);
+    byBucket.get(r.bucket).push(r);
+  }
+
+  const fold = (rows) => {
+    let ops = 0, errs = 0, maint = 0, entries = 0, exits = 0;
+    let availSum = 0, availCount = 0;
+    for (const r of rows || []) {
+      ops     += r.operations;
+      errs    += r.errors;
+      entries += r.entries;
+      exits   += r.exits;
+      maint   += r.maintenance_hours;
+      // ⚠️ רק אתרים שנמדדו נכנסים לממוצע — זהה ל-`measuredHours > 0`
+      // ב-uptimeFromData. אתר שלא נמדד כלל אינו 0% זמינות, הוא "לא ידוע",
+      // וספירתו כאפס הייתה מורידה את הממוצע של כולם.
+      if (r.measured_hours > 0) { availSum += r.availability_percent; availCount++; }
+    }
+    return { ops, errs, entries, exits, maint, availSum, availCount };
+  };
+
+  return {
+    perBucket: Array.from({ length: bucketCount }, (_, i) => fold(byBucket.get(i))),
+    // סיכומי כל הטווח — הדלי הנוסף שנוסף בקצה.
+    totalRange: fold(byBucket.get(bucketCount)),
+    // מפת (אתר → דלי → פעולות) למפת החום.
+    opsOf: (siteId, bucket) => {
+      const rows = byBucket.get(bucket) || [];
+      const hit = rows.find((r) => r.site_id === siteId);
+      return hit ? hit.operations : 0;
+    },
+  };
+}
+
+// ⚠️ `data` או `series` — אחד מהם חייב להגיע. `data` הוא המסלול המקורי
+// (שורות גולמיות, זרוע השרת); `series` הוא הפלט של public.executive_series,
+// שכבר מצטבר במסד. כל השאר — סינון, KPIs, פילוחים, ייצוא — משותף לשניהם
+// ורץ פעם אחת בקוד אחד.
+export function computeExecutive({ allRows, data, series, allSites, from, to,
                                    siteCodes, statuses, minFailureRate = 0,
                                    groupBy = "site", granularity = "day" }) {
   const totalSitesInSystem = allRows.length;
@@ -590,7 +653,15 @@ export function computeExecutive({ allRows, data, allSites, from, to,
   for (const r of rows) if (sitesByStatus[r.status] !== undefined) sitesByStatus[r.status]++;
 
   // סך הכניסות/היציאות בכל הטווח (לאריחי הסיכום מתחת לגרף) — מהזיכרון
-  const totals = directionFromData(data, selectedIds, { from, to });
+  // הדליים נחתכים כאן כי getBucketRanges הוא מקור האמת לגבולות התקופה.
+  const buckets = getBucketRanges({ from, to, granularity });
+  // ⚠️ נטען פעם אחת ומשמש לשלושת הצרכנים (סיכומים, גרף, מפת חום) —
+  // בדיוק כמו שהלולאה הישנה קראה ל-*FromData שלוש פעמים על אותו `data`.
+  const folded = series ? foldSeries(series, buckets.length, selectedIds) : null;
+
+  const totals = folded
+    ? { entries: folded.totalRange.entries, exits: folded.totalRange.exits }
+    : directionFromData(data, selectedIds, { from, to });
 
   const kpis = {
     totalSites: rows.length,
@@ -610,27 +681,36 @@ export function computeExecutive({ allRows, data, allSites, from, to,
   };
 
   // --- סדרת הזמן (משמשת גם לגרף וגם ל-groupBy=time) ---
-  const buckets = getBucketRanges({ from, to, granularity });
 
   // הלולאה הזו הייתה הרוצחת: (דליים × אתרים × 3) שאילתות. חודש בגרנולריות
   // יומית = 30 דליים; עם 200 אתרים זה היה ~18,000 סיבובי רשת. עכשיו: אפס.
-  const chart = buckets.map((b) => {
+  const chart = buckets.map((b, i) => {
     let ops = 0, errs = 0, maint = 0, availSum = 0, availCount = 0;
+    let entries = 0, exits = 0;
 
-    for (const id of selectedIds) {
-      const st = statsFromData(data, id, { from: b.from, to: b.to });
-      ops += st.operations;
-      errs += st.errors;
+    if (folded) {
+      // ⚠️ אותם שדות ואותו סדר צבירה כמו הענף למטה. ההבדל היחיד הוא
+      // **מי חישב** — המסד או הדפדפן — ולכן parity משווה את שניהם.
+      const f = folded.perBucket[i];
+      ops = f.ops; errs = f.errs; maint = f.maint;
+      availSum = f.availSum; availCount = f.availCount;
+      entries = f.entries; exits = f.exits;
+    } else {
+      for (const id of selectedIds) {
+        const st = statsFromData(data, id, { from: b.from, to: b.to });
+        ops += st.operations;
+        errs += st.errors;
 
-      const up = uptimeFromData(data, id, { from: b.from, to: b.to });
-      maint += up.maintenanceHours;
-      if (up.measuredHours > 0) {
-        availSum += up.availabilityPercent;
-        availCount++;
+        const up = uptimeFromData(data, id, { from: b.from, to: b.to });
+        maint += up.maintenanceHours;
+        if (up.measuredHours > 0) {
+          availSum += up.availabilityPercent;
+          availCount++;
+        }
       }
+      const d = directionFromData(data, selectedIds, { from: b.from, to: b.to });
+      entries = d.entries; exits = d.exits;
     }
-
-    const { entries, exits } = directionFromData(data, selectedIds, { from: b.from, to: b.to });
 
     return {
       label: b.label,
@@ -650,7 +730,9 @@ export function computeExecutive({ allRows, data, allSites, from, to,
     return {
       siteCode: r.code,
       siteName: r.name,
-      values: buckets.map((b) => statsFromData(data, id, { from: b.from, to: b.to }).operations),
+      values: folded
+        ? buckets.map((_, i) => folded.opsOf(id, i))
+        : buckets.map((b) => statsFromData(data, id, { from: b.from, to: b.to }).operations),
     };
   });
   const heatmap = {

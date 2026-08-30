@@ -484,6 +484,61 @@ AS $$
   );
 $$;
 
+-- ============================================================
+-- app.error_segments — הגדרה **אחת** לשאלה "מהי תקלה שנספרת"
+-- ============================================================
+-- ⚠️ חולצה מ-site_stats כדי ש-executive_series תוכל לחלוק אותה. לפני
+-- החילוץ הייתי צריך לשכפל את הלוגיקה, וזה בדיוק "פורט שמגדיר מדד
+-- מחדש" — שני מקומות שיסטו ביום שמישהו יתקן אחד מהם.
+--
+-- ⚠️ **וה-p_from/p_to כאן הם גבולות התקופה, לא של הדלי.** הקיפול חייב
+-- לראות את ההקשר שלפני: תקלה שהתחילה קודם, נותקה ב-no_comm, וחזרה —
+-- היא המשך ואסור שתיספר. נמדד: מגדל 1 ב-30/08 — error ב-27/08, no_comm
+-- של 2.9 ימים, ואז error שוב. קריאה לדלי בודד לא רואה את הראשונה
+-- וסופרת את השנייה כחדשה. השער parity-exec-series תפס בדיוק את זה.
+CREATE OR REPLACE FUNCTION app.error_segments(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text
+)
+RETURNS TABLE (
+  site_id        integer,
+  started_at     text,
+  in_maintenance boolean
+)
+LANGUAGE sql
+STABLE
+AS $seg$
+WITH err AS (
+  SELECT c.site_id, c.started_at
+    FROM public.site_segments_collapsed(p_site_ids, p_from, p_to) c
+   WHERE c.status = 'error'
+     -- ⚠️ **אחרי הקיפול ולא לפניו** — זהה ל-statsFromData. מקטע שהוצא
+     -- עדיין משתתף בקיפול הריצוד, כי הוא ההקשר שקובע אם מה שאחריו הוא
+     -- המשך. סינון מוקדם היה מזיז את ספירת שכניו.
+     AND c.excluded_at IS NULL
+     AND c.started_at >= p_from
+     AND c.started_at < p_to
+)
+SELECT
+  e.site_id,
+  e.started_at,
+  (EXISTS (
+     SELECT 1 FROM maintenance_windows w
+      WHERE w.site_id = e.site_id
+        AND w.excluded_at IS NULL
+        AND w.started_at <= e.started_at
+        AND COALESCE(w.cancelled_at, w.expires_at) >= e.started_at)
+   OR EXISTS (
+     SELECT 1 FROM status_history m
+      WHERE m.site_id = e.site_id
+        AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
+        AND m.started_at <= e.started_at
+        AND (m.ended_at IS NULL OR m.ended_at >= e.started_at))
+  )
+FROM err e;
+$seg$;
+
 CREATE OR REPLACE FUNCTION public.site_stats(
   p_site_ids integer[],
   p_from     text,
@@ -517,35 +572,12 @@ WITH ops AS (
      AND o.occurred_at < p_to
    GROUP BY o.site_id
 ),
--- מקטעי התקלה ששרדו את הקיפול ושהתחילו בתוך החלון
-err AS (
-  SELECT c.site_id, c.started_at
-    FROM public.site_segments_collapsed(p_site_ids, p_from, p_to) c
-   WHERE c.status = 'error'
-     -- ⚠️ **אחרי הקיפול ולא לפניו** — זהה ל-statsFromData. מקטע שהוצא
-     -- עדיין משתתף בקיפול הריצוד, כי הוא ההקשר שקובע אם מה שאחריו הוא
-     -- המשך. סינון מוקדם היה מזיז את ספירת שכניו.
-     AND c.excluded_at IS NULL
-     AND c.started_at >= p_from
-     AND c.started_at < p_to
-),
+-- ⚠️ **מקור אחד**: app.error_segments. הלוגיקה ישבה כאן, ו-
+-- executive_series הייתה חייבת את אותה הגדרה — שכפול היה נפרד ביום
+-- שמישהו יתקן אחד מהם, והתסמין הוא שני מספרי תקלות לאותו אתר.
 classified AS (
-  SELECT
-    e.site_id,
-    (EXISTS (
-       SELECT 1 FROM maintenance_windows w
-        WHERE w.site_id = e.site_id
-          AND w.excluded_at IS NULL
-          AND w.started_at <= e.started_at
-          AND COALESCE(w.cancelled_at, w.expires_at) >= e.started_at)
-     OR EXISTS (
-       SELECT 1 FROM status_history m
-        WHERE m.site_id = e.site_id
-          AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
-          AND m.started_at <= e.started_at
-          AND (m.ended_at IS NULL OR m.ended_at >= e.started_at))
-    ) AS in_maintenance
-  FROM err e
+  SELECT e.site_id, e.in_maintenance
+    FROM app.error_segments(p_site_ids, p_from, p_to) e
 ),
 agg AS (
   SELECT site_id,
@@ -1312,3 +1344,134 @@ GRANT EXECUTE ON FUNCTION public.server_heartbeat() TO authenticated;
 
 COMMENT ON FUNCTION public.server_heartbeat() IS
   'החותם האחרון שהשרת כתב על עצמו. NULL = מעולם לא נכתב. משמש את הדשבורד כדי לומר שהוא מציג נתונים ישנים.';
+
+-- ============================================================
+-- executive_series — כל מה שמסך "מנהל כללי" צריך, בקריאה אחת
+-- ============================================================
+-- ⚠️ **מה זה מחליף.** הזרוע הישירה שלפה שורות **גולמיות** והריצה עליהן
+-- את computeExecutive בדפדפן. נמדד על הייצור:
+--
+--     חודש: 10,605 שורות · 6 נסיעות רשת סדרתיות
+--     שנה : 14,361 שורות · 8 נסיעות
+--
+-- וכל זה כדי להפיק גרף של 30 נקודות. כאן: שורה לכל (דלי × אתר) —
+-- 496 שורות, 71KB, קריאה אחת.
+--
+-- ============================================================
+-- ⚠️ למה יש p_from/p_to **וגם** p_buckets
+-- ============================================================
+-- הגרסה הראשונה קראה ל-site_stats לכל דלי, וזה נכשל ב-parity על מקרה
+-- אמיתי — מגדל 1, 30/08/2026:
+--
+--     error    27/08 08:05 → 13:15
+--     no_comm  27/08 13:15 → 30/08 09:25    (2.9 ימים)
+--     error    30/08 09:25 → פתוח           ← בדלי של היום
+--
+-- קיפול הריצוד מזהה את השלישית כ**המשך** של הראשונה ולכן אינו סופר
+-- אותה. קריאה שרואה רק את הדלי אינה רואה את הראשונה: JS=1 מול SQL=2.
+-- לכן **הקיפול רץ פעם אחת על כל התקופה**, והמקטעים ששרדו מחולקים
+-- לדליים לפי started_at — בדיוק מה ש-statsFromData עושה.
+--
+-- ============================================================
+-- ⚠️ הצורה: CTE-ים מקובצים, לא LATERAL לכל תא
+-- ============================================================
+-- הגרסה שקדמה קראה ל-site_uptime בתוך LATERAL שרץ לכל (דלי × אתר) —
+-- 480 קריאות. **נמדד: 13,216ms**, כלומר איטי פי חמישה־עשר מהמסלול
+-- שהוא בא להחליף. אותה תוצאה בדיוק, צורה אחרת: קריאה אחת לכל דלי
+-- (30), וסריקה מקובצת אחת על operations.
+--
+-- זה לא כוונון — זו ההבחנה בין "נכון" ל"שמיש", ובלי מדידה היא נראית
+-- כמו אותו קוד.
+CREATE OR REPLACE FUNCTION public.executive_series(
+  p_site_ids integer[],
+  p_from     text,
+  p_to       text,
+  p_buckets  jsonb
+)
+RETURNS TABLE (
+  bucket               integer,
+  site_id              integer,
+  operations           integer,
+  errors               integer,
+  entries              integer,
+  exits                integer,
+  maintenance_hours    double precision,
+  availability_percent double precision,
+  measured_hours       double precision
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH b AS (
+  -- ⚠️ WITH ORDINALITY שומר על סדר הדליים. בלעדיו הגרף היה מקבל את
+  -- אותם מספרים בסדר אחר — נראה כמו נתונים שגויים, לא כמו באג מיון.
+  SELECT (ord - 1)::integer AS bucket,
+         e ->> 'from'       AS f,
+         e ->> 'to'         AS t
+    FROM jsonb_array_elements(p_buckets) WITH ORDINALITY AS x(e, ord)
+),
+ids AS (
+  SELECT id AS site_id FROM sites
+   WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)
+),
+-- קריאה אחת לכל **דלי**, לא לכל תא. זה ההבדל בין 30 קריאות ל-480.
+up AS (
+  SELECT b.bucket, u.site_id, u.maintenance_hours, u.availability_percent, u.measured_hours
+    FROM b
+    CROSS JOIN LATERAL public.site_uptime(p_site_ids, b.f, b.t) u
+),
+-- סריקה מקובצת אחת על operations, במקום תת-שאילתה לכל תא.
+ops AS (
+  SELECT b.bucket,
+         o.site_id,
+         COUNT(*)::integer                                            AS operations,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::integer      AS entries,
+         COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::integer       AS exits
+    FROM b
+    JOIN operations o
+      ON o.occurred_at >= b.f
+     AND o.occurred_at < b.t
+   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
+     -- ⚠️ הסינון **חייב** להיות זהה לזה של site_stats — כולל
+     -- app.op_served — אחרת כניסות+יציאות לא יסתכמו לסך הפעולות **על
+     -- אותו מסך**, וזה נראה כמו טעות עיגול ולא כמו מקור שונה.
+     AND o.excluded_at IS NULL
+     AND o.is_anomaly = 0
+     AND o.start_end = 'end'
+     AND o.superseded_by IS NULL
+     AND app.op_served(o.site_id, o.occurred_at)
+   GROUP BY b.bucket, o.site_id
+),
+-- הקיפול, פעם אחת, על כל התקופה.
+errs AS (
+  SELECT e.site_id, e.started_at
+    FROM app.error_segments(p_site_ids, p_from, p_to) e
+   WHERE NOT e.in_maintenance
+),
+err_by_bucket AS (
+  SELECT b.bucket, e.site_id, COUNT(*)::integer AS n
+    FROM b JOIN errs e
+      ON e.started_at >= b.f AND e.started_at < b.t
+   GROUP BY b.bucket, e.site_id
+)
+-- ⚠️ הנהג הוא (דלי × אתר) ולא הנתונים: הגרף חייב להראות דלי עם אפס
+-- פעולות, לא לדלג עליו.
+SELECT
+  b.bucket,
+  ids.site_id,
+  COALESCE(o.operations, 0),
+  COALESCE(eb.n, 0),
+  COALESCE(o.entries, 0),
+  COALESCE(o.exits, 0),
+  u.maintenance_hours,
+  u.availability_percent,
+  u.measured_hours
+FROM b
+CROSS JOIN ids
+LEFT JOIN up            u  ON u.bucket  = b.bucket AND u.site_id  = ids.site_id
+LEFT JOIN ops           o  ON o.bucket  = b.bucket AND o.site_id  = ids.site_id
+LEFT JOIN err_by_bucket eb ON eb.bucket = b.bucket AND eb.site_id = ids.site_id;
+$$;
+
+COMMENT ON FUNCTION public.executive_series(integer[], text, text, jsonb) IS
+  'שורה לכל (דלי × אתר) עבור מסך המנהל הכללי. הקיפול רץ פעם אחת על כל התקופה; זמינות נקראת פעם אחת לכל דלי.';
