@@ -28,6 +28,30 @@
 /** גודל עמוד. 1,000 הוא התקרה של Supabase — בקשה גדולה יותר לא תעזור. */
 const PAGE = 1000;
 
+// ============================================================
+// ⚠️ העמודים נשלפים במקביל — וזה היה הצוואר האמיתי
+// ============================================================
+// הגרסה הקודמת שלפה עמוד, המתינה, שלפה את הבא. נמדד על נתוני הייצור
+// במסך "מנהל כללי", תצוגת שנה:
+//
+//     operations       6,754 שורות  =  7 עמודים
+//     status_history   7,597 שורות  =  8 עמודים
+//     סה"כ            14,386 שורות  =  2.2MB
+//
+// שמונה נסיעות רשת **בזו אחר זו**, כל אחת 150–400ms מהמשרד ל-Supabase.
+// זה לבדו 1.5–3 שניות של המתנה שאינה עושה כלום — ה-CPU בטל, הרשת בטלה
+// בין בקשה לבקשה, והמסך ריק.
+//
+// ⚠️ **אי אפשר פשוט לבקש עמוד גדול יותר**: 1,000 היא תקרה קשיחה של
+// Supabase (ראה למעלה — `limit` פשוט מתעלמים ממנו).
+//
+// ⚠️ **ואי אפשר לדעת מראש כמה עמודים יש** בלי `count: 'exact'`, שהוא
+// שאילתה נוספת ו-COUNT מלא על טבלה גדולה — כלומר לשלם נסיעה כדי לחסוך
+// נסיעות. לכן: עמוד ראשון לבדו, ואם הוא מלא — אצווה מקבילה שמכפילה את
+// עצמה. שמונה עמודים הופכים לשתי נסיעות במקום שמונה.
+const FIRST_BATCH = 4;
+const MAX_BATCH = 16;
+
 /**
  * מריץ את הבורר שוב ושוב עם חלונות Range עד שנגמרות השורות.
  *
@@ -37,24 +61,51 @@ const PAGE = 1000;
  * @returns {{ rows, capped }}
  */
 export async function pageAll(build, cap = 20000) {
-  const rows = [];
+  const maxPages = Math.max(1, Math.ceil(cap / PAGE));
 
-  for (let offset = 0; offset < cap; offset += PAGE) {
-    const { data, error } = await build(offset, offset + PAGE - 1);
+  const fetchPage = async (i) => {
+    const { data, error } = await build(i * PAGE, i * PAGE + PAGE - 1);
     if (error) {
       throw new Error(
         error.code === "42501" ? "אין הרשאת קריאה — נדרשת התחברות" : error.message
       );
     }
+    return data || [];
+  };
 
-    rows.push(...(data || []));
+  // ⚠️ העמוד הראשון לבדו, ולא כחלק מאצווה. רוב הקריאות במערכת הזו
+  // מחזירות פחות מ-1,000 שורות, ולירות ארבע בקשות כדי להביא 12 שורות
+  // זה להחליף בעיה אחת באחרת.
+  const first = await fetchPage(0);
+  if (first.length < PAGE) return { rows: first, capped: false };
 
-    // עמוד קצר מהמלא = הגענו לסוף. זה הסימן היחיד האמין — Supabase אינו
-    // מחזיר את הסך הכולל אלא אם מבקשים count, וזו שאילתה נוספת בכל עמוד.
-    if (!data || data.length < PAGE) return { rows, capped: false };
+  const pages = [first];
+  let next = 1;
+  let batch = FIRST_BATCH;
+  let reachedEnd = false;
+
+  while (next < maxPages && !reachedEnd) {
+    const size = Math.min(batch, maxPages - next);
+    const got = await Promise.all(
+      Array.from({ length: size }, (_, k) => fetchPage(next + k))
+    );
+
+    // ⚠️ Promise.all שומר על סדר הקלט, ולכן השרשור כאן שומר על סדר
+    // השורות שהקורא ביקש ב-.order(). בלי זה כל החישובים שמניחים סדר
+    // כרונולוגי — קיפול ריצוד, מקטעים, דליים — היו מקבלים קלט מעורבב.
+    pages.push(...got);
+
+    // עמוד קצר מהמלא = נגמרו השורות. באצווה מקבילה ייתכן שנשלפו גם
+    // עמודים ריקים אחריו — הם מוסיפים אפס שורות, וזה המחיר על כך שאין
+    // לנו את הסך הכולל מראש.
+    reachedEnd = got.some((g) => g.length < PAGE);
+    next += size;
+    batch = Math.min(batch * 2, MAX_BATCH);
   }
+
+  const rows = pages.flat();
 
   // ⚠️ נגמרה התקרה ועדיין יש שורות. מחזירים capped כדי שה-UI יאמר "חלקי"
   // במקום להציג "סה\"כ" שקטן מהאמת — בדיוק הכשל שהקובץ הזה קיים בשבילו.
-  return { rows, capped: true };
+  return { rows, capped: !reachedEnd };
 }

@@ -30,12 +30,33 @@ const FETCH_CAP = 20000;
 /** בונה את מבנה `data` שה-*FromData מצפות לו: שלוש מפות לפי site_id. */
 async function loadRangeShape(from, to) {
   const [ops, segments, windows] = await Promise.all([
+    // ============================================================
+    // ⚠️ הסינון עבר לשרת — 52% פחות שורות, אותה תוצאה בדיוק
+    // ============================================================
+    // שני הצרכנים היחידים של `data.ops` — `statsFromData` ו-
+    // `directionFromData` ב-shared/executive.mjs — מסננים **בדיוק** את
+    // אותם ארבעה תנאים בזיכרון. כלומר עד עכשיו חצי מהשורות עברו את
+    // האינטרנט רק כדי להימחק בדפדפן.
+    //
+    // נמדד על הייצור, תצוגת שנה: 6,755 → 3,243 שורות · 994KB → 474KB ·
+    // 7 עמודים → 4. הסינון ב-SQL ובזיכרון הושוו ונתנו את אותו מספר.
+    //
+    // ⚠️ **העמודות עדיין נשלפות, ואסור להסיר אותן.** הקוד המשותף עדיין
+    // קורא `o.is_anomaly === 0` — ועל שורה בלי העמודה זה `undefined === 0`,
+    // כלומר **false**, ו'סך הפעולות' היה הופך ל-0 בלי שום שגיאה. הסינון
+    // כאן הופך את הבדיקות שם למיותרות, לא לשגויות.
+    //
+    // ⚠️ ומה שזה יוצר: תלות בין שני קבצים. אם מישהו ישנה את הסינון ב-
+    // shared/executive.mjs, הזרוע הזו תסטה בשקט. `tests/exec-ops-filter.test.js`
+    // מקבע את השקילות בדיוק בשביל זה.
     pageAll((a, b) => supabase
       .from("operations")
-      // ⚠️ excluded_at: פעולה שסומנה כניסוי אינה נספרת. הקוד המשותף
-      // כבר מסנן לפיה — בלי העמודה הסינון עובר בשקט ולא מסנן כלום.
       .select("site_id, occurred_at, entry_exit, start_end, is_anomaly, superseded_by, excluded_at")
       .gte("occurred_at", from).lt("occurred_at", to)
+      .is("excluded_at", null)
+      .eq("is_anomaly", 0)
+      .is("superseded_by", null)
+      .eq("start_end", "end")
       .order("occurred_at", { ascending: true })
       .range(a, b), FETCH_CAP),
 
