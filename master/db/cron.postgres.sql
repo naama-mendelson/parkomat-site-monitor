@@ -186,6 +186,112 @@ SELECT cron.schedule('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.pr
 --
 -- ⚠️ **וזה חייב לרוץ ב-Postgres ולא ב-master.** שומר שיושב בתוך התהליך
 -- שהוא בא לשמור עליו מת יחד איתו — וזה בדיוק המצב שבו הוא נחוץ.
+-- ============================================================
+-- שליחת התראה — ובעיקר, כישלון שמכריז על עצמו
+-- ============================================================
+-- ⚠️ **הגרסה הקודמת שתקה במשך חודשים.** הכותרת נבנתה כך:
+--
+--     'Bearer ' || current_setting('app.push_anon_key', true)
+--
+-- וב-SQL, שרשור עם NULL הוא NULL — לא 'Bearer '. ההגדרה מעולם לא
+-- נקבעה, ולכן **כל הכותרת נעלמה** ו-Supabase החזיר:
+--
+--     {"code":"UNAUTHORIZED_NO_AUTH_HEADER"}
+--
+-- נמדד ב-net._http_response: 401 בכל קריאה. השומר ירה נאמנה כל עשר
+-- דקות במשך נפילה של 2.5 ימים, ואיש לא ידע.
+--
+-- ⚠️ וה-true השני ב-current_setting אומר "אל תזרוק אם חסר" — כלומר
+-- **המערכת תוכננה לשתוק** כשההגדרה חסרה. זה השורש, ולא המפתח החסר:
+-- הגדרה חסרה חייבת להיות רועשת, אחרת היא מתגלה רק באסון.
+--
+-- לכן כאן: מפתח חסר מייצר WARNING **וגם** שורה ב-settings שאפשר לשאול
+-- עליה, והפונקציה מחזירה NULL כדי שהקורא יידע שלא נשלח כלום.
+CREATE OR REPLACE FUNCTION app.send_push(
+  p_kind       text,
+  p_site_name  text,
+  p_fault_text text
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $push$
+DECLARE
+  v_key text := current_setting('app.push_anon_key', true);
+  v_req bigint;
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  -- ⚠️ coalesce ואז השוואה למחרוזת ריקה: גם NULL וגם '' הם "אין מפתח",
+  -- ו-'' היה עובר בדיקת IS NOT NULL ושולח 'Bearer ' ריק — כלומר אותו
+  -- כשל בדיוק, בתחפושת אחרת.
+  IF coalesce(v_key, '') = '' THEN
+    INSERT INTO settings (key, value, updated_at)
+    VALUES ('alert_last_error', 'app.push_anon_key אינו מוגדר — התראות אינן נשלחות', v_now)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+    RAISE WARNING 'app.send_push: app.push_anon_key אינו מוגדר — ההתראה לא נשלחה';
+    RETURN NULL;
+  END IF;
+
+  SELECT net.http_post(
+    url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || v_key),
+    body    := jsonb_build_object(
+      'site_id', 0, 'site_code', '—', 'site_name', p_site_name,
+      'kind', p_kind, 'fault_text', p_fault_text)
+  ) INTO v_req;
+
+  -- ⚠️ מזהה הבקשה נשמר כדי שאפשר יהיה לשאול **אחר כך** מה חזר.
+  -- pg_net אסינכרוני: הצלחת ה-POST כאן אינה אומרת שהצד השני קיבל,
+  -- וזו בדיוק הסיבה שהכשל הקודם היה בלתי נראה.
+  INSERT INTO settings (key, value, updated_at)
+  VALUES ('alert_last_request', v_req::text, v_now)
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+
+  RETURN v_req;
+END;
+$push$;
+
+-- ============================================================
+-- האם ההתראות באמת עובדות — שאלה שאפשר לשאול
+-- ============================================================
+-- ⚠️ בלי הפונקציה הזו אין דרך לדעת. "נשלחה בקשה" ו"ההתראה הגיעה" הם
+-- שני דברים שונים, ובמשך חודשים ההבדל ביניהם היה בלתי נראה: pg_net
+-- אסינכרוני, אז הכשל חוזר לטבלה ולא לקורא.
+--
+-- מחזירה שורה אחת: האם המפתח קיים, מה חזר בבקשה האחרונה, וכמה מנויים
+-- בכלל רשומים — כי התראה תקינה שאין לה נמען היא עדיין שתיקה.
+CREATE OR REPLACE FUNCTION app.alert_health()
+RETURNS TABLE (
+  key_present     boolean,
+  subscribers     integer,
+  last_request_id bigint,
+  last_status     integer,
+  last_at         timestamptz,
+  last_error      text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, net, pg_temp
+AS $health$
+DECLARE
+  v_req bigint;
+BEGIN
+  SELECT value::bigint INTO v_req FROM settings WHERE key = 'alert_last_request';
+
+  RETURN QUERY
+  SELECT
+    coalesce(current_setting('app.push_anon_key', true), '') <> '',
+    (SELECT COUNT(*)::int FROM push_subscriptions),
+    v_req,
+    (SELECT r.status_code FROM net._http_response r WHERE r.id = v_req),
+    (SELECT r.created    FROM net._http_response r WHERE r.id = v_req),
+    (SELECT s.value      FROM settings s WHERE s.key = 'alert_last_error');
+END;
+$health$;
+
 CREATE OR REPLACE FUNCTION app.check_ingestion_health(
   p_heartbeat_stale_minutes integer DEFAULT 10,
   p_drop_window_minutes     integer DEFAULT 15
@@ -201,7 +307,9 @@ DECLARE
   v_drops     integer;
   v_last      text;
   v_now       text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
-  v_key       text;
+  -- ⚠️ v_key הוכרז כאן ומעולם לא שימש. במקומו: מזהה הבקשה, שהוא מה
+  -- שמבדיל בין "נשלח" ל"נחסם" — ההבחנה שכל התיקון הזה עומד עליה.
+  v_req       bigint;
 BEGIN
   -- ============================================================
   -- 1. השרת חדל לדווח על עצמו
@@ -218,18 +326,20 @@ BEGIN
       -- דקות כל הלילה הוא טלפון שמשתיקים — ואז גם ההתראה הבאה תושתק.
       SELECT value INTO v_last FROM settings WHERE key = 'alert_last_heartbeat';
       IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
-        PERFORM net.http_post(
-          url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
-          headers := jsonb_build_object(
-            'Content-Type', 'application/json',
-            'Authorization', 'Bearer ' || current_setting('app.push_anon_key', true)),
-          body    := jsonb_build_object(
-            'site_id', 0, 'site_code', '—', 'site_name', 'מערכת הניטור',
-            'kind', 'no_comm',
-            'fault_text', 'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת')
-        );
-        INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_heartbeat', v_now, v_now)
-          ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+        v_req := app.send_push(
+          'no_comm', 'מערכת הניטור',
+          'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת');
+
+        -- ============================================================
+        -- ⚠️ הדה-דופ נרשם רק אם באמת נשלח משהו
+        -- ============================================================
+        -- קודם הוא נרשם תמיד. כלומר כישלון שליחה **השתיק את ההתראה
+        -- לשעה** — המנגנון שנועד למנוע רעש הפך למנגנון שמסתיר כשל.
+        -- זה מה שהפך 401 חוזר לשתיקה מוחלטת במקום לניסיון כל עשר דקות.
+        IF v_req IS NOT NULL THEN
+          INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_heartbeat', v_now, v_now)
+            ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+        END IF;
         RETURN QUERY SELECT 'heartbeat_stale'::text, (round(v_age_min) || ' דקות')::text;
       END IF;
     END IF;
@@ -277,18 +387,15 @@ BEGIN
   IF v_drops > 0 THEN
     SELECT value INTO v_last FROM settings WHERE key = 'alert_last_drops';
     IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
-      PERFORM net.http_post(
-        url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
-        headers := jsonb_build_object(
-          'Content-Type', 'application/json',
-          'Authorization', 'Bearer ' || current_setting('app.push_anon_key', true)),
-        body    := jsonb_build_object(
-          'site_id', 0, 'site_code', '—', 'site_name', 'מערכת הניטור',
-          'kind', 'fault',
-          'fault_text', v_drops || ' הודעות נזרקו בקליטה — ייתכן שמצב אתר אינו מעודכן')
-      );
-      INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_drops', v_now, v_now)
-        ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+      v_req := app.send_push(
+        'fault', 'מערכת הניטור',
+        v_drops || ' הודעות נזרקו בקליטה — ייתכן שמצב אתר אינו מעודכן');
+
+      -- ⚠️ אותו נימוק כמו למעלה: אין שליחה, אין השתקה.
+      IF v_req IS NOT NULL THEN
+        INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_drops', v_now, v_now)
+          ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+      END IF;
       RETURN QUERY SELECT 'drops'::text, (v_drops || ' הודעות')::text;
     END IF;
   END IF;
