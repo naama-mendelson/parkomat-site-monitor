@@ -286,14 +286,58 @@ public class ServiceManager
 
     // ===== עזרים =====
 
+    // ============================================================
+    // ⚠️ המרוץ שהפעיל שני סוכנים — ומה בדיוק מונע אותו
+    // ============================================================
+    // הגרסה הקודמת הייתה "בדוק ואז הפעל" בלי נעילה:
+    //
+    //     if (IsRunning(AgentProcName)) return null;
+    //     return LaunchHidden(...);
+    //
+    // ‏`Process.Start` חוזר **מיד**, אבל התהליך החדש מופיע ב-
+    // `GetProcessesByName` רק אחרי מאות מילישניות. ושני קוראים רצים
+    // בתהליכונים שונים: `ApplyConfigChange` (מסך ההגדרות) והשומר
+    // (`WatchdogAction.Start`) — שרואה `processAlive: false` בדיוק אחרי
+    // ה-KillByName שקדם להפעלה.
+    //
+    // ⚠️ נמדד באתר 1284 ב-26/08/2026 22:23:07: שני מופעים, אותה שנייה,
+    // אותו Tray אב. הם ניתקו זה את זה ב-MQTT במשך ארבעה ימים.
+    //
+    // הנעילה לבדה **אינה מספיקה** — הקורא השני היה נכנס מיד אחרי שחרורה
+    // ועדיין רואה "לא רץ". לכן ההמתנה היא בתוך הנעילה: יוצאים ממנה רק
+    // כשהתהליך כבר גלוי למי שיבדוק אחרינו.
+    private static readonly object _startGate = new();
+
     private static string? StartAgent()
     {
-        if (IsRunning(AgentProcName))
-            return null;
-        if (!File.Exists(AgentExe))
-            return "קובץ ה-Agent לא נמצא. ייתכן שההתקנה לא הושלמה — התקן מחדש.";
+        lock (_startGate)
+        {
+            if (IsRunning(AgentProcName))
+                return null;
+            if (!File.Exists(AgentExe))
+                return "קובץ ה-Agent לא נמצא. ייתכן שההתקנה לא הושלמה — התקן מחדש.";
 
-        return LaunchHidden(AgentExe, arguments: null, "ה-Agent");
+            string? error = LaunchHidden(AgentExe, arguments: null, "ה-Agent");
+            if (error != null)
+                return error;
+
+            WaitUntilRunning(AgentProcName, TimeSpan.FromSeconds(5));
+            return null;
+        }
+    }
+
+    // ממתין עד שהתהליך גלוי, או עד תום הזמן. ⚠️ פסק זמן ולא המתנה
+    // אינסופית: תהליך שנכשל בעלייה לא יופיע לעולם, והחזקת הנעילה לנצח
+    // הייתה מקפיאה את ה-Tray כולו — כלומר הופכת באג של כפילות לתקיעה.
+    private static void WaitUntilRunning(string procName, TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < until)
+        {
+            if (IsRunning(procName))
+                return;
+            Thread.Sleep(100);
+        }
     }
 
     private static string? StartMosquitto()
