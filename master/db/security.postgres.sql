@@ -498,34 +498,55 @@ $$;
 
 GRANT EXECUTE ON FUNCTION app.is_active_user() TO authenticated;
 -- sites
+-- ============================================================
+-- ⚠️ למה כל קריאה כאן עטופה ב-(SELECT ...)
+-- ============================================================
+-- `app.is_active_user()` ו-`app.is_manager()` הן STABLE, אבל בתוך USING
+-- הן נקראות **לכל שורה שנסרקת**. נמדד דרך PostgREST על נתוני הייצור:
+--
+--     site_uptime   2,554–2,819ms  להחזרת 16 שורות (4KB)
+--     חמש קריאות רצופות — כולן איטיות באותה מידה, כלומר לא התחלה קרה
+--
+-- ואותה שאילתה בדיוק דרך חיבור `postgres` רצה ב-123ms — כי ל-postgres
+-- יש rolbypassrls, והמדיניות אינה נבדקת כלל. כלומר **כל ההפרש הוא
+-- RLS**, ולא החישוב.
+--
+-- עטיפה ב-`(SELECT f())` הופכת את הקריאה ל-InitPlan: Postgres מעריך
+-- אותה **פעם אחת לשאילתה** ומשווה את התוצאה לכל שורה. זה דפוס מתועד
+-- של Supabase, והוא **אינו משנה מי רואה מה** — פונקציה STABLE מחזירה
+-- את אותו ערך לאורך השאילתה בין כה וכה.
+--
+-- ⚠️ ולכן זה גם לא "אופטימיזציה שמרככת אבטחה": הביטוי זהה, רק מספר
+-- ההערכות שונה. `check-security` מאמת שאיש לא קיבל גישה שלא הייתה לו.
+
 DROP POLICY IF EXISTS sites_read_authenticated ON sites;
 CREATE POLICY sites_read_authenticated ON sites
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- status_history
 DROP POLICY IF EXISTS status_history_read_authenticated ON status_history;
 CREATE POLICY status_history_read_authenticated ON status_history
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- operations
 DROP POLICY IF EXISTS operations_read_authenticated ON operations;
 CREATE POLICY operations_read_authenticated ON operations
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- maintenance_windows
 DROP POLICY IF EXISTS maintenance_windows_read_authenticated ON maintenance_windows;
 CREATE POLICY maintenance_windows_read_authenticated ON maintenance_windows
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- monthly_summary
 DROP POLICY IF EXISTS monthly_summary_read_authenticated ON monthly_summary;
 CREATE POLICY monthly_summary_read_authenticated ON monthly_summary
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- events — הדשבורד מאזין לזה (Realtime / replay), ולכן קריאה נדרשת
 DROP POLICY IF EXISTS events_read_authenticated ON events;
 CREATE POLICY events_read_authenticated ON events
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- ============================================================
 -- suppressed_faults — תקלות שהושמטו בזמן תחזוקה
@@ -536,7 +557,7 @@ CREATE POLICY events_read_authenticated ON events
 -- rolbypassrls), ולכן הפער היה מתגלה רק ביום שמישהו הופך את המתג.
 DROP POLICY IF EXISTS suppressed_faults_read_authenticated ON suppressed_faults;
 CREATE POLICY suppressed_faults_read_authenticated ON suppressed_faults
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- ============================================================
 -- settings — **אין מדיניות, וזה מכוון**
@@ -587,7 +608,7 @@ ALTER TABLE audit_log  ENABLE ROW LEVEL SECURITY;
 -- כתיבה כאן הייתה נותנת לדפדפן לשנות דרגות ישירות מול PostgREST.
 DROP POLICY IF EXISTS app_users_read_authenticated ON app_users;
 CREATE POLICY app_users_read_authenticated ON app_users
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- ============================================================
 -- audit_log — בקר רואה הכול, חוץ מניהול המשתמשים
@@ -616,7 +637,7 @@ CREATE POLICY app_users_read_authenticated ON app_users
 DROP POLICY IF EXISTS audit_log_read_authenticated ON audit_log;
 CREATE POLICY audit_log_read_authenticated ON audit_log
   FOR SELECT TO authenticated
-  USING (app.is_manager() OR action NOT LIKE 'user.%');
+  USING ((SELECT app.is_manager()) OR action NOT LIKE 'user.%');
 
 GRANT SELECT ON app_users, audit_log TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_app_user()      TO authenticated;
@@ -752,8 +773,8 @@ DROP POLICY IF EXISTS field_reports_read ON field_reports;
 CREATE POLICY field_reports_read ON field_reports
   FOR SELECT TO authenticated
   USING (
-    app.is_active_user()
-    AND (app.is_manager() OR reported_by_user_id = app.current_app_user())
+    (SELECT app.is_active_user())
+    AND ((SELECT app.is_manager()) OR reported_by_user_id = (SELECT app.current_app_user()))
   );
 
 -- הקבצים יורשים את ההרשאה של הדיווח שהם שייכים אליו. ⚠️ בלי ה-EXISTS
@@ -764,11 +785,11 @@ DROP POLICY IF EXISTS field_report_files_read ON field_report_files;
 CREATE POLICY field_report_files_read ON field_report_files
   FOR SELECT TO authenticated
   USING (
-    app.is_active_user()
+    (SELECT app.is_active_user())
     AND EXISTS (
       SELECT 1 FROM field_reports r
        WHERE r.id = field_report_files.report_id
-         AND (app.is_manager() OR r.reported_by_user_id = app.current_app_user())
+         AND ((SELECT app.is_manager()) OR r.reported_by_user_id = (SELECT app.current_app_user()))
     )
   );
 
@@ -785,7 +806,7 @@ GRANT SELECT ON field_report_files TO authenticated;
 ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS announcements_read ON announcements;
 CREATE POLICY announcements_read ON announcements
-  FOR SELECT TO authenticated USING (app.is_active_user());
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 GRANT SELECT ON announcements TO authenticated;
 
@@ -799,11 +820,11 @@ DROP POLICY IF EXISTS field_report_replies_read ON field_report_replies;
 CREATE POLICY field_report_replies_read ON field_report_replies
   FOR SELECT TO authenticated
   USING (
-    app.is_active_user()
+    (SELECT app.is_active_user())
     AND EXISTS (
       SELECT 1 FROM field_reports r
        WHERE r.id = field_report_replies.report_id
-         AND (app.is_manager() OR r.reported_by_user_id = app.current_app_user())
+         AND ((SELECT app.is_manager()) OR r.reported_by_user_id = (SELECT app.current_app_user()))
     )
   );
 
@@ -819,6 +840,6 @@ ALTER TABLE service_commands ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS service_commands_read ON service_commands;
 CREATE POLICY service_commands_read ON service_commands
   FOR SELECT TO authenticated
-  USING (app.is_active_user() AND app.is_manager());
+  USING ((SELECT app.is_active_user()) AND (SELECT app.is_manager()));
 
 GRANT SELECT ON service_commands TO authenticated;
