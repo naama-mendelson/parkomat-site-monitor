@@ -19,6 +19,7 @@
 // ועבר. 2 נבדל מ-0 בכוונה — CI שמסתפק ב-"לא נפל" היה מקבל כיסוי חלקי בשקט.
 
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 // SKIP_CODES — קודי היציאה שמשמעותם "לא הורץ מחוסר הגדרה" ולא "נכשל".
@@ -113,6 +114,37 @@ for (const g of GATES) {
   // המידע נמצא שם — וזה בדיוק המצב שבו הכי צריך אותו.
   if (r.status !== 0 && errLines.length) {
     for (const l of errLines.slice(-6)) console.log(`     │ ${l}`);
+  }
+
+  // ============================================================
+  // ⚠️ בכשל — הפלט **המלא** נשמר לקובץ
+  // ============================================================
+  // שש שורות אינן מספיקות, ונמדד: parity-executive נפל פעמיים בהרצה
+  // מלאה ועבר חמש פעמים לבד. כל מה שהסיכום הראה היה שורת כותרת אחת —
+  // בלי מספרים, בלי שם שדה, בלי כלום. בלי הפלט המלא אי אפשר להבדיל
+  // בין הבדל אמיתי, נתונים שזזו, וקריסה.
+  //
+  // ⚠️ **ורק בכשל.** שמירת הפלט של 25 שערים בכל הרצה הייתה יוצרת רעש
+  // שאיש לא מנקה, והקבצים היו מתיישנים בלי שאיש ישים לב איזה שייך
+  // לאיזו הרצה.
+  if (r.status !== 0 && r.status !== 2) {
+    try {
+      const dir = path.join(__dirname, ".gate-logs");
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${g.name}.log`);
+      fs.writeFileSync(file,
+        `# ${g.name} — ${new Date().toISOString()} — exit=${r.status}
+
+` +
+        `===== stdout =====
+${r.stdout || "(ריק)"}
+
+` +
+        `===== stderr =====
+${r.stderr || "(ריק)"}
+`);
+      console.log(`     📄 הפלט המלא: tools/.gate-logs/${g.name}.log`);
+    } catch { /* שמירת הלוג לא תפיל את ההרצה */ }
   }
 
   if (r.status === 0) {
