@@ -780,3 +780,47 @@ EXCEPTION
 END $$;
 
 ALTER TABLE field_report_replies REPLICA IDENTITY FULL;
+
+-- ============================================================
+-- service_commands — פקודות תפעול מהדשבורד למכונת השרת
+-- ============================================================
+-- ⚠️ **למה זה עובר דרך טבלה ולא דרך קריאה לשרת.** הכפתור נחוץ בדיוק
+-- כשהשרת אינו עונה — קריאה אליו הייתה נכשלת ברגע היחיד שבו היא נדרשת.
+-- הדשבורד קורא וכותב ל-Supabase ישירות (VITE_SUPABASE_DIRECT), והוא PWA
+-- שנטען מהמטמון, ולכן הוא חי גם כשהמכונה במשרד למטה לגמרי.
+--
+-- מי שמבצע בפועל הוא סקריפט על DELL008 שרץ **מחוץ ל-Docker** (משימה
+-- מתוזמנת). זה תנאי ולא פרט: מבצע שרץ בתוך Docker נופל יחד עם מה שהוא
+-- אמור להרים.
+--
+-- ⚠️ ו-27/08/2026 הוא הסיבה שזה קיים: המכונה איבדה חשמל, Docker לא עלה
+-- בלי התחברות משתמש, והמערכת הייתה למטה 2.5 ימים.
+CREATE TABLE IF NOT EXISTS service_commands (
+  id            BIGSERIAL PRIMARY KEY,
+  -- 'restart' היום. עמודה ולא ENUM כדי שפקודה נוספת לא תדרוש מיגרציה.
+  command       TEXT NOT NULL,
+  -- 'pending' | 'running' | 'done' | 'failed' | 'expired'
+  status        TEXT NOT NULL DEFAULT 'pending',
+  reason        TEXT,
+  requested_by  TEXT NOT NULL,
+  requested_at  TEXT NOT NULL,
+  claimed_at    TEXT,
+  finished_at   TEXT,
+  result        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_commands_pending
+  ON service_commands(status, id);
+CREATE INDEX IF NOT EXISTS idx_service_commands_recent
+  ON service_commands(requested_at DESC);
+
+-- ⚠️ Realtime: מי שלחצה על הכפתור צריכה לראות "התקבל → רץ → הסתיים"
+-- בלי לרענן. בלי זה היא תלחץ שוב, ושוב — ובדיוק לכן יש גם ריסון ב-RPC.
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.service_commands;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE service_commands REPLICA IDENTITY FULL;

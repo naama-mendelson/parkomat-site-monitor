@@ -808,3 +808,17 @@ CREATE POLICY field_report_replies_read ON field_report_replies
   );
 
 GRANT SELECT ON field_report_replies TO authenticated;
+
+-- ============================================================
+-- service_commands — מנהלת רואה, ורק היא מבקשת
+-- ============================================================
+-- ⚠️ קריאה למנהלת בלבד ולא לכל מאומת. השורות מכילות `reason` שמישהי
+-- הקלידה ואת שמה, וזו רשומת תפעול ולא מידע שכל משתמש צריך. הכתיבה
+-- כולה עוברת ב-RPC — אין GRANT INSERT/UPDATE לאיש.
+ALTER TABLE service_commands ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_commands_read ON service_commands;
+CREATE POLICY service_commands_read ON service_commands
+  FOR SELECT TO authenticated
+  USING (app.is_active_user() AND app.is_manager());
+
+GRANT SELECT ON service_commands TO authenticated;

@@ -764,3 +764,7 @@ export {
 
 export { subscribeNewReports } from "./reportsLiveDirect";
 export { subscribeReload, broadcastReload } from "./reloadDirect";
+
+export {
+  requestServiceRestart, recentServiceCommands, subscribeServiceCommands,
+} from "./serviceCommandsDirect";

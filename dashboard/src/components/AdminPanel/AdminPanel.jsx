@@ -11,6 +11,7 @@ import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-typ
 import { useAdmin } from "../../hooks/useAdmin";
 import { useDirect } from "../../services/dataSource";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
+import ServerControl from "../ServerControl/ServerControl";
 import "./AdminPanel.css";
 import Logo from "../Logo/Logo";
 
@@ -240,6 +241,14 @@ function AdminPanel({ sites, onClose, onChanged }) {
             </div>
           </form>
         )}
+
+        {/* ============================================================ */}
+        {/* הפעלה מחדש של השרת                                          */}
+        {/* ============================================================ */}
+        {/* ⚠️ כאן ולא בכותרת העליונה: המסך הזה כבר מגודר לתפקיד מנהלת,  */}
+        {/* וכפתור שמפיל את הקליטה לארבע דקות אינו שייך לסרגל שכולם      */}
+        {/* רואים. הרכיב עצמו מסתיר את עצמו במצב שרת.                    */}
+        <ServerControl />
 
         {/* רשימת האתרים */}
         <div className="adm-list">

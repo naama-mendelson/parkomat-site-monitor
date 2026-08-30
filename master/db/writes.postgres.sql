@@ -1664,3 +1664,146 @@ $$;
 
 REVOKE ALL ON FUNCTION public.delete_field_report(bigint) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_field_report(bigint) TO authenticated;
+
+-- ============================================================
+-- הכפתור "הפעל מחדש את השרת" — שלוש פונקציות, שלושה קוראים שונים
+-- ============================================================
+-- ⚠️ **הכפתור נחוץ בדיוק כשהשרת לא עונה**, ולכן הוא אינו יכול לעבור
+-- דרכו. הדשבורד כותב לטבלה ב-Supabase; סקריפט על מכונת השרת, שרץ
+-- **מחוץ ל-Docker**, קורא ומבצע. שני הצדדים אינם מכירים זה את זה.
+--
+-- החלוקה: request מהדפדפן (מנהלת), claim ו-complete מהסקריפט בלבד.
+
+-- מבקשת הפעלה מחדש. מנהלת בלבד.
+CREATE OR REPLACE FUNCTION public.request_service_restart(p_reason text DEFAULT NULL)
+RETURNS TABLE (id bigint, status text, message text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor  text;
+  v_now    text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_open   service_commands%ROWTYPE;
+  v_id     bigint;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  -- ============================================================
+  -- ⚠️ ריסון — והוא לא נימוס, הוא הגנה
+  -- ============================================================
+  -- הפעלה מחדש לוקחת דקה עד ארבע (Docker Desktop מרים מכונת WSL). מי
+  -- שלא רואה תוצאה מיידית לוחצת שוב — וחמש בקשות בתור הן חמש הפעלות
+  -- מחדש ברצף, כלומר הכפתור שנועד להציל הופך למי שמפיל.
+  SELECT * INTO v_open FROM service_commands c
+   WHERE c.status IN ('pending', 'running')
+   ORDER BY c.id DESC LIMIT 1;
+
+  IF FOUND THEN
+    RETURN QUERY SELECT v_open.id, v_open.status,
+      CASE v_open.status
+        WHEN 'pending' THEN 'בקשה כבר ממתינה — המכונה תבצע אותה תוך דקה'
+        ELSE 'הפעלה מחדש כבר רצה כרגע'
+      END;
+    RETURN;
+  END IF;
+
+  INSERT INTO service_commands (command, status, reason, requested_by, requested_at)
+  VALUES ('restart', 'pending', nullif(btrim(coalesce(p_reason, '')), ''), v_actor, v_now)
+  RETURNING service_commands.id INTO v_id;
+
+  PERFORM app.record_write_audit(
+    'service.restart_requested', v_actor, app.current_app_role(),
+    'service_command', v_id::text,
+    jsonb_build_object('reason', p_reason));
+
+  RETURN QUERY SELECT v_id, 'pending'::text, 'הבקשה נשלחה — ההפעלה תתחיל תוך דקה'::text;
+END;
+$$;
+
+-- הסקריפט על מכונת השרת תופס את הפקודה הבאה.
+CREATE OR REPLACE FUNCTION public.claim_service_command()
+RETURNS TABLE (id bigint, command text, reason text, requested_by text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  -- ============================================================
+  -- ⚠️ בקשה ישנה פגה ואינה מבוצעת
+  -- ============================================================
+  -- אם הסקריפט היה כבוי שעתיים, הבקשה שממתינה כבר אינה רלוונטית —
+  -- ביצועה עכשיו יפיל את השרת בזמן אקראי, אולי דווקא כשהכול תקין.
+  -- פקודה היא בקשה לרגע מסוים, לא הוראה עומדת.
+  UPDATE service_commands c
+     SET status = 'expired',
+         finished_at = v_now,
+         result = 'פגה — עברו יותר מ-15 דקות מהבקשה'
+   WHERE c.status = 'pending'
+     AND c.requested_at < to_char((now() - interval '15 minutes') AT TIME ZONE 'UTC',
+                                  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+
+  -- ⚠️ FOR UPDATE SKIP LOCKED: אם אי-פעם ירוצו שני מבצעים (בטעות, או
+  -- בזמן החלפת מכונה), הם לא ייקחו את אותה פקודה ולא יריצו שתי הפעלות
+  -- מחדש במקביל.
+  RETURN QUERY
+  WITH next AS (
+    SELECT c.id FROM service_commands c
+     WHERE c.status = 'pending'
+     ORDER BY c.id
+     LIMIT 1
+     FOR UPDATE SKIP LOCKED
+  )
+  UPDATE service_commands c
+     SET status = 'running', claimed_at = v_now
+    FROM next
+   WHERE c.id = next.id
+  RETURNING c.id, c.command, c.reason, c.requested_by;
+END;
+$$;
+
+-- הסקריפט מדווח מה קרה.
+CREATE OR REPLACE FUNCTION public.complete_service_command(
+  p_id bigint, p_ok boolean, p_result text DEFAULT NULL)
+RETURNS TABLE (updated integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_n   integer;
+BEGIN
+  UPDATE service_commands c
+     SET status = CASE WHEN p_ok THEN 'done' ELSE 'failed' END,
+         finished_at = v_now,
+         -- ⚠️ חיתוך ל-2000: הפלט של docker compose יכול להיות ארוך מאוד,
+         -- והשורה הזו נקראת במסך. מה שחשוב נמצא בהתחלה ובסוף.
+         result = left(coalesce(p_result, ''), 2000)
+   WHERE c.id = p_id AND c.status = 'running';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN QUERY SELECT v_n;
+END;
+$$;
+
+-- ============================================================
+-- ⚠️ ההרשאות הן חצי מהתכנון
+-- ============================================================
+-- `request` פתוחה למאומתים — היא בודקת מנהלת בגוף שלה.
+-- `claim` ו-`complete` **סגורות בפני הדפדפן לגמרי**: הן משנות מצב של
+-- פקודה, ומשתמש שיקרא להן דרך PostgREST היה יכול לסמן "בוצע" על בקשה
+-- שאיש לא ביצע — כלומר להשתיק את הכפתור בלי שאיש ידע. הסקריפט על
+-- מכונת השרת מתחבר עם המפתח הסודי ורץ כ-service_role.
+REVOKE ALL ON FUNCTION public.request_service_restart(text)               FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.claim_service_command()                     FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.complete_service_command(bigint, boolean, text) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.request_service_restart(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_service_command()                     TO service_role;
+GRANT EXECUTE ON FUNCTION public.complete_service_command(bigint, boolean, text) TO service_role;

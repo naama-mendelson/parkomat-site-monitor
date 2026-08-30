@@ -1,0 +1,112 @@
+/* components/ServerControl/ServerControl.css
+   נצמד למשתני העיצוב הקיימים כדי שהמסך יתנהג נכון גם במצב כהה. */
+
+.svc {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 18px 0;
+}
+.svc h3 { margin: 0 0 10px; font-size: 1rem; }
+
+.svc-what { margin: 0 0 6px; font-size: 0.88rem; line-height: 1.55; }
+.svc-what strong { color: #d97706; }
+.svc-when { margin: 0 0 14px; font-size: 0.82rem; color: var(--text-muted); }
+
+.svc-err {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  color: #dc2626;
+  border-radius: 9px; padding: 9px 12px; margin-bottom: 12px; font-size: 0.88rem;
+}
+.svc-ok {
+  background: rgba(22, 163, 74, 0.1);
+  border: 1px solid rgba(22, 163, 74, 0.35);
+  color: #16a34a;
+  border-radius: 9px; padding: 9px 12px; margin-bottom: 12px; font-size: 0.88rem;
+}
+
+/* ⚠️ כתום ולא כחול: זו פעולה שמפילה את הקליטה לכמה דקות, והיא יושבת
+   באותו מסך עם "הוסף אתר". מראה זהה היה מזמין לחיצה על הלא נכון. */
+.svc-btn {
+  padding: 11px 24px;
+  border: none; border-radius: 9px;
+  background: #f59e0b; color: #fff;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.svc-btn:hover { background: #d97706; }
+
+.svc-confirm {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.07);
+  border-radius: 11px; padding: 14px;
+}
+.svc-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.svc-field > span { font-size: 0.85rem; font-weight: 600; }
+.svc-field em { font-weight: 400; font-style: normal; color: var(--text-muted); }
+.svc-field input {
+  padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 9px;
+  background: var(--bg-input, transparent); color: inherit; font: inherit;
+}
+.svc-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.svc-cancel {
+  padding: 9px 18px; border: 1px solid var(--border-color); border-radius: 9px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.svc-go {
+  padding: 9px 20px; border: none; border-radius: 9px;
+  background: #f59e0b; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+}
+.svc-go:disabled, .svc-cancel:disabled { opacity: 0.6; cursor: default; }
+
+/* ===== מצב חי ===== */
+.svc-live {
+  display: flex; align-items: center; gap: 12px;
+  border-radius: 11px; padding: 13px 15px;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.07);
+}
+.svc-live-running { border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); }
+.svc-live-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 3px; }
+
+/* ⚠️ אנימציה ולא טקסט סטטי: הפעלה מחדש לוקחת עד ארבע דקות, ומסך קפוא
+   לארבע דקות הוא מסך שגורם ללחוץ שוב. */
+.svc-spin {
+  width: 16px; height: 16px; flex: none;
+  border: 2px solid rgba(127, 127, 127, 0.3);
+  border-top-color: #f59e0b;
+  border-radius: 50%;
+  animation: svc-rot 0.9s linear infinite;
+}
+@keyframes svc-rot { to { transform: rotate(360deg); } }
+
+/* מי שמעדיף פחות תנועה מקבל סימון סטטי — הספין הוא קישוט, לא מידע. */
+@media (prefers-reduced-motion: reduce) {
+  .svc-spin { animation: none; border-top-color: #f59e0b; }
+}
+
+/* ===== היסטוריה ===== */
+.svc-hist { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.svc-hist li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px;
+  font-size: 0.8rem; padding: 6px 10px; border-radius: 7px;
+  background: var(--bg-hover, rgba(127, 127, 127, 0.07));
+}
+.svc-hist-when { color: var(--text-muted); }
+.svc-hist-status { font-weight: 600; }
+.svc-hist-done .svc-hist-status { color: #16a34a; }
+.svc-hist-failed .svc-hist-status, .svc-hist-expired .svc-hist-status { color: #dc2626; }
+.svc-hist-who { color: var(--text-muted); }
+.svc-hist-why { color: var(--text-muted); font-style: italic; }
+.svc-hist-err {
+  flex-basis: 100%; color: #dc2626; font-family: ui-monospace, monospace;
+  font-size: 0.74rem; white-space: pre-wrap; word-break: break-word;
+}
+
+.svc-limit { margin: 12px 0 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+
+@media (max-width: 600px) {
+  .svc { padding: 13px 14px; }
+  .svc-confirm-actions { flex-direction: column-reverse; }
+  .svc-confirm-actions button { width: 100%; }
+}
