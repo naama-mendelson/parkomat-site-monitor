@@ -21,7 +21,23 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
-$EnvFile = Join-Path $Root "master\.env"
+
+# ============================================================
+# ⚠️ ה-.env יושב בשורש, לא ב-master/
+# ============================================================
+# נמדד על המכונה האמיתית: `❌ לא נמצא C:parkomatmaster.env`.
+# כשהשרת רץ ב-Docker, `docker compose` קורא את ה-.env **מהשורש**
+# ומעביר את המשתנים לקונטיינר; `master/.env` קיים רק כשמריצים את
+# master ישירות על המארח — וזה לא המצב כאן.
+#
+# ⚠️ והמבצע יצא בשקט בגלל זה. הוא הדפיס שורה אחת ללוג שאיש לא קרא,
+# ובקשת ההפעלה מחדש מ-30/08 נשארה תלויה יומיים. **קובץ קונפיג בנתיב
+# שגוי נראה בדיוק כמו מנגנון שלא הותקן.**
+#
+# שני הנתיבים נבדקים, כי מכונת פיתוח שמריצה את master ישירות תמצא
+# דווקא את השני.
+$EnvFile = Join-Path $Root ".env"
+if (-not (Test-Path $EnvFile)) { $EnvFile = Join-Path $Root "master\.env" }
 $Starter = Join-Path $PSScriptRoot "start-parkomat.ps1"
 $LogFile = Join-Path $PSScriptRoot "command-poller.log"
 
@@ -31,7 +47,10 @@ function Say([string]$msg) {
     try { Add-Content -Path $LogFile -Value $line -Encoding utf8 } catch { }
 }
 
-if (-not (Test-Path $EnvFile)) { Say "❌ לא נמצא $EnvFile"; exit 1 }
+if (-not (Test-Path $EnvFile)) {
+    Say "❌ לא נמצא קובץ הגדרות — חיפשתי ב-$Root.env וב-$Rootmaster.env"
+    exit 1
+}
 if (-not (Test-Path $Starter)) { Say "❌ לא נמצא $Starter"; exit 1 }
 
 # ---------- קריאת ההגדרות ----------
