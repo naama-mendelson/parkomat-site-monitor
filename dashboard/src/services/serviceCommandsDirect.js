@@ -78,3 +78,45 @@ export function subscribeServiceCommands(onChange) {
 
   return () => { try { supabase.removeChannel(ch); } catch { /* כבר נסגר */ } };
 }
+
+// ============================================================
+// ⚠️ מצב המבצע — הדבר שחסר וגרם לכפתור להיכשל בשקט
+// ============================================================
+// נמדד בייצור: בקשת הפעלה מחדש מ-30/08 16:27 נשארה `pending` **יומיים**.
+// הכפתור נלחץ, שום דבר לא קרה, ולא היה שום מקום לראות זאת — המבצע
+// כותב למסד רק כשיש לו מה לבצע, ולכן "אין פקודות" ו"המבצע מת" נראים
+// זהים לחלוטין.
+//
+// ⚠️ **מנגנון חירום שנכשל בלי להכריז הוא בדיוק הכשל שהוא בא למנוע.**
+export async function fetchServiceHealth() {
+  if (!isSupabaseConfigured) return null;
+  const { data, error } = await supabase.rpc("service_health");
+  if (error) return null;           // מחוון, לא נתון שהמסך בנוי עליו
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+
+  const age = row.poller_age_secs === null || row.poller_age_secs === undefined
+    ? null
+    : Number(row.poller_age_secs);
+
+  return {
+    seenAt: row.poller_seen_at ?? null,
+    ageSeconds: age,
+    // ⚠️ המבצע רץ כל דקה. חמש דקות הן חמש הרצות שהוחמצו — סף שלא נורה
+    // על עומס רגעי. `null` פירושו **מעולם לא רץ**, וזה מצב שונה: לא
+    // "נפל" אלא "לא הותקן", ומי שקוראת צריכה לדעת מה מהם.
+    alive: age !== null && age < 300,
+    neverRan: age === null,
+    openId: row.open_command_id ?? null,
+    openStatus: row.open_status ?? null,
+  };
+}
+
+/** בדיקת חיבור — עוברת את כל השרשרת ואינה מפעילה כלום מחדש. */
+export async function requestServicePing() {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+  const { data, error } = await supabase.rpc("request_service_ping");
+  if (error) throw new Error(messageFor(error));
+  const row = Array.isArray(data) ? data[0] : data;
+  return { id: row?.id ?? null, status: row?.status ?? "pending", message: row?.message ?? "נשלח" };
+}

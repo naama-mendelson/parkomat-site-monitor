@@ -1694,6 +1694,24 @@ BEGIN
   PERFORM app.require_manager();
 
   -- ============================================================
+  -- ⚠️ פקיעה **לפני** בדיקת הריסון — אחרת הכפתור נועל את עצמו
+  -- ============================================================
+  -- הפקיעה ישבה רק ב-claim_service_command, שאותה קורא **המבצע בלבד**.
+  -- כשהמבצע אינו רץ, הבקשה נשארת pending לנצח, והריסון שמתחתיה מסרב
+  -- ליצור בקשה חדשה — לעולם.
+  --
+  -- ⚠️ נמדד בייצור: בקשה #12 מ-30/08 16:27 נשארה תלויה, והכפתור הפסיק
+  -- לעבוד בלי שום הודעה. כלומר **מנגנון החירום נכשל בשקט בדיוק כשהיה
+  -- צריך אותו** — אותו דפוס של ההתראה שהחזירה 401.
+  UPDATE service_commands c
+     SET status = 'expired',
+         finished_at = v_now,
+         result = 'פגה — המבצע לא הגיב תוך 15 דקות'
+   WHERE c.status = 'pending'
+     AND c.requested_at < to_char((now() - interval '15 minutes') AT TIME ZONE 'UTC',
+                                  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+
+  -- ============================================================
   -- ⚠️ ריסון — והוא לא נימוס, הוא הגנה
   -- ============================================================
   -- הפעלה מחדש לוקחת דקה עד ארבע (Docker Desktop מרים מכונת WSL). מי
@@ -1748,6 +1766,12 @@ BEGIN
    WHERE c.status = 'pending'
      AND c.requested_at < to_char((now() - interval '15 minutes') AT TIME ZONE 'UTC',
                                   'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+
+  -- ⚠️ **אות חיים של המבצע.** בלעדיו אין שום דרך לדעת שהוא חי: הוא
+  -- כותב למסד רק כשיש פקודה, ולכן "אין פקודות" ו"המבצע מת" נראים
+  -- זהים לחלוטין. נמדד בייצור — בקשה שנתקעה יומיים בלי שאיש ידע.
+  INSERT INTO settings (key, value, updated_at) VALUES ('poller_heartbeat', v_now, v_now)
+    ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
 
   -- ⚠️ FOR UPDATE SKIP LOCKED: אם אי-פעם ירוצו שני מבצעים (בטעות, או
   -- בזמן החלפת מכונה), הם לא ייקחו את אותה פקודה ולא יריצו שתי הפעלות
@@ -1807,3 +1831,99 @@ REVOKE ALL ON FUNCTION public.complete_service_command(bigint, boolean, text) FR
 GRANT EXECUTE ON FUNCTION public.request_service_restart(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_service_command()                     TO service_role;
 GRANT EXECUTE ON FUNCTION public.complete_service_command(bigint, boolean, text) TO service_role;
+
+-- ============================================================
+-- service_health — האם המבצע על מכונת השרת בכלל חי
+-- ============================================================
+-- ⚠️ **זה מה שחסר, ובגללו כפתור החירום נכשל בשקט.** המבצע כותב למסד רק
+-- כשיש פקודה לבצע, ולכן "אין פקודות" ו"המבצע מת" נראים זהים לחלוטין.
+--
+-- נמדד בייצור: בקשה #12 מ-30/08 16:27 נשארה `pending` יומיים. הכפתור
+-- נלחץ, שום דבר לא קרה, ולא היה שום מקום לראות זאת. **מנגנון חירום
+-- שנכשל בלי להכריז הוא בדיוק הכשל שהוא בא למנוע.**
+--
+-- `claim_service_command` כותבת עכשיו `poller_heartbeat` בכל הרצה — גם
+-- כשאין מה לבצע — והפונקציה הזו מחזירה את גילו.
+CREATE OR REPLACE FUNCTION public.service_health()
+RETURNS TABLE (
+  poller_seen_at   text,
+  poller_age_secs  integer,
+  open_command_id  bigint,
+  open_status      text
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+WITH hb AS (SELECT value AS v FROM settings WHERE key = 'poller_heartbeat')
+SELECT
+  (SELECT v FROM hb),
+  -- ⚠️ NULL ולא 0 כשאין אות חיים: מבצע שטרם רץ מעולם אינו "רץ עכשיו".
+  (SELECT EXTRACT(EPOCH FROM (now() - v::timestamptz))::integer FROM hb),
+  (SELECT c.id     FROM service_commands c WHERE c.status IN ('pending','running') ORDER BY c.id DESC LIMIT 1),
+  (SELECT c.status FROM service_commands c WHERE c.status IN ('pending','running') ORDER BY c.id DESC LIMIT 1);
+$$;
+
+-- ⚠️ נשלל מ-PUBLIC: מצב תפעולי אינו לאנונימיים. מנהלת בלבד קוראת
+-- למסך הזה, וההגבלה נאכפת ב-RLS על הטבלה עצמה.
+REVOKE ALL ON FUNCTION public.service_health() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.service_health() TO authenticated;
+
+COMMENT ON FUNCTION public.service_health() IS
+  'גיל אות החיים של המבצע על מכונת השרת — כדי שכפתור החירום לא ייכשל בשקט.';
+
+-- ============================================================
+-- request_service_ping — לבדוק את השרשרת בלי להפיל את השרת
+-- ============================================================
+-- ⚠️ **בלי זה אי אפשר לוודא שכפתור החירום עובד** — הדרך היחידה לבדוק
+-- הייתה להפעיל את השרת מחדש באמת, כלומר להפיל את הקליטה לארבע דקות.
+-- מנגנון שבדיקתו יקרה יותר מהתקלה שהוא מונע הוא מנגנון שלא בודקים,
+-- ואז מגלים שהוא שבור בדיוק כשצריך אותו. נמדד: בקשה #12 נשארה תלויה
+-- יומיים ואיש לא ידע.
+--
+-- `ping` עוברת את **אותו מסלול בדיוק** — טבלה, תפיסה, דיווח — ורק
+-- הפעולה עצמה היא לא-כלום. אם היא חוזרת `done`, כל החוליות חיות.
+CREATE OR REPLACE FUNCTION public.request_service_ping()
+RETURNS TABLE (id bigint, status text, message text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_actor text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_open  service_commands%ROWTYPE;
+  v_id    bigint;
+BEGIN
+  v_actor := app.actor_display_name();
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_manager();
+
+  -- אותה פקיעה כמו בבקשת ההפעלה מחדש, ומאותה סיבה.
+  UPDATE service_commands c
+     SET status = 'expired', finished_at = v_now,
+         result = 'פגה — המבצע לא הגיב תוך 15 דקות'
+   WHERE c.status = 'pending'
+     AND c.requested_at < to_char((now() - interval '15 minutes') AT TIME ZONE 'UTC',
+                                  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+
+  SELECT * INTO v_open FROM service_commands c
+   WHERE c.status IN ('pending', 'running') ORDER BY c.id DESC LIMIT 1;
+  IF FOUND THEN
+    RETURN QUERY SELECT v_open.id, v_open.status, 'כבר יש פקודה פתוחה — המתיני לה'::text;
+    RETURN;
+  END IF;
+
+  INSERT INTO service_commands (command, status, reason, requested_by, requested_at)
+  VALUES ('ping', 'pending', 'בדיקת חיבור', v_actor, v_now)
+  RETURNING service_commands.id INTO v_id;
+
+  RETURN QUERY SELECT v_id, 'pending'::text, 'נשלחה בדיקה — התשובה תגיע תוך דקה'::text;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.request_service_ping() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.request_service_ping() TO authenticated;

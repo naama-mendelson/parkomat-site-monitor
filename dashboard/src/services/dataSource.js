@@ -789,4 +789,5 @@ export { subscribeReload, broadcastReload } from "./reloadDirect";
 
 export {
   requestServiceRestart, recentServiceCommands, subscribeServiceCommands,
+  fetchServiceHealth, requestServicePing,
 } from "./serviceCommandsDirect";

@@ -10,10 +10,12 @@
 import { useEffect, useState, useRef } from "react";
 import {
   requestServiceRestart, recentServiceCommands, subscribeServiceCommands, useDirect,
+  fetchServiceHealth, requestServicePing,
 } from "../../services/dataSource";
 import "./ServerControl.css";
 
 const LABEL = {
+  ping: "בדיקה",
   pending: "ממתין למכונה",
   running: "רץ עכשיו",
   done: "הסתיים בהצלחה",
@@ -34,12 +36,16 @@ export default function ServerControl() {
   const [err, setErr] = useState("");
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [health, setHealth] = useState(null);
   // ⚠️ ref ולא state: הרענון אחרי שינוי חי לא צריך לגרור רינדור נוסף.
   const timer = useRef(null);
 
   async function load() {
     try { setRows(await recentServiceCommands(5)); }
     catch (e) { setErr(e.message); }
+    // ⚠️ נטען יחד עם הרשימה ולא בנפרד: מצב המבצע הוא ההקשר שבלעדיו
+    // "הבקשה ממתינה" לא אומר אם היא בדרך או אבודה.
+    setHealth(await fetchServiceHealth());
   }
 
   useEffect(() => {
@@ -70,9 +76,44 @@ export default function ServerControl() {
     }
   }
 
+  async function ping() {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      const r = await requestServicePing();
+      setMsg(r.message);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="svc">
       <h3>הפעלה מחדש של השרת</h3>
+
+      {/* ============================================================ */}
+      {/* ⚠️ מצב המבצע — בלעדיו הכפתור נכשל בשקט                       */}
+      {/* ============================================================ */}
+      {/* נמדד בייצור: בקשה מ-30/08 16:27 נשארה ממתינה **יומיים**.     */}
+      {/* הכפתור נלחץ, כלום לא קרה, ולא היה שום מקום לראות זאת.        */}
+      {/* מנגנון חירום שנכשל בלי להכריז הוא בדיוק הכשל שהוא מונע.      */}
+      {health && (
+        health.neverRan ? (
+          <div className="svc-dead">
+            ⛔ <strong>המבצע לא רץ מעולם על מחשב השרת.</strong>{" "}
+            הכפתור לא יעשה כלום. צריך להריץ שם <code>ops\install-watchdog.ps1</code>.
+          </div>
+        ) : !health.alive ? (
+          <div className="svc-dead">
+            ⛔ <strong>המבצע אינו מגיב</strong> — נראה לאחרונה {ilTime(health.seenAt)}.
+            {" "}הכפתור לא יעשה כלום עד שיחזור.
+          </div>
+        ) : (
+          <div className="svc-ready">✅ המבצע פעיל — נראה לפני פחות מדקה</div>
+        )
+      )}
 
       {/* ============================================================ */}
       {/* ⚠️ מה זה עושה נכתב במפורש, לפני הלחיצה                      */}
@@ -123,9 +164,21 @@ export default function ServerControl() {
       ) : (
         // ⚠️ שני שלבים ולא אחד. הפעלה מחדש של הייצור בלחיצה בודדת ליד
         // כפתור "מחק אתר" היא תאונה שמחכה לקרות.
-        <button className="svc-btn" onClick={() => setConfirming(true)}>
-          הפעל מחדש את השרת
-        </button>
+        <div className="svc-buttons">
+          <button className="svc-btn" onClick={() => setConfirming(true)}>
+            הפעל מחדש את השרת
+          </button>
+          {/* ============================================================ */}
+          {/* ⚠️ בדיקה שאינה מפילה כלום                                    */}
+          {/* ============================================================ */}
+          {/* בלי זה, הדרך היחידה לוודא שהכפתור עובד הייתה להפעיל את      */}
+          {/* השרת מחדש באמת — כלומר להפיל את הקליטה לארבע דקות.          */}
+          {/* מנגנון שבדיקתו יקרה יותר מהתקלה שהוא מונע הוא מנגנון שלא     */}
+          {/* בודקים, ואז מגלים שהוא שבור בדיוק כשצריך אותו.               */}
+          <button className="svc-test" onClick={ping} disabled={busy}>
+            {busy ? "בודק…" : "בדוק חיבור"}
+          </button>
+        </div>
       )}
 
       {rows.length > 0 && (

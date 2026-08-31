@@ -110,3 +110,45 @@
   .svc-confirm-actions { flex-direction: column-reverse; }
   .svc-confirm-actions button { width: 100%; }
 }
+
+/* ===== מצב המבצע ===== */
+/* ⚠️ אדום ובולט. משתמשת שלוחצת על כפתור חירום שלא יעשה כלום חייבת
+   לדעת זאת **לפני** הלחיצה, לא אחרי יומיים של המתנה. */
+.svc-dead {
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  border-radius: 9px;
+  padding: 10px 13px;
+  margin-bottom: 12px;
+  font-size: 0.87rem;
+  line-height: 1.55;
+}
+.svc-dead code {
+  font-family: ui-monospace, monospace;
+  background: rgba(127, 127, 127, 0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ⚠️ ירוק ושקט. "הכול תקין" לא צריך לתפוס מקום — הוא רק צריך להיות שם
+   כדי שההיעדר שלו ייראה. */
+.svc-ready {
+  color: #16a34a;
+  font-size: 0.83rem;
+  margin-bottom: 12px;
+}
+
+.svc-buttons { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* ⚠️ משני ולא כתום: הבדיקה אינה מפילה כלום, ואסור שתיראה מסוכנת כמו
+   ההפעלה מחדש שלידה. */
+.svc-test {
+  padding: 11px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.svc-test:disabled { opacity: 0.55; cursor: default; }

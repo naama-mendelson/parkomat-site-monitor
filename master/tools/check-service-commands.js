@@ -49,6 +49,22 @@ const ok = (name, cond, detail = "") => {
 
       const beAs = async (uid) => { await one("SELECT set_config('app.user_id', ?, true) AS s", uid); };
 
+      // ============================================================
+      // ⚠️ מנקים פקודה פתוחה **אמיתית** לפני שמתחילים
+      // ============================================================
+      // הריסון מחזיר את הפקודה הפתוחה במקום ליצור חדשה — וזו התנהגות
+      // נכונה. אבל אם בייצור יש בקשה תלויה (למשל כי המבצע אינו רץ),
+      // השער קיבל אותה וכל הבדיקות שאחריה בדקו את הפקודה הלא נכונה.
+      //
+      // ⚠️ נמדד: בקשה #15 מ-31/08 07:36 שהמשתמשת שלחה ושאיש לא ביצע.
+      // השער דיווח כישלון על **מצב ייצור**, לא על באג — וזה בדיוק סוג
+      // הרעש שגורם להפסיק להאמין לשער.
+      //
+      // הניקוי בתוך הטרנזקציה שמתגלגלת אחורה, ולכן הבקשה האמיתית
+      // שורדת ותבוצע כשהמבצע יחזור.
+      await db.prepare(
+        "UPDATE service_commands SET status = 'expired' WHERE status IN ('pending','running')").run();
+
       // ---------- 1. מנהלת יכולה לבקש ----------
       await beAs(mgr.uid);
       const r1 = (await q("SELECT * FROM request_service_restart(?)", "בדיקת שער"))[0];
@@ -129,6 +145,46 @@ const ok = (name, cond, detail = "") => {
       const twice = (await q("SELECT * FROM complete_service_command(?, ?, ?)",
         r1.id, false, "לא אמור לדרוס"))[0];
       ok("סיום כפול אינו דורס", Number(twice.updated) === 0);
+
+      // ============================================================
+      // ⚠️ 7. בקשה תקועה **אינה** נועלת את הכפתור
+      // ============================================================
+      // הפקיעה ישבה רק ב-claim_service_command, שאותה קורא המבצע בלבד.
+      // כשהמבצע אינו רץ, הבקשה נשארת pending לנצח והריסון מסרב ליצור
+      // חדשה — כלומר **כפתור החירום נועל את עצמו בדיוק כשצריך אותו**.
+      //
+      // נמדד בייצור: בקשה #12 מ-30/08 16:27 נשארה תלויה יומיים.
+      await beAs(mgr.uid);
+      const oldStamp = new Date(Date.now() - 30 * 60000).toISOString();
+      await db.prepare(
+        `INSERT INTO service_commands (command, status, reason, requested_by, requested_at)
+         VALUES ('restart', 'pending', 'תקועה', ?, ?)`).run(mgr.uid, oldStamp);
+
+      const afterStuck = (await q("SELECT * FROM request_service_restart(?)", "אחרי תקיעה"))[0];
+      ok("בקשה ישנה אינה נועלת את הכפתור",
+        afterStuck && afterStuck.status === "pending" && afterStuck.message.includes("נשלחה"),
+        JSON.stringify(afterStuck));
+
+      const expired = await one(
+        "SELECT status FROM service_commands WHERE reason = ?", "תקועה");
+      ok("והישנה סומנה כפגה", expired && expired.status === "expired", expired?.status);
+
+      // מנקים את החדשה כדי שההמשך יעבוד על הפקודה המקורית
+      await db.prepare("UPDATE service_commands SET status='expired' WHERE id = ?")
+        .run(afterStuck.id);
+
+      // ---------- 8. בדיקת חיבור — אותו מסלול, בלי להפיל כלום ----------
+      const ping = (await q("SELECT * FROM request_service_ping()"))[0];
+      ok("בדיקת חיבור נוצרת", ping && ping.status === "pending");
+      const pingRow = await one("SELECT command FROM service_commands WHERE id = ?", ping.id);
+      ok("והיא מסוג ping ולא restart", pingRow && pingRow.command === "ping", pingRow?.command);
+      await db.prepare("UPDATE service_commands SET status='expired' WHERE id = ?").run(ping.id);
+
+      // ---------- 9. מצב המבצע ----------
+      const health = await one("SELECT * FROM service_health()");
+      ok("service_health עונה", health !== undefined && health !== null);
+
+
 
       throw SENTINEL;
     });
