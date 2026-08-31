@@ -218,7 +218,24 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $push$
 DECLARE
-  v_key text := current_setting('app.push_anon_key', true);
+  -- ============================================================
+  -- ⚠️ המפתח יושב ב-settings, לא ב-GUC — וזה לא סגנון
+  -- ============================================================
+  -- הניסיון הראשון היה `ALTER DATABASE ... SET app.push_anon_key`.
+  -- Supabase דוחה אותו: **permission denied to set parameter**. התפקיד
+  -- `postgres` שם אינו superuser.
+  --
+  -- ⚠️ ושורה ב-settings היא גם הפתרון הנכון יותר: היא **נוסעת
+  -- ב-pg_dump**, בעוד ש-GUC ברמת המסד נשאר מאחור. כלומר ביום שנצא
+  -- מ-Supabase ההתראות ימשיכו לעבוד, במקום להישבר בשקט.
+  --
+  -- ⚠️ והמפתח הזה הוא ה-publishable — הוא נשלח לכל דפדפן בכל טעינה
+  -- של הדשבורד. אין כאן סוד ש-settings חושפת.
+  --
+  -- ה-GUC נשאר כנפילה־לאחור, למקרה שמישהו כן הגדיר אותו.
+  v_key text := coalesce(
+    (SELECT value FROM settings WHERE key = 'push_anon_key'),
+    current_setting('app.push_anon_key', true));
   v_req bigint;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 BEGIN
@@ -283,7 +300,8 @@ BEGIN
 
   RETURN QUERY
   SELECT
-    coalesce(current_setting('app.push_anon_key', true), '') <> '',
+    coalesce((SELECT value FROM settings WHERE key = 'push_anon_key'),
+             current_setting('app.push_anon_key', true), '') <> '',
     (SELECT COUNT(*)::int FROM push_subscriptions),
     v_req,
     (SELECT r.status_code FROM net._http_response r WHERE r.id = v_req),
