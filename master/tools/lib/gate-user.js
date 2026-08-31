@@ -98,7 +98,43 @@ async function gateToken(sbUrl, anonKey, secretKey, fetchFn = fetch) {
     }
   };
 
-  return { token, email, password: PW, cleanup };
+  // ============================================================
+  // ⚠️ רשת ביטחון — מסלול יציאה שאיש לא צפה
+  // ============================================================
+  // הניקוי נקרא במסלולי היציאה **המפורשים** של כל שער, לא ב-finally. די
+  // בחריגה אחת שלא נתפסה כדי לדלג עליו.
+  //
+  // ⚠️ וזה קרה: שגיאת רשת הפילה שער לפני הקריאה, ונשאר בייצור חשבון
+  // **מנהל פעיל** — gate1788088486802@parkomat.co.il, עם הרשאה למחוק אתר
+  // ואת כל ההיסטוריה שלו, ובלי שאיש יודע עליו. הוא התגלה יום אחרי, בידי
+  // check-no-residue.
+  //
+  // ⚠️ הרשת יושבת **כאן ולא בשבעת השערים**: תיקון בשבעה מקומות נשחק ביום
+  // שבו ייכתב שער שמיני. `exit` אינו יכול להמתין ל-await, ולכן נתפסות
+  // החריגות עצמן — שם עוד אפשר לנקות לפני שהתהליך מת.
+  const steps = [];
+  const addCleanup = (fn) => steps.push(fn);
+
+  let done = false;
+  const runAll = async () => {
+    if (done) return;                       // הניקוי חייב להיות אידמפוטנטי:
+    done = true;                            // השערים קוראים לו גם בעצמם.
+    for (const fn of steps) {
+      try { await fn(); } catch (e) { console.error(`⚠️ שלב ניקוי נכשל: ${e.message}`); }
+    }
+    await cleanup();
+  };
+
+  const bail = async (why, err) => {
+    console.error(`⚠️ ${why} — מנקה את משתמש השער לפני יציאה: ${err?.stack ?? err}`);
+    await runAll();
+    process.exit(1);
+  };
+  process.on("uncaughtException", (e) => { bail("חריגה שלא נתפסה", e); });
+  process.on("unhandledRejection", (e) => { bail("דחייה שלא טופלה", e); });
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { bail(sig, "הופסק"); });
+
+  return { token, email, password: PW, cleanup: runAll, addCleanup };
 }
 
 module.exports = { gateToken };

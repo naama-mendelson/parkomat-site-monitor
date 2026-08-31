@@ -30,7 +30,7 @@ async function f(url, opt) {
 // כך שהשורה נולדת כבקר. `app_metadata: manager` לבדו אינו מספיק.
 const { createRequire } = await import("node:module");
 const { gateToken } = createRequire(import.meta.url)("./lib/gate-user");
-const { token, email, cleanup: dropUser } = await gateToken(SB, ANON, SECRET, f);
+const { token, email, cleanup: dropUser, addCleanup } = await gateToken(SB, ANON, SECRET, f);
 
 const H = { apikey: ANON, Authorization: `Bearer ${token}` };
 const get = async (q) => (await f(`${SB}/rest/v1/${q}`, { headers: H })).json();
@@ -50,7 +50,9 @@ const rpc = async (fn, body) => {
 //
 // ⚠️ נמדד בשער check-no-residue: שתי שורות נשארו אחרי כל ריצה, והצטברו.
 // אותו דפוס בדיוק שהותיר 62 חלונות תחזוקה ב-check-writes.
-const cleanup = async () => {
+// ⚠️ נרשם ב-addCleanup ולא רק נעטף: כך הוא רץ גם ברשת הביטחון של
+// gate-user, כלומר גם כשהשער מת מחריגה ולא הגיע לקריאה המפורשת.
+addCleanup(async () => {
   try {
     const { createRequire } = await import("node:module");
     const db = createRequire(import.meta.url)("../db/db");
@@ -58,16 +60,48 @@ const cleanup = async () => {
     // הפעולה היא של השער. מחיקה לפי היעד הייתה מוחקת היסטוריה אמיתית.
     await db.prepare("DELETE FROM audit_log WHERE actor_name = ?").run(email);
   } catch { /* ניקוי אינו מפיל את השער */ }
-  await dropUser();
-};
+});
+
+// dropUser מריץ את השלבים הרשומים ואז מוחק את המשתמש — ופעם אחת בלבד.
+const cleanup = dropUser;
 
 try {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
 
-  const cand = await get(`status_history?status=eq.error&ended_at=not.is.null&started_at=gte.${since}` +
-                         `&reclassified_to=is.null&select=id,site_id,status,started_at&order=started_at.desc&limit=1`);
-  if (!cand?.length) { console.error("אין מקטע תקלה בטווח"); await cleanup(); process.exit(1); }
-  const T = cand[0];
+  // ============================================================
+  // ⚠️ המקטע נבחר לפי **צורתו**, ולא "האחרון שהיה"
+  // ============================================================
+  // הגרסה הראשונה לקחה את מקטע התקלה האחרון (`order=started_at.desc&limit=1`).
+  // אבל הבדיקה החזקה כאן — "'תפעול תקלה' ירד" — מתקיימת רק כשאחרי התקלה בא
+  // מקטע **תחזוקה**: הוא נספר כטיפול בתקלה רק משום שקדמה לו תקלה, ומרגע
+  // שהיא איננה תקלה הוא תחזוקה שגרתית. אם אחרי התקלה בא `ready`, אין מה
+  // להוריד — והשער נופל על נתונים תקינים לגמרי.
+  //
+  // ⚠️ נמדד: מתוך 201 מקטעי תקלה בחודש, ל-76 בלבד עוקב מקטע תחזוקה — 38%.
+  // כלומר השער היה אדום ברוב הימים, ועבר עד כה במזל. הוא נפל בפועל על
+  // מקטע 26216 (אתר 11332), שאחריו בא `ready`.
+  //
+  // ⚠️ ולא הוחלשה כאן הטענה. הפיתוי היה לוותר על הבדיקה כשאין מקטע מתאים —
+  // וזו בדיוק הבדיקה היחידה שמוכיחה שהסיווג מוחל **בכניסה** ולא בתווית.
+  // שער שמדלג עליה בשקט נראה ירוק בדיוק כשהוא אינו בודק כלום. לכן: אם אין
+  // מקטע בעל הצורה הנדרשת, השער מדווח **"לא רץ"** (יציאה 2) ולא "עבר".
+  const cands = await get(`status_history?status=eq.error&ended_at=not.is.null&started_at=gte.${since}` +
+                          `&reclassified_to=is.null&select=id,site_id,status,started_at&order=started_at.desc&limit=60`);
+  if (!cands?.length) { console.error("אין מקטע תקלה בטווח"); await cleanup(); process.exit(1); }
+
+  let T = null;
+  for (const c of cands) {
+    // המקטע שבא מיד אחרי, באותו אתר. הסטטוס האפקטיבי — לא הגולמי.
+    const nxt = await get(`status_history?site_id=eq.${c.site_id}&started_at=gt.${c.started_at}` +
+                          `&select=status,reclassified_to&order=started_at.asc&limit=1`);
+    const eff = nxt?.[0] && (nxt[0].reclassified_to || nxt[0].status);
+    if (eff === "maintenance") { T = c; break; }
+  }
+  if (!T) {
+    console.error(`אין מקטע תקלה שאחריו תחזוקה מבין ${cands.length} המועמדים — לא ניתן לבדוק שהסיווג מוחל בכניסה.`);
+    await cleanup();
+    process.exit(2);
+  }
   console.log(`מקטע נבחר: id=${T.id} · אתר ${T.site_id} · ${T.started_at}`);
 
   async function timelineFor() {
