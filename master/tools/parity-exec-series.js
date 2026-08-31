@@ -126,6 +126,62 @@ function walk(a, b, path) {
     }
   }
 
+  // ============================================================
+  // ⚠️ בדיקת התחבורה — השער עד כאן אינו חוצה את PostgREST
+  // ============================================================
+  // כל ההשוואות למעלה רצות דרך ה-pool, כלומר הן מוכיחות שה-SQL וה-JS
+  // מסכימים. הן **אינן יכולות** לתפוס אובדן נתונים בדרך אל הדפדפן — ולא
+  // תפסו: PostgREST חותך כל תשובה ב-1,000 שורות, ו-executive_series
+  // מחזירה שורה לכל (דלי × אתר).
+  //
+  // ⚠️ נמדד בייצור: "השנה הנוכחית" ברזולוציה יומית = 3,920 שורות, חזרו
+  // 1,000, **בסטטוס 200**. אין ORDER BY בפונקציה, ולכן אלה 1,000 שורות
+  // שרירותיות — הגרף מתפזר במקום להיגמר, וזה נראה כמו מכונה שקטה.
+  //
+  // זו הבדיקה היחידה כאן שנוגעת ברשת, והיא הסיבה שהיא קיימת: שער
+  // שמשווה שני חישובים לעולם לא יראה מה השכבה שביניהם זרקה.
+  {
+    const fs = require("node:fs");
+    const { gateToken } = require("./lib/gate-user");
+    const SB = process.env.SUPABASE_URL, SECRET = process.env.SUPABASE_SECRET_KEY;
+    const ANON = (fs.readFileSync("../dashboard/.env", "utf8")
+      .match(/^VITE_SUPABASE_PUBLISHABLE_KEY=(.*)$/m) || [])[1]?.trim();
+
+    const retry = async (url, opt) => {
+      let last;
+      for (let i = 0; i < 5; i++) {
+        try { return await fetch(url, opt); } catch (e) { last = e; await new Promise((r) => setTimeout(r, 600)); }
+      }
+      throw last;
+    };
+
+    console.log("\n── תחבורה: מה באמת מגיע לדפדפן ──");
+    const g = await gateToken(SB, ANON, SECRET, retry);
+    try {
+      const H = { apikey: ANON, Authorization: `Bearer ${g.token}`, "Content-Type": "application/json" };
+      const to = new Date().toISOString();
+      // ⚠️ שנה × יומי — הטווח הרחב ביותר שהבורר במסך מאפשר ("שנה שעברה").
+      // בדיקה על טווח צר הייתה עוברת תמיד: התקרה נפגעת רק מעל ~62 ימים.
+      const from = new Date(Date.now() - 365 * 86400000).toISOString();
+      const bs = getBucketRanges({ from, to, granularity: "day" });
+      const withTotal = [...bs.map((b) => ({ from: b.from, to: b.to })), { from, to }];
+      const body = JSON.stringify({ p_site_ids: null, p_from: from, p_to: to, p_buckets: withTotal });
+
+      const r = await retry(`${SB}/rest/v1/rpc/executive_series_json`, { method: "POST", headers: H, body });
+      const got = await r.json();
+      const nSites = (await db.prepare("SELECT COUNT(*)::int AS n FROM sites").get()).n;
+      const expect = withTotal.length * nSites;
+      const ok = Array.isArray(got) && got.length === expect;
+      console.log(`  ${ok ? "✅" : "❌"} ${withTotal.length} דליים × ${nSites} אתרים = ${expect} · הגיעו ${Array.isArray(got) ? got.length : "לא-מערך"}`);
+      if (!ok) {
+        diffs++;
+        console.log("     הנתונים נחתכים בדרך לדפדפן. אל תחזירו שורות מ-RPC רחב.");
+      }
+    } finally {
+      await g.cleanup();
+    }
+  }
+
   console.log(`\n${"=".repeat(50)}`);
   console.log(diffs === 0
     ? `✅ נקי — ${checks} השוואות, 0 הבדלים${ties ? ` (${ties} תיקו-עיגול)` : ""}`
