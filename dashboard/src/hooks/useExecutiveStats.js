@@ -1,4 +1,4 @@
-// hooks/useExecutiveStats.js — נתוני המנהל הכללי, עם פילטרים ו-debounce
+// hooks/useExecutiveStats.js — נתוני המנהל הכללי, עם פילטרים וחסם קצב
 import { useState, useEffect, useRef } from "react";
 // דרך המתג: במצב ישיר הדשבורד שולף מ-Supabase ומריץ עליו את **אותה**
 // computeExecutive שהשרת מריץ (shared/executive.mjs).
@@ -6,29 +6,37 @@ import { fetchExecutive } from "../services/dataSource";
 import { createRunner } from "./fetchRunner";
 
 // ============================================================
-// ⚠️ שלוש מהירויות, ולא אחת
+// ⚠️ חסם קצב, לא השהיה — וזו ההבחנה שהחמצתי פעמיים
 // ============================================================
-// נמדד בדפדפן על הייצור: **כל שליפה של המסך הזה רצה פעמיים.** המסך
-// נטען, ותוך שניות מגיעה הודעת SSE מאתר כלשהו, `dataVersion` עולה,
-// והשליפה מתחילה שוב בזמן שהראשונה עדיין באוויר:
+// נמדד בדפדפן על הייצור, שוב ושוב: **כל טעינה של המסך הזה שולפת הכול
+// פעמיים.**
 //
-//     site_stats        1.58s  ו-  1.15s
-//     site_uptime       1.71s  ו-   629ms
-//     executive_series  2.44s  ו-  2.35s
+//     site_stats        2.32s  ו-  1.97s
+//     site_uptime       2.02s  ו-   977ms
+//     executive_series  3.54s  ו-  3.38s
 //
-// שתים-עשרה בקשות מקבילות מאיטות זו את זו — site_stats נמדד 1.58s
-// בדפדפן מול 0.5s כשנמדד לבדו.
+// המקור: המסך נטען, ותוך שניות מגיעה הודעת SSE מאחד מ-16 האתרים,
+// `dataVersion` עולה, והמסך שולף את הכול מחדש.
 //
-// ⚠️ **התיקון אינו לבטל את הרענון**; עדכון חי הוא כל הנקודה של המסך.
-// הוא לא להריץ שניים במקביל (`createRunner`), ולתת לרענון מ-SSE חלון
-// איחוד רחב יותר: הודעות מגיעות בפרצים מ-16 אתרים, ו-300ms אינן
-// מספיקות כדי לאחד פרץ. הנתון הוא אגרגציה על 30 יום — שתי שניות אינן
-// נראות בו, ושתי שליפות כבדות במקביל — כן.
-const LIVE_DEBOUNCE_MS = 2000;
+// ⚠️ **השהיה (debounce) לא פותרת את זה.** היא ממתינה לשקט — ואצל 16
+// אתרים שמדווחים כל הזמן, שקט אין. ניסיתי 2 שניות, והגל השני פשוט זז
+// שתי שניות אחורה במקום להיעלם.
+//
+// ⚠️ **והשליפה השנייה מיותרת מיסודה.** המסך הזה הוא אגרגציה על 30 יום;
+// פעולה אחת משנה אותו בכ-0.03%. לשלם 12 בקשות ו-2.4 שניות כדי לא לשנות
+// כלום זה בזבוז, לא עדכניות.
+//
+// לכן: **לכל היותר רענון אחד בדקה.** הטעינה עצמה נחשבת רענון, ולכן הגל
+// השני בטעינה נעלם לגמרי. זה גם מתיישב עם מה שכבר קיים — App.jsx מריץ
+// resync תקופתי כל 60 שניות, מאותו שיקול בדיוק.
+//
+// ⚠️ המחיר, במפורש: מספר על המסך יכול להיות ישן בעד דקה. באגרגציה של
+// 30 יום זה בלתי נראה; שתי שליפות כבדות בכל טעינה — נראות מאוד.
+const LIVE_MIN_INTERVAL_MS = 60_000;
 
 /**
  * params  — { period | from,to, sites, statuses, minFailureRate, groupBy, granularity }
- * version — עולה בכל הודעה חדשה (SSE) → שליפה מחדש
+ * version — עולה בכל הודעה חדשה (SSE) → מועמד לרענון, בכפוף לחסם הקצב
  *
  * debounce: גרירת סליידר או הקלדת תאריך משנה פילטרים במהירות; בלי השהיה
  * היינו יורים עשרות בקשות כבדות (אגרגציה על כל האתרים).
@@ -46,9 +54,11 @@ export function useExecutiveStats(params, version = 0, debounceMs = 300) {
   const latestKey = useRef(null);
   const lastKey = useRef(null);
   const first = useRef(true);
+  const lastRunAt = useRef(0);
 
   // ⚠️ נוצר **פעם אחת** ומוחזק ב-ref. יצירה בכל רינדור הייתה מאפסת את
-  // דגל "כבר באוויר", וההגנה כולה הייתה נעלמת בלי שום סימן.
+  // דגל "כבר באוויר", וההגנה מפני שתי שליפות מקבילות הייתה נעלמת בלי
+  // שום סימן.
   const runner = useRef(null);
   if (!runner.current) {
     runner.current = createRunner({
@@ -61,15 +71,26 @@ export function useExecutiveStats(params, version = 0, debounceMs = 300) {
   useEffect(() => {
     latestKey.current = key;
 
-    // • טעינה ראשונה — מיידית. כל השהיה כאן היא מסך ריק בלי סיבה.
-    // • שינוי פילטר — 300ms. בקשה מפורשת של המשתמשת, מגיעה ביחידים.
-    // • רענון מ-SSE — 2 שניות. ראה ההסבר למעלה.
-    const isLive = !first.current && key === lastKey.current;
-    const wait = first.current ? 0 : (isLive ? LIVE_DEBOUNCE_MS : debounceMs);
+    const isFirst = first.current;
+    // "חי" = רק ה-version זז, הפילטרים לא. שינוי פילטר הוא בקשה מפורשת
+    // של המשתמשת ואינו כפוף לחסם — היא מחכה לתשובה עכשיו.
+    const isLive = !isFirst && key === lastKey.current;
     first.current = false;
     lastKey.current = key;
 
-    const timer = setTimeout(() => runner.current.run(key), wait);
+    let wait;
+    if (isFirst) {
+      wait = 0;                       // טעינה — מיידית. מסך ריק בלי סיבה הוא הגרוע מכול.
+    } else if (isLive) {
+      wait = Math.max(0, LIVE_MIN_INTERVAL_MS - (Date.now() - lastRunAt.current));
+    } else {
+      wait = debounceMs;              // שינוי פילטר
+    }
+
+    const timer = setTimeout(() => {
+      lastRunAt.current = Date.now();
+      runner.current.run(key);
+    }, wait);
     return () => clearTimeout(timer);
   }, [key, version, debounceMs]);
 
