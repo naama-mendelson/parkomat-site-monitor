@@ -315,3 +315,43 @@ prevention*), and both rate limiters, which key on IP, would let one person lock
 value — and `tests/client-ip.test.js` pins all of it, including that the helper must not call
 itself: a blanket `req.ip` → `clientIp(req)` replacement once turned it into infinite recursion
 that would have crashed the server on every request lacking the header.
+
+## ⚠️ יש **שתי** פריסות של הדשבורד, ורק אחת היא זו שמשתמשים בה
+
+זה לא היה כתוב בשום מקום, ובגלל זה נשרפו שלוש פריסות ביום אחד: הקוד
+נדחף, `deploy.ps1` רץ על השרת, והמסך בדפדפן נשאר זהה — כי הוא בכלל לא
+מגיע משם.
+
+| | מאיפה מוגש | מתעדכן | מי משתמש |
+|---|---|---|---|
+| **Cloudflare Pages** ⭐ | `parkomat-site-monitor.pages.dev` | **אוטומטית מכל `git push` ל-main** | ⭐ **זה מה שפותחים** |
+| **DELL008 / Docker** | `parkomat-web` דרך Caddy, פורט 8080 | רק ב-`deploy.ps1` ידני | דיבאג מקומי בלבד |
+
+**המסקנה המעשית:**
+
+- **שינוי בדשבורד** → `git push`, וזהו. Pages בונה תוך 1–2 דקות.
+  ⚠️ **`deploy.ps1` אינו נחוץ בשבילו.**
+- **שינוי ב-master** (קליטת MQTT, הבוט) → `deploy.ps1` על DELL008. **רק
+  זה** דורש פריסה ידנית.
+- **שינוי ב-SQL** → מוחל בעליית `master`, כלומר גם הוא דרך `deploy.ps1`.
+  ⚠️ יוצא מן הכלל: פונקציות שהוחלו ידנית ממחשב הפיתוח כבר חיות מיד.
+
+⚠️ **והדרך היחידה לדעת איזה קוד הדפדפן מריץ היא שם ה-bundle.**
+לשונית Network, סינון `index-`. אם השם לא השתנה — הקוד לא השתנה, ולא
+משנה כמה פריסות רצו. `Ctrl+F5` לבדו אינו מספיק; צריך
+**Application → Clear site data**.
+
+⚠️ **חשבון ה-Cloudflare אינו זה שהדומיין יושב בו.** הפרויקט חי תחת
+`naamam@parkomat.co.il`, ולא תחת החשבון שמנהל את `parkomat.co.il`.
+`Workers & Pages` בחשבון הלא נכון מציג "No projects found" — מה שנראה
+בדיוק כמו "הפרויקט אינו קיים".
+
+### המנהרה — קיימת בקוד, כבויה בפועל
+
+`docker-compose.yml` מגדיר `tunnel` תחת `profiles: ["tunnel"]`, כלומר
+`docker compose up -d` רגיל **אינו** מרים אותה. ובנוסף אין
+`CLOUDFLARE_TUNNEL_TOKEN` ב-`.env` של DELL008, ולכן היא לא תעלה גם עם
+הפרופיל.
+
+**המשמעות:** הדשבורד שמוגש מ-DELL008 נגיש **רק ברשת המשרד**. זו אינה
+תקלה — זו הסיבה ש-Cloudflare Pages הוא המסלול האמיתי.

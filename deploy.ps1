@@ -105,13 +105,32 @@ if ($tn -match "Registered tunnel connection|connection established|Connection .
 
 # ⚠️ נבדק לפי **הקבצים** ולא לפי הלוג. תלות בטקסט עברי בפלט של Docker
 # היא בדיוק מה שנשבר כאן פעם אחת; קובץ על הדיסק הוא עובדה בלי קידוד.
-$today = (Get-Date).ToString("yyyy-MM-dd")
-$dumps = @(Get-ChildItem "backups" -Filter "parkomat-$today*.jsonl.gz" -ErrorAction SilentlyContinue)
+# ============================================================
+# ⚠️ 25 שעות, ולא "מהיום" — והשינוי הזה תיקן מרוץ
+# ============================================================
+# הבדיקה שאלה "יש גיבוי מהיום?" **מיד** אחרי הרמת הקונטיינרים. אבל
+# דיימון הגיבוי משלים בעלייה, וההשלמה לוקחת זמן: בפריסה של 30/08
+# הבדיקה רצה ב-12:0x UTC והקובץ נוצר ב-12:51. התוצאה הייתה
+# "אין גיבוי מהיום" על מערכת שגיבתה בסדר גמור.
+#
+# ⚠️ וזה גרוע במיוחד כאן: הפריסה מסיימת ב-"1 בדיקות לא עברו" **בכל
+# פעם**, ואז מפסיקים לקרוא את השורה הזו — כולל ביום שבו הגיבוי באמת
+# ייכשל. אזהרה שתמיד דולקת אינה אזהרה.
+#
+# 25 שעות היא גם השאלה הנכונה יותר: מה שמעניין אינו התאריך על הקובץ
+# אלא **כמה זמן עבר** מאז הגיבוי האחרון. הגיבוי רץ ב-02:30 UTC יומי,
+# ולכן 25 שעות סובלניות לגבול היום ועדיין תופסות דילוג אמיתי.
+$cutoff = (Get-Date).AddHours(-25)
+$dumps = @(Get-ChildItem "backups" -Filter "parkomat-*.jsonl.gz" -ErrorAction SilentlyContinue |
+           Where-Object { $_.LastWriteTime -gt $cutoff } | Sort-Object LastWriteTime)
 if ($dumps.Count -gt 0) {
   $kb = [int]($dumps[-1].Length / 1KB)
-  Ok "גיבוי מהיום קיים: $($dumps[-1].Name) ($kb KB)"
+  $age = [int]((Get-Date) - $dumps[-1].LastWriteTime).TotalHours
+  Ok "גיבוי אחרון: $($dumps[-1].Name) ($kb KB, לפני $age שעות)"
 } else {
-  Warn "אין גיבוי מהיום בתיקיית backups — docker compose logs backup"; $fail++
+  $last = @(Get-ChildItem "backups" -Filter "parkomat-*.jsonl.gz" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+  $when = if ($last.Count) { $last[-1].LastWriteTime.ToString("dd/MM HH:mm") } else { "מעולם" }
+  Warn "אין גיבוי מ-25 השעות האחרונות (אחרון: $when) — docker compose logs backup"; $fail++
 }
 
 $mq = docker compose logs --tail=60 parkomat 2>&1 | Out-String
