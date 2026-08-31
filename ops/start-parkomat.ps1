@@ -76,7 +76,18 @@ if (DaemonUp) {
 }
 
 if (DaemonUp) {
-    foreach ($n in (docker ps -a --format "{{.Names}}" 2>$null)) {
+    # ============================================================
+    # ⚠️ רק הקונטיינרים שלנו
+    # ============================================================
+    # על המכונה הזו רצים גם קונטיינרים של צוותים אחרים —
+    # `ubuntu-ssh-bridged` יצא לפני חמישה חודשים, ו-`aps-postgres` שייך
+    # למישהו אחר. בלי הסינון הזה הכפתור מדווח עליהם **בכל לחיצה**,
+    # לנצח.
+    #
+    # ⚠️ ואזהרה שמופיעה תמיד היא אזהרה שמפסיקים לקרוא — ואז גם האמיתית
+    # תיבלע בתוכה. זו אותה מחלה בדיוק שבגללה השערים דיווחו "נכשל" על
+    # שרת שאינו רץ, ובגללה deploy.ps1 מסיים ב-"1 בדיקות לא עברו" תמיד.
+    foreach ($n in (docker ps -a --format "{{.Names}}" 2>$null | Where-Object { $_ -like "parkomat*" })) {
         $i = docker inspect $n --format "{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}" 2>$null
         if (-not $i) { continue }
         $p = $i -split "\|"
@@ -148,7 +159,7 @@ Start-Sleep -Seconds 12
 
 $allOk = (DaemonUp)
 if (DaemonUp) {
-    foreach ($r in (docker ps --format "{{.Names}}|{{.Status}}" 2>$null)) {
+    foreach ($r in (docker ps --format "{{.Names}}|{{.Status}}" 2>$null | Where-Object { $_ -like "parkomat*" })) {
         $p = $r -split "\|"
         Say ("  ✔ {0,-20} {1}" -f $p[0], $p[1]) "Green"
     }
