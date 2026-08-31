@@ -35,6 +35,7 @@ const GATES = [
   { name: "parity-executive",  what: "מנהל כללי — דרך PostgREST" },
   { name: "parity-shape",      what: "זהות מבנה בכל המסלולים" },
   { name: "check-switch",      what: "שתי זרועות המתג שלמות",    noEnv: true },
+  { name: "check-scope-master", what: "master מגיש רק את הבוט ואת בדיקת החיים" },
   { name: "check-scope",       what: "מה בקר רואה ומה לא" },
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
