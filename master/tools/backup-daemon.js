@@ -45,13 +45,48 @@ function hasBackupToday() {
   return fs.readdirSync(DIR).some((f) => f.startsWith(`parkomat-${today}`));
 }
 
+// ============================================================
+// ⚠️ בלי הטיפול הזה הקונטיינר נהרג ב-SIGKILL בכל עצירה — קוד 137
+// ============================================================
+// ⚠️ בתוך Docker התהליך הזה הוא **PID 1**, ול-PID 1 אין טיפול ברירת מחדל
+// בסיגנלים. כלומר SIGTERM פשוט מתעלמים ממנו, Docker ממתין את זמן החסד
+// ואז הורג בכוח.
+//
+// ⚠️ נמדד בפועל ב-DELL008: `parkomat` יצא בקוד **0** (הוא מטפל ב-SIGTERM
+// במפורש, ראו master.js), ו-`parkomat-backup` בקוד **137**. אותו
+// docker compose stop, שני קונטיינרים, שתי התנהגויות.
+//
+// ⚠️ וזה לא אסתטי בלבד: אם ההריגה נופלת באמצע כתיבת קובץ הגיבוי, נשאר
+// קובץ **חתוך** שנראה בדיוק כמו גיבוי תקין — ו-deploy.ps1 בודק קיום וזמן,
+// לא תוכן. גיבוי שקרי גרוע מאין גיבוי, כי הוא מונע את השאלה.
+let busy = null;
+let stopping = false;
+
+async function shutdown(sig) {
+  if (stopping) return;              // שני סיגנלים ברצף אינם שני כיבויים
+  stopping = true;
+  if (busy) {
+    console.log(`[backup] ${sig} — ממתין לסיום הגיבוי שרץ כרגע...`);
+    try { await busy; } catch { /* השגיאה כבר נרשמה ב-once */ }
+  }
+  console.log(`[backup] ${sig} — יוצא נקי.`);
+  process.exit(0);
+}
+for (const s of ["SIGTERM", "SIGINT"]) process.on(s, () => { shutdown(s); });
+
 async function once(reason) {
+  // ⚠️ נחשף ל-shutdown כדי שעצירה באמצע גיבוי תמתין לו במקום לחתוך אותו.
+  busy = runBackup({ dir: DIR });
   try {
-    await runBackup({ dir: DIR });
+    await busy;
   } catch (e) {
     // ⚠️ לא מפילים את התהליך. restart: unless-stopped היה מרים אותו מיד,
     // הוא היה נכשל שוב, ונוצרת לולאת הפעלות שמסתירה את הסיבה בלוג.
     console.error(`[backup] ❌ (${reason}) ${e.message}`);
+  } finally {
+    // ⚠️ חובה לאפס. `busy` שנשאר מלא אחרי סיום היה גורם ל-shutdown להמתין
+    // ל-promise שכבר הסתיים — לא תקלה, אבל גם לא מה שכתוב שם.
+    busy = null;
   }
 }
 
