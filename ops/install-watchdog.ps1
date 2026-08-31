@@ -108,3 +108,33 @@ Write-Host "ללוגים:         Get-Content '$(Join-Path $PSScriptRoot "start-
 Write-Host "                Get-Content '$(Join-Path $PSScriptRoot "command-poller.log")' -Tail 30"
 Write-Host "להסרה:          Unregister-ScheduledTask -TaskName 'Parkomat-Watchdog' -Confirm:`$false"
 Write-Host "                Unregister-ScheduledTask -TaskName 'Parkomat-CommandPoller' -Confirm:`$false"
+
+# ============================================================
+# הכפתור על שולחן העבודה
+# ============================================================
+# ⚠️ **זה מה שבאמת נדרש, ולא כפתור בדשבורד.** הדשבורד רץ על Cloudflare
+# Pages — לא על המכונה הזו — ומי שלוחץ עליו אינו בהכרח לידה. הכפתור
+# צריך להיות כאן, על המכונה שבה יושבים master ו-Docker.
+#
+# ⚠️ `-Interactive` הוא ההבדל מהמשימה המתוזמנת: החלון נשאר פתוח עד
+# שקוראים אותו. בלעדיו הוא היה נסגר מיד, ומי שלחץ לא היה יודע אם זה
+# הצליח ולמה זה נפל.
+$Starter = Join-Path $PSScriptRoot "start-parkomat.ps1"
+$Desktop = [Environment]::GetFolderPath("Desktop")
+$LnkPath = Join-Path $Desktop "הפעל את Parkomat.lnk"
+
+try {
+    $sh = New-Object -ComObject WScript.Shell
+    $lnk = $sh.CreateShortcut($LnkPath)
+    $lnk.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    # ⚠️ -File ולא -Command: עם -Command החלון החיצוני מפרש את המשתנים
+    # שבתוך הסקריפט ומרוקן אותם. זו תקלה שכבר נפלנו בה במגדל 1.
+    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Starter`" -Interactive"
+    $lnk.WorkingDirectory = Split-Path -Parent $PSScriptRoot
+    $lnk.IconLocation = "$env:SystemRoot\System32\shell32.dll,238"
+    $lnk.Description  = "מרים את Parkomat ומסביר למה הוא נפל"
+    $lnk.Save()
+    Write-Host "✅ נוצר קיצור דרך על שולחן העבודה: 'הפעל את Parkomat'" -ForegroundColor Green
+} catch {
+    Write-Host "⚠️ יצירת קיצור הדרך נכשלה: $($_.Exception.Message)" -ForegroundColor Yellow
+}

@@ -1,4 +1,12 @@
-﻿# ops/start-parkomat.ps1 — הרמה מלאה של המערכת בלחיצה אחת.
+﻿param(
+    # ⚠️ המתג הזה מפריד בין שני קוראים שונים לגמרי:
+    #   • המשימה המתוזמנת — רצה חבויה כל 5 דקות, ואסור לה לעצור ולחכות.
+    #   • הכפתור על שולחן העבודה — אדם לחץ, והוא רוצה לקרוא מה קרה.
+    # בלי ההפרדה, המתנה ל-Enter בסוף הייתה מקפיאה את המשימה המתוזמנת.
+    [switch]$Interactive
+)
+
+# ops/start-parkomat.ps1 — מרים את Parkomat, ואומר למה הוא נפל.
 #
 # ============================================================
 # למה זה קיים
@@ -8,108 +16,161 @@
 # Desktop עצמו** רשום ב-HKCU\...\Run, מפתח ההפעלה של המשתמש, והוא עולה
 # רק כשמישהו **מתחבר**. אף אחד לא נכנס, והמערכת הייתה למטה 2.5 ימים.
 #
-# ⚠️ **וכפתור בדשבורד לא היה עוזר**: הדשבורד מוגש על ידי Caddy, שרץ
-# באותו Docker שנפל. מה שמפעיל את המערכת חייב לחיות מחוץ לה.
-#
-# ============================================================
-# ⚠️ מה זה **לא** פותר, ויש לומר במפורש
-# ============================================================
-# Docker Desktop ב-Windows דורש סשן משתמש מחובר. הסקריפט הזה יכול
-# להפעיל אותו — אבל רק אם מישהו כבר מחובר. מחשב שאותחל ואיש לא נכנס
-# אליו יישאר למטה גם עם הסקריפט הזה מותקן.
-#
-# הפתרונות לזה הם החלטה נפרדת: כניסה אוטומטית (auto-logon), או העברת
-# ה-master לשירות Windows שאינו תלוי ב-Docker כלל.
+# ⚠️ **וכפתור בדשבורד אינו הפתרון.** הדשבורד רץ על Cloudflare Pages —
+# לא על המכונה הזו — ומי שלוחץ עליו אינו בהכרח לידה. הכפתור צריך להיות
+# **כאן**, על שולחן העבודה של המכונה שבה יושבים master ו-Docker.
 
-$ErrorActionPreference = "Stop"
-
-# ⚠️ הנתיב נגזר ממיקום הסקריפט ולא מקובע. נתיב קשיח היה שובר את
-# הסקריפט בכל מכונה אחרת — ובפועל כבר הנחתי נתיב שגוי פעם אחת.
+$ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
 $LogFile = Join-Path $PSScriptRoot "start-parkomat.log"
 
 function Say([string]$msg, [string]$color = "Gray") {
-    $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
+    $line = "{0}  {1}" -f (Get-Date -Format "HH:mm:ss"), $msg
     Write-Host $line -ForegroundColor $color
     try { Add-Content -Path $LogFile -Value $line -Encoding utf8 } catch { }
 }
-
+function Title([string]$t) {
+    Write-Host ""
+    Write-Host ("=" * 60) -ForegroundColor DarkCyan
+    Write-Host ("  " + $t) -ForegroundColor Cyan
+    Write-Host ("=" * 60) -ForegroundColor DarkCyan
+}
 function DaemonUp {
     try { $v = docker version --format "{{.Server.Version}}" 2>$null; return [bool]$v }
     catch { return $false }
 }
 
-Say "=== הרמת Parkomat ===" "Cyan"
-Say "תיקייה: $Root"
+Write-Host ""
+Write-Host "   P A R K O M A T   —   הפעלה מחדש" -ForegroundColor Yellow
+Write-Host ""
 
-# ---------- 1. מנוע Docker ----------
+# ============================================================
+#  שלב 1 — מה קרה
+# ============================================================
+# ⚠️ **האבחון קודם להפעלה, ובכוונה.** הפעלה מחדש מוחקת ראיות: `docker
+# inspect` מאבד את קוד היציאה, והלוג של הקונטיינר מתחיל מאפס. מי שרוצה
+# לדעת למה זה קרה חייב לשאול **לפני** שהוא מתקן.
+Title "1. מה קרה"
+$found = $false
+
+try {
+    $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+    Say ("המחשב עלה ב-{0}  (לפני {1} ימים)" -f $boot, [math]::Round(((Get-Date) - $boot).TotalDays, 1))
+
+    # אירוע 6008 נרשם **בהדלקה** ומתאר את הכיבוי הקודם — ובגוף ההודעה
+    # יש את השעה המדויקת. זה מה שחשף את נפילת 27/08.
+    $ev = Get-WinEvent -FilterHashtable @{LogName='System'; Id=6008} -MaxEvents 1 -ErrorAction SilentlyContinue
+    if ($ev -and $ev.TimeCreated -gt (Get-Date).AddDays(-14)) {
+        Say ("⚠  כיבוי לא צפוי: " + ($ev.Message -replace "`r`n", " ")) "Yellow"
+        Say "    זה נראה כמו הפסקת חשמל. אל-פסק (UPS) היה מונע את זה." "Yellow"
+        $found = $true
+    }
+} catch { }
+
 if (DaemonUp) {
-    Say "Docker כבר רץ." "Green"
+    Say "Docker Desktop רץ." "Green"
 } else {
-    Say "Docker אינו רץ — מפעיל את Docker Desktop..." "Yellow"
+    Say "⚠  Docker Desktop אינו רץ — זו הסיבה שהמערכת למטה." "Yellow"
+    Say "    הוא עולה רק כשמישהו מתחבר למשתמש; אתחול בלי התחברות משאיר אותו כבוי." "Yellow"
+    $found = $true
+}
+
+if (DaemonUp) {
+    foreach ($n in (docker ps -a --format "{{.Names}}" 2>$null)) {
+        $i = docker inspect $n --format "{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}" 2>$null
+        if (-not $i) { continue }
+        $p = $i -split "\|"
+        if ($p[0] -ne "running") {
+            Say ("⚠  {0}: {1} · קוד יציאה {2}" -f $n, $p[0], $p[1]) "Yellow"; $found = $true
+        }
+        # ⚠️ OOM הוא סיבה שונה לגמרי, והתיקון שלה אחר: תקרת הזיכרון
+        # ב-docker-compose.yml, לא הפעלה מחדש.
+        if ($p[2] -eq "true")  { Say ("⛔ {0} נהרג בגלל חוסר זיכרון" -f $n) "Red"; $found = $true }
+        if ([int]$p[3] -gt 3)  { Say ("⚠  {0} הופעל מחדש {1} פעמים — הוא קורס בלולאה" -f $n, $p[3]) "Yellow"; $found = $true }
+    }
+}
+
+$freeGB = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+if ($freeGB -lt 5) { Say ("⛔ נותרו רק {0}GB בדיסק C — זה מפיל קונטיינרים" -f $freeGB) "Red"; $found = $true }
+else { Say ("דיסק C: {0}GB פנויים." -f $freeGB) }
+
+if (-not $found) { Say "לא נמצאה סיבה ברורה — ייתכן שהכול תקין וצריך רק רענון." "Green" }
+
+# ============================================================
+#  שלב 2 — מרים
+# ============================================================
+Title "2. מרים את המערכת"
+
+if (-not (DaemonUp)) {
+    Say "מפעיל את Docker Desktop..." "Yellow"
     $exe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    if (-not (Test-Path $exe)) {
-        Say "❌ לא נמצא: $exe" "Red"
-        exit 1
-    }
-    Start-Process $exe
-
-    # ⚠️ המתנה ארוכה בכוונה: Docker Desktop מרים מכונת WSL שלמה, ועל
-    # מחשב עמוס זה לוקח יותר מדקה. פסק זמן קצר היה מדווח כישלון על
-    # הפעלה שהצליחה — כלומר שולח מישהו לחפש תקלה שאינה קיימת.
-    $until = (Get-Date).AddMinutes(4)
-    while (-not (DaemonUp) -and (Get-Date) -lt $until) {
-        Start-Sleep -Seconds 5
-        Write-Host "." -NoNewline
-    }
-    Write-Host ""
-    if (-not (DaemonUp)) {
-        Say "❌ Docker לא עלה תוך 4 דקות." "Red"
-        exit 1
-    }
-    Say "Docker עלה." "Green"
+    if (Test-Path $exe) {
+        Start-Process $exe
+        # ⚠️ המתנה ארוכה בכוונה: Docker Desktop מרים מכונת WSL שלמה, ועל
+        # מחשב עמוס זה לוקח יותר מדקה. פסק זמן קצר היה מדווח כישלון על
+        # הפעלה שהצליחה — כלומר שולח מישהו לחפש תקלה שאינה קיימת.
+        $until = (Get-Date).AddMinutes(4)
+        while (-not (DaemonUp) -and (Get-Date) -lt $until) {
+            Start-Sleep -Seconds 5
+            Write-Host "." -NoNewline -ForegroundColor DarkGray
+        }
+        Write-Host ""
+    } else { Say "❌ Docker Desktop לא מותקן בנתיב הצפוי." "Red" }
 }
 
-# ---------- 2. הקונטיינרים ----------
-Push-Location $Root
+if (-not (DaemonUp)) {
+    Say "❌ Docker לא עלה. נסי להפעיל אותו ידנית מתפריט התחל, ואז ללחוץ שוב." "Red"
+} else {
+    Say "Docker פעיל." "Green"
+    Push-Location $Root
+    try {
+        Say "מרים את השירותים..."
+        docker compose up -d 2>&1 | ForEach-Object { Say ("  " + $_) }
+
+        # ⚠️ המנהרה היא **profile** ולא שירות רגיל, ולכן `up -d` רגיל אינו
+        # מרים אותה. בהתאוששות של 30/08 היא אכן לא חזרה — הדשבורד עבד
+        # מהשרת ולא מהאינטרנט, וזה כשל שקט: הכול "ירוק" ורק אי אפשר להגיע.
+        $envFile = Join-Path $Root ".env"
+        $hasToken = (Test-Path $envFile) -and
+                    ((Get-Content $envFile -Raw) -match "CLOUDFLARE_TUNNEL_TOKEN\s*=\s*\S+")
+        if ($hasToken) {
+            Say "מרים את המנהרה..."
+            docker compose --profile tunnel up -d 2>&1 | ForEach-Object { Say ("  " + $_) }
+        }
+    } finally { Pop-Location }
+}
+
+# ============================================================
+#  שלב 3 — בודק שזה באמת עובד
+# ============================================================
+Title "3. בדיקה"
+Start-Sleep -Seconds 12
+
+$allOk = (DaemonUp)
+if (DaemonUp) {
+    foreach ($r in (docker ps --format "{{.Names}}|{{.Status}}" 2>$null)) {
+        $p = $r -split "\|"
+        Say ("  ✔ {0,-20} {1}" -f $p[0], $p[1]) "Green"
+    }
+}
+
+# ⚠️ "הקונטיינר רץ" אינו "השרת עובד". קונטיינר שקורס בלולאה מופיע כ-Up
+# בדיוק בין נפילה לנפילה; רק תשובה מ-/health מוכיחה שהוא חי באמת.
 try {
-    Say "מרים את השירותים..."
-    docker compose up -d 2>&1 | ForEach-Object { Say "  $_" }
-
-    # ⚠️ המנהרה היא **profile** ולא שירות רגיל, ולכן `up -d` רגיל **אינו**
-    # מרים אותה. בהתאוששות של 30/08 היא אכן לא חזרה — כלומר הדשבורד היה
-    # נגיש מהשרת עצמו ולא מהאינטרנט, וזה כשל שקט: הכול "עובד", ורק אי
-    # אפשר להגיע אליו מהטלפון.
-    $envFile = Join-Path $Root ".env"
-    $hasToken = (Test-Path $envFile) -and
-                ((Get-Content $envFile -Raw) -match "CLOUDFLARE_TUNNEL_TOKEN\s*=\s*\S+")
-    if ($hasToken) {
-        Say "מרים גם את המנהרה (profile: tunnel)..."
-        docker compose --profile tunnel up -d 2>&1 | ForEach-Object { Say "  $_" }
-    } else {
-        Say "⚠️ אין CLOUDFLARE_TUNNEL_TOKEN ב-.env — המנהרה לא הורמה, והדשבורד לא יהיה נגיש מבחוץ." "Yellow"
-    }
-} finally {
-    Pop-Location
-}
-
-# ---------- 3. אימות ----------
-Start-Sleep -Seconds 15
-Say ""
-Say "=== מצב ===" "Cyan"
-$rows = docker ps --format "{{.Names}}|{{.Status}}"
-foreach ($r in $rows) {
-    $p = $r -split "\|"
-    Say ("  {0,-20} {1}" -f $p[0], $p[1]) "Green"
-}
-
-# ⚠️ "הקונטיינר רץ" אינו "השרת עובד". הבדיקה האמיתית היא ש-/health עונה
-# — קונטיינר שקורס בלולאה מופיע כ-Up בדיוק בין נפילה לנפילה.
-try {
-    $h = Invoke-WebRequest -Uri "http://127.0.0.1:4000/health" -TimeoutSec 10 -UseBasicParsing
-    Say "✅ השרת עונה: HTTP $($h.StatusCode)" "Green"
+    $h = Invoke-WebRequest -Uri "http://127.0.0.1:4000/health" -TimeoutSec 15 -UseBasicParsing
+    Say ("✅ השרת עונה (HTTP {0}) — הקליטה פעילה." -f $h.StatusCode) "Green"
 } catch {
-    Say "⚠️ /health לא ענה — ייתכן שהשרת עדיין עולה. בדקי: docker logs parkomat" "Yellow"
+    Say "⚠  השרת עדיין לא עונה. ייתכן שהוא באמצע עלייה — נסי שוב בעוד דקה." "Yellow"
+    $allOk = $false
 }
 
-Say "=== סיום ===" "Cyan"
+Write-Host ""
+if ($allOk) { Write-Host "   ✅  המערכת למעלה. אפשר לסגור את החלון." -ForegroundColor Green }
+else        { Write-Host "   ⚠   משהו עדיין לא תקין. צלמי את המסך ושלחי." -ForegroundColor Yellow }
+Write-Host ""
+
+# ⚠️ רק כשאדם לחץ. המשימה המתוזמנת חייבת להסתיים לבד.
+if ($Interactive) {
+    Write-Host "   הקישי Enter לסגירה..." -ForegroundColor DarkGray
+    [void](Read-Host)
+}
