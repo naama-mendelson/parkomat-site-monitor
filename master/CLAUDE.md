@@ -875,3 +875,56 @@ real code (`tools/lib/totp.js`, validated against the four RFC 6238 vectors), an
 same manager who was refused a line earlier now gets `200`. It also restores the flag **to the
 value it found** on every exit path including failure — restoring to a hard `false` would
 silently disable enforcement the day someone turns it on.
+
+## PostgREST חותך ב-1,000 שורות — וזו שכבה ששום שער השוואה אינו חוצה
+
+Written in English like the rest of this file.
+
+The cap is hard: `limit` is ignored, and `Range` moves the window without enlarging it.
+The response comes back **200** — not 206, no warning, no error.
+
+The cap was known: `dashboard/src/services/pageAll.js` exists for exactly this, and three
+services page through it. **Nobody applied the thought to RPC**, and that is where it hit.
+
+⚠️ **Measured in production:** `executive_series` returns one row per (bucket × site), so
+*"השנה הנוכחית"* at daily resolution — **the screen's own default** — is 3,920 rows, of
+which 1,000 arrived. *"הרבעון הנוכחי"* was already truncated too (1,024 → 1,000).
+
+⚠️ **And it was worse than a clean cut**: the function has **no `ORDER BY`**, so those were
+1,000 *arbitrary* rows. The chart did not end mid-range — it scattered: buckets with data and
+buckets at zero alternating, a pattern that reads exactly like a quiet machine. That also
+rules out paging as the fix, since pages would overlap and skip.
+
+`executive_series_json` returns the same data as **one row**, and omits rows where every field
+`foldSeries` reads is zero — 5,872 rows become 541, 922KB becomes 87KB. This matters most on a
+phone, and the dashboard is a PWA.
+
+**Why the gate could not have caught it, and this is the general lesson:**
+
+> `parity-exec-series` calls the function **through the pool**. It proves the SQL and the JS
+> agree. It never crosses PostgREST at all — and the loss happened in the layer between them.
+
+This is the same shape as the two warnings already in this file: *a parity gate proves two
+implementations match, never that the definition is right* — and now also **never what the
+transport threw away**.
+
+Three things guard it now, and each covers what the others cannot:
+
+- **`check-row-cap`** — every RPC name and every table the dashboard reads must be *declared*
+  with a **structural** reason ("returns few" is not a reason), and every row-returning RPC is
+  actually called against production at the widest parameters the UI allows. ⚠️ The threshold is
+  **900, not 1,000**: a gate that lights up at truncation lights up *after* the data is already
+  gone from the screen. Its first run caught six tables a manual `grep` had missed — they are
+  written `supabase\n  .from(...)`, which `supabase.from` does not match.
+- **The transport check inside `parity-exec-series`** — runs both the sparse and the full series
+  through the *same* `computeExecutive` and demands an identical result. A correct row count
+  alone would not prove the omitted rows carried nothing.
+- **`tests/exec-series-sparse.test.js`** — structural: every field `foldSeries` reads must appear
+  in the SQL filter. ⚠️ It earned its place on the first run by catching `availability_percent`.
+
+⚠️ **The trap that has no production coverage:** a bucket entirely in maintenance is
+`measured_hours = 0` with `maintenance_hours > 0`. A filter that looked only at
+operations/errors/measured would drop it and quietly remove real maintenance hours from the
+screen — and production holds **zero** such buckets today, so it would have passed the
+production comparison in full. That is why the field list is locked *mechanically* rather than
+argued ("this field is protected by that one" is a rule someone will break without noticing).
