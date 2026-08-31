@@ -66,19 +66,52 @@ $url = $conf['SUPABASE_URL']
 $key = $conf['SUPABASE_SECRET_KEY']
 if (-not $url -or -not $key) { Say "❌ חסר SUPABASE_URL או SUPABASE_SECRET_KEY ב-master\.env"; exit 1 }
 
-$headers = @{
-    "apikey"        = $key
-    "Authorization" = "Bearer $key"
-    "Content-Type"  = "application/json"
-}
-
+# ============================================================
+# ⚠️ curl.exe ולא Invoke-RestMethod — וזה נמדד, לא העדפה
+# ============================================================
+# על DELL008, עם **אותו מפתח, אותן כותרות ואותה כתובת**:
+#
+#     curl.exe                     → HTTP 200
+#     Invoke-RestMethod            → 401 Unauthorized
+#     Invoke-RestMethod + TLS 1.2  → 401 Unauthorized
+#
+# Windows PowerShell 5.1 בונה את הבקשה מעל `HttpWebRequest`, ובדרך
+# כותרת ה-Authorization אובדת. ה-401 נראה **בדיוק כמו מפתח שגוי**,
+# ולכן הוא שלח אותנו לבדוק את המפתח, את הגיבוי ואת ההרשאות — כשכולם
+# היו תקינים מלכתחילה.
+#
+# ⚠️ `curl.exe` מגיע עם Windows 10 1803 ומעלה, ואינו תלוי בגרסת
+# PowerShell. הוא גם מה שכל שאר העולם משתמש בו מול PostgREST.
+#
+# ⚠️ **הגוף עובר דרך קובץ זמני ולא בשורת הפקודה.** ה-reason מגיע
+# בעברית, וציטוט של יוניקוד בשורת פקודה של Windows הוא מקור לכשלים
+# שקטים — הטקסט מגיע מעוות והשרת מקבל JSON פגום.
 function Rpc([string]$name, $body) {
     $json = if ($null -eq $body) { "{}" } else { $body | ConvertTo-Json -Compress }
-    # ⚠️ UTF8 מפורש: ה-reason מגיע בעברית, וברירת המחדל של PowerShell 5.1
-    # הייתה הופכת אותו לג'יבריש בדרך חזרה ליומן.
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-    return Invoke-RestMethod -Method Post -Uri "$url/rest/v1/rpc/$name" `
-        -Headers $headers -Body $bytes -TimeoutSec 30
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        # UTF8 בלי BOM: BOM בתחילת ה-JSON הופך אותו ללא־תקין.
+        [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
+
+        $raw = & curl.exe -s -S --max-time 30 -w "`n%{http_code}" `
+            -X POST "$url/rest/v1/rpc/$name" `
+            -H "apikey: $key" `
+            -H "Authorization: Bearer $key" `
+            -H "Content-Type: application/json" `
+            --data-binary "@$tmp" 2>&1
+
+        $lines = @($raw) -join "`n" -split "`n"
+        $code = $lines[-1].Trim()
+        $bodyText = ($lines[0..($lines.Count - 2)] -join "`n").Trim()
+
+        if ($code -notmatch '^2\d\d$') {
+            throw "HTTP $code · $bodyText"
+        }
+        if (-not $bodyText) { return $null }
+        return $bodyText | ConvertFrom-Json
+    } finally {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ---------- תפיסת הפקודה הבאה ----------
