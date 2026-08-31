@@ -1519,9 +1519,39 @@ RETURNS jsonb
 LANGUAGE sql
 STABLE
 AS $$
-  -- COALESCE כדי שתקופה בלי אף דלי תחזיר [] ולא NULL: הלקוח עושה .map.
+  -- ============================================================
+  -- ⚠️ שורות שאינן תורמות דבר אינן נשלחות — 91% מהן
+  -- ============================================================
+  -- הנהג הוא (דלי × אתר), ולכן שנה יומית מייצרת 5,856 שורות שמהן **535
+  -- נושאות נתון**. השאר הן אתרים שטרם נרשמו ולילות ריקים. נמדד: 922KB
+  -- מול ~85KB, על אפליקציה שנפתחת בטלפון.
+  --
+  -- ⚠️ ההשמטה בטוחה רק משום ש-foldSeries קוראת בדיוק שישה שדות:
+  -- operations, errors, entries, exits, maintenance_hours, ו-measured_hours
+  -- (כתנאי לכניסה לממוצע הזמינות). שורה שכל השישה בה אפס אינה משנה דבר,
+  -- ו-fold מטפלת בדלי חסר כאפסים ממילא (`rows || []`).
+  --
+  -- ⚠️ המלכודת שנבדקה ולא הונחה: **דלי שכולו תחזוקה** הוא measured_hours=0
+  -- עם maintenance_hours>0. מסנן שמסתכל רק על operations/errors/measured
+  -- היה מוחק אותו ומוריד שעות תחזוקה אמיתיות מהמסך. בייצור יש היום **אפס**
+  -- דליים כאלה — כלומר מסנן שגוי היה עובר את השוואת הייצור בשלמותה.
+  --
+  -- ⚠️ ולכן tests/exec-series-sparse.test.js נועל את הרשימה מבנית: ברגע
+  -- ש-fold תקרא שדה שביעי, הבדיקה תיפול. בלעדיה הקישור הזה נשבר בשקט
+  -- והנתון פשוט ייעלם מהגרף.
   SELECT COALESCE(jsonb_agg(t), '[]'::jsonb)
-    FROM public.executive_series(p_site_ids, p_from, p_to, p_buckets) t;
+    FROM public.executive_series(p_site_ids, p_from, p_to, p_buckets) t
+   WHERE t.operations <> 0
+      OR t.errors     <> 0
+      OR t.entries    <> 0
+      OR t.exits      <> 0
+      OR COALESCE(t.maintenance_hours, 0) <> 0
+      OR COALESCE(t.measured_hours, 0)    <> 0
+      -- ⚠️ availability_percent מוגן ממילא ב-measured_hours>0 ב-fold, ולכן
+      -- השורה הזו אינה משנה אף שורה בפועל. היא כאן כדי שהכלל יישאר **מכני**:
+      -- "כל שדה ש-fold קוראת נמצא במסנן". כלל שדורש נימוק ("השדה הזה מוגן
+      -- על ידי אחר") הוא כלל שמישהו יפר בלי לשים לב.
+      OR COALESCE(t.availability_percent, 0) <> 0;
 $$;
 
 COMMENT ON FUNCTION public.executive_series_json(integer[], text, text, jsonb) IS

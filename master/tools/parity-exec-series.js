@@ -61,6 +61,29 @@ function walk(a, b, path) {
   console.log(`  ❌ ${path}: JS=${JSON.stringify(a)} SQL=${JSON.stringify(b)}`);
 }
 
+// allRows זהה לשתי הזרועות ומגיע מ-supervisor — הוא אינו מה שנבדק כאן.
+// ⚠️ הוצא לפונקציה כדי שבדיקת התחבורה תבנה אותו **באותו קוד**: העתק שני
+// היה יכול להיבדל, ואז "אותה תוצאה" הייתה טענה על שני קלטים שונים.
+async function buildAllRows(sites, siteIds, from, to) {
+  const stats = await db.prepare("SELECT * FROM site_stats(?, ?, ?)").all(siteIds, from, to);
+  const up = await db.prepare("SELECT * FROM site_uptime(?, ?, ?)").all(siteIds, from, to);
+  const sMap = new Map(stats.map((r) => [r.site_id, r]));
+  const uMap = new Map(up.map((r) => [r.site_id, r]));
+  return sites.map((s) => {
+    const st = sMap.get(s.id) || {};
+    const u = uMap.get(s.id) || {};
+    return {
+      code: s.code, name: s.site_name, status: s.status,
+      operations: st.operations || 0, errors: st.errors || 0,
+      failureRate: st.failure_rate || 0,
+      availability: u.availability_percent ?? 0,
+      hasUptimeData: (u.measured_hours || 0) > 0,
+      maintenanceHours: u.maintenance_hours || 0,
+      downtimeHours: u.error_hours || 0,
+      cycleTotal: 0, operationsSinceLastError: 0,
+    };
+  });
+}
 (async () => {
   await db.init();
   console.log("=== parity-exec-series ===\n");
@@ -93,24 +116,7 @@ function walk(a, b, path) {
 
       // ---------- allRows זהה לשני הצדדים ----------
       // הוא אינו מה שנבדק כאן; הוא מגיע מ-supervisor בשתי הזרועות כאחת.
-      const stats = await db.prepare("SELECT * FROM site_stats(?, ?, ?)").all(siteIds, from, to);
-      const up = await db.prepare("SELECT * FROM site_uptime(?, ?, ?)").all(siteIds, from, to);
-      const sMap = new Map(stats.map((r) => [r.site_id, r]));
-      const uMap = new Map(up.map((r) => [r.site_id, r]));
-      const allRows = sites.map((s) => {
-        const st = sMap.get(s.id) || {};
-        const u = uMap.get(s.id) || {};
-        return {
-          code: s.code, name: s.site_name, status: s.status,
-          operations: st.operations || 0, errors: st.errors || 0,
-          failureRate: st.failure_rate || 0,
-          availability: u.availability_percent ?? 0,
-          hasUptimeData: (u.measured_hours || 0) > 0,
-          maintenanceHours: u.maintenance_hours || 0,
-          downtimeHours: u.error_hours || 0,
-          cycleTotal: 0, operationsSinceLastError: 0,
-        };
-      });
+      const allRows = await buildAllRows(sites, siteIds, from, to);
 
       const common = { allRows, allSites, from, to, granularity };
       const viaData = computeExecutive({ ...common, data });
@@ -169,14 +175,38 @@ function walk(a, b, path) {
 
       const r = await retry(`${SB}/rest/v1/rpc/executive_series_json`, { method: "POST", headers: H, body });
       const got = await r.json();
-      const nSites = (await db.prepare("SELECT COUNT(*)::int AS n FROM sites").get()).n;
-      const expect = withTotal.length * nSites;
-      const ok = Array.isArray(got) && got.length === expect;
-      console.log(`  ${ok ? "✅" : "❌"} ${withTotal.length} דליים × ${nSites} אתרים = ${expect} · הגיעו ${Array.isArray(got) ? got.length : "לא-מערך"}`);
-      if (!ok) {
+
+      // הסדרה המלאה, דרך ה-pool — הצד שאינו עובר ב-PostgREST כלל.
+      const siteIdsAll = (await db.prepare("SELECT id FROM sites ORDER BY id").all()).map((x) => x.id);
+      const full = await db.prepare("SELECT * FROM executive_series(?, ?, ?, ?::jsonb)")
+        .all(siteIdsAll, from, to, JSON.stringify(withTotal));
+
+      // ⚠️ שתי טענות, ושתיהן נחוצות.
+      //
+      // הראשונה: **כמה הגיע**. הפונקציה משמיטה שורות ריקות בכוונה, ולכן
+      // "דליים × אתרים" אינו המספר הצפוי יותר — אבל קטימה ב-1,000 עדיין
+      // חייבת ליפול. לכן הצפי מחושב מאותו מסנן, בצד השני.
+      const expect = full.filter((t) =>
+        t.operations !== 0 || t.errors !== 0 || t.entries !== 0 || t.exits !== 0 ||
+        (t.maintenance_hours || 0) !== 0 || (t.measured_hours || 0) !== 0 ||
+        (t.availability_percent || 0) !== 0).length;
+      const okCount = Array.isArray(got) && got.length === expect;
+      console.log(`  ${okCount ? "✅" : "❌"} ${withTotal.length} דליים × ${siteIdsAll.length} אתרים · ${full.length} שורות → ${expect} נושאות נתון · הגיעו ${Array.isArray(got) ? got.length : "לא-מערך"}`);
+      if (!okCount) {
         diffs++;
         console.log("     הנתונים נחתכים בדרך לדפדפן. אל תחזירו שורות מ-RPC רחב.");
       }
+
+      // ⚠️ השנייה, והיא החשובה: **ההשמטה חסרת אובדן**. ספירה נכונה אינה
+      // מוכיחה שהשורות שהושמטו באמת לא תרמו — מסנן ששכח maintenance_hours
+      // היה נותן ספירה תואמת ומסך שגוי. לכן שני הצדדים עוברים דרך אותה
+      // computeExecutive, והתוצאה חייבת להיות זהה לחלוטין.
+      const allRowsT = await buildAllRows(sites, siteIds, from, to);
+      const common = { allRows: allRowsT, allSites, from, to, granularity: "day" };
+      const before = diffs;
+      walk(computeExecutive({ ...common, series: full }),
+           computeExecutive({ ...common, series: got }), "דליל מול מלא");
+      console.log(`  ${before === diffs ? "✅" : "❌"} ההשמטה חסרת אובדן — אותה תוצאה משני הצדדים`);
     } finally {
       await g.cleanup();
     }
