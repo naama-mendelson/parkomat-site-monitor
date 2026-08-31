@@ -82,3 +82,30 @@ Get-ChildItem $logs -Filter *.log | Sort-Object LastWriteTime -Descending |
   Select-Object -First 3 Name, LastWriteTime, @{n='KB';e={[int]($_.Length/1KB)}} | Format-Table -AutoSize
 $newest = Get-ChildItem $logs -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($newest) { "`n--- 30 השורות האחרונות מתוך $($newest.Name) ---"; Get-Content $newest.FullName -Tail 30 }
+
+Write-Host "`n=== 6. מה הסוכן באמת שידר ===" -ForegroundColor Cyan
+# ============================================================
+# ⚠️ זו הראיה המכרעת, והגרסה הראשונה של הסקריפט החמיצה אותה
+# ============================================================
+# הסוכן כותב יומן נפרד של כל הודעה ששודרה — agent-sent-YYYY-MM-DD.jsonl.
+# הסקריפט סינן *.log בלבד, ולכן הראה יומן שכולו סנכרוני NTP והשאיר את
+# השאלה החשובה פתוחה.
+#
+# ⚠️ ולמה היא מכרעת: MqttPublisher.cs אינו רושם דבר על מצב החיבור. סוכן
+# שאיבד את החיבור ל-MQTT נראה **זהה לחלוטין** לאתר שקט — אותו יומן, אותו
+# מסך. היומן הזה הוא הדבר היחיד שמפריד ביניהם.
+$sent = Get-ChildItem $logs -Filter "agent-sent-*.jsonl" -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending
+if (-not $sent) {
+  Write-Host "  ⚠️ אין יומן שידור כלל — הסוכן לא שידר דבר מאז ההתקנה" -ForegroundColor Yellow
+} else {
+  $sent | Select-Object -First 5 Name, LastWriteTime, @{n="KB";e={[int]($_.Length/1KB)}} | Format-Table -AutoSize
+  $age = (Get-Date) - $sent[0].LastWriteTime
+  if ($age.TotalHours -gt 24) {
+    Write-Host ("  ⚠️ השידור האחרון לפני {0:N1} שעות" -f $age.TotalHours) -ForegroundColor Yellow
+  } else {
+    Write-Host ("  ✅ שידור אחרון לפני {0:N1} שעות" -f $age.TotalHours) -ForegroundColor Green
+  }
+  "`n--- 10 השורות האחרונות מתוך $($sent[0].Name) ---"
+  Get-Content $sent[0].FullName -Tail 10
+}
