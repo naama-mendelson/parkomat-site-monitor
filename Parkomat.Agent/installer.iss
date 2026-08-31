@@ -18,7 +18,7 @@
 ; 1.0.20 — התרעה על מזהה אתר חסר. בלעדיו הנושאים יוצאים sites//state
 ;          והשרת אינו מנוי אליהם: כל הבדיקות ירוקות והאתר נעדר מהדשבורד.
 ;          כעת: הסוכן מסרב לשדר, הסמל נשאר אפור, ו"בדוק חיבור" אומר למה.
-#define MyAppVersion "1.0.20"
+#define MyAppVersion "1.0.21"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
