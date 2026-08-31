@@ -37,16 +37,61 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 import { computeExecutive, getBucketRanges } from "../../../shared/executive.mjs";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 
+// ============================================================
+// ⚠️ איחוד בקשות — כי לא הצלחתי לאתר את מקור הכפילות
+// ============================================================
+// נמדד בדפדפן על הייצור, ארבע פעמים ברצף: **fetchExecutiveDirect רץ
+// פעמיים בכל טעינה** — שני גלים מלאים של שמונה בקשות.
+//
+//     site_stats        1.53s  ו-  911ms
+//     site_uptime       1.36s  ו-  898ms
+//     executive_series  2.55s  ו-  2.51s
+//
+// ⚠️ **חיפשתי את הטריגר ולא מצאתי אותו בוודאות.** נשללו: השהיה
+// (debounce לא עוזר כשאין שקט), חסם קצב ב-hook (שני הקוראים "ראשונים",
+// כלומר הרכיב מותקן מחדש), StrictMode (אינו מכפיל בבנייה לייצור),
+// ו-onReconnect של Realtime (יש לו כבר הגנה על החיבור הראשון).
+//
+// החשוד שנותר הוא AuthGate: הוא מציג ספינר עד ש-mfaChecked מתמלא,
+// ומאפס אותו כש-user מהבהב — ואז App כולו נעקר ומותקן מחדש.
+//
+// ⚠️ **ובמקום לתקן ניחוש חמישי, ההגנה יושבת כאן.** שתי קריאות זהות
+// בתוך חלון קצר הן **אותה שאלה**, ואין סיבה לשאול אותה פעמיים — לא
+// משנה מי שאל. זו לא הסתרה של הבאג: הכפילות עדיין תיראה כקריאה אחת
+// ל-fetchExecutiveDirect, פשוט לא כשמונה בקשות רשת.
+//
+// ⚠️ החלון קצר בכוונה. הוא נועד לאחד **גל טעינה**, לא לשמש מטמון —
+// מטמון היה מחזיר נתון ישן אחרי שינוי פילטר, וזה כשל שקט.
+const COALESCE_MS = 5000;
+let lastKey = null;
+let lastAt = 0;
+let lastPromise = null;
+
+
 function messageFor(error) {
   if (!error) return "שגיאה לא ידועה";
   if (error.code === "42501") return "אין הרשאת קריאה — נדרשת התחברות";
   return error.message || "השליפה נכשלה";
 }
 
-export async function fetchExecutiveDirect({ from, to, ...filters }) {
+export async function fetchExecutiveDirect(params) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
   }
+
+  const cacheKey = JSON.stringify(params);
+  if (lastPromise && lastKey === cacheKey && Date.now() - lastAt < COALESCE_MS) {
+    return lastPromise;
+  }
+  lastKey = cacheKey;
+  lastAt = Date.now();
+  lastPromise = runExecutive(params);
+  // ⚠️ כישלון אינו נשמר: ניסיון חוזר אחרי שגיאה חייב באמת לרוץ.
+  lastPromise.catch(() => { if (lastKey === cacheKey) lastPromise = null; });
+  return lastPromise;
+}
+
+async function runExecutive({ from, to, ...filters }) {
 
   // ⚠️ הדליים נחתכים **כאן** באותה getBucketRanges ש-computeExecutive
   // תשתמש בה מיד אחר כך. מקור אמת אחד לגבולות התקופה — שכפול החיתוך
