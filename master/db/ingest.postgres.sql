@@ -340,3 +340,173 @@ $fn$;
 
 COMMENT ON FUNCTION app.ingest_operation(integer, text, text, text, text, text, text, integer) IS
   'פורט של operation-handler.js. parity-ingest-op משווה אותה מול המסלול הקיים על אותן הודעות.';
+
+-- ============================================================
+-- app.ingest_state — מסלול המצב, פורט מ-state-handler.js
+-- ============================================================
+-- שישה שלבים, וכל אחד מהם נולד מכשל שנמדד. הסדר הוא ההתנהגות.
+--
+-- ⚠️ **הצוואה המאוחרת** (שלב 1). הודעת no_comm אינה מגיעה מהאתר — הברוקר
+-- מפרסם אותה בשמו כשהחיבור מת, ולכן **אין לה חותם זמן משלה** והשרת חותם
+-- אותה ב"עכשיו". "עכשיו" הוא תמיד הזמן החדש ביותר שקיים, ולכן צוואה
+-- שהתעכבה בתור עוברת את שומר ה-backfill (היא לא ישנה — היא "עכשיו"),
+-- דורסת את המצב העדכני, ומסמנת כמנותק אתר שדיווח לפני שנייה.
+-- הסף הוא 1.5 × keepalive של 60 שניות.
+--
+-- ⚠️ **תקלה בזמן תחזוקה מושמטת לגמרי** (שלב 3) — לא נרשמת כמקטע, ולכן
+-- אינה נספרת באף מדד. אבל היא **כן** נרשמת ב-suppressed_faults, אחרת
+-- המידע נעלם ואי אפשר לדעת בדיעבד שהיא קרתה.
+--
+-- ⚠️ **no_comm אינו מעדכן last_seen** (שלבים 5 ו-6). נתק אינו סימן חיים.
+-- זו השורה שמפרידה בין "האתר שקט" ל"האתר נראה".
+-- ⚠️ DROP לפני CREATE, ולא CREATE OR REPLACE לבדו: שינוי **שם** של עמודת
+-- פלט ב-RETURNS TABLE נחשב שינוי טיפוס החזרה, ו-Postgres דוחה אותו ב-
+-- "cannot change return type of existing function". בלי זה, מסד שכבר
+-- מריץ גרסה ישנה פשוט לא יתעדכן — והשער ישווה מול פונקציה שאינה בקוד.
+DROP FUNCTION IF EXISTS app.ingest_state(integer, text, text, text);
+
+CREATE OR REPLACE FUNCTION app.ingest_state(
+  p_site_id     integer,
+  p_status      text,
+  p_occurred_at text,
+  p_fault_text  text DEFAULT NULL
+)
+RETURNS TABLE (
+  applied     boolean,
+  outcome     text,     -- applied / no_change / backfill / lwt_late / suppressed
+  -- ⚠️ **at_used ולא occurred_at.** שם פלט ב-RETURNS TABLE הופך למשתנה,
+  -- ואז ON CONFLICT (site_id, occurred_at) למטה אינו יודע אם הכוונה
+  -- לעמודה או למשתנה — 42702, ומ-PostgREST זה חוזר כ-400. אותה מלכודת
+  -- בדיוק שתועדה על uid=4096(AzureAD+נעמהמנדלסון) gid=4096 groups=4096 ב-writes.postgres.sql.
+  at_used     text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  -- ⚠️ 1.5 × keepalive של 60 שניות. הצד השני הוא ingestion/lwt-order.js.
+  LWT_MIN_SILENCE constant integer := 90;
+  ISO             constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+
+  v_now      text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_at       text := p_occurred_at;
+  v_site     record;
+  v_silence  integer;
+  v_open     record;
+  v_in_maint boolean;
+BEGIN
+  SELECT s.id, s.status, s.last_seen INTO v_site
+    FROM sites s WHERE s.id = p_site_id FOR UPDATE;
+
+  IF v_site.id IS NULL THEN
+    RETURN QUERY SELECT false, 'no_site'::text, v_at;
+    RETURN;
+  END IF;
+
+  -- ---------- 1. צוואה מאוחרת ----------
+  IF p_status = 'no_comm' THEN
+    IF v_site.last_seen IS NOT NULL THEN
+      v_silence := FLOOR(EXTRACT(EPOCH FROM (
+        v_now::timestamptz - v_site.last_seen::timestamptz)))::integer;
+      IF v_silence < LWT_MIN_SILENCE THEN
+        RETURN QUERY SELECT false, 'lwt_late'::text, v_at;
+        RETURN;
+      END IF;
+    END IF;
+
+    -- ⚠️ החותם הוא **עכשיו**, מרוצף לשנייה שלמה. חוזה הסוכן הוא שניות,
+    -- וחותם במילישניות שהשרת כותב נראה תמיד "חדש" מהסנכרון של הסוכן —
+    -- אז שומר ה-backfill דוחה את הסנכרון והאתר נתקע ב-no_comm לנצח.
+    v_at := to_char(date_trunc('second', now() AT TIME ZONE 'UTC'), ISO);
+  END IF;
+
+  -- ---------- 2. תקלה בזמן תחזוקה — מושמטת ----------
+  IF p_status = 'error' THEN
+    SELECT v_site.status = 'maintenance' OR EXISTS (
+      SELECT 1 FROM maintenance_windows m
+       WHERE m.site_id = p_site_id AND m.cancelled_at IS NULL
+         AND m.started_at <= v_now AND m.expires_at > v_now
+    ) INTO v_in_maint;
+
+    IF v_in_maint THEN
+      UPDATE sites SET last_seen = v_at
+       WHERE id = p_site_id AND (last_seen IS NULL OR last_seen < v_at);
+
+      -- ⚠️ נרשמת ללוג ולא נעלמת. בלי זה אי אפשר לדעת בדיעבד שהיא קרתה.
+      INSERT INTO suppressed_faults (site_id, occurred_at, fault_text, reason, created_at)
+      VALUES (p_site_id, v_at, p_fault_text,
+              CASE WHEN v_site.status = 'maintenance' THEN 'plc' ELSE 'window' END, v_now)
+      ON CONFLICT (site_id, occurred_at) DO NOTHING;
+
+      RETURN QUERY SELECT false, 'suppressed'::text, v_at;
+      RETURN;
+    END IF;
+  END IF;
+
+  -- ---------- 3. שומר backfill ----------
+  SELECT h.status, h.started_at INTO v_open
+    FROM status_history h
+   WHERE h.site_id = p_site_id AND h.ended_at IS NULL
+   ORDER BY h.started_at DESC LIMIT 1;
+
+  IF v_open.started_at IS NOT NULL AND v_at < v_open.started_at THEN
+    RETURN QUERY SELECT false, 'backfill'::text, v_at;
+    RETURN;
+  END IF;
+
+  -- ---------- 4. אין שינוי ----------
+  IF p_status = v_site.status THEN
+    IF p_status = 'no_comm' THEN
+      -- ⚠️ נתק אינו סימן חיים — last_seen אינו זז.
+      RETURN QUERY SELECT false, 'no_change'::text, v_at;
+      RETURN;
+    END IF;
+
+    UPDATE sites SET last_seen = v_at
+     WHERE id = p_site_id AND (last_seen IS NULL OR last_seen < v_at);
+
+    -- ⚠️ תיאור תקלה שהגיע באיחור ממלא מקטע פתוח שנשאר בלי תיאור. הבקר
+    -- מדווח את הטקסט אחרי ה-MODE, ולכן המקטע נפתח ריק ומתמלא רק כאן.
+    IF p_status = 'error' AND COALESCE(p_fault_text, '') <> '' THEN
+      UPDATE status_history SET fault_text = p_fault_text
+       WHERE site_id = p_site_id AND ended_at IS NULL
+         AND COALESCE(reclassified_to, status) = 'error'
+         AND fault_text IS NULL;
+    END IF;
+
+    RETURN QUERY SELECT false, 'no_change'::text, v_at;
+    RETURN;
+  END IF;
+
+  -- ---------- 5. אותו מצב במקטע הפתוח ----------
+  -- ⚠️ שכפול מכוון של הבדיקה למעלה: `sites.status` ו-`status_history` הם
+  -- שני מקורות, והם יכולים להיפרד. applyStateChange בודקת את המקטע.
+  IF v_open.status IS NOT NULL AND v_open.status = p_status THEN
+    RETURN QUERY SELECT false, 'no_change'::text, v_at;
+    RETURN;
+  END IF;
+
+  -- ---------- 6. החלפת מקטע ----------
+  UPDATE status_history SET ended_at = v_at
+   WHERE site_id = p_site_id AND ended_at IS NULL;
+
+  INSERT INTO status_history (site_id, status, started_at, fault_text)
+  VALUES (p_site_id, p_status, v_at, p_fault_text);
+
+  IF p_status = 'no_comm' THEN
+    -- ⚠️ הסטטוס בלבד. נתק אינו סימן חיים.
+    UPDATE sites SET status = p_status WHERE id = p_site_id;
+  ELSE
+    UPDATE sites SET status = p_status,
+                     last_seen = CASE WHEN last_seen IS NULL OR last_seen < v_at
+                                      THEN v_at ELSE last_seen END
+     WHERE id = p_site_id;
+  END IF;
+
+  RETURN QUERY SELECT true, 'applied'::text, v_at;
+END;
+$fn$;
+
+COMMENT ON FUNCTION app.ingest_state(integer, text, text, text) IS
+  'פורט של state-handler.js + applyStateChange. parity-ingest-state משווה מול המסלול הקיים.';
