@@ -58,7 +58,10 @@ const shape = (snap) => ({
     fault: s.fault_text,
   })),
   site: { status: snap.site.status, last_seen: norm(snap.site.last_seen, null) },
-  drops: snap.drops.map((d) => d.reason),
+  // ⚠️ סיבות הזריקה מושוות גם הן, ומסודרות: הודעה שנדחתה בלי עקבה היא
+  // בדיוק המצב שהיה לפני ש-ingest_drops נוצרה. פונקציה שדוחה נכון אבל
+  // אינה רושמת נראית זהה לחלוטין בכל בדיקה שמסתכלת רק על המקטעים.
+  drops: snap.drops.map((d) => d.reason).sort(),
 });
 
 async function scenario(name, build, opts = {}) {
@@ -88,6 +91,7 @@ async function scenario(name, build, opts = {}) {
   const j = shape(jsSnap), s = shape(sqlSnap);
   cmp(`${name} · מקטעים`, j.segs, s.segs);
   cmp(`${name} · שורת האתר`, j.site, s.site);
+  cmp(`${name} · זריקות`, j.drops, s.drops);
   if (before === diffs) console.log(`  ✅ ${name}`);
 }
 
