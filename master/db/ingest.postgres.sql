@@ -510,3 +510,147 @@ $fn$;
 
 COMMENT ON FUNCTION app.ingest_state(integer, text, text, text) IS
   'פורט של state-handler.js + applyStateChange. parity-ingest-state משווה מול המסלול הקיים.';
+
+-- ============================================================
+-- app.classify_timestamp — פורט מדויק של classifyTimestamp
+-- ============================================================
+-- המקור: `ingestion/plausibility.js`. פונקציה **טהורה** בשני הצדדים,
+-- ולכן ניתנת להשוואה ערך מול ערך על אלפי מקרים בלי לגעת בנתון.
+--
+-- ============================================================
+-- ⚠️ שתי דרגות, לא מדיניות אחת — וזה לב העניין
+-- ============================================================
+-- סחיפת שעון קטנה וסחיפה אבסורדית הן שתי תקלות שונות:
+--
+--   • **סחיפה קטנה** — מיישרים ומקבלים. אתר עם שעון שמקדים ב-34 שניות
+--     הוא אתר עובד לגמרי, ודחייה שלו הייתה מוחקת את כל הדיווח שלו בגלל
+--     תקלה שאינה שלו. נמדד בשטח: אתר 1343 ב-34s+, 2439 ב-70s+, 3513
+--     ב-20s-.
+--
+--   • **סחיפה אבסורדית** — דוחים ורושמים. חותם לפני 2020, אחרי 2100,
+--     או לפני שהאתר בכלל נרשם, אינו סחיפה אלא שעון שבור או הודעה זרה.
+--
+-- ⚠️ **ו-`allow_past_clamp` הוא ההבדל בין סחיפה ל-backfill אמיתי.**
+-- חותם ישן יכול להיות (א) שעון שמפגר, או (ב) הודעה שהגיעה באיחור מהתור.
+-- משתי ההודעות עצמן אין דרך להבחין — אותו שדה, אותו הפרש. מה שמבדיל הוא
+-- **הקשר ההגעה**: backfill מגיע בגלים מיד אחרי שהמנוי חוזר. בשגרה
+-- (allow_past_clamp=true) חותם ישן הוא כמעט תמיד סחיפה; בתוך חלון פריקה
+-- (false) הוא נשמר כפי שהוא. יישור של backfill אמיתי היה **משכתב את
+-- ההיסטוריה** — כל ההודעות שהצטברו היו מקבלות את זמן ההגעה.
+CREATE OR REPLACE FUNCTION app.classify_timestamp(
+  p_timestamp_sec   bigint,
+  p_now_ms          bigint,
+  p_registered_ms   bigint DEFAULT NULL,
+  p_allow_past_clamp boolean DEFAULT false
+)
+RETURNS TABLE (
+  action         text,   -- accept / clamp / reject
+  effective_sec  bigint,
+  reason         text,
+  skew_seconds   bigint,
+  warn           boolean,
+  classification text    -- ok / drift_future / drift_past / backfill / reject
+)
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+  -- הקבועים חיים בשני מקומות, וזה מכוון: הצד השני הוא plausibility.js,
+  -- ושער ההשוואה נופל אם הם נפרדים.
+  FUTURE_CLAMP_MAX      constant integer := 300;
+  FUTURE_CLAMP_MIN      constant integer := 5;
+  PAST_CLAMP_MAX        constant integer := 300;
+  PAST_CLAMP_MIN        constant integer := 30;
+  SKEW_WARN             constant integer := 5;
+  REGISTRATION_GRACE    constant integer := 120;
+  MIN_TIMESTAMP         constant bigint  := 1577836800;   -- 2020-01-01Z
+  MAX_TIMESTAMP         constant bigint  := 4102444800;   -- 2100-01-01Z
+
+  v_now_sec  bigint := FLOOR(p_now_ms / 1000.0)::bigint;
+  v_skew     bigint;
+  v_before   bigint;
+  v_behind   bigint;
+  v_warn     boolean;
+BEGIN
+  IF p_timestamp_sec IS NULL THEN
+    RETURN QUERY SELECT 'reject'::text, NULL::bigint,
+      -- ⚠️ COALESCE ל-'null' ולא format לבדו: ב-Postgres format('%s', NULL)
+      -- מחזיר מחרוזת **ריקה**, וה-reason הזה נכתב ל-ingest_drops — כלומר
+      -- מי שיקרא אותו בעוד חצי שנה יראה 'חותם זמן אינו מספר ()' ולא יידע
+      -- מה היה שם.
+      format('חותם זמן אינו מספר (%s)', COALESCE(p_timestamp_sec::text, 'null')),
+      0::bigint, true, 'reject'::text;
+    RETURN;
+  END IF;
+
+  IF p_timestamp_sec < MIN_TIMESTAMP THEN
+    RETURN QUERY SELECT 'reject'::text, NULL::bigint,
+      format('חותם זמן לפני 2020 (%s) — שעון לא מאותחל', p_timestamp_sec),
+      p_timestamp_sec - v_now_sec, true, 'reject'::text;
+    RETURN;
+  END IF;
+
+  IF p_timestamp_sec >= MAX_TIMESTAMP THEN
+    RETURN QUERY SELECT 'reject'::text, NULL::bigint,
+      format('חותם זמן אחרי 2100 (%s) — כנראה מילישניות', p_timestamp_sec),
+      p_timestamp_sec - v_now_sec, true, 'reject'::text;
+    RETURN;
+  END IF;
+
+  v_skew := p_timestamp_sec - v_now_sec;   -- חיובי = בעתיד
+
+  IF v_skew > FUTURE_CLAMP_MAX THEN
+    RETURN QUERY SELECT 'reject'::text, NULL::bigint,
+      format('חותם זמן %ss בעתיד (מיישרים עד %ss)', v_skew, FUTURE_CLAMP_MAX),
+      v_skew, true, 'reject'::text;
+    RETURN;
+  END IF;
+
+  -- ⚠️ חותם שקדם לרישום האתר. חלון החסד קיים כי הרישום עצמו נכתב
+  -- בזמן השרת, וההודעה הראשונה עשויה לצאת שנייה לפניו.
+  IF p_registered_ms IS NOT NULL THEN
+    v_before := FLOOR(p_registered_ms / 1000.0)::bigint - p_timestamp_sec;
+    IF v_before > REGISTRATION_GRACE THEN
+      RETURN QUERY SELECT 'reject'::text, NULL::bigint,
+        format('חותם זמן %ss לפני רישום האתר', v_before), v_skew, true, 'reject'::text;
+      RETURN;
+    END IF;
+  END IF;
+
+  v_warn := ABS(v_skew) >= SKEW_WARN;
+
+  IF v_skew > 0 THEN
+    IF v_skew <= FUTURE_CLAMP_MIN THEN
+      RETURN QUERY SELECT 'accept'::text, p_timestamp_sec, NULL::text, v_skew, v_warn, 'ok'::text;
+      RETURN;
+    END IF;
+    RETURN QUERY SELECT 'clamp'::text, v_now_sec, NULL::text, v_skew, v_warn, 'drift_future'::text;
+    RETURN;
+  END IF;
+
+  v_behind := -v_skew;
+
+  IF v_behind > PAST_CLAMP_MAX THEN
+    RETURN QUERY SELECT 'accept'::text, p_timestamp_sec,
+      format('חותם %ss בעבר — מעל תקרת היישור, מטופל כ-backfill', v_behind),
+      v_skew, v_warn, 'backfill'::text;
+    RETURN;
+  END IF;
+
+  IF v_behind > PAST_CLAMP_MIN THEN
+    IF NOT p_allow_past_clamp THEN
+      RETURN QUERY SELECT 'accept'::text, p_timestamp_sec,
+        format('חותם %ss בעבר בתוך חלון פריקה — נשמר כפי שהוא', v_behind),
+        v_skew, v_warn, 'backfill'::text;
+      RETURN;
+    END IF;
+    RETURN QUERY SELECT 'clamp'::text, v_now_sec, NULL::text, v_skew, v_warn, 'drift_past'::text;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT 'accept'::text, p_timestamp_sec, NULL::text, v_skew, v_warn, 'ok'::text;
+END;
+$fn$;
+
+COMMENT ON FUNCTION app.classify_timestamp(bigint, bigint, bigint, boolean) IS
+  'פורט של classifyTimestamp מ-ingestion/plausibility.js. parity-ingest-cycle משווה ערך מול ערך.';

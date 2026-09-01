@@ -118,6 +118,89 @@ async function compare(label, input) {
     console.log(`  ✅ כל שבעת המצבים נבדקו`);
   }
 
+  // ============================================================
+  // classifyTimestamp — הפונקציה הטהורה השנייה
+  // ============================================================
+  // ⚠️ **המדד שהיא שומרת עליו הוא כל השאר.** חותם זמן שגוי אינו טועה
+  // בשדה אחד — הוא מזיז מקטע, ולכן מזיז זמינות, שיעור תקלות וכל דוח.
+  // ולכן היא נבדקת באותה קפדנות: כל חמשת הסיווגים במפורש, ואחריהם רשת.
+  const { classifyTimestamp } = require("../ingestion/plausibility");
+  const seenClass = new Set();
+
+  async function cmpTs(label, ts, nowMs, regMs, allowPast) {
+    checks++;
+    const js = classifyTimestamp(ts, nowMs, regMs, { allowPastClamp: allowPast });
+    seenClass.add(js.classification);
+
+    const sql = await db.prepare(
+      "SELECT * FROM app.classify_timestamp(?, ?, ?, ?)"
+    ).get(ts, nowMs, regMs, allowPast);
+
+    // ⚠️ ה-`reason` מושווה גם הוא. הוא מה שנרשם ל-ingest_drops, וזה מה
+    // שמישהו יקרא בעוד חצי שנה כשינסה להבין למה הודעה נעלמה.
+    const same =
+      js.action === sql.action &&
+      (js.effectiveSec ?? null) === (sql.effective_sec ?? null) &&
+      (js.reason ?? null) === (sql.reason ?? null) &&
+      Number(js.skewSeconds) === Number(sql.skew_seconds) &&
+      Boolean(js.warn) === Boolean(sql.warn) &&
+      js.classification === sql.classification;
+
+    if (!same) {
+      diffs++;
+      console.log(`  ❌ ${label}`);
+      console.log(`     JS  : ${JSON.stringify(js)}`);
+      console.log(`     SQL : ${JSON.stringify(sql)}`);
+    }
+    return same;
+  }
+
+  console.log("\n── classifyTimestamp: חמשת הסיווגים ──");
+  const NOW = Date.parse("2026-08-01T10:00:00.000Z");
+  const S = (offsetSec) => Math.floor(NOW / 1000) + offsetSec;
+
+  const tsCases = [
+    ["ok — בדיוק עכשיו",           S(0), null, false],
+    ["ok — 3ש בעתיד (מתחת לסף)",   S(3), null, false],
+    ["ok — 10ש בעבר",              S(-10), null, false],
+    ["drift_future — 34ש (אתר 1343)", S(34), null, false],
+    ["drift_future — 70ש (אתר 2439)", S(70), null, false],
+    ["drift_future — בדיוק על הגבול", S(300), null, false],
+    ["reject — 301ש בעתיד",        S(301), null, false],
+    ["backfill — 400ש בעבר",       S(-400), null, false],
+    ["backfill — בחלון פריקה",     S(-100), null, false],
+    ["drift_past — בשגרה",         S(-100), null, true],
+    ["ok — 30ש בעבר (על הרצפה)",   S(-30), null, true],
+    ["reject — לפני 2020",         1500000000, null, false],
+    ["reject — מילישניות",         Date.now(), null, false],
+    ["reject — לפני רישום האתר",   S(-60), NOW + 600000, false],
+    ["backfill — בתוך חלון החסד",  S(-60), NOW + 30000, false],
+    ["reject — NULL",              null, null, false],
+  ];
+
+  for (const [label, ts, reg, ap] of tsCases) {
+    const okc = await cmpTs(label, ts, NOW, reg, ap);
+    if (okc) console.log(`  ✅ ${label.padEnd(32)} → ${classifyTimestamp(ts, NOW, reg, { allowPastClamp: ap }).classification}`);
+  }
+
+  console.log("\n── classifyTimestamp: רשת אקראית ──");
+  for (let i = 0; i < 400; i++) {
+    const off = rnd(1400) - 700;
+    await cmpTs(`ts אקראי ${i}`, S(off),
+      NOW, Math.random() > 0.6 ? NOW - rnd(9000000) : null, Math.random() > 0.5);
+  }
+  console.log(`  ${diffs === 0 ? "✅" : "❌"} 400 מקרים אקראיים`);
+
+  // ⚠️ אותו כלל כמו למעלה: "עברו" בלי לגעת בכל הסיווגים אינו אישור.
+  const ALL_CLASS = ["ok", "drift_future", "drift_past", "backfill", "reject"];
+  const missingClass = ALL_CLASS.filter((c) => !seenClass.has(c));
+  if (missingClass.length) {
+    diffs++;
+    console.log(`  ❌ סיווגים שלא נבדקו כלל: ${missingClass.join(", ")}`);
+  } else {
+    console.log("  ✅ כל חמשת הסיווגים נבדקו");
+  }
+
   console.log(`\n${"=".repeat(50)}`);
   console.log(diffs === 0
     ? `✅ נקי — ${checks} השוואות, 0 הבדלים`
