@@ -114,6 +114,18 @@ public static class AgentPaths
     public static string LogsFolder { get; } = Path.Combine(BaseFolder, "logs");
 
     /// <summary>
+    /// תיקיית תור השידור: ...\Parkomat\Agent\queue.
+    ///
+    /// ⚠️ קובץ לכל פעולה שטרם שודרה, כדי שהתור ישרוד <b>נפילת חשמל</b>. עד
+    /// כה הוא חי בזיכרון בלבד, ו-Worker.cs תיעד את הפער במפורש: "התור חי
+    /// בזיכרון בלבד — כלומר כל הפעולות שהוא נועד להציל היו אובדות בדיוק כאן".
+    ///
+    /// ⚠️ תחת ProgramData ולא ב-LocalAppData של המשתמש: השירות והמגש רצים
+    /// בהקשרים שונים, ותור שרק אחד מהם רואה אינו תור.
+    /// </summary>
+    public static string QueueFolder { get; } = Path.Combine(BaseFolder, "queue");
+
+    /// <summary>
     /// מוודא שתיקיית הבסיס קיימת. בטוח לקרוא לזה כמה פעמים —
     /// אם התיקייה כבר קיימת, לא קורה כלום.
     /// </summary>

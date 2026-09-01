@@ -1,6 +1,7 @@
 using Parkomat.Agent.Core.Configuration;
 using System.Threading;
 using Parkomat.Agent.Core.Protocol;
+using Parkomat.Agent.Core.Queue;
 using Parkomat.Agent.Core.Time;
 using Parkomat.Agent.Service.Diagnostics;
 using Parkomat.Agent.Service.Logic;
@@ -349,8 +350,15 @@ public class Worker : BackgroundService
         // דרך "לזהות שוב" את המעבר. שומרים כאן כל פעולה *עם החותם המקורי שלה* עד
         // שידור מוצלח; כשל → נשארת ותשודר בסבב הבא (אותו חותם ⇒ ה-dedup של השרת
         // סופג כפילות QoS-1). הרצפה גבוהה מספיק לכל אורך נתק סביר של הברוקר המקומי.
-        var pendingOps = new List<OperationMessage>();
-        const int MaxPendingOps = 1000;
+        // ⚠️ **על הדיסק, לא בזיכרון.** ההערה שמעל תיארה נכון מה התור מציל,
+        // אבל השורה שאחריה הייתה List — ולכן נפילת חשמל מחקה אותו לגמרי.
+        // זה גם החצי השני של באג ה-cleansession: התיקון שם סגר נתק אינטרנט,
+        // ותור Mosquitto יושב על אותו מחשב — ולכן נפילת חשמל נשארה פתוחה.
+        var pendingOps = new PendingQueue(AgentPaths.QueueFolder);
+        if (pendingOps.Count > 0)
+            _logger.LogInformation(
+                "Pending queue restored from disk: {Count} operation(s) survived the restart.",
+                pendingOps.Count);
 
         // מונה המחזורים מהקריאה הקודמת, לזיהוי ירידה (גלישה/איפוס). מאותחל
         // ל-int.MinValue כדי שהקריאה הראשונה לעולם לא תיראה כירידה.
@@ -505,14 +513,8 @@ public class Worker : BackgroundService
             // שידור (שעלול לזרוק). כך אף כניסה/יציאה לא אובדת גם אם הברוקר נופל כאן.
             foreach (var op in result.Operations)
             {
-                if (pendingOps.Count >= MaxPendingOps)
-                {
-                    _logger.LogError(
-                        "Pending-operations buffer full ({Max}) — dropping oldest. Broker unreachable too long?",
-                        MaxPendingOps);
-                    pendingOps.RemoveAt(0);
-                }
-                pendingOps.Add(op);
+                // התקרה והמחיקה של הישן ביותר נאכפות בתוך PendingQueue.
+                pendingOps.Enqueue(op);
             }
 
             // ===== אבחון: מונה מחזורים שירד =====
@@ -714,18 +716,27 @@ public class Worker : BackgroundService
                 // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
                 // זורקת, יוצאים ל-catch כשהיא עדיין ראש התור — כך היא (וכל מה שאחריה)
                 // תשודר שוב בסבב הבא, עם החותם המקורי. אין אובדן ואין קידום-לפני-שידור.
-                while (pendingOps.Count > 0)
+                foreach (var (queuedPath, queuedOp) in pendingOps.LoadAll<OperationMessage>())
                 {
                     // חיוּת גם *בתוך* הריקון: התור מחזיק עד 1000 פעולות, ולכל
                     // שידור timeout של 5 שניות. מול ברוקר איטי (לא מת — מת נכשל
-                    // מהר) ריקון ארוך היה עובר את סף התקיעה בזמן שהסוכן עובד
-                    // כשורה, ה-watchdog היה הורג אותו, **והתור חי בזיכרון בלבד**
-                    // — כלומר כל הפעולות שהוא נועד להציל היו אובדות בדיוק כאן.
+                    // מהר) ריקון ארוך עובר את סף התקיעה בזמן שהסוכן עובד כשורה,
+                    // וה-watchdog הורג אותו.
+                    //
+                    // ⚠️ **הסיפה של ההערה הזו כבר אינה נכונה, וזה השינוי.** קודם
+                    // כתוב היה כאן ש"התור חי בזיכרון בלבד — כלומר כל הפעולות שהוא
+                    // נועד להציל היו אובדות בדיוק כאן". מאז התור יושב על הדיסק
+                    // (PendingQueue), והריגה בידי ה-watchdog כבר אינה מאבדת אותו.
+                    // השורה נשארת כי הריגה מיותרת היא עדיין תקלה — רק לא תקלה
+                    // שעולה בנתונים.
                     WriteLiveness();
 
-                    var op = pendingOps[0];
+                    var op = queuedOp;
                     await mqtt.PublishOperationAsync(op, stoppingToken);
-                    pendingOps.RemoveAt(0);
+                    // ⚠️ נמחק **אחרי** שידור מוצלח בלבד. כשל זורק לפני השורה
+                    // הזו, הקובץ נשאר, וההודעה תשודר שוב בסבב הבא עם החותם
+                    // המקורי — ה-dedup בשרת סופג את הכפילות.
+                    pendingOps.Remove(queuedPath);
                     _logger.LogInformation(
                         "-> Published OPERATION: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle}",
                         op.StartEnd, op.EntryExit, op.User, op.CycleCounter);
