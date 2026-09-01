@@ -272,10 +272,32 @@ CREATE TABLE IF NOT EXISTS app_users (
   --
   -- מנהל = כל מה שבקר יכול, ועוד: ניהול משתמשים, הוצאת אנשים מהמערכת,
   -- וראייה של **כל** יומן הפעולות. בקר רואה רק את מה שבקרים עשו.
+  --
+  -- ============================================================
+  -- ⚠️ ודרגה שלישית שאינה אדם: `agent`
+  -- ============================================================
+  -- שתי הדרגות למעלה מתארות **בני אדם**. `agent` הוא מחשב באתר, והוא
+  -- נוסף כדי שסוכן יוכל לכתוב לבסיס הנתונים בלי המפתח הסודי — שעוקף RLS
+  -- לחלוטין ולכן אסור שירד ל-16 מחשבים שאפשר לגשת אליהם פיזית.
+  --
+  -- ⚠️ **הוא אינו "בקר עם פחות הרשאות".** הוא נכנס דרך `site_id` למטה
+  -- ורואה אתר אחד בלבד, בעוד ששני האחרים רואים הכול. אל תעניקו לו
+  -- הרשאות אדם ואל תכניסו אותו ל-`list_users` כשורה רגילה.
   role         TEXT NOT NULL DEFAULT 'operator'
-                 CHECK (role IN ('operator', 'manager')),
+                 CHECK (role IN ('operator', 'manager', 'agent')),
   is_active    BOOLEAN NOT NULL DEFAULT TRUE,
   supabase_uid UUID,                                -- ⚠️ בלי FK — ראה למעלה
+  -- ============================================================
+  -- ⚠️ שיוך לאתר — חריגה מודעת מכלל "כל אחד רואה הכול"
+  -- ============================================================
+  -- הכלל בשורש (*"Every user sees every site — no user↔site association
+  -- table"*) נכתב על **בני אדם**, ומטרתו למנוע תת-קבוצות של אנשים. סוכן
+  -- שקשור לאתר אחד הוא ההפך הגמור מהכוונה שלו: לא הגבלה של אדם, אלא
+  -- **תיחום של מכונה** כך שדליפה מאתר אחד לא תיגע ב-15 האחרים.
+  --
+  -- ⚠️ NULL = אדם. אין כאן FK ל-sites בכוונה: מחיקת אתר אינה אמורה למחוק
+  -- את שורת הסוכן בשקט — היא אמורה להשאיר סוכן יתום שנראה ביומן.
+  site_id      INTEGER,
   created_at   TEXT NOT NULL,
   created_by   INTEGER REFERENCES app_users(id),    -- מי צירף. FK פנימי מותר.
   disabled_at  TEXT,
@@ -294,17 +316,48 @@ CREATE TABLE IF NOT EXISTS app_users (
 --
 -- המיפוי: executive ו-supervisor → manager. שניהם היו "מעל בקר", ובפועל
 -- אין אף supervisor במערכת — שתי השורות הקיימות הן executive.
+-- ⚠️ והאילוץ הזה מתרחב שוב, עם הוספת `agent`. אותו נימוק בדיוק חל:
+-- `CREATE TABLE IF NOT EXISTS` לא ייגע במסד שכבר רץ, ולכן בלי הבלוק הזה
+-- ההרחבה הייתה נכנסת לפיתוח בלבד — וכל ניסיון ליצור סוכן בייצור היה נופל
+-- על `violates check constraint`, בשלב שבו כבר נוצר משתמש auth תואם.
+--
+-- ⚠️ הבדיקה המקדימה קיימת כדי שלא ננעל את הטבלה בכל עלייה: `DROP` ואז
+-- `ADD CONSTRAINT` סורקים את כל הטבלה ותופסים ACCESS EXCLUSIVE. אותה מחלה
+-- שתועדה למטה על `ADD COLUMN IF NOT EXISTS`.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables
-              WHERE table_schema = 'public' AND table_name = 'app_users') THEN
+              WHERE table_schema = 'public' AND table_name = 'app_users')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+        WHERE conname = 'app_users_role_check'
+          AND pg_get_constraintdef(oid) LIKE '%agent%'
+     ) THEN
     ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
     UPDATE app_users SET role = 'manager' WHERE role IN ('executive', 'supervisor');
     ALTER TABLE app_users ADD CONSTRAINT app_users_role_check
-      CHECK (role IN ('operator', 'manager'));
+      CHECK (role IN ('operator', 'manager', 'agent'));
+  END IF;
+
+  -- שיוך הסוכן לאתר. NULL = אדם.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'app_users'
+       AND column_name = 'site_id'
+  ) THEN
+    ALTER TABLE app_users ADD COLUMN IF NOT EXISTS site_id INTEGER;
   END IF;
 END
 $$;
+
+-- ⚠️ אינדקס ייחודי **חלקי**: אתר אחד, סוכן פעיל אחד. שני סוכנים לאותו אתר
+-- הם בדיוק מה שקרה באתר 1284 — שני תהליכים ששידרו במקביל והציפו את
+-- הקליטה. שם זה נסגר בצד הסוכן (SingleInstance.cs); כאן זה נסגר גם במסד.
+--
+-- `WHERE ... is_active` הוא מה שמאפשר להשבית סוכן ולהנפיק חדש לאותו אתר.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_one_agent_per_site
+  ON app_users(site_id)
+  WHERE site_id IS NOT NULL AND role = 'agent' AND is_active;
 
 -- ============================================================
 -- ⚠️ עמודות שנוספו אחרי הקמת הטבלאות — והיו חסרות מהקובץ הזה
