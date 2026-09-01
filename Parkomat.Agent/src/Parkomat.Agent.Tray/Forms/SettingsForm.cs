@@ -23,6 +23,13 @@ public class SettingsForm : Form
     private readonly TextBox _mqttUser = new();
     private readonly TextBox _mqttPass = new();
 
+    // ⚠️ הכתיבה הישירה ל-Supabase. ריק = כבוי, וזה המצב בכל 16 האתרים
+    // עד שממלאים אותם אחד-אחד.
+    private readonly TextBox _sbUrl = new();
+    private readonly TextBox _sbKey = new();
+    private readonly TextBox _sbEmail = new();
+    private readonly TextBox _sbPass = new();
+
     // מחזיק את הגדרות ה-PLC (כולל הכתובות) בזיכרון, נערך דרך חלונית הכתובות.
     private PlcConfig _plc = new();
 
@@ -57,6 +64,8 @@ public class SettingsForm : Form
         layout.Controls.Add(BuildPlcGroup());
         // --- קבוצת "MQTT" ---
         layout.Controls.Add(BuildMqttGroup());
+
+        layout.Controls.Add(BuildSupabaseGroup());
         // --- כפתורים ---
         layout.Controls.Add(BuildButtons());
 
@@ -140,6 +149,49 @@ public class SettingsForm : Form
             AutoSize = true,
             ForeColor = System.Drawing.Color.FromArgb(0x1B, 0x5E, 0x20)
         }, 1, 4);
+
+        g.Controls.Add(t);
+        return g;
+    }
+
+    // ============================================================
+    // כתיבה ישירה — ארבעה שדות, וכולם ריקים כברירת מחדל
+    // ============================================================
+    // ⚠️ **ריק = כבוי, ואין כאן מתג.** מתג נפרד היה מאפשר מצב "מופעל אבל
+    // בלי פרטים" — סוכן שמנסה לכתוב, נכשל בכל סבב, וממלא את הלוג. כאן
+    // המצב הזה אינו ניתן לביטוי: SupabaseConfig.Enabled נגזר מארבעת השדות.
+    //
+    // ⚠️ וזה גם מה שמאפשר לשגר את הגרסה ל-16 האתרים בבת אחת ולהפעיל אתר
+    // אחד בכל פעם — אותו דפוס כמו מתג VITE_SUPABASE_DIRECT בדשבורד.
+    private GroupBox BuildSupabaseGroup()
+    {
+        var g = NewGroup("כתיבה ישירה ל-Supabase (רשות)");
+        var t = NewTable(6);
+
+        t.Controls.Add(new Label(), 0, 0);
+        t.Controls.Add(new Label
+        {
+            Text = "השאירו ריק כדי להשאיר כבוי. האתר ימשיך לשדר ב-MQTT כרגיל.",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(0x55, 0x55, 0x55)
+        }, 1, 0);
+
+        AddRow(t, 1, "כתובת הפרויקט:", _sbUrl);
+        AddRow(t, 2, "מפתח ציבורי:", _sbKey);
+        AddRow(t, 3, "משתמש האתר:", _sbEmail);
+
+        // ⚠️ מוסתרת בתצוגה, כמו סיסמת ה-MQTT. היא מונפקת פעם אחת
+        // (provision-agent-user) ואינה ניתנת לשחזור.
+        _sbPass.UseSystemPasswordChar = true;
+        AddRow(t, 4, "סיסמת האתר:", _sbPass);
+
+        t.Controls.Add(new Label(), 0, 5);
+        t.Controls.Add(new Label
+        {
+            Text = "⚠️ הסיסמה שונה לכל אתר ומוצגת פעם אחת בלבד בעת ההנפקה.",
+            AutoSize = true,
+            ForeColor = System.Drawing.Color.FromArgb(0x8A, 0x65, 0x00)
+        }, 1, 5);
 
         g.Controls.Add(t);
         return g;
@@ -233,6 +285,11 @@ public class SettingsForm : Form
         _mqttPort.Value = Math.Clamp(c.Mqtt.Port, (int)_mqttPort.Minimum, (int)_mqttPort.Maximum);
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
+
+        _sbUrl.Text = c.Supabase.Url;
+        _sbKey.Text = c.Supabase.AnonKey;
+        _sbEmail.Text = c.Supabase.Email;
+        _sbPass.Text = c.Supabase.Password;
     }
 
     private async void OnSave()
@@ -267,6 +324,16 @@ public class SettingsForm : Form
                 Port = (int)_mqttPort.Value,
                 Username = _mqttUser.Text.Trim(),
                 Password = _mqttPass.Text
+            },
+            // ⚠️ Trim על כל השדות: רווח שנדבק בהדבקה נראה כערך תקין בטופס,
+            // ו-Enabled היה נדלק על הגדרות שאינן שלמות. נבדק ב-
+            // SupabaseWriteTests.WhitespaceIsNotAValue.
+            Supabase = new SupabaseConfig
+            {
+                Url = _sbUrl.Text.Trim(),
+                AnonKey = _sbKey.Text.Trim(),
+                Email = _sbEmail.Text.Trim(),
+                Password = _sbPass.Text.Trim()
             }
         };
 
