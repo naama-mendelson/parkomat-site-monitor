@@ -724,21 +724,44 @@ export function coveredMs(merged, start, end) {
   return total;
 }
 
+// ============================================================
+// ⚠️ הקיפול מחליט לפי הסטטוס **האפקטיבי**, לא לפי הגולמי
+// ============================================================
+// `reclassified_to` הוא שכבה מעל `status`, ו-`status` המקורי לעולם אינו
+// נדרס. הכלל בתיעוד חד: **כל** קריאה של status_history עוברת דרך
+// `COALESCE(reclassified_to, status)`. הפונקציה הזו לא עשתה זאת.
+//
+// ⚠️ **נתפס בייצור בידי שער ההשוואה, ורק אחרי שמישהו סיווג מחדש בפועל.**
+// באתר 3456 סווגו שני מקטעי `error` ל-`maintenance`, וכך נוצר הרצף
+// האפקטיבי maintenance→maintenance. ה-SQL קיפל אותם כראוי; ה-JS ראה
+// error→maintenance, החליט שזה שינוי מצב, ושמר את שניהם. 61 מול 59.
+//
+// ⚠️ ולמה `check-effective-status` לא תפס: הוא סורק `status = '…'` בקבצי
+// ה-SQL וב-queries.js. כאן ההשוואה היא בין שני **משתנים** ב-JS, בקובץ
+// אחר לגמרי — כלומר בדיוק מחוץ לטווח שלו.
+//
+// ⚠️ המקטע המוחזר נשאר **המקורי**: רק ההחלטה משתמשת בסטטוס האפקטיבי.
+// צרכנים במורד הזרם ממשיכים לראות את `status` הגולמי ואת `reclassified_to`
+// לצידו, ולהחליט בעצמם — החלפת השדה כאן הייתה מוחקת את המקור.
+const effectiveStatus = (s) => s.reclassified_to || s.status;
+
 export function collapseNoCommFlicker(segments) {
   const out = [];
   let lastObserved = null;   // המצב האחרון שאינו no_comm
 
   for (const s of segments) {
+    const status = effectiveStatus(s);
+
     // נתק נשמר תמיד — הוא לא "מאפס" את המצב שקדם לו, רק מסתיר אותו.
-    if (s.status === "no_comm") {
+    if (status === "no_comm") {
       out.push(s);
       continue;
     }
     // חזרה לאותו מצב בדיוק = המשך, לא אירוע חדש.
-    if (s.status === lastObserved) continue;
+    if (status === lastObserved) continue;
 
     out.push(s);
-    lastObserved = s.status;
+    lastObserved = status;
   }
   return out;
 }
