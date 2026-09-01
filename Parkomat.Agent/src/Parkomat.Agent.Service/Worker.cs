@@ -2,6 +2,7 @@ using Parkomat.Agent.Core.Configuration;
 using System.Threading;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Queue;
+using Parkomat.Agent.Core.Supabase;
 using Parkomat.Agent.Core.Time;
 using Parkomat.Agent.Service.Diagnostics;
 using Parkomat.Agent.Service.Logic;
@@ -172,6 +173,38 @@ public class Worker : BackgroundService
         }
         using var plc = new PlcReader(config.Plc);
         await using var mqtt = new MqttPublisher(config.Mqtt, config.SiteId, clock);
+
+        // ============================================================
+        // כתיבה ישירה ל-Supabase — לצד MQTT, ורק אם הוגדרה
+        // ============================================================
+        // ⚠️ **MQTT נשאר מקור האמת בשלב הזה.** הכתיבה כאן היא best-effort:
+        // אצווה שנכשלה נרשמת ללוג ואינה נשמרת לניסיון חוזר, כי ההודעה כבר
+        // נמסרה ל-MQTT ומשם היא תגיע. ביום שבו הכיוון יתהפך, התור שעל
+        // הדיסק יזין את המסלול הזה במקום את MQTT — וזו עבודה נפרדת.
+        //
+        // ⚠️ ובאתר שלא הוגדר,  הוא false ו-SendAsync אינו נוגע
+        // ברשת כלל. זה מה שמאפשר לשגר את הגרסה ל-16 האתרים בלי לשנות דבר.
+        SupabaseWriter? supabase = config.Supabase.Enabled
+            ? new SupabaseWriter(config.Supabase,
+                new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
+            : null;
+
+        if (supabase is not null)
+            _logger.LogInformation(
+                "Direct Supabase write is ON for {Email} -> {Url}",
+                config.Supabase.Email, config.Supabase.Url);
+
+        // כל מה ששודר בסבב הנוכחי. מתמלא דרך הצופה של MqttPublisher —
+        // התפר היחיד שרואה **כל** שידור, ולכן אין אתר שאפשר לשכוח.
+        var mirrored = new List<BatchItem>();
+        if (supabase is not null)
+        {
+            mqtt.OnPublished = payload =>
+            {
+                if (payload is StateMessage sm) mirrored.Add(BatchPayload.From(sm));
+                else if (payload is OperationMessage om) mirrored.Add(BatchPayload.From(om));
+            };
+        }
 
         // --- התחברות ל-Broker (כולל הגדרת ה-LWT) ---
         try
@@ -376,6 +409,15 @@ public class Worker : BackgroundService
         // --- הלולאה הראשית ---
         while (!stoppingToken.IsCancellationRequested)
         {
+            // ⚠️ **מתנקה בתחילת הסבב, לא רק אחרי שליחה מוצלחת.** סבב שזורק
+            // לפני השליחה (כשל MQTT, קריאת PLC) מדלג על הניקוי שבסוף, והאצווה
+            // הייתה גדלה בכל סבב עד שהיא חורגת מתקרת 200 של השרת — ואז **כל**
+            // שליחה נדחית, לנצח, בגלל סבב אחד שנכשל לפני שעה.
+            //
+            // ומה שנשאר מהסבב הקודם אכן נזרק: MQTT הוא מקור האמת בשלב הזה,
+            // וההודעות כבר נמסרו שם.
+            mirrored.Clear();
+
             // ===== חיוּת: "הלולאה מסתובבת" — לפני הכול, ובלי תנאי =====
             // נכתב כאן ולא אחרי הקריאה, ובכוונה: זו הצהרה על כך שהתהליך לא
             // תקוע, ולא על כך שהבקר עונה. ראה AgentPaths.LivenessFile —
@@ -740,6 +782,32 @@ public class Worker : BackgroundService
                     _logger.LogInformation(
                         "-> Published OPERATION: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle}",
                         op.StartEnd, op.EntryExit, op.User, op.CycleCounter);
+                }
+
+                // ============================================================
+                // הכתיבה הישירה — אצווה אחת לכל סבב
+                // ============================================================
+                // ⚠️ **אצווה ולא הודעה-הודעה.** מעבר MODE אחד מייצר state
+                // ו-operation עם אותו חותם; שליחתם יחד היא מה שמאפשר לשרת
+                // להחליט על יישור הזמן פעם אחת, ומייתר את clamp-memo כולו.
+                //
+                // ⚠️ ונשלח **אחרי** ה-MQTT, לא לפניו: MQTT הוא מקור האמת
+                // בשלב הזה, ואסור שכשל ברשת החדשה יעכב אותו.
+                if (supabase is not null && mirrored.Count > 0)
+                {
+                    WriteResult res = await supabase.SendAsync(mirrored, stoppingToken);
+                    if (res.Ok)
+                        _logger.LogInformation(
+                            "-> Supabase: {Count} message(s) written directly.", mirrored.Count);
+                    else
+                        // ⚠️ אזהרה ולא שגיאה, ובלי ניסיון חוזר: ההודעות כבר
+                        // נמסרו ל-MQTT ומשם הן יגיעו. כשל כאן הוא **הפסד של
+                        // המסלול החדש בלבד**, וכל עוד הוא הצד המשני זו אינה
+                        // תקלה שדורשת פעולה.
+                        _logger.LogWarning(
+                            "Supabase write failed ({Status}): {Error}", res.Status, res.Error);
+
+                    mirrored.Clear();
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
