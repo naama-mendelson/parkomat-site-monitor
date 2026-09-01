@@ -779,3 +779,122 @@ COMMENT ON FUNCTION app.classify_timestamp(bigint, bigint, bigint, boolean) IS
 --     מחזירות את הסיבה ב-`outcome`, אבל **אינן כותבות** אותה. מי שיקרא
 --     להן חייב לרשום — אחרת הודעה שנדחתה נעלמת בלי עקבות, וזה בדיוק מה
 --     שהיה לפני ש-ingest_drops נוצרה.
+
+-- ============================================================
+-- public.ingest_batch — הדלת היחידה שהסוכן דופק בה
+-- ============================================================
+-- ⚠️ **נמדד: הפונקציות ב-app אינן נגישות כלל.** PostgREST מחפש רק בסכמת
+-- `public`, ולכן קריאה ל-`/rest/v1/rpc/ingest_state` חוזרת 404 עם
+-- `PGRST202 — Searched for the function public.ingest_state`. כל מה שנבנה
+-- עד כאן היה מושלם ובלתי-נגיש.
+--
+-- ============================================================
+-- ⚠️ ואין כאן `p_site_id` — וזו לא השמטה
+-- ============================================================
+-- הפונקציות ב-`app` מקבלות מזהה אתר, כי שער ההשוואה צריך להריץ אותן על
+-- אתר סינתטי. הדלת הציבורית **אינה מקבלת אותו**: היא גוזרת אותו מהזהות
+-- דרך `app.agent_site_id()`.
+--
+-- ההבדל אינו סגנוני. סוכן שמקבל את האתר כפרמטר יכול לכתוב לכל אתר אחר —
+-- מספיק לשנות מספר בבקשה. כלומר דליפת הסיסמה של אתר אחד הייתה שוב פותחת
+-- את כל 16, וזה בדיוק מה שהזהות-לכל-אתר נבנתה כדי למנוע.
+--
+-- ⚠️ **NULL הוא כישלון, לא "ללא הגבלה".** `agent_site_id()` מחזירה NULL
+-- לכל מי שאינו סוכן פעיל — כולל מנהל. NULL שנקרא כ"הכול מותר" הוא בדיוק
+-- הצורה שבה בדיקת הרשאה הופכת לעקיפת הרשאה.
+--
+-- ============================================================
+-- ⚠️ אצווה ולא הודעה בודדת — וזה מה שמייתר את clamp-memo
+-- ============================================================
+-- מעבר MODE אחד בבקר מייצר **שתי** הודעות עם אותו חותם זמן (state
+-- ו-operation). ב-MQTT הן מגיעות בזו אחר זו, "עכשיו" של השרת שונה
+-- ביניהן, ולכן היישור מחשב להן שני חותמים — ומבנה נתונים שלם
+-- (clamp-memo, עם TTL ותקרת גודל) קיים רק כדי לזכור את ההחלטה הראשונה.
+--
+-- כאן הן מגיעות יחד, בקריאה אחת, בטרנזקציה אחת. הבעיה אינה נפתרת — היא
+-- אינה קיימת.
+CREATE OR REPLACE FUNCTION public.ingest_batch(p_messages jsonb)
+RETURNS TABLE (
+  idx     integer,
+  kind    text,
+  outcome text,
+  detail  text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  -- ⚠️ תקרה, כי הקלט מגיע מהרשת. אצווה של מיליון הודעות הייתה מחזיקה
+  -- טרנזקציה פתוחה על שורת האתר ומקפיאה את הקליטה שלו. 200 מכסה בנדיבות
+  -- פריקת תור אחרי נתק ארוך (התור בסוכן מוגבל ל-1000, כלומר חמש אצוות).
+  MAX_BATCH constant integer := 200;
+
+  v_site   integer;
+  v_msg    jsonb;
+  v_i      integer := 0;
+  v_kind   text;
+  v_res    record;
+BEGIN
+  v_site := app.agent_site_id();
+  IF v_site IS NULL THEN
+    RAISE EXCEPTION 'רק סוכן פעיל המשויך לאתר רשאי לכתוב קליטה'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF jsonb_typeof(p_messages) <> 'array' THEN
+    RAISE EXCEPTION 'p_messages חייב להיות מערך' USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF jsonb_array_length(p_messages) > MAX_BATCH THEN
+    RAISE EXCEPTION 'אצווה גדולה מדי (% > %)', jsonb_array_length(p_messages), MAX_BATCH
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  FOR v_msg IN SELECT * FROM jsonb_array_elements(p_messages)
+  LOOP
+    v_i := v_i + 1;
+    v_kind := v_msg ->> 'kind';
+
+    IF v_kind = 'state' THEN
+      SELECT * INTO v_res FROM app.ingest_state(
+        v_site,
+        v_msg ->> 'status',
+        v_msg ->> 'occurred_at',
+        NULLIF(v_msg ->> 'fault_text', ''));
+      RETURN QUERY SELECT v_i, 'state'::text, v_res.outcome, NULL::text;
+
+    ELSIF v_kind = 'operation' THEN
+      SELECT * INTO v_res FROM app.ingest_operation(
+        v_site,
+        v_msg ->> 'start_end',
+        v_msg ->> 'entry_exit',
+        COALESCE(v_msg ->> 'card', ''),
+        v_msg ->> 'state',
+        v_msg ->> 'occurred_at',
+        COALESCE(v_msg ->> 'reported_at', v_msg ->> 'occurred_at'),
+        NULLIF(v_msg ->> 'cycle', '')::integer);
+      RETURN QUERY SELECT v_i, 'operation'::text,
+        CASE WHEN v_res.inserted THEN 'applied' ELSE 'duplicate' END,
+        v_res.cycle_mode;
+
+    ELSE
+      -- ⚠️ סוג לא מוכר **נרשם** ולא נבלע. זו בדיוק הסיבה ש-unknown_topic
+      -- קיים בצד ה-MQTT: הודעה שנעלמת בלי עקבה היא הודעה שאיש לא יחקור.
+      PERFORM app.record_ingest_drop(v_site, COALESCE(v_kind, 'unknown'),
+        'unknown_kind', format('סוג הודעה לא מוכר: %s', COALESCE(v_kind, '(חסר)')), v_msg);
+      RETURN QUERY SELECT v_i, COALESCE(v_kind, 'unknown'), 'rejected'::text,
+        'unknown_kind'::text;
+    END IF;
+  END LOOP;
+END;
+$fn$;
+
+-- ⚠️ REVOKE מפורש לפני GRANT, כמו כל פונקציה ב-writes.postgres.sql:
+-- ברירת המחדל של Postgres היא EXECUTE ל-PUBLIC, כלומר גם ל-anon. פונקציה
+-- שכותבת קליטה ופתוחה ל-anon היא הדלת שהמפתח הפומבי פותח.
+REVOKE ALL ON FUNCTION public.ingest_batch(jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ingest_batch(jsonb) TO authenticated;
+
+COMMENT ON FUNCTION public.ingest_batch(jsonb) IS
+  'הדלת היחידה של הסוכן. האתר נגזר מהזהות ולא מהמטען — סוכן אינו יכול לכתוב לאתר אחר.';

@@ -77,6 +77,11 @@ try {
   // שהיא איננה תקלה הוא תחזוקה שגרתית. אם אחרי התקלה בא `ready`, אין מה
   // להוריד — והשער נופל על נתונים תקינים לגמרי.
   //
+  // ⚠️ **ו- אינו קישוט.** מקטע שסומן כ**ניסוי** אינו
+  // נספר כתקלה בשום מדד, ולכן "מונה התקלות ירד" אינו יכול להתקיים עליו —
+  // הוא כבר 0. השער נפל בדיוק על זה: razch סימן מקטע כניסוי באתר 1415
+  // (זלטופולסקי 17, אתר חדש שנרשם היום) בזמן שהשער רץ.
+  //
   // ⚠️ נמדד: מתוך 201 מקטעי תקלה בחודש, ל-76 בלבד עוקב מקטע תחזוקה — 38%.
   // כלומר השער היה אדום ברוב הימים, ועבר עד כה במזל. הוא נפל בפועל על
   // מקטע 26216 (אתר 11332), שאחריו בא `ready`.
@@ -86,7 +91,7 @@ try {
   // שער שמדלג עליה בשקט נראה ירוק בדיוק כשהוא אינו בודק כלום. לכן: אם אין
   // מקטע בעל הצורה הנדרשת, השער מדווח **"לא רץ"** (יציאה 2) ולא "עבר".
   const cands = await get(`status_history?status=eq.error&ended_at=not.is.null&started_at=gte.${since}` +
-                          `&reclassified_to=is.null&select=id,site_id,status,started_at&order=started_at.desc&limit=60`);
+                          `&reclassified_to=is.null&excluded_at=is.null&select=id,site_id,status,started_at&order=started_at.desc&limit=60`);
   if (!cands?.length) { console.error("אין מקטע תקלה בטווח"); await cleanup(); process.exit(1); }
 
   let T = null;
