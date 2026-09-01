@@ -96,7 +96,7 @@ const callBatch = (token, messages) =>
   const t0 = Math.floor(Date.now() / 1000) - 600;
   const iso = (s) => new Date(s * 1000).toISOString();
 
-  let mine = null, other = null, agent = null;
+  let mine = null, other = null, fresh = null, agent = null, freshAgent = null;
   try {
     mine = await makeSite();
     other = await makeSite();
@@ -167,14 +167,74 @@ const callBatch = (token, messages) =>
     ok("⚠️ והדחייה נרשמה ל-ingest_drops", drops.includes("unknown_kind"),
       JSON.stringify(drops));
 
-    // ---------- 5. תקרת האצווה ----------
+    // ---------- 5. החוזה מול הסוכן — הקובץ עצמו ----------
+    // ============================================================
+    // ⚠️ **זו הבדיקה היחידה שחוצה את שתי השפות**
+    // ============================================================
+    // הבדיקות ב-C# מוודאות שהסוכן מייצר את הצורה שה-C# מצפה לה — כלומר
+    // הן משוות את הקוד לעצמו. השרת הוא שכבה אחרת, בשפה אחרת, ואף בדיקה שם
+    // אינה יכולה לשאול אותו. שדה בשם שגוי מגיע כ-NULL, ההודעה נכתבת חסרה,
+    // ואין שגיאה בשום צד.
+    //
+    // `shared/contracts/ingest-batch.sample.json` הוא המקור: הבדיקה ב-C#
+    // מוודאת שהסוכן מייצר בדיוק אותו, וכאן הוא **נשלח כמות שהוא**. אם
+    // הסוכן סוטה — הבדיקה שם נופלת. אם השרת סוטה — השורה הזו נופלת. אף
+    // אחד מהם אינו יכול לזוז לבד.
+    console.log("\n── החוזה מול הסוכן ──");
+    const contractPath = path.join(__dirname, "..", "..", "shared", "contracts",
+      "ingest-batch.sample.json");
+    ok("קובץ החוזה קיים", fs.existsSync(contractPath), contractPath);
+
+    if (fs.existsSync(contractPath)) {
+      const contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+      // ⚠️ אתר **נקי** לחוזה. חותמי הזמן שבקובץ קבועים (10:00), והאתר
+      // שלמעלה כבר מחזיק מקטע פתוח מאוחר יותר — כלומר כל ההודעות היו
+      // נדחות כ-backfill. שער שמריץ את החוזה על מצב שדוחה אותו אינו בודק
+      // את החוזה אלא את שומר ה-backfill.
+      fresh = await makeSite();
+      freshAgent = await provisionAgent(fresh);
+      const cr = await retry(`${SB}/rest/v1/rpc/ingest_batch`, {
+        method: "POST",
+        headers: { apikey: ANON, Authorization: `Bearer ${freshAgent.token}`,
+                   "Content-Type": "application/json" },
+        body: JSON.stringify(contract),
+      });
+      const cb = await cr.json();
+      ok("⚠️ השרת מקבל את המטען של הסוכן מילה במילה",
+        cr.status === 200 && Array.isArray(cb) && cb.length === contract.p_messages.length,
+        `${cr.status} ${JSON.stringify(cb).slice(0, 200)}`);
+
+      // ⚠️ ולא רק "לא נכשל": כל הודעה חייבת להתקבל בפועל. `200` עם ארבע
+      // דחיות הוא בדיוק הכשל השקט שהחוזה בא למנוע.
+      // ⚠️ **"לא נדחתה" אינו מספיק.** ingest_state מחזירה backfill /
+      // no_change / lwt_late — כולן אינן "rejected", וכולן אומרות
+      // שההודעה לא נכתבה. הגרסה הראשונה של השורה הזו בדקה rejected בלבד,
+      // ועברה על אצווה שכל ארבע ההודעות בה נדחו כ-backfill.
+      const notApplied = (Array.isArray(cb) ? cb : []).filter((x) => x.outcome !== "applied");
+      ok("⚠️ כל הודעה בחוזה נכתבה בפועל", notApplied.length === 0,
+        JSON.stringify(notApplied));
+
+      // ⚠️ והעברית שרדה. הסוכן שולח אותה כמות שהיא (ולא כ-\\uXXXX), וזה
+      // מה שמאפשר לקרוא תיאור תקלה מ-ingest_drops בעוד חצי שנה.
+      const withFault = contract.p_messages.find((m) => m.fault_text);
+      if (withFault) {
+        const seg = await db.prepare(
+          "SELECT fault_text FROM status_history WHERE site_id = ? AND fault_text IS NOT NULL " +
+          "ORDER BY started_at DESC LIMIT 1").get(fresh.id);
+        ok("⚠️ תיאור התקלה בעברית נשמר קריא",
+          seg?.fault_text === withFault.fault_text,
+          `נשמר: ${JSON.stringify(seg?.fault_text)}`);
+      }
+    }
+
+    // ---------- 6. תקרת האצווה ----------
     const big = Array.from({ length: 201 }, (_, i) =>
       ({ kind: "state", status: "ready", occurred_at: iso(t0 + 400 + i) }));
     const br = await callBatch(agent.token, big);
     ok("⚠️ אצווה ענקית נדחית", br.status >= 400,
       `קיבלה ${br.status} — אצווה בלי תקרה מקפיאה את שורת האתר`);
 
-    // ---------- 6. סוכן מושבת ----------
+    // ---------- 7. סוכן מושבת ----------
     await db.prepare("UPDATE app_users SET is_active = FALSE WHERE LOWER(email) = LOWER(?)")
       .run(agent.email);
     const dr = await callBatch(agent.token, [
@@ -187,7 +247,8 @@ const callBatch = (token, messages) =>
 
   } finally {
     if (agent) await agent.cleanup();
-    for (const s of [mine, other]) {
+    if (freshAgent) await freshAgent.cleanup();
+    for (const s of [mine, other, fresh]) {
       if (!s) continue;
       try {
         await db.prepare("DELETE FROM operations WHERE site_id = ?").run(s.id);

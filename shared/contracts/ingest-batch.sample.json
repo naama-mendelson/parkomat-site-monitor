@@ -1,0 +1,35 @@
+{
+  "p_messages": [
+    {
+      "kind": "state",
+      "occurred_at": "2026-09-01T10:00:00.000Z",
+      "status": "operating"
+    },
+    {
+      "kind": "operation",
+      "occurred_at": "2026-09-01T10:00:00.000Z",
+      "start_end": "start",
+      "entry_exit": "entry",
+      "card": "77",
+      "state": "operating",
+      "reported_at": "2026-09-01T10:00:00.000Z",
+      "cycle": 100
+    },
+    {
+      "kind": "operation",
+      "occurred_at": "2026-09-01T10:00:30.000Z",
+      "start_end": "end",
+      "entry_exit": "entry",
+      "card": "",
+      "state": "operating",
+      "reported_at": "2026-09-01T10:00:30.000Z",
+      "cycle": 101
+    },
+    {
+      "kind": "state",
+      "occurred_at": "2026-09-01T10:00:35.000Z",
+      "status": "error",
+      "fault_text": "מיטה 5 - בוכנה 2: זמן מקסימלי לפעולה"
+    }
+  ]
+}

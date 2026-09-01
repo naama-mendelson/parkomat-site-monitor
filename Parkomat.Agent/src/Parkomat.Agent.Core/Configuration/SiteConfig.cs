@@ -14,6 +14,16 @@ public class SiteConfig
     /// <summary>הגדרות החיבור ל-Broker.</summary>
     public MqttConfig Mqtt { get; set; } = new();
 
+    /// <summary>
+    /// כתיבה ישירה ל-Supabase — **כבויה עד שממלאים אותה**.
+    ///
+    /// ⚠️ חיה **לצד** MQTT ולא במקומו. כל עוד השדות ריקים הסוכן מתנהג
+    /// בדיוק כמו קודם, ולכן אפשר לשגר את הגרסה ל-16 האתרים בלי לשנות דבר
+    /// בהתנהגותם. הפעלה היא מילוי ארבעה שדות באתר **אחד**, וכיבוי הוא
+    /// מחיקתם — אותו דפוס בדיוק כמו מתג VITE_SUPABASE_DIRECT בדשבורד.
+    /// </summary>
+    public SupabaseConfig Supabase { get; set; } = new();
+
     /// <summary>כל כמה מילי-שניות לקרוא מה-PLC. ברירת מחדל: שנייה.</summary>
     public int PollIntervalMs { get; set; } = 1000;
 
