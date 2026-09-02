@@ -1,6 +1,7 @@
 // components/Header/Header.jsx — Header עליון: לוגו, בורר תפקיד, חיפוש, dark/light
 import { useEffect, useState } from "react";
 import PushSettings from "../PushSettings/PushSettings";
+import HelpPanel from "../HelpPanel/HelpPanel";
 // ⚠️ **התראות push אינן קיימות במחשב — לא מוסתרות, פשוט לא נבנות.**
 // זו בקשת המשתמשת, ויש לה נימוק: התראה למחשב שפתוח על הדשבורד ממילא היא
 // כפילות של הצליל שכבר יש שם. וגם באייפון ההרשאה זמינה **רק** באפליקציה
@@ -79,6 +80,7 @@ function Header({
   // ⚠️ נפתח מכפתור ולא קופץ מעצמו: לדפדפן יש הזדמנות אחת לבקש הרשאה,
   // ומי שיחסום כי לא הבין — לא נוכל לשאול אותו שוב לעולם.
   const [pushOpen, setPushOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // ============================================================
   // ההזמנה — פעם אחת, בכניסה השנייה
@@ -195,6 +197,12 @@ function Header({
           )}
 
 
+          {/* ⚠️ פתוח לכולם, בלי תלות בתפקיד: מי שצריך הסבר על מספר הוא
+              בדיוק מי שאין לו הרשאות. עזרה מאחורי הרשאה היא עזרה שאינה
+              מגיעה למי שזקוק לה. */}
+          <button className="theme-toggle" onClick={() => setHelpOpen(true)}
+                  title="איך קוראים את הדשבורד" aria-label="עזרה">?</button>
+
           {canManage && (
             <button className="add-site-btn" onClick={onAdmin} title="ניהול אתרים">
               <span className="add-site-plus">⚙</span>
@@ -254,6 +262,7 @@ function Header({
       )}
 
       {pushOpen && <PushSettings onClose={() => setPushOpen(false)} />}
+      {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
 
       {/* מוני סטטוס כפילטרים — רק בתצוגת הבקר */}
       {isOperator && (
