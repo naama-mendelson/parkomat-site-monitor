@@ -8,21 +8,34 @@ editing either component. Source comments are Hebrew; these instruction files ar
 ## Architecture today
 
 ```
-Agent (on site) → HiveMQ → Node server → Supabase (Postgres)
-                              ↓                    ↑
-                        SSE + assistant      dashboard reads directly
+Agent (on site) ──→ HiveMQ ──→ Node server ──→ Supabase (Postgres)
+       ╎                            ↓                  ↑
+       ╎                      SSE + assistant    dashboard reads directly
+       ╎
+       ╌╌╌╌╌ (HTTPS, direct) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌→   ⚠️ built · OFF at every site
 ```
 
-The site list is read straight from PostgREST; the server still computes every other read
-(supervisor, executive, analytics, insights, activity log) and owns ingestion, SSE and the
-AI assistant. **~8,700 lines** — the read endpoints are no longer on the hot path but are
-deliberately kept as the way back (see *Phase E is cancelled*, below).
+⚠️ **`master` now serves exactly two routes** — `POST /api/chat` (the assistant) and
+`GET /health`. The 29 read endpoints were deleted, not merely bypassed. That was a deliberate
+call and it **closed the exit door**: `VITE_SUPABASE_DIRECT=false` is no longer a switch, so
+leaving Supabase became a project rather than a config change. (The paragraph below about the
+read endpoints being "kept as the way back" describes the state *before* that decision; it is
+left in place because the reasoning it records is still what a reader needs in order to judge
+the trade.)
+
+The dashboard reads Supabase directly for everything. The server owns ingestion, SSE and the
+AI assistant.
 
 | Component | Role |
 |---|---|
-| `Parkomat.Agent/` | C# / .NET 10, runs on a PC at the site. Reads the PLC over Modbus-TCP, publishes to MQTT. |
-| `master/` | Node/Express. MQTT ingestion, the AI assistant, SSE, and the read endpoints that have not moved. |
-| `dashboard/` | React 19 / Vite. Reads sites from Supabase directly; everything else through `master`. One flag switches it all back. |
+| `Parkomat.Agent/` | C# / .NET 10, on a PC at the site. Reads the PLC over Modbus-TCP, publishes to MQTT — and, **when configured**, writes to Supabase directly as well. v1.0.22. |
+| `master/` | Node/Express. MQTT ingestion + the AI assistant. Two routes. |
+| `dashboard/` | React 19 / Vite. Reads Supabase directly. |
+
+⚠️ **The dotted line is real code with 32 gates behind it, and it is off at all 16 sites.**
+`SupabaseConfig.Enabled` is *derived* from four fields, so "on but incomplete" cannot be
+expressed. Turning one site on is `tools/provision-agent-user.js <code>` plus four fields in
+that site's settings form; turning it off is clearing them.
 
 ---
 
@@ -44,6 +57,33 @@ escape path exists in the repo, written and tested but inactive.
 | D' — writes go directly too | **Built and live.** `db/writes.postgres.sql`: maintenance (`start`/`cancel`), sites (`register`/`update`/`delete`), users (`list`/`set_active`/`set_role`), plus `public.my_role()`. All reachable from the browser through PostgREST; the server is not involved. 59 live checks in `tools/check-writes.js`. **Invite and delete-user stay on the server** — they need the Secret key, which must never reach a browser. |
 | E — delete the read API | **Deliberately not done — see below.** The *other* half of E, moving the daily job to `pg_cron`, **is done.** |
 | F — dormant self-hosted auth | **Seam only.** Token verification is implemented and tested; there is no users table, no password hashing, no sign-in endpoint — deliberately. |
+| G — the agent writes directly | **Built, proven end to end, and OFF.** Added after the six phases above; see below. |
+
+### G — the agent writes directly (02/09/2026)
+
+Not in the original plan. It came from one question — *"can the agent write straight to
+Supabase?"* — whose real motive was **retiring DELL008**, the office PC whose power loss on
+27/08 took the system down for 2.5 days.
+
+| Piece | State |
+|---|---|
+| Per-site identity | **Live.** `role = 'agent'` + `site_id` on `app_users`; a partial unique index makes two active agents for one site impossible. Replaces one shared MQTT password used by all 16 sites, extractable from any installer with `strings`. |
+| Ingestion in SQL | **Live, unused.** Five functions, 1,098 comparisons against the existing path. |
+| The public door | **Live, unused.** `public.ingest_batch` takes **no site id** — it derives it from the identity, so an agent cannot write to another site by changing a number. |
+| Durable queue in the agent | **Shipped in 1.0.22.** |
+| The agent speaks HTTP | **Shipped in 1.0.22, disabled.** |
+
+⚠️ **What this does *not* yet allow: switching HiveMQ off.** Disconnect detection is the
+blocker, and it is an open product decision, not missing code. Today a dead site PC is
+reported by the broker holding the bridge's will — **HTTP has no equivalent of a will**. The
+options are a heartbeat plus a server-side timer (which the product owner disliked: *"I'm not
+settled on it, I like polling less"*), or Realtime presence. Until it is decided, the direct
+path runs **beside** MQTT and buys resilience, not the retirement of the broker.
+
+⚠️ **And retiring DELL008 needs more than this anyway** — the assistant still holds
+`GROQ_API_KEY` and the backup daemon still runs there. Two Edge Functions already exist
+(`invite-user`, `notify-fault`), so the precedent for moving them is established; the second
+one records the reason plainly: *"master falls, and that is exactly when the alert is needed."*
 
 **What still runs the old way.** `supervisor`, `executive`, `analytics`, `insights` and the
 activity log still load rows into memory and compute in JS (`loadRangeData` +
@@ -258,13 +298,40 @@ in with tests.
 
 ## What does not change
 
-- **The agent** — unchanged on site PCs.
-- **HiveMQ** — unchanged.
-- **Ingestion logic** — dedup key on `reported_at`, plausibility gating, clamp, LWT
-  ordering, cycle-counter rules. None of it moves.
-- **The numbers.** Every ported function must return results identical to the current JS
-  on real data before it is adopted. Integers exactly; floats compared on the rounded,
-  user-visible value. Verify against production-shaped data *and* seeded edge cases.
+⚠️ **Three of the four entries below said "unchanged" and are now out of date.** They are
+kept, struck through in prose rather than deleted, because *what* changed and *why* is the
+useful part — a list that quietly rewrites itself teaches nothing.
+
+- ~~**The agent** — unchanged on site PCs.~~ **It changed** (01–02/09/2026, v1.0.22). Two
+  fixes and one dormant path: `cleansession false` in the bridge (measured: **0 of 5**
+  messages survived an internet outage before, 5 of 5 after), a **disk-backed** send queue
+  that survives a power cut, and direct-write to Supabase that **ships disabled**. See
+  `Parkomat.Agent/CLAUDE.md`.
+- ~~**HiveMQ** — unchanged.~~ **Still the only live path**, and still authoritative — but no
+  longer the only one that exists. The direct path runs beside it when a site is configured;
+  MQTT stays the source of truth while both run.
+- ~~**Ingestion logic** — none of it moves.~~ **Most of it moved**, and it is the one part of
+  this project that writes customer data, so nothing was adopted on argument:
+  `db/ingest.postgres.sql` holds `decide_cycle_update`, `classify_timestamp`,
+  `ingest_operation`, `ingest_state` and the public door `ingest_batch`, proven against the
+  existing path by **1,098 comparisons** across four gates.
+  ⚠️ **Four modules deliberately did *not* move**, and that is a conclusion rather than a gap:
+  `replay-window` and `clamp-memo` exist only to compensate for MQTT delivering one message
+  at a time — an agent that sends a batch makes the problem *not exist* rather than solving
+  it; `bridge-handler` belongs to the disconnect-detection decision that is still open;
+  `fault-text` moves to the agent, before the network. The reasoning is recorded at the foot
+  of `db/ingest.postgres.sql`.
+- **The numbers.** ✅ Unchanged, and it is the rule that made the rest safe. Every ported
+  function must return results identical to the current JS on real data before it is adopted.
+  Integers exactly; floats compared on the rounded, user-visible value. Verify against
+  production-shaped data *and* seeded edge cases.
+
+⚠️ **And the sharpest lesson of that port was about the harness, not the code.** Of 19
+mutations run, **six exposed blindness in a gate that had just been written** — not a bug in
+the thing under test. Twice the scenarios only covered the ordinary path (no message ever
+arrived late; no `no_comm` was ever sent), and twice an assertion passed for a reason other
+than the one intended. *A gate that has never been mutated is a gate whose coverage is
+unknown.*
 
 ## Cost trigger worth knowing
 
