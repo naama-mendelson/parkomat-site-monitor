@@ -67,6 +67,7 @@ const GATES = [
   { name: "parity-ingest-op",    what: "מסלול התפעולים — המסלול הקיים מול app.ingest_operation" },
   { name: "parity-ingest-state", what: "מסלול המצב — המסלול הקיים מול app.ingest_state" },
   { name: "check-agent-write",   what: "סוכן כותב דרך PostgREST — ורק לאתר שלו" },
+  { name: "check-agent-live",    what: "קוד ה-C# האמיתי כותב ל-Supabase האמיתי" },
   // ⚠️ **אחרון בכוונה.** הוא בודק מה נשאר אחרי כל השאר, ולכן חייב לרוץ
   // אחריהם. נמדד: 62 חלונות תחזוקה ו-297 שורות ביקורת הצטברו על אתר
   // אמיתי והופיעו בלוג הפעילות שלו כפעולות שאיש לא עשה.
