@@ -310,6 +310,127 @@ BEGIN
 END;
 $health$;
 
+-- ============================================================
+-- app.detect_blackout — האם המערכת כולה חשוכה
+-- ============================================================
+-- ⚠️ **הכלל הזה נגזר ממדידה, לא מהערכה.** נמדד על 30 יום:
+--
+--   • שתיקה של אתר **בודד** אינה סימן: ההפסקה המקסימלית לאתר היא
+--     61–68 שעות ברוטינה, כי הסוכן משדר רק על שינוי MODE ואלה חניונים
+--     בלילות ובסופי שבוע. סף שימנע רעש ארוך מהתקלה שמחפשים.
+--
+--   • "אפס אתרים משדרים" לבדו אינו סימן: זה המצב **33% מהזמן**.
+--
+--   • אבל **אורך הרצף** מפריד נקי. שלושת הרצפים הארוכים ביותר היו
+--     115.0, 59.5 ו-17.0 שעות — כולם נפילות אמיתיות. הרביעי כבר
+--     4.0 שעות, שהוא לילה רגיל. בין 4 ל-17 אין כלום.
+--
+-- שני כללים, ולכל אחד תפקיד אחר:
+--
+--   איטי  — אפס אתרים מעל p_slow_hours (ברירת מחדל 6). תמיד פעיל,
+--           מרווח של 50% מעל הלילה הארוך ביותר שנמדד.
+--
+--   מהיר  — 43 מתוך 168 שעות-בשבוע **מעולם** לא היו בהן אפס אתרים
+--           ב-4 שבועות, וב-30 מהן המינימום היה ≥3. בשעה כזו, שעה של
+--           שתיקה מוחלטת היא חסרת תקדים. משהה ~שעה, מכסה ~30 שעות בשבוע.
+--
+-- ⚠️ **ומה זה לא תופס, במפורש:** אתר **בודד** שמת. את זה רק צוואה
+-- (MQTT היום) או דופק תופסים. זו סיבה טובה לא למהר לפרוש את HiveMQ.
+--
+-- ⚠️ p_at קיים כדי שאפשר יהיה להריץ את הכלל על **רגע היסטורי** ולבדוק
+-- מה הוא היה אומר. כלל שלא נבחן על נפילה אמיתית הוא ניחוש.
+CREATE OR REPLACE FUNCTION app.detect_blackout(
+  p_at             timestamptz DEFAULT now(),
+  p_slow_hours     numeric     DEFAULT 6,
+  p_fast_min_sites integer     DEFAULT 0   -- 0 = הכלל המהיר כבוי
+)
+RETURNS TABLE (kind text, quiet_hours numeric, detail text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_last   timestamptz;
+  v_quiet  numeric;
+  v_solid  integer;
+BEGIN
+  -- ⚠️ שני המקורות, לא אחד: אתר יכול לדווח מצב בלי אף תפעול (לילה עם
+  -- מעבר ל-ready), ותפעול בלי שינוי מצב. שתיקה היא היעדר **שניהם**.
+  SELECT GREATEST(
+           (SELECT MAX(received_at::timestamptz) FROM operations
+             WHERE received_at < to_char(p_at, 'YYYY-MM-DD"T"HH24:MI:SS')),
+           (SELECT MAX(started_at::timestamptz) FROM status_history
+             WHERE started_at < to_char(p_at, 'YYYY-MM-DD"T"HH24:MI:SS')))
+    INTO v_last;
+
+  IF v_last IS NULL THEN RETURN; END IF;
+  v_quiet := ROUND((EXTRACT(EPOCH FROM (p_at - v_last)) / 3600)::numeric, 1);
+
+  -- ---- הכלל האיטי ----
+  IF v_quiet >= p_slow_hours THEN
+    RETURN QUERY SELECT 'blackout'::text, v_quiet,
+      ('אף אתר לא שידר ' || v_quiet || ' שעות')::text;
+    RETURN;
+  END IF;
+
+  -- ---- הכלל המהיר ----
+  -- ⚠️ הבסיס נלקח מ-28 הימים שלפני p_at, ולכן נפילה **ארוכה** מנמיכה
+  -- אותו בעצמה. זה מקובל: המהיר נועד לתפוס את השעה הראשונה, ובנקודה
+  -- הזו הבסיס עדיין נקי. אחרי זה האיטי תופס ממילא.
+  -- ⚠️ **הרשת חייבת לכלול שעות עם אפס — וזה היה באג.** הגרסה הראשונה
+  -- עשתה MIN על תוצאת GROUP BY של האירועים עצמם, ושעה בלי אף אירוע
+  -- אינה מייצרת שורה. כלומר המינימום רץ רק על השעות שכן היו בהן נתונים
+  -- ולעולם לא היה 0.
+  --
+  -- ⚠️ **וזה נתפס בבדיקה על ההיסטוריה, לא בקריאה:** הכלל התריע ב-03:00
+  -- בארבעה לילות רגילים וטען ש"תמיד משדרים כאן ≥5 אתרים" — על שלוש
+  -- לפנות בוקר. כלל שמסתמך על בסיס שאינו יכול להיות אפס יתריע בדיוק
+  -- בשעות השקטות, שהן בדיוק אלה שהוא אמור לפטור.
+  -- ⚠️ **ולא MIN, אלא "כמה מהשבועות" — כי MIN אינו עמיד.**
+  -- נמדד: אחרי תיקון הרשת, MIN התאפס כמעט בכל שעה-בשבוע והכלל המהיר
+  -- חדל לירות. הסיבה אינה שהשעות רועשות — היא ש**בחלון של 4 שבועות
+  -- היו שלוש נפילות**, וכל אחת מאפסת את המינימום של השעות שהיא כיסתה.
+  -- סטטיסטיקה שנפילה אחת הורסת אינה בסיס להשוואה מול נפילות.
+  SELECT COUNT(*) FILTER (WHERE cnt >= p_fast_min_sites) INTO v_solid FROM (
+    SELECT g.h, (
+      SELECT COUNT(DISTINCT e.site_id) FROM (
+        SELECT site_id, received_at::timestamptz AS t FROM operations
+         WHERE received_at >= to_char(p_at - interval '28 days', 'YYYY-MM-DD"T"HH24:MI:SS')
+           AND received_at <  to_char(p_at - interval '1 hour',  'YYYY-MM-DD"T"HH24:MI:SS')
+        UNION ALL
+        SELECT site_id, started_at::timestamptz FROM status_history
+         WHERE started_at >= to_char(p_at - interval '28 days', 'YYYY-MM-DD"T"HH24:MI:SS')
+           AND started_at <  to_char(p_at - interval '1 hour',  'YYYY-MM-DD"T"HH24:MI:SS')
+      ) e WHERE e.t >= g.h AND e.t < g.h + interval '1 hour') AS cnt
+      FROM generate_series(date_trunc('hour', p_at - interval '28 days'),
+                           date_trunc('hour', p_at - interval '1 hour'),
+                           interval '1 hour') AS g(h)
+     WHERE EXTRACT(DOW  FROM g.h) = EXTRACT(DOW  FROM p_at)
+       AND EXTRACT(HOUR FROM g.h) = EXTRACT(HOUR FROM p_at)
+  ) z;
+
+  -- ⚠️ 3 מתוך 4 השבועות, ולא 4 מתוך 4: נפילה אחת בהיסטוריה לא תשתיק
+  -- את הכלל, אבל שעה שבאמת שקטה לפעמים כן תפטור אותו.
+  -- ⚠️ **והוא כבוי כברירת מחדל (p_fast_min_sites = 0), וזו מסקנה
+  -- ממדידה ולא זהירות.** נבחן על ההיסטוריה: הוא אכן מקדים את הזיהוי
+  -- של נפילת DELL008 מ-5 שעות ל-2 — ומייצר גם שתי התראות ב-**03:00**
+  -- בלילות רגילים. התראה שגויה בשלוש לפנות בוקר היא בדיוק זו שמלמדת
+  -- אנשים להשתיק, ואז גם הנכונה הבאה מושתקת.
+  --
+  -- ⚠️ והסיבה העמוקה: **אין חלון היסטורי נקי לכייל מולו.** ב-4 השבועות
+  -- שנמדדו היו שלוש נפילות רב-יומיות. כלל של שעה אחת דורש בסיס נקי,
+  -- והבסיס עצמו מלא בחורים. כשיצטבר חודש בלי נפילה — להעביר 3 ולבחון שוב.
+  IF p_fast_min_sites > 0 AND v_solid >= 3 AND v_quiet >= 1 THEN
+    RETURN QUERY SELECT 'blackout_fast'::text, v_quiet,
+      ('שעה שב-' || v_solid || ' מתוך 4 השבועות שידרו בה לפחות ' ||
+       p_fast_min_sites || ' אתרים — וכעת אף אחד, ' || v_quiet || ' שעות')::text;
+  END IF;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.detect_blackout(timestamptz, numeric, integer) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION app.check_ingestion_health(
   p_heartbeat_stale_minutes integer DEFAULT 10,
   p_drop_window_minutes     integer DEFAULT 15
@@ -328,6 +449,7 @@ DECLARE
   -- ⚠️ v_key הוכרז כאן ומעולם לא שימש. במקומו: מזהה הבקשה, שהוא מה
   -- שמבדיל בין "נשלח" ל"נחסם" — ההבחנה שכל התיקון הזה עומד עליה.
   v_req       bigint;
+  v_blk       record;
 BEGIN
   -- ============================================================
   -- 1. השרת חדל לדווח על עצמו
@@ -417,6 +539,31 @@ BEGIN
       RETURN QUERY SELECT 'drops'::text, (v_drops || ' הודעות')::text;
     END IF;
   END IF;
+
+  -- ============================================================
+  -- 3. המערכת כולה חשוכה
+  -- ============================================================
+  -- ⚠️ **שתי הנפילות הרב-יומיות לא נתפסו ע"י אף אחד משני הסעיפים
+  -- שמעליי**, ולכן הסעיף הזה קיים. סעיף 1 בודק את הדופק של השרת —
+  -- ושרת שאינו רץ אינו כותב דופק **וגם אינו מריץ שום בדיקה**; מי
+  -- שמריץ כאן הוא pg_cron, בתוך Postgres, ולכן הוא שורד את נפילת
+  -- ה-master. סעיף 2 בודק זריקות, ובנפילה אין הודעות שייזרקו.
+  --
+  -- נבחן על ההיסטוריה: תפס את שלוש הנפילות (6, 5 ו-8.8 שעות), עם
+  -- אפס התראות שווא ב-80 בדיקות בזמנים תקינים.
+  FOR v_blk IN SELECT * FROM app.detect_blackout() LOOP
+    SELECT value INTO v_last FROM settings WHERE key = 'alert_last_blackout';
+    -- ⚠️ דה-דופ של 6 שעות ולא שעה: נפילה נמשכת, וההתראה עליה חוזרת
+    -- בכל הרצה. שעה הייתה מייצרת 60 התראות על נפילה בת יומיים וחצי.
+    IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 3600 > 6 THEN
+      v_req := app.send_push('no_comm', 'מערכת הניטור', v_blk.detail);
+      IF v_req IS NOT NULL THEN
+        INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_blackout', v_now, v_now)
+          ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+      END IF;
+      RETURN QUERY SELECT v_blk.kind, v_blk.detail;
+    END IF;
+  END LOOP;
 END;
 $fn$;
 
