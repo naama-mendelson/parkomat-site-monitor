@@ -952,11 +952,46 @@ fault" in the same second. Measured on one segment: faults 17→16, maintenance 
 4→3; the third number is the proof, and it does not move if the swap happens at the label.
 
 Nothing on the server side starts the process — that is deployment's job
-(`restart: unless-stopped` in `docker-compose.yml`). When it is not running, **no
-messages are lost**: HiveMQ keeps them (`clean:false` + fixed clientId) and delivers them
-all with their original timestamps on the next start. Measured: 15 hours down, 240
+(`restart: unless-stopped` in `docker-compose.yml`). When it is not running, messages
+survive a *short* outage: HiveMQ keeps them (`clean:false` + fixed clientId) and delivers
+them all with their original timestamps on the next start. Measured: 15 hours down, 240
 messages, zero lost. What *is* lost is knowing — the dashboard showed 15-hour-old state
 with no indication anything was wrong.
+
+### ⚠️ But the queue does **not** survive a long one — measured, and it cost real data
+
+This section used to say *"no messages are lost"* without qualification. **That is false past
+some duration between 15 hours and 4 days**, and the counter-example is in production data.
+
+Between **05/08/2026 ~10:30 and 10/08/2026 ~07:00** — roughly **4.8 days** — `operations` and
+`status_history` hold **zero rows across all 12 sites**. Not one `no_comm` either: the process
+that would have recorded it was the one that was down.
+
+⚠️ **And the machines were working the whole time.** The PLC counter is cumulative, so the jump
+across the gap is a measurement of what was lost: **all 12 sites moved, 624 cycles in total**
+(1343 +99, 2441 +87, 3452 +70, 1348 +67 …). Those cycles are gone from the data permanently —
+they are not "late", they never arrived.
+
+⚠️ **And the 27/08 outage lost data too — which was not previously recorded.** It is documented
+here as *"the system was down 2.5 days and nobody knew"*; the stronger fact is that **364 cycles
+across 15 of 16 sites are missing from the database**, with zero operations inside the window.
+Both blackouts are permanent holes, not delayed deliveries: a replayed queue would have written
+the rows with their original timestamps, and there are none.
+
+Three conclusions worth holding:
+
+- **Queue retention is a real limit, not a formality.** Whatever HiveMQ's expiry or queue cap
+  is on the current plan, it is shorter than 2.5 days. Anything that reasons from *"the
+  broker holds it for us"* must state a duration.
+- **`cycle_total` is the only witness to what was lost.** Because the PLC counter is cumulative,
+  the delta across an outage measures the missing work exactly — and it is the reason the two
+  numbers above can be stated at all. Any future change that resets or re-baselines that counter
+  destroys the only record of gaps like these.
+- **Nothing in the system noticed.** There is no record of this outage anywhere — not in
+  `audit_log` (which starts 17/08), not in git (no commits between 30/07 and 17/08). It was
+  found by querying for silence while designing disconnect detection, months later. The
+  27/08 DELL008 outage (59.5 hours) is the *second* multi-day blackout in that window, and
+  the only one anybody knew about.
 
 ## אימות דו-שלבי (TOTP) — נבנה, נאכף ב-SQL, ועדיין כבוי
 
