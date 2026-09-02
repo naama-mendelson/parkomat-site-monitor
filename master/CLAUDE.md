@@ -289,21 +289,34 @@ expires. Cost: one query per call, which is why it is not read from the claim.
 `req.ip`; SQL has no access to PostgREST's client address. The identity is stronger than
 before (verified token instead of a shared code) but where it came from is gone.
 
-## User management: three of five operations moved, two cannot
+## User management: all five operations have left the server
 
-This is the full answer to *"why isn't user management just in Supabase?"* — most of it now is.
+⚠️ **This section used to say "three of five moved, two cannot", and that is no longer true.**
+Both exceptions have since left, by different routes, and `api/routes.js` now serves exactly
+**two** endpoints in total — `/api/chat` and `/health`.
 
 | Operation | Where it runs | Why |
 |---|---|---|
 | list | **Postgres** (`list_users`) | reads `app_users`, joins `auth.users` for last sign-in |
 | deactivate / restore | **Postgres** (`set_user_active`) | touches `app_users` only |
 | change role | **Postgres** (`set_user_role`) | touches `app_users` only |
-| **invite** | **server** | `POST /auth/v1/admin/users` needs the **Secret key** |
-| **delete** | **server** | removing the GoTrue user needs the **Secret key** |
+| **invite** | **Edge Function** `invite-user` | `POST /auth/v1/admin/users` needs the **Secret key** |
+| **delete** | **Postgres** (`delete_user`) | both deletions commit in one transaction |
 
 The Secret key bypasses RLS entirely, so it must never reach a browser (root rule 7). That is
-the whole reason the last two stay. `UsersPanel` therefore imports three functions from
-`services/dataSource` and two from `services/api` — half-and-half on purpose.
+still why invite is not an RPC — it is the one operation that genuinely needs the Admin API.
+
+**Delete went the other way, and the reason is worth keeping.** It was an Edge Function too,
+and moving it to an RPC bought two things: a deploy step that does not travel in `git`
+disappeared, and the two deletions (`app_users` and GoTrue) now commit or fail **together**.
+The Edge Function version did them in two calls, and a failure between them left a user who
+could still sign in with no identity row.
+
+⚠️ **And the deploy step that does not travel in git is not a theoretical cost.** A change to
+`invite-user/index.ts` pushed to `main` is **not in production** until someone deploys the
+function. `check-permissions` calls the deployed function over the network, so it measures
+what is live rather than what is in the repo — which is the only reason the grant bug below
+was found at all.
 
 **What unblocked the role change** was `public.my_role()`. Before it, a role change had to
 write **two** places — `app_users` *and* the token's `app_metadata` — because the dashboard read
@@ -387,6 +400,58 @@ deletes **both sides** at the end. Points worth keeping:
   and returns code 2 if it cannot.
 - `PARITY_EMAIL` / `PARITY_PASSWORD` still win when set — signing in as a real account
   stays testable.
+
+## ⚠️ Two gates were testing routes that no longer exist — and reported "did not run"
+
+`parity-shape` and `check-permissions` both began by probing a server on `:4000` and exiting
+with code 2 when it did not answer. Both told the truth — and the truth was useless, because
+**the routes they probed had been deleted.** Starting the server would not have helped: the
+message *"start it, or set PARITY_API"* sent the reader to fix something impossible. This is
+the same failure mode as the three gates that needed a deleted person's password, one layer
+further along: not a gate that cannot authenticate, but a gate whose subject is gone.
+
+Both were re-pointed rather than retired, because the *questions* were still live. What
+changed is only where the answer is enforced.
+
+**`check-permissions` → PostgREST + the Edge Function.** The matrix is unchanged. Two
+findings came out of the move, and neither could have surfaced any other way:
+
+- The invite/manager bug above — found because the gate calls the **deployed** function.
+- ⚠️ **`401` vs "zero rows" is a real difference.** The server answered an unauthenticated
+  read with `401`. It was expected that PostgREST would answer `200` with `[]`, since RLS
+  filters rows rather than refusing requests — **measured otherwise**: the publishable key
+  (`sb_publishable_…`) is not a JWT, so PostgREST refuses before any policy is consulted.
+  That is the stronger answer, and the gate now pins it. If the key format ever returns to a
+  public JWT this check starts returning `200`, and that is exactly when someone must confirm
+  the policies still require `authenticated`.
+
+**`parity-shape` → a recorded contract**, `shared/contracts/direct-shapes.json`, written by
+`node tools/parity-shape.js --update`.
+
+⚠️ **It is a regression gate, not a correctness gate.** A contract generated from the code
+freezes a bug too, if one was present when it was recorded. What it does guarantee is the one
+thing 2,279 value comparisons missed: a field that disappears from the direct arm.
+
+Three properties are load-bearing, and each was earned by a measured failure:
+
+1. **Every array element, not the first.** The old comment claimed rows in an array are
+   homogeneous. The activity log disproves it — an operation row and a status row share almost
+   no keys. Measured: the same site, minutes apart, returned a different *kind* of first row
+   and the gate failed on nine fields with no code change.
+2. **Every site, unioned — on both sides.** With two live arms an arbitrary site was harmless,
+   since both saw the same one. Against a file it is not: recordings from two sites differed by
+   24 fields, six of them only because one site has never had a maintenance window. One site
+   would have frozen a weaker contract than the screen actually consumes.
+3. **A shrink guard.** `--update` **refuses** to write a contract smaller than the one on disk
+   (override: `--shrink`). Without it, re-recording on a quiet day silently locks in fewer
+   fields — the gate manufacturing the exact blindness it exists to prevent.
+
+⚠️ **And a null or empty parent excuses its children, but never itself.** A site with no
+faults returns `lastFault: null`; demanding the recorded subtree under it would paint a healthy
+system red. The field itself must still be there, so deleting it from the code is still caught.
+
+⚠️ **Widen the window before blaming the code.** `GET /api/activity` and both insights cases
+ask for a **year**, not a week, precisely so every entry *kind* is present in the sample.
 
 ## Metrics also live in SQL now — and there is a parity gate
 
@@ -663,6 +728,83 @@ They now carry **`ON DELETE SET NULL`**, added as idempotent DDL in `schema.post
   `auth/deactivation.js`): nobody deletes themselves, and the last *active* manager cannot
   be deleted. A manager who deactivates themselves can be restored by another; one who
   deletes themselves with no other manager leaves no route back from the UI at all.
+
+## ⚠️ Inviting a manager created an operator — a missing GRANT, reported as `200`
+
+Measured in production, and it had been live since invite moved to the Edge Function.
+
+`provision_app_user` is `AFTER INSERT` on `auth.users` and runs **before** GoTrue writes
+`app_metadata`, so every invited user lands in `app_users` as `operator` — for everyone,
+by construction. `invite-user` corrects it immediately afterwards:
+
+```ts
+admin.from("app_users").update({ role: wantRole }).eq("supabase_uid", created.user.id)
+```
+
+**`service_role` had no GRANT on `public.app_users`.** That update returned
+`42501 permission denied for table app_users`, the function did not check the error, and the
+call returned **`200`** with a body declaring `role: "manager"`. The screen showed success and
+the temporary password worked. The invited manager simply got `403` on every management action,
+with nothing anywhere explaining why — and `app_metadata` in the Supabase dashboard said
+`manager`, so the one place a person would look to check agreed with the lie.
+
+Both halves are fixed and both were needed:
+
+- **The GRANT** (`db/security.postgres.sql`) — narrow, `SELECT, UPDATE` on one table, wrapped
+  in `DO $$ … EXCEPTION WHEN undefined_object` so plain Postgres, which has no such role, still
+  boots. It is **not** a widening of trust: `service_role` is the Secret key, it already
+  bypasses RLS by construction, and it lives only in the Edge Function and the server.
+- **The error check** in `invite-user` — it now returns `500` naming what happened. ⚠️ It must
+  say *the user was created and the role was not set*, because that is the true state; "invite
+  failed" would send the inviter to try again and hit `409`.
+
+⚠️ **Why our own tables do not inherit Supabase's default grants:** they are created by
+`db.init()`, not by the Supabase dashboard, so the project's default privileges never applied.
+Any new table an Edge Function must touch needs its GRANT written out explicitly — and
+written in the SQL file, or it will not survive `pg_dump` to a non-Supabase Postgres.
+
+### ⚠️ And `app_users` was not a special case — no table was granted at all
+
+Measured across all 20 tables in `public`: every one held exactly
+`REFERENCES, TRIGGER, TRUNCATE` — the residue of ownership, not data access. **The Secret key
+could not read a single row through PostgREST.**
+
+The second casualty was `notify-fault`, and it failed in a more deceptive way than the invite
+did. Its four table calls — read `settings` for the silence window, read and write
+`push_last_sent`, delete dead `push_subscriptions` — **all ignored `error`**. So:
+
+- the alert itself would still have been **sent**: `push_targets_for_site` is a *function*, and
+  functions grant `EXECUTE` to `PUBLIC` by default;
+- but the window from `settings` was ignored, and "when did we last alert" was neither read nor
+  written — so **flood protection did not exist**. A flapping site would push on every event.
+
+The symptom is the opposite of silence, which is why nobody would have traced it to a
+permission error. ⚠️ **And it has never actually run**: `app.alert_health()` reports
+`key_present: true` with `last_request_id: null` — the key was configured after the last
+recorded failure and no fault has occurred since. The first real alert would have been the
+first test.
+
+⚠️ **And this exact error had been hit once before — the lesson just was not generalised.**
+`supabase/migrations/20260819_push_notifications.sql` records it in its own comment: the first
+delete-user implementation used a `service_role` client in an Edge Function and got
+*"permission denied for table app_users"* — *"the assumption that it bypasses RLS did not
+hold."* The response then was to **avoid** `service_role` by moving the whole operation into an
+RPC. That was the right call for delete, which needs no Admin API at all — and it left
+`invite-user`, which does, sitting on the same broken assumption.
+
+So there are two legitimate answers, and which one applies depends on one question: *does this
+operation need the Admin API?* If no → RPC, and `service_role` never enters the picture. If yes
+→ Edge Function with a narrow, written-down GRANT. Invite is the only operation in the second
+group.
+
+**The grants are deliberately narrow, and the list is the documentation.** After the fix
+`service_role` reads `settings`, `push_last_sent`, `push_subscriptions` and writes `app_users`
+— and still gets `42501` on `sites`, `operations`, and every other business table. Verified
+both directions. A blanket `GRANT ALL ON ALL TABLES` would have worked too and would have
+destroyed the answer to *"who writes to this table"*, which is what this file exists for.
+
+⚠️ **The next table an Edge Function needs will fail exactly the same way**, and silently
+unless its call checks `error`. Both halves are the rule: add the GRANT, and check the error.
 
 ## Users are created by invitation only — enforced in the database
 
