@@ -4,11 +4,20 @@
 // הרשאה: מי שילחץ "חסום" כי לא הבין — **לא נוכל לשאול אותו שוב לעולם**,
 // רק הוא בהגדרות האתר. לכן ההסבר בא לפני הבקשה, תמיד.
 import { useEffect, useState } from "react";
+//
+// ⚠️ **אינו מייבא את `supabase` — וכך זה היה עד היום** (כלל 5 בשורש).
+// הקומפוננטה הריצה ארבע שאילתות בגוף שלה, בעוד שכל שאר הקומפוננטות
+// מתעדות במפורש שהן אינן עושות זאת. הכול עבר ל-`services/pushDirect.js`.
 import {
   pushPermission, enablePush, disablePush,
   getPushSites, setPushSites, ensurePushSubscription, pushCoverage,
+  getPushKinds, setPushKinds,
 } from "../../services/pushDirect";
-import { supabase } from "../../services/supabase";
+// ⚠️ רשימת האתרים עוברת ב**מתג** ולא ב-*Direct: לטבלת `sites` יש זרוע
+// שרת מלאה, בשונה מהעדפות ההתראות שאין להן אחת בכוונה. `check-switch`
+// תפס בדיוק את זה — והקריאה הישירה הזו הייתה בקומפוננטה מלכתחילה,
+// בלי שהשער יראה אותה, כי היא לא הגיעה מקובץ *Direct.
+import { fetchSitesList } from "../../services/dataSource";
 import "./PushSettings.css";
 
 // ⚠️ הסדר אינו אקראי — הוא סדר הרעש. ראה ההערה על no_comm למטה.
@@ -35,16 +44,37 @@ function PushSettings({ onClose }) {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("sites").select("id, code, site_name").order("site_name");
-      setSites(data || []);
+      // ⚠️ רשימה ריקה נראית כמו "אין אתרים", לא כמו "הקריאה נכשלה" —
+      // והמשתמש היה מסיק שאין לו מה לבחור.
+      setSites(await fetchSitesList().catch((e) => { setErr(e.message); return []; }));
       if (pushPermission() === "granted") {
         // ⚠️ חידוש שקט לפני הצגת המצב: אחרת המסך היה מציג "לא מכוסה" על
         // מנוי שהיה מתחדש שנייה אחר כך מעצמו.
-        await ensurePushSubscription().catch(() => {});
+        //
+        // ⚠️ **והתוצאה נקראת.** קודם היא נזרקה (`.catch(() => {})` על ערך
+        // שלא נבדק), ולכן חידוש שנכשל בכתיבה למסד היה שקוף לחלוטין:
+        // הדפדפן מחזיק הרשמה, אצלנו אין שורה, והמסך מציג כיסוי תקין.
+        // מי שסומך על ההתראות לא היה יודע עד שתקלה לא תגיע.
+        const renew = await ensurePushSubscription().catch((e) => ({
+          state: "save-failed", message: e?.message,
+        }));
+        if (renew?.state === "save-failed") {
+          setErr(renew.message || "רישום המכשיר להתראות נכשל — נסו לרענן");
+        }
         setCover(await pushCoverage().catch(() => null));
         setChosen(await getPushSites().catch(() => []));
-        const { data: t } = await supabase.from("push_user_types").select("kind");
-        setKinds((t || []).map((r) => r.kind));
+        // ============================================================
+        // ⚠️ כשל **קריאה** כאן מוחק העדפות — ולכן הוא חייב לעצור
+        // ============================================================
+        // בלי בדיקת השגיאה, קריאה שנכשלת מחזירה `null`, המסך מציג שאף
+        // סוג התראה אינו מסומן, והלחיצה הבאה על שמירה **כותבת את זה
+        // למסד**. כלומר תקלת רשת חולפת מוחקת בחירה אמיתית של המשתמש,
+        // דרך פעולה שהוא עשה בעצמו ולכן לא יחשוד בה.
+        //
+        // ⚠️ ובכשל **אין** `setKinds` כלל — נשארים עם הערך הקודם במקום
+        // לצייר "אף סוג לא נבחר" על מסך שהמשתמש עומד לשמור ממנו.
+        try { setKinds(await getPushKinds()); }
+        catch (e) { setErr(e.message || "טעינת סוגי ההתראות נכשלה"); }
       }
     })();
   }, []);
@@ -75,16 +105,11 @@ function PushSettings({ onClose }) {
     if (key === "fault") return;
     const next = kinds.includes(key) ? kinds.filter((x) => x !== key) : [...kinds, key];
     setKinds(next);
-    // ⚠️ אותה טעות שהייתה ב-pushDirect: select().limit(1) על app_users
-    // מחזיר את השורה הראשונה בטבלה ולא את המשתמש הנוכחי.
-    const { data: myId } = await supabase.rpc("my_app_user_id");
-    if (!myId) return;
-    await supabase.from("push_user_types").delete().eq("app_user_id", myId);
-    // 'fault' נשמר תמיד יחד עם השאר — ברירת המחדל "אין שורות" מכסה רק
-    // את המקרה שבו איש לא בחר דבר.
-    const rows = ["fault", ...next.filter((k) => k !== "fault")]
-      .map((k) => ({ app_user_id: myId, kind: k }));
-    await supabase.from("push_user_types").insert(rows).catch((e) => setErr(e.message));
+    // ⚠️ המסך כבר הראה את הסימון החדש (`setKinds(next)` למעלה), ולכן
+    // כשל שקט כאן נראה בדיוק כמו שמירה שהצליחה — עד שההתראה לא תגיע.
+    // הכלל, ההרשאות והשמירה עצמם ב-`services/pushDirect.js` (כלל 5).
+    try { await setPushKinds(next); }
+    catch (e) { setErr(e.message || "שמירת סוגי ההתראות נכשלה"); }
   }
 
   // ⚠️ שומר את הסירוב **ואז** סוגר. הסדר ההפוך היה מאבד אותו אם הסגירה

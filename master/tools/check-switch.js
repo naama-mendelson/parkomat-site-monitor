@@ -99,6 +99,15 @@ const ALLOWED_DIRECT = new Set([
   "isInstalledApp",
   "pushSupported", "pushPermission", "enablePush", "disablePush",
   "getPushSites", "setPushSites", "ensurePushSubscription", "pushCoverage",
+  // ⚠️ **סוגי ההתראות — אותו נימוק, ולא הרחבה שלו.** `push_user_types`
+  // היא טבלת העדפות של מנגנון שאין לו זרוע שרת מלכתחילה; אין `/api`
+  // שמגיש אותה, ולא אמור להיות.
+  //
+  // ⚠️ ומה ש**לא** נכנס לכאן: רשימת האתרים. היא נקראה ישירות בגוף
+  // הקומפוננטה ולא נתפסה — כי היא לא הגיעה מקובץ *Direct — ולטבלת
+  // `sites` יש זרוע שרת מלאה. היא עברה ל-`fetchSitesList` שבמתג.
+  // הגבול הוא "האם קיים צד שרת", לא "האם זה נוח".
+  "getPushKinds", "setPushKinds",
   // ⚠️ useSSE מממש את המתג **בעצמו** ובצדק: מנוי חי אינו בקשה, ואי אפשר
   // לעטוף אותו ב-dataSource שכולו פונקציות שמחזירות ערך. שתי הזרועות שם
   // מלאות — Realtime מול EventSource — ונבדקות בסעיף הראשי.

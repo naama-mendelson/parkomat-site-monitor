@@ -144,9 +144,70 @@ export async function getPushSites() {
   return (data || []).map((r) => r.site_id);
 }
 
+// ============================================================
+// ⚠️ שתי הפונקציות הבאות עברו לכאן מתוך `PushSettings.jsx` — כלל 5
+// ============================================================
+// הקומפוננטה ייבאה את `supabase` ישירות והריצה ארבע שאילתות בגוף שלה.
+// כלל 5 בשורש `CLAUDE.md` אוסר זאת במפורש, וכל שאר הקומפוננטות מתעדות
+// שהן **אינן** עושות זאת (`AccountMenu`, `MfaSetup`, `Login`).
+//
+// ⚠️ **וזה לא סגנון.** התפר הזה הוא מה שהופך יציאה מ-Supabase להחלפת
+// קבצים ב-`services/` במקום חיפוש של קריאות מפוזרות בכל הרכיבים —
+// כלומר בדיוק דלת היציאה שכל הפרויקט נבנה סביבה.
+
+/** אילו סוגי אירועים המשתמש בחר לקבל. */
+export async function getPushKinds() {
+  const { data, error } = await supabase.from("push_user_types").select("kind");
+  // ⚠️ זריקה ולא `[]`: רשימה ריקה מוצגת כ"לא נבחר דבר", והשמירה הבאה
+  // הייתה כותבת את זה למסד. כלומר תקלת קריאה מוחקת בחירה אמיתית.
+  if (error) throw new Error(error.message || "טעינת סוגי ההתראות נכשלה");
+  return (data || []).map((r) => r.kind);
+}
+
+/** קובע את סוגי האירועים. 'fault' תמיד נשמר. */
+export async function setPushKinds(kinds) {
+  const { data: myId, error: meErr } = await supabase.rpc("my_app_user_id");
+  if (meErr) throw new Error(meErr.message || "שמירת סוגי ההתראות נכשלה");
+  if (!myId) throw new Error("המשתמש אינו פעיל במערכת — ההעדפה לא נשמרה");
+
+  // ============================================================
+  // ⚠️ הקוד הקודם כאן **לא נכשל בשקט — הוא לא עבד מעולם**
+  // ============================================================
+  // בקומפוננטה היה כתוב:
+  //
+  //     await supabase.from("push_user_types").insert(rows)
+  //       .catch((e) => setErr(e.message))
+  //
+  // ⚠️ ונמדד ב-supabase-js 2.111.0: `insert()` מחזיר `PostgrestFilterBuilder`
+  // שיש לו `then` ו**אין לו `catch`**. כלומר `.catch` הוא `undefined`,
+  // והשורה זורקת `TypeError` **מיד, בכל לחיצה**, לפני שיוצאת בקשה לרשת.
+  //
+  // ⚠️ `toggleKind` הוא מטפל אירוע async בלי try/catch, ולכן ה-TypeError
+  // הפך לדחייה לא-מטופלת: שום דבר על המסך. ו-`setKinds(next)` כבר רץ
+  // לפני כן — כך שתיבת הסימון זזה ונראתה נשמרת.
+  //
+  // **התוצאה: שינוי סוגי ההתראות לא עבד אף פעם, לאף משתמש.** לא באג
+  // שמתעורר בתנאים נדירים — כשל דטרמיניסטי בכל קריאה.
+  //
+  // ⚠️ ו-`await` על הבנאי **אינו** זורק גם כשהמסד מסרב: הוא נפתר עם
+  // `{ data, error }`. לכן בדיקת `error` היא הדרך היחידה, ולא try/catch.
+  const { error: delErr } = await supabase
+    .from("push_user_types").delete().eq("app_user_id", myId);
+  // ⚠️ ויוצאים כאן: מחיקה שנכשלה והוספה שמצליחה אחריה מייצרות כפילויות.
+  if (delErr) throw new Error(delErr.message || "שמירת סוגי ההתראות נכשלה");
+
+  const rows = ["fault", ...kinds.filter((k) => k !== "fault")]
+    .map((k) => ({ app_user_id: myId, kind: k }));
+  const { error: insErr } = await supabase.from("push_user_types").insert(rows);
+  if (insErr) throw new Error(insErr.message || "שמירת סוגי ההתראות נכשלה");
+  return rows.map((r) => r.kind);
+}
+
 /** קובע את רשימת האתרים. מערך ריק מחזיר ל"כל האתרים". */
 export async function setPushSites(siteIds) {
-  const { data: myId } = await supabase.rpc("my_app_user_id");
+  // ⚠️ שגיאה אינה "אין משתמש" — ראה את אותה הפרדה ב-ensurePushSubscription.
+  const { data: myId, error: meErr } = await supabase.rpc("my_app_user_id");
+  if (meErr) throw new Error(meErr.message || "עדכון ההעדפות נכשל");
   if (!myId) throw new Error("המשתמש אינו פעיל במערכת");
 
   // ⚠️ מחיקה ואז הוספה, ולא diff: הרשימה קצרה (12 אתרים), והפרש שגוי
@@ -196,14 +257,18 @@ export async function ensurePushSubscription() {
     renewed = true;
   }
 
-  const { data: myId } = await supabase.rpc("my_app_user_id");
+  // ⚠️ שגיאה **אינה** "אין משתמש". בלי ההפרדה, תקלת רשת או הרשאה הייתה
+  // מוצגת כ"המשתמש אינו פעיל במערכת" — אבחנה שגויה ששולחת מישהו לבדוק
+  // את החשבון במקום את החיבור.
+  const { data: myId, error: meErr } = await supabase.rpc("my_app_user_id");
+  if (meErr) return { state: "save-failed", message: meErr.message };
   if (!myId) return { state: "no-user" };
 
   const json = sub.toJSON();
   const now = new Date().toISOString();
   // ⚠️ upsert ולא update: אחרי חידוש ה-endpoint **שונה**, ולכן אין שורה
   // לעדכן. update לבדו היה מצליח בשקט ומעדכן אפס שורות.
-  await supabase.from("push_subscriptions").upsert({
+  const { error: saveErr } = await supabase.from("push_subscriptions").upsert({
     app_user_id: myId,
     endpoint: json.endpoint,
     p256dh: json.keys.p256dh,
@@ -212,6 +277,18 @@ export async function ensurePushSubscription() {
     created_at: now,
     verified_at: now,
   }, { onConflict: "endpoint" });
+
+  // ============================================================
+  // ⚠️ הכתיבה הזו היא **כל** החידוש — ועד עכשיו כשלונה נבלע
+  // ============================================================
+  // כל הפונקציה קיימת כדי שהרשמה שנמחקה תשוב בשקט. אם ה-upsert נכשל,
+  // ההרשמה החדשה קיימת בדפדפן ו**אינה קיימת אצלנו** — כלומר המשתמש
+  // משוכנע שהוא מכוסה, והשרת לא יודע לאן לשלוח.
+  //
+  // זה בדיוק מה שההערה בראש הפונקציה מכנה הכשל הגרוע ביותר האפשרי כאן:
+  // שקט שנקרא כ"הכול בסדר". החזרת מצב אינה מתקנת את הכתיבה, אבל היא
+  // מפסיקה למחוק את הידיעה שהיא נכשלה.
+  if (saveErr) return { state: "save-failed", renewed, message: saveErr.message };
 
   return { state: "ok", renewed, endpoint: json.endpoint };
 }

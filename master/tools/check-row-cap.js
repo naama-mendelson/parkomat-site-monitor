@@ -100,6 +100,10 @@ const TABLES = {
   suppressed_faults: "pageAll",
   push_subscriptions: "כתיבה או מחיקה",
   push_user_sites: "שורה לאתר למשתמש",
+  // ⚠️ סיבה **מבנית**, לא "מחזיר מעט": ה-RLS מסננת ל-`app_user_id` של
+  // הקורא, ו-`kind` מוגבל לשלושת הערכים ב-`KINDS`. כלומר התקרה היא שלוש
+  // שורות למשתמש מעצם המבנה — לא מפני שהטבלה קטנה היום.
+  push_user_types: "שורה לסוג למשתמש — שלושה סוגים בסך הכול",
   announcements: "limit מפורש",
   field_reports: "limit מפורש",
   service_commands: "limit מפורש",
