@@ -27,7 +27,45 @@ const path = require("node:path");
   }
 
   const checks = [];
-  const add = (name, got, want) => checks.push([name, got, want]);
+  // ⚠️ הפרמטר הרביעי הוא **הסיבה**, והוא נוסף אחרי ששער זה נפל פעם אחת
+  // מתוך חמש והשורה אמרה רק "false מול true". שער שנופל בלי לומר למה הוא
+  // שער שמריצים שוב ומקווים — כלומר שער שלומדים להתעלם ממנו.
+  const add = (name, got, want, why = "") => checks.push([name, got, want, why]);
+
+  // ============================================================
+  // ⚠️ ניקוי נעילת בדיקה תלויה — לפני הכול, ולא לפני מקרה 5 בלבד
+  // ============================================================
+  // מקרה 5 למטה הורג בכוונה את ה-backend של הנעילה שהוא עצמו תפס. מול
+  // ה-pooler של Supabase הריגת backend אינה בהכרח מסיימת את ה-session
+  // (זה בדיוק הכשל שמקרה 6 מתעד), ולכן הנעילה עלולה להישאר תלויה —
+  // וההרצה **הבאה** של השער נכשלת.
+  //
+  // ⚠️ ונמדד שזה מפיל לא רק את מקרה 5: כשנעילת הבדיקה תפוסה, גם
+  // מקרים 1–4 נופלים, כי הם פותחים ב-`acquireSingleInstanceLock` על
+  // אותם מפתחות. לכן הניקוי בראש — שם הוא מגן על כל השער.
+  //
+  // ⚠️ והוא בטוח: המפתחות הם של הבדיקה בלבד (0x74657374/0x6c6f636b),
+  // ולא אלה שהשרת החי מחזיק. אותה הבחנה בדיוק שמקרה 5 כבר מקפיד עליה
+  // כשהוא הורג — ראה ההערה על application_name שם.
+  {
+    // ⚠️ require מקומי: `sessionUrlFor` מפורק מהמודול בהמשך הקובץ (מקרה 4),
+    // והבלוק הזה רץ לפניו. שימוש בקבוע שטרם אותחל זורק ReferenceError —
+    // וזה בדיוק מה שקרה בהעברה לכאן.
+    const { sessionUrlFor: sessionUrl } = require("../db/single-instance");
+    const pre = new Client({ connectionString: sessionUrl(URL_), ssl: { rejectUnauthorized: false } });
+    pre.on("error", () => { /* ניתוק בזמן הניקוי אינו אמור להפיל את השער */ });
+    try {
+      await pre.connect();
+      const cleared = await pre.query(
+        `SELECT pg_terminate_backend(l.pid) FROM pg_locks l
+          WHERE l.locktype = 'advisory' AND l.granted
+            AND l.classid = $1 AND l.objid = $2 AND l.pid <> pg_backend_pid()`, TEST_KEYS);
+      if (cleared.rows.length) console.log(`(נוקו ${cleared.rows.length} נעילות בדיקה תלויות מהרצה קודמת)
+`);
+    } catch { /* ניקוי מיטבי — כשל כאן ידווח דרך המקרה שייפול */ }
+    await pre.end().catch(() => {});
+  }
+
 
   // ---- 1. המופע הראשון תופס ----
   let release = null;
@@ -112,7 +150,11 @@ const path = require("node:path");
   // (`pg_terminate_backend`), וממתינים. אם המאזין חסר, התהליך הזה מת כאן
   // ומעולם לא יגיע לטבלת התוצאות.
   let survived = false;
-  const lock5 = await acquireSingleInstanceLock(URL_, TEST_KEYS).catch(() => null);
+  let why5 = "";
+
+  const lock5 = await acquireSingleInstanceLock(URL_, TEST_KEYS)
+    .catch((e) => { why5 = `לא ניתן לתפוס את נעילת הבדיקה: ${e.message}`; return null; });
+  if (!lock5 && !why5) why5 = "נעילת הבדיקה תפוסה — ייתכן שנשארה תלויה מהרצה קודמת";
   if (lock5) {
     const killer = new Client({ connectionString: sessionUrlFor(URL_), ssl: { rejectUnauthorized: false } });
     try {
@@ -134,17 +176,17 @@ const path = require("node:path");
       // דבר, והבדיקה "עברה" בלי לבדוק שום דבר. זו בדיוק בדיקה שלילית שעוברת
       // מהסיבה הלא נכונה, ובלי התנאי הזה אין שום דרך להבחין.
       if (killed.rows.length === 0) {
-        console.error("   לא נהרג אף backend — הבדיקה לא בדקה כלום");
+        why5 = "לא נהרג אף backend — הבדיקה לא בדקה כלום";
       } else {
         // שהות לאירוע ה-'error' להגיע ולהתפוצץ, אם אין מי שיתפוס אותו.
         await new Promise((r) => setTimeout(r, 1500));
         survived = true;
       }
-    } catch { /* נשאר false */ }
+    } catch (e) { why5 = `חריגה בזמן הבדיקה: ${e.message}`; }
     await killer.end().catch(() => {});
     await lock5().catch(() => {});
   }
-  add("⚠️ ניתוק חיבור הנעילה אינו מפיל את התהליך", survived, true);
+  add("⚠️ ניתוק חיבור הנעילה אינו מפיל את התהליך", survived, true, why5);
 
   // ---- 6. ⚠️ נעילה בסרק משוחררת אוטומטית ----
   // ============================================================
@@ -207,10 +249,11 @@ const path = require("node:path");
 
   console.log("בדיקה                                      בפועל       צפוי");
   let bad = 0;
-  for (const [name, got, want] of checks) {
+  for (const [name, got, want, why] of checks) {
     const ok = got === want;
     if (!ok) bad++;
     console.log(`${name.padEnd(42)}${String(got).slice(0, 10).padStart(10)} ${String(want).slice(0, 10).padStart(10)}  ${ok ? "✅" : "❌"}`);
+    if (!ok && why) console.log(`   └─ ${why}`);
   }
 
   console.log(bad === 0 ? "\n✅ שרת אחד בלבד יכול לרוץ" : `\n❌ ${bad} כשלים`);
