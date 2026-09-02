@@ -622,6 +622,21 @@ async function parityStats() {
       compare(`stats/${period}/${code}.errors`,       js.errors,              s.errors);
       compare(`stats/${period}/${code}.errInMaint`,   js.errorsInMaintenance, s.errors_in_maintenance);
       compare(`stats/${period}/${code}.failureRate`,  js.failureRate,         s.failure_rate);
+      // ⚠️ זמן הטיפול נכנס להשוואה כמו כל שדה אחר. שדה שקיים בשתי הזרועות
+      // ואינו מושווה הוא בדיוק החור ש-parity-shape נבנה בשבילו — שם זה היה
+      // trend, וכאן היה יכול להיות ההבדל בין ממוצע על מקטעים סגורים לבין
+      // ממוצע על כולם.
+      compare(`stats/${period}/${code}.avgRepair`,    js.avgRepairMinutes,    s.avg_repair_minutes);
+      compare(`stats/${period}/${code}.medRepair`,    js.medianRepairMinutes, s.median_repair_minutes);
+      compare(`stats/${period}/${code}.longCount`,    js.longRepairCount,     s.long_repair_count);
+      compare(`stats/${period}/${code}.longPct`,      js.longRepairPercent,   s.long_repair_percent);
+      compare(`stats/${period}/${code}.quickCount`,   js.quickRepairCount,    s.quick_repair_count);
+      compare(`stats/${period}/${code}.medCount`,     js.mediumRepairCount,   s.medium_repair_count);
+      // ⚠️ מערך מושווה כמחרוזת: `compare` בנוי לסקלרים, ושני מערכים
+      // שווי-ערך אינם `===`. השוואת אורך בלבד הייתה מפספסת סדר שונה —
+      // וסדר הוא בדיוק מה שהגרף מציג.
+      compare(`stats/${period}/${code}.repairSeries`,
+        JSON.stringify(js.repairSeries), JSON.stringify(s.repair_minutes));
       expectNumber(`stats/${period}/${code}.failureRate type`, s.failure_rate);
       expectNumber(`stats/${period}/${code}.operations type`,   s.operations);
       if (failures > before) periodFails++;

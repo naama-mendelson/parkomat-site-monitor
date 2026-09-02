@@ -1,0 +1,42 @@
+/* ============================================================
+   RepairChart — מקל לכל תקלה, גובה לפי המשך
+   ============================================================
+   ⚠️ צבעי המערכת בלבד, ואותו קידוד של הרשימה בפאנל: מקל אדום כאן הוא
+   שורה עם פס אדום שם. גרסה קודמת קידדה צבעים קשיח, ולכן גם המציאה
+   פלטה שנייה וגם לא הגיבה למצב כהה. */
+
+.rchart {
+  display: flex;
+  align-items: flex-end;
+  /* ⚠️ **gap ולא רוחב קבוע.** מספר התקלות משתנה מאתר לאתר, ורוחב קבוע
+     היה גורם לאתר עם 30 תקלות לגלוש ולאתר עם 3 להיראות ריק. flex: 1
+     על המקלות מחלק את הרוחב הקיים, וה-gap מבטיח שהם נשארים מובחנים. */
+  gap: 2px;
+  width: 100%;
+}
+
+.rchart-bar {
+  flex: 1;
+  min-width: 2px;
+  /* ⚠️ מקסימום, כדי שאתר עם שתי תקלות לא יקבל שני מלבנים רחבים
+     שנראים כמו פס ולא כמו גרף. */
+  max-width: 14px;
+  border-radius: 1.5px 1.5px 0 0;
+  align-self: flex-end;
+}
+
+.rchart-bar--quick  { background: var(--brand-light); }
+.rchart-bar--medium { background: var(--status-warning); }
+.rchart-bar--long   { background: var(--status-error); }
+
+/* ⚠️ הריחוף מציג את המשך המדויק. בלעדיו הגרף אומר "יש כאן שיא" ולא
+   כמה — ומי שרואה מקל גבוה רוצה את המספר. */
+.rchart-bar:hover { filter: brightness(1.15); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .rchart-bar { transition: filter 0.12s ease; }
+}
+
+/* על הכרטיס — צפוף יותר, כי יש פחות רוחב ופחות גובה. */
+.rchart--compact { gap: 1.5px; }
+.rchart--compact .rchart-bar { max-width: 9px; }

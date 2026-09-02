@@ -496,6 +496,10 @@ $$;
 -- היא המשך ואסור שתיספר. נמדד: מגדל 1 ב-30/08 — error ב-27/08, no_comm
 -- של 2.9 ימים, ואז error שוב. קריאה לדלי בודד לא רואה את הראשונה
 -- וסופרת את השנייה כחדשה. השער parity-exec-series תפס בדיוק את זה.
+-- ⚠️ DROP מפורש: הוספת עמודה ל-RETURNS TABLE אינה CREATE OR REPLACE חוקי
+-- ("cannot change return type of existing function").
+DROP FUNCTION IF EXISTS app.error_segments(integer[], text, text);
+
 CREATE OR REPLACE FUNCTION app.error_segments(
   p_site_ids integer[],
   p_from     text,
@@ -504,13 +508,17 @@ CREATE OR REPLACE FUNCTION app.error_segments(
 RETURNS TABLE (
   site_id        integer,
   started_at     text,
+  -- ⚠️ **ended_at נחשף כאן ולא מחושב אצל הצרכן.** זמן הטיפול חייב לצאת
+  -- מאותם מקטעים שמהם יוצאת ספירת התקלות — אחרת אתר יראה "12 תקלות"
+  -- ו"ממוצע טיפול" שחושב על קבוצה אחרת. NULL = תקלה שעדיין פתוחה.
+  ended_at       text,
   in_maintenance boolean
 )
 LANGUAGE sql
 STABLE
 AS $seg$
 WITH err AS (
-  SELECT c.site_id, c.started_at
+  SELECT c.site_id, c.started_at, c.ended_at
     FROM public.site_segments_collapsed(p_site_ids, p_from, p_to) c
    WHERE c.status = 'error'
      -- ⚠️ **אחרי הקיפול ולא לפניו** — זהה ל-statsFromData. מקטע שהוצא
@@ -523,6 +531,7 @@ WITH err AS (
 SELECT
   e.site_id,
   e.started_at,
+  e.ended_at,
   (EXISTS (
      SELECT 1 FROM maintenance_windows w
       WHERE w.site_id = e.site_id
@@ -539,6 +548,8 @@ SELECT
 FROM err e;
 $seg$;
 
+DROP FUNCTION IF EXISTS public.site_stats(integer[], text, text);
+
 CREATE OR REPLACE FUNCTION public.site_stats(
   p_site_ids integer[],
   p_from     text,
@@ -549,7 +560,67 @@ RETURNS TABLE (
   operations            integer,
   errors                integer,
   errors_in_maintenance integer,
-  failure_rate          double precision
+  failure_rate          double precision,
+  -- ============================================================
+  -- ⚠️ זמן טיפול — ולמה **שניים** ולא אחד
+  -- ============================================================
+  -- כמה זמן האתר שוהה בתקלה עד שהוא חוזר לתפעול או למוכן.
+  --
+  -- ⚠️ **הממוצע לבדו מטעה כאן, וזה נמדד.** על 277 תקלות ב-90 יום:
+  -- 10% התקלות הארוכות מהוות **68%** מכלל זמן התקלה. התוצאה היא שהממוצע
+  -- מתאר את הזנב ולא את היום-יום — אתר 2438 למשל: ממוצע 55.2 דקות,
+  -- חציון 5.3. מסך שמציג 55 מתאר אתר איטי, בעוד שחצי מהתקלות שם נסגרות
+  -- תוך חמש דקות.
+  --
+  -- לכן שניהם מוחזרים. הממוצע הוא מה שנשאל; החציון הוא מה שמונע ממנו
+  -- להטעות, והפער ביניהם הוא עצמו הסימן ל"יש כאן תקלה אחת שנתקעה".
+  --
+  -- ⚠️ **תקלה פתוחה אינה נספרת.** אין לה זמן טיפול — היא עדיין בטיפול,
+  -- וספירתה כאילו הסתיימה עכשיו הייתה מקצרת את הממוצע דווקא כשאתר תקוע.
+  --
+  -- ⚠️ **ותקלות בתחזוקה מוחרגות**, בדיוק כמו בעמודת errors שמעליי. אחרת
+  -- "זמן הטיפול" היה כולל שעות שבהן איש לא אמור היה לטפל.
+  avg_repair_minutes    double precision,
+  median_repair_minutes double precision,
+  -- ============================================================
+  -- ⚠️ הזנב — כספירה ואחוז, ולא כממוצע שני
+  -- ============================================================
+  -- כאן ישב "ממוצע בלי שתי התקלות הארוכות", והוא הוחלף. הסיבה עקרונית:
+  -- הסרת **k פריטים** אומרת דבר אחר על כל מדגם — באתר עם 3 תקלות היא
+  -- מוחקת שני שלישים מהנתונים, ובאתר עם 33 היא מוחקת 6%. אותה תווית,
+  -- שתי משמעויות. והיא גם אינה קיימת כשיש שתי תקלות או פחות: 11 מתוך
+  -- 18 כרטיסים הציגו מקף.
+  --
+  -- **סף אינו k.** "מעל שעה" אומר את אותו דבר על אתר עם תקלה אחת ועל
+  -- אתר עם 33, ואינו משנה משמעות עם גודל המדגם. ואפס הוא תשובה אמיתית
+  -- ומשמעותית — "אף תקלה לא נגררה" — במקום היעדר נתון.
+  --
+  -- ⚠️ **והשעה נבחרה ממדידה ולא כי היא עגולה:** 78% מהתקלות נסגרות תוך
+  -- חצי שעה ו-88% תוך שעה. הסף מסמן את החריג במקום לחתוך באמצע ההתפלגות.
+  --
+  -- ⚠️ **ושניהם מוחזרים, אחוז וספירה.** אחוז לבדו מטעה במדגם קטן — אתר
+  -- עם שתי תקלות שאחת מהן ארוכה הוא "50%", וזה קורא כאסון. הספירה היא
+  -- מה שמחזיר את הפרופורציה, ולכן היא נחוצה לצד האחוז ולא במקומו.
+  long_repair_count      integer,
+  long_repair_percent    double precision,
+  -- ⚠️ שתי הספירות שמשלימות את ההתפלגות לרצועה שעל הכרטיס. הגבולות
+  -- (רבע שעה, שעה) אינם עגולים לשם עיגול: נמדד ש-78% מהתקלות נסגרות תוך
+  -- חצי שעה ו-88% תוך שעה, כלומר הם חותכים היכן שההתפלגות באמת נשברת.
+  quick_repair_count     integer,
+  medium_repair_count    integer,
+  -- ============================================================
+  -- ⚠️ המשכים עצמם — כדי שהכרטיס יוכל לצייר מקל לכל תקלה
+  -- ============================================================
+  -- הספירות מעליי מספיקות לפס יחסי, אבל לא לגרף שבו **גובה כל מקל הוא
+  -- משך התקלה**. לזה צריך את הערכים.
+  --
+  -- ⚠️ ומוחזרים כמערך בשורה הקיימת, ולא כשאילתה נוספת: שאילתה לכל
+  -- כרטיס הייתה 18 קריאות — בדיוק ה-N+1 שנמחק מ-queries.js.
+  --
+  -- ⚠️ ותקרה של 60: הנמדד הגבוה ביותר הוא 36 תקלות לאתר ב-90 יום, ולכן
+  -- זו הגנה מבנית על גודל התשובה ולא הערכה. סדר כרונולוגי, כי הגרף
+  -- מציג ציר זמן ולא דירוג.
+  repair_minutes         double precision[]
 )
 LANGUAGE sql
 STABLE
@@ -576,7 +647,7 @@ WITH ops AS (
 -- executive_series הייתה חייבת את אותה הגדרה — שכפול היה נפרד ביום
 -- שמישהו יתקן אחד מהם, והתסמין הוא שני מספרי תקלות לאותו אתר.
 classified AS (
-  SELECT e.site_id, e.in_maintenance
+  SELECT e.site_id, e.in_maintenance, e.started_at, e.ended_at
     FROM app.error_segments(p_site_ids, p_from, p_to) e
 ),
 agg AS (
@@ -584,6 +655,31 @@ agg AS (
          COUNT(*) FILTER (WHERE NOT in_maintenance)::int AS errors,
          COUNT(*) FILTER (WHERE in_maintenance)::int     AS errors_in_maint
     FROM classified
+   GROUP BY site_id
+),
+-- ⚠️ **המשך אמיתי ולא חתוך לגבול הטווח.** תיקון שנמשך שלוש שעות נמשך
+-- שלוש שעות, גם אם השבוע הנבחר נגמר באמצע. חיתוך לגבול היה מקצר דווקא
+-- את התקלות הארוכות — אלה שכל המדד קיים בשבילן.
+durations AS (
+  SELECT site_id, started_at,
+         EXTRACT(EPOCH FROM (ended_at::timestamptz - started_at::timestamptz)) / 60 AS mins
+    FROM classified
+   WHERE NOT in_maintenance AND ended_at IS NOT NULL
+),
+-- ⚠️ שלוש המידות יוצאות מ**אותה** קבוצת מקטעים. חישוב הגזום ממקור נפרד
+-- היה מאפשר לו להתבסס על קבוצה אחרת מזו של הממוצע — כלומר שני מספרים
+-- שנראים בני-השוואה ואינם.
+rep AS (
+  SELECT site_id,
+         AVG(mins)                                        AS avg_min,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY mins) AS med_min,
+         COUNT(*) FILTER (WHERE mins > 60)::int            AS long_n,
+         COUNT(*) FILTER (WHERE mins <= 15)::int           AS quick_n,
+         COUNT(*) FILTER (WHERE mins > 15 AND mins <= 60)::int AS medium_n,
+         COUNT(*)::int                                     AS closed_n,
+         (ARRAY_AGG(ROUND(mins::numeric, 1)::double precision ORDER BY started_at)
+          )[1:60]                                          AS mins_arr
+    FROM durations
    GROUP BY site_id
 )
 SELECT
@@ -595,13 +691,25 @@ SELECT
     WHEN COALESCE(o.n, 0) > 0
     THEN ROUND(((COALESCE(a.errors, 0)::numeric / o.n) * 100), 2)::double precision
     ELSE 0::double precision
-  END
+  END,
+  -- ⚠️ NULL ולא 0: אתר בלי תקלות סגורות בטווח לא "טופל תוך אפס דקות".
+  -- הדשבורד מציג — במקום מספר, בדיוק כמו measuredHours = 0 בזמינות.
+  ROUND(r.avg_min::numeric, 1)::double precision,
+  ROUND(r.med_min::numeric, 1)::double precision,
+  -- ⚠️ 0 ולא NULL: "אף תקלה לא נגררה" הוא נתון, לא היעדר נתון. NULL רק
+  -- כשלא הייתה אף תקלה סגורה — ואז אין על מה לדווח בכלל.
+  r.long_n,
+  ROUND((r.long_n::numeric / NULLIF(r.closed_n, 0)) * 100, 0)::double precision,
+  r.quick_n,
+  r.medium_n,
+  r.mins_arr
 -- כמו ב-site_uptime: הנהג הוא טבלת האתרים, כדי לתמוך ב-NULL (כל האתרים)
 -- ולהחזיר שורה לכל אתר קיים גם בלי נתונים בטווח.
 FROM (SELECT id AS site_id FROM sites
        WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)) AS ids
 LEFT JOIN ops o ON o.site_id = ids.site_id
-LEFT JOIN agg a ON a.site_id = ids.site_id;
+LEFT JOIN agg a ON a.site_id = ids.site_id
+LEFT JOIN rep r ON r.site_id = ids.site_id;
 $$;
 
 COMMENT ON FUNCTION public.site_stats(integer[], text, text) IS
@@ -867,6 +975,9 @@ COMMENT ON FUNCTION public.recent_errors(integer) IS
 --    בלבד הייתה מעלימה תקלה ממסך אחד ומשאירה אותה באחר.
 -- ⚠️ DROP: נוספו עמודות ל-RETURNS TABLE, ו-REPLACE אינו יכול לשנות טיפוס.
 DROP FUNCTION IF EXISTS public.site_status_history(integer, integer);
+
+DROP FUNCTION IF EXISTS public.site_repair_events(integer, text, text);
+
 
 CREATE OR REPLACE FUNCTION public.site_status_history(
   p_site_id integer,

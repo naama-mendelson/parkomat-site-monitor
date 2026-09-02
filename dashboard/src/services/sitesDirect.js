@@ -90,6 +90,16 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       failureRate: st?.failure_rate ?? 0,
       operations:  st?.operations   ?? 0,
       errors:      st?.errors       ?? 0,
+      // ⚠️ **?? null ולא ?? 0**, בשונה משלוש השורות שמעליי. אתר בלי תקלות
+      // סגורות בטווח לא "טופל תוך אפס דקות" — אין לו נתון. אותה הבחנה
+      // בדיוק כמו measuredHours = 0 בזמינות, שתי שורות מתחת.
+      avgRepairMinutes:    st?.avg_repair_minutes    ?? null,
+      medianRepairMinutes: st?.median_repair_minutes ?? null,
+      longRepairCount:     st?.long_repair_count     ?? null,
+      longRepairPercent:   st?.long_repair_percent   ?? null,
+      quickRepairCount:    st?.quick_repair_count    ?? null,
+      mediumRepairCount:   st?.medium_repair_count   ?? null,
+      repairSeries:        st?.repair_minutes         ?? null,
       // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהמסך יציג "—"
       // ולא "0%". "0%" נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
       uptime: up && up.measured_hours > 0 ? up.availability_percent : null,

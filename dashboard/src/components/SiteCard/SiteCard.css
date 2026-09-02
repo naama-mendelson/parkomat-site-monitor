@@ -137,6 +137,82 @@
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  /* ⚠️ המספר לעולם אינו נשבר לשתי שורות. זה מה שקרה כשהממוצע הגזום היה
+     באותה שורה, והוא מה שהופך טור מיושר לטקסט מבולגן. */
+  white-space: nowrap;
+}
+
+/* ============================================================
+   ⚠️ שורת הטיפול היא כפתור — והרצועה ירדה מהכרטיס
+   ============================================================
+   הרצועה נוסתה כאן וירדה: מקרא שמדפיס אפסים על אתר עם תקלה אחת, פס
+   יחיד ב-100% שאינו אומר דבר, וגובה כרטיסים לא אחיד ששבר את הרשת.
+   פרופורציה על 1–3 תקלות אינה מידע. היא חיה עכשיו ב-RepairBreakdown,
+   שם יש מקום להציג אותה עם הרשימה שמסבירה אותה.
+
+   ⚠️ ומה שנשאר כאן חייב להיראות כמו שאר השורות — כפתור שמצייר את עצמו
+   אחרת היה הופך שורת נתונים לפקד, ומושך את העין לשורה אחת מתוך שלוש
+   בלי סיבה. ההבדל היחיד הוא ה-hover. */
+.card-detail--btn {
+  /* ⚠️ **נראה כמו כפתור, ולא רק מתנהג ככזה.** הגרסה הקודמת הייתה זהה
+     לשאר השורות ונרמזה רק ב-hover — כלומר אף אחד לא ידע שאפשר ללחוץ
+     עליה עד שהעכבר במקרה עבר שם. רמז שמתגלה רק במגע אינו רמז.
+
+     ⚠️ והמשקל מדוד: מסגרת דקה ורקע עדין, ולא כפתור מלא. שורת נתונים
+     שצועקת הייתה מושכת את העין לפני אחוז הכשל ולפני נקודת הסטטוס —
+     שהם המידע החשוב יותר על הכרטיס. */
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  padding: 5px 9px;
+  /* מקזז את הריפוד כדי שהשורה תישאר מיושרת עם השורות שמעליה. */
+  margin: 1px -9px 0;
+  width: calc(100% + 18px);
+  gap: 8px;
+  /* ⚠️ **לא space-between כמו שאר השורות.** עם שלושה ילדים (תווית, ערך,
+     חץ) הוא היה פורש אותם שווה בשווה והערך היה נתקע באמצע. כאן התווית
+     בהתחלה, והערך והחץ נצמדים יחד לקצה — כי הם יחידה אחת. */
+  justify-content: flex-start;
+}
+.card-detail--btn .detail-value { margin-inline-start: auto; }
+
+/* ⚠️ אתר בלי תקלות אינו כפתור כלל — שום מסגרת, שום חץ. פקד מושבת
+   שנראה כמו פקד מבטיח פעולה שלא תקרה. */
+.card-detail--btn:disabled {
+  cursor: default;
+  background: none;
+  border-color: transparent;
+}
+
+.detail-chevron {
+  flex: none;
+  color: var(--text-muted);
+  opacity: 0.75;
+  align-self: center;
+}
+
+.card-detail--btn:not(:disabled):hover {
+  border-color: var(--accent);
+  background: var(--bg-card);
+}
+.card-detail--btn:not(:disabled):hover .detail-chevron {
+  color: var(--accent);
+  opacity: 1;
+}
+.card-detail--btn:not(:disabled):active { transform: translateY(1px); }
+
+.card-detail--btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card-detail--btn { transition: border-color .14s ease, background .14s ease; }
+  .detail-chevron { transition: color .14s ease, opacity .14s ease; }
 }
 
 /* ============================================================

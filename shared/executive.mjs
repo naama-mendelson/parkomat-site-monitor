@@ -336,6 +336,8 @@ export function statsFromData(data, siteId, { from, to }) {
 
   let errors = 0;
   let errorsInMaintenance = 0;
+  const repairs = [];
+  const repairSeries = [];
   // הקיפול רץ על *כל* המקטעים הטעונים ולא רק על אלה שבטווח, וזה חיוני: תקלה
   // שהתחילה לפני ה-from, נותקה, וחזרה בתוך הטווח — היא המשך, ואסור שתיספר.
   // בלי המקטע הקודם אי אפשר לדעת זאת.
@@ -348,15 +350,78 @@ export function statsFromData(data, siteId, { from, to }) {
     if (s.excluded_at) continue;
     if (!(s.started_at >= from && s.started_at < to)) continue;
     if (wasInMaintenanceMem(data, siteId, s.started_at)) errorsInMaintenance++;
-    else errors++;
+    else {
+      errors++;
+      // ⚠️ **רק מקטע שנסגר.** לתקלה פתוחה אין זמן טיפול — היא עדיין
+      // בטיפול, וספירתה כאילו הסתיימה עכשיו הייתה מקצרת את הממוצע דווקא
+      // כשאתר תקוע. מאותה סיבה גם תקלות בתחזוקה אינן נכנסות: אלה שעות
+      // שבהן איש לא אמור היה לטפל.
+      if (s.ended_at) {
+        const mins = (Date.parse(s.ended_at) - Date.parse(s.started_at)) / 60000;
+        repairs.push(mins);
+        // ⚠️ סדר כרונולוגי ונפרד מ-`repairs`, ש**ממוין** בהמשך לחישוב
+        // החציון. מיון של אותו מערך היה הופך את הגרף מציר זמן לדירוג.
+        repairSeries.push(Math.round(mins * 10) / 10);
+      }
+    }
   }
 
   const failureRate = operations > 0 ? (errors / operations) * 100 : 0;
+
+  // ============================================================
+  // ⚠️ זמן טיפול — ממוצע **וחציון**, ולא ממוצע לבדו
+  // ============================================================
+  // נמדד על 277 תקלות ב-90 יום: 10% הארוכות מהוות 68% מכלל זמן התקלה.
+  // הממוצע מתאר לכן את הזנב ולא את היום-יום — אתר 2438: ממוצע 44.8 דקות,
+  // חציון 4.6. מסך שמציג רק את הראשון מתאר אתר איטי שרובו מהיר.
+  //
+  // הפער בין השניים הוא עצמו הסימן ל"יש כאן תקלה אחת שנתקעה".
+  repairs.sort((a, b) => a - b);
+  const avg = repairs.length
+    ? repairs.reduce((a, b) => a + b, 0) / repairs.length : null;
+  // חציון על מספר זוגי = ממוצע שני האמצעיים, בדיוק כמו percentile_cont ב-SQL.
+  const med = repairs.length
+    ? (repairs.length % 2
+        ? repairs[(repairs.length - 1) / 2]
+        : (repairs[repairs.length / 2 - 1] + repairs[repairs.length / 2]) / 2)
+    : null;
+  // ============================================================
+  // ⚠️ הזנב — ספירה ואחוז, ולא "ממוצע בלי השתיים הארוכות"
+  // ============================================================
+  // כאן ישב ממוצע גזום, והוא הוחלף. הסרת **k פריטים** אומרת דבר אחר על
+  // כל מדגם: באתר עם 3 תקלות היא מוחקת שני שלישים, ובאתר עם 33 היא
+  // מוחקת 6%. סף אינו k — "מעל שעה" אומר את אותו דבר בכל גודל מדגם.
+  //
+  // ⚠️ והשעה ממדידה: 78% מהתקלות נסגרות תוך חצי שעה, 88% תוך שעה.
+  //
+  // ⚠️ ושניהם נשמרים, ספירה ואחוז: אחוז לבדו מטעה במדגם קטן — אתר עם
+  // שתי תקלות שאחת ארוכה הוא "50%", וזה קורא כאסון.
+  const LONG_MINUTES = 60;
+  const QUICK_MINUTES = 15;
+  const longCount = repairs.filter((m) => m > LONG_MINUTES).length;
+  const quickCount = repairs.filter((m) => m <= QUICK_MINUTES).length;
+  const mediumCount = repairs.length - quickCount - longCount;
+  const longPercent = repairs.length
+    ? Math.round((longCount / repairs.length) * 100) : null;
+
+  const round1 = (v) => (v === null ? null : Math.round(v * 10) / 10);
+
   return {
     operations,
     errors,
     errorsInMaintenance,
     failureRate: Math.round(failureRate * 100) / 100,
+    // ⚠️ null ולא 0: אתר בלי תקלות סגורות לא "טופל תוך אפס דקות".
+    avgRepairMinutes: round1(avg),
+    medianRepairMinutes: round1(med),
+    // ⚠️ 0 ולא null: "אף תקלה לא נגררה" הוא נתון. null רק כשאין תקלות סגורות.
+    longRepairCount: repairs.length ? longCount : null,
+    longRepairPercent: longPercent,
+    quickRepairCount: repairs.length ? quickCount : null,
+    mediumRepairCount: repairs.length ? mediumCount : null,
+    // ⚠️ אותה תקרה כמו ב-SQL. בלעדיה שער ההשוואה היה נופל על אתר עם
+    // יותר מ-60 תקלות — ורק שם, כלומר בהפתעה.
+    repairSeries: repairs.length ? repairSeries.slice(0, 60) : null,
   };
 }
 
