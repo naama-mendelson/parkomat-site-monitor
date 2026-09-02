@@ -106,19 +106,42 @@ Deno.serve(async (req) => {
   // ⚠️ נשמר ב-settings כדי שכיוונו יהיה UPDATE אחד ולא סבב פריסה: את
   // החלון הנכון יודעים רק **אחרי** שרואים כמה התראות מגיעות בפועל.
   // ⚠️ ו-0 אינו מקרה מיוחד — הוא "בלי דילוג", כלומר כל אירוע נשלח.
-  const { data: setting } = await db.from("settings")
+  // ============================================================
+  // ⚠️ שגיאות המסד נאספות ומוחזרות — הן היו נבלעות, וזה השתיק את ההגנה
+  // ============================================================
+  // ארבע הקריאות כאן התעלמו מ-`error`. נמדד: ל-`service_role` לא הייתה
+  // הרשאה על אף טבלה, ולכן כולן חזרו `42501` — והקוד המשיך כרגיל.
+  //
+  // התוצאה לא הייתה "ההתראות לא עובדות" אלא משהו ערמומי יותר: החלון
+  // מ-settings התעלם, "מתי נשלח לאחרונה" לא נקרא ולא נכתב, ולכן **מניעת
+  // ההצפה פשוט לא התקיימה**. אתר מהבהב היה שולח התראה על כל אירוע.
+  //
+  // ⚠️ ואינן מחזירות 500: הקורא הוא טריגר `pg_net`, וכישלון היה הופך
+  // התראה שנשלחה בהצלחה לניסיון חוזר. הן נרשמות ב-`warnings` ומוחזרות
+  // בגוף התשובה, שם `alert_health` וכל מי שקורא את התור יראה אותן.
+  const warnings: string[] = [];
+  const warn = (what: string, e: unknown) => {
+    if (e) warnings.push(`${what}: ${String((e as { message?: string })?.message ?? e)}`);
+  };
+
+  const { data: setting, error: setErr } = await db.from("settings")
     .select("value").eq("key", "push_window_minutes").maybeSingle();
+  warn("קריאת push_window_minutes", setErr);
   const windowMin = Number(setting?.value ?? 10);
 
   if (windowMin > 0) {
-    const { data: last } = await db.from("push_last_sent")
+    const { data: last, error: lastErr } = await db.from("push_last_sent")
       .select("sent_at").eq("site_id", site_id).maybeSingle();
+    warn("קריאת push_last_sent", lastErr);
     if (last?.sent_at) {
       const ageMin = (Date.now() - Date.parse(last.sent_at)) / 60000;
       if (ageMin < windowMin) {
         // ⚠️ 200 ולא 429: הקורא הוא טריגר, לא לקוח. שגיאה כאן הייתה נרשמת
         // בתור של pg_net כתקלה חוזרת, בעוד שדילוג מכוון הוא הצלחה.
-        return new Response(JSON.stringify({ skipped: "rate-limited", ageMin }), { status: 200 });
+        return new Response(JSON.stringify({
+          skipped: "rate-limited", ageMin,
+          ...(warnings.length ? { warnings } : {}),
+        }), { status: 200 });
       }
     }
   }
@@ -128,9 +151,20 @@ Deno.serve(async (req) => {
   const { data: targets, error } = await db.rpc("push_targets_for_site", {
     p_site_id: site_id, p_kind: kind,
   });
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  // ⚠️ ה-warnings נלווים גם לכישלון: כשהקריאה הזו נופלת, השגיאות שנאספו
+  // לפניה הן בדיוק מה שמסביר **למה** — ולזרוק אותן כאן היה משאיר את מי
+  // שקורא את התור עם "500" בלי הקשר.
+  if (error) {
+    return new Response(JSON.stringify({
+      error: error.message,
+      ...(warnings.length ? { warnings } : {}),
+    }), { status: 500 });
+  }
   if (!targets?.length) {
-    return new Response(JSON.stringify({ sent: 0, reason: "אין מנויים" }), { status: 200 });
+    return new Response(JSON.stringify({
+      sent: 0, reason: "אין מנויים",
+      ...(warnings.length ? { warnings } : {}),
+    }), { status: 200 });
   }
 
   const server = await webpush.ApplicationServer.new({
@@ -169,17 +203,24 @@ Deno.serve(async (req) => {
   }));
 
   if (dead.length) {
-    await db.from("push_subscriptions").delete().in("id", dead);
+    const { error: delErr } = await db.from("push_subscriptions").delete().in("id", dead);
+    warn("מחיקת מנויים מתים", delErr);
   }
 
   // ⚠️ נרשם רק כששלחנו בפועל. עדכון גם על 0 נשלחו היה משתיק את האתר
   // לחלון שלם בגלל ניסיון שלא הגיע לאיש.
   if (sent > 0) {
-    await db.from("push_last_sent")
+    // ⚠️ הכתיבה הזו היא **כל** מניעת ההצפה. כשהיא נכשלת בשקט, החלון
+    // לעולם אינו מתחיל — ולכן היא זו שהכי חשוב שתדווח.
+    const { error: upErr } = await db.from("push_last_sent")
       .upsert({ site_id, sent_at: new Date().toISOString() }, { onConflict: "site_id" });
+    warn("רישום מועד השליחה (מניעת הצפה)", upErr);
   }
 
-  return new Response(JSON.stringify({ sent, removed: dead.length }), {
+  return new Response(JSON.stringify({
+    sent, removed: dead.length,
+    ...(warnings.length ? { warnings } : {}),
+  }), {
     status: 200, headers: { "content-type": "application/json" },
   });
   } catch (e) {

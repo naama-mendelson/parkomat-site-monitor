@@ -40,6 +40,10 @@ const GATES = [
   { name: "check-signup",      what: "מי נכנס למערכת ומה הוא מקבל" },
   { name: "check-single-instance", what: "שרת שני מסרב לעלות" },
   { name: "check-permissions",  what: "מי מורשה למה — מקצה לקצה" },
+  // ⚠️ נכתב אחרי שנמצא ש**אף טבלה** ב-public לא הוענקה ל-service_role,
+  // ושתי ה-Edge Functions נכשלו בשקט על כך — האחת החזירה 200 על עדכון
+  // שלא קרה, והשנייה איבדה את מניעת ההצפה שלה בלי שאיש הבחין.
+  { name: "check-edge-grants",  what: "Edge Functions — הרשאות וטיפול בשגיאה" },
   { name: "check-writes",       what: "כתיבה ישירה ל-Supabase, בלי השרת" },
   { name: "check-reports",      what: "דיווחי שטח — תקרות, זהות, ומי רואה את מה" },
   // ⚠️ .mjs ולא .js: הוא מייבא את shared/timeline.mjs — אותו מודול עצמו

@@ -690,6 +690,100 @@ CREATE POLICY audit_log_read_authenticated ON audit_log
   USING ((SELECT app.is_manager()) OR action NOT LIKE 'user.%');
 
 GRANT SELECT ON app_users, audit_log TO authenticated;
+
+-- ============================================================
+-- ⚠️ service_role על app_users — בלי זה הזמנת מנהל יוצרת בקר, בשקט
+-- ============================================================
+-- ה-Edge Function `invite-user` יוצר את המשתמש ואז מתקן את הדרגה:
+--
+--   admin.from("app_users").update({ role: wantRole })
+--
+-- התיקון הזה **חובה** — `provision_app_user` הוא AFTER INSERT ורץ לפני
+-- ש-GoTrue כותב את `app_metadata`, ולכן כל מוזמן נוחת כ-'operator'.
+--
+-- ⚠️ **ובלי ההרשאה הזו הוא נכשל ב-42501, והפונקציה אינה בודקת את השגיאה.**
+-- נמדד: `permission denied for table app_users`. התוצאה — הקריאה מחזירה
+-- **200**, גוף התשובה מכריז `role: "manager"`, המסך מציג הצלחה והסיסמה
+-- הזמנית עובדת. המוזמן פשוט מקבל 403 בכל פעולת ניהול, ואין שום הודעה
+-- שמסבירה למה. זה כבר קרה כאן פעם אחת למשתמשת אמיתית.
+--
+-- ⚠️ וזו אינה הרחבה של גבול האמון: `service_role` הוא המפתח הסודי, שכבר
+-- עוקף RLS מהגדרתו ויושב **רק** ב-Edge Function ובשרת — לעולם לא בדפדפן
+-- (כלל 7). מה שחסר כאן היה GRANT ברמת הטבלה, לא הרשאה עקרונית.
+--
+-- ⚠️ ולמה מפורש ולא בהסתמכות על ברירת המחדל של Supabase: הטבלאות נוצרות
+-- ע"י `db.init()` שלנו, ולכן ברירות המחדל של הפרויקט אינן חלות עליהן.
+-- הן גם לא היו נוסעות ב-pg_dump אל מסד שאינו Supabase.
+--
+-- ============================================================
+-- ⚠️ וזה לא היה מקרה יחיד — **אף טבלה** לא הייתה מוענקת
+-- ============================================================
+-- נמדד על כל 20 הטבלאות ב-public: לכולן היה בדיוק
+-- `REFERENCES, TRIGGER, TRUNCATE` — השארית שנגזרת מבעלות, ולא גישה
+-- לנתונים. המפתח הסודי לא יכול היה לקרוא שורה אחת דרך PostgREST.
+--
+-- ⚠️ **המחיר השני נמצא ב-notify-fault**, וגם הוא היה שקט: מניעת ההצפה
+-- שלה קוראת `settings` ו-`push_last_sent` וכותבת אליהן — **בלי לבדוק
+-- שגיאה**. כלומר החלון מ-settings התעלם, "מתי נשלח לאחרונה" לא נקרא
+-- ולא נכתב, ולכן **כל אירוע תקלה היה נשלח** בלי שום דילוג. ההתראה
+-- עצמה הייתה עובדת (`push_targets_for_site` הוא פונקציה, ולפונקציות
+-- יש EXECUTE כברירת מחדל) — מה שלא עבד הוא בדיוק ההגנה מפני הצפה.
+--
+-- ⚠️ ולמה צר ולא `GRANT ALL ON ALL TABLES`: הרשימה הזו היא **תיעוד של
+-- מה ש-Edge Function באמת נוגעת בו**. הענקה גורפת הייתה מסתירה את
+-- השאלה "מי כותב לטבלה הזו", וזו השאלה שכל הקובץ הזה קיים בשבילה.
+-- טבלה חדשה שפונקציה תצטרך — מוסיפים לה שורה כאן, אחרת היא תיכשל
+-- באותה שתיקה בדיוק.
+-- ⚠️ **וכל הענקה נבדקת שהטבלה בכלל קיימת** — אחרת הקובץ הזה מפיל את
+-- עליית השרת.
+--
+-- `push_last_sent` ו-`push_subscriptions` **אינן נוצרות ע"י `db.init()`**.
+-- הן כן בגיט — ב-`supabase/migrations/20260819_push_notifications.sql` —
+-- אבל `db.init()` מחיל אך ורק את שישה הקבצים שב-`master/db/`, ותיקיית
+-- ה-migrations אינה ביניהם. על מסד שהוקם מ-`db.init()` בלבד הן פשוט
+-- אינן שם.
+--
+-- ⚠️ ואז `GRANT` עליהן זורק `undefined_table`, שאינו `undefined_object`,
+-- ולכן הוא היה בורח מה-EXCEPTION, מפיל את החלת הקובץ כולו — ו**עוצר את
+-- קליטת ה-MQTT בגלל הרשאה להתראות push**.
+--
+-- ⚠️ הלולאה כאן **אינה** פותרת את הפער עצמו, ואין להתבלבל: נמדד ש-4
+-- טבלאות ו-6 פונקציות — כולל `public.delete_user`, שהדשבורד קורא לו —
+-- קיימות רק בקובץ ה-migration. הן שורדות מסד חי, ולא הקמה מחדש. הלולאה
+-- רק מונעת שהפער הזה יפיל את השרת.
+DO $$
+DECLARE
+  g record;
+BEGIN
+  FOR g IN
+    -- invite-user: מתקן את הדרגה מיד אחרי היצירה.
+    SELECT 'app_users'          AS t, 'SELECT, UPDATE'         AS p
+    -- notify-fault: קורא את חלון ההשתקה, וזוכר מתי נשלחה התראה אחרונה.
+    --
+    -- ⚠️ `settings` היא הטבלה שבמכוון אין לה מדיניות RLS (היא מחזיקה את
+    -- גיבוב קוד המנהל). ההענקה כאן אינה סותרת זאת: `service_role` עוקף
+    -- RLS מהגדרתו ממילא, והוא לעולם אינו מגיע לדפדפן (כלל 7). מה שהיה
+    -- חסר הוא הרשאה ברמת הטבלה, לא מדיניות.
+    UNION ALL SELECT 'settings',           'SELECT'
+    UNION ALL SELECT 'push_last_sent',     'SELECT, INSERT, UPDATE'
+    UNION ALL SELECT 'push_subscriptions', 'SELECT, DELETE'
+  LOOP
+    IF to_regclass('public.' || g.t) IS NOT NULL THEN
+      EXECUTE format('GRANT %s ON public.%I TO service_role', g.p, g.t);
+    ELSE
+      -- ⚠️ `%` ולא `%s`. ב-`RAISE` הסימן הוא `%` לבדו (בשונה מ-`format`
+      -- בשורה שמעל, שם `%s` נכון). נמדד: `%s` הפיק
+      -- *"הטבלה push_last_sents אינה קיימת"* — שם טבלה שאינו קיים,
+      -- בהודעה שכל תפקידה להצביע על הטבלה החסרה.
+      RAISE WARNING 'הענקה ל-service_role דולגה: הטבלה % אינה קיימת', g.t;
+    END IF;
+  END LOOP;
+EXCEPTION WHEN undefined_object THEN
+  -- Postgres רגיל אינו מכיר את התפקיד. ההרשאה חסרת משמעות שם, וכישלון
+  -- כאן היה עוצר את עליית השרת בגלל תפקיד ספציפי ל-Supabase.
+  NULL;
+END;
+$$;
 GRANT EXECUTE ON FUNCTION app.current_app_user()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_app_role()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.is_manager()          TO authenticated;
