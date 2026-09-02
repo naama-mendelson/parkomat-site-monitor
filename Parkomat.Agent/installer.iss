@@ -44,6 +44,15 @@
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+
+; ⚠️ גרסה על **קובץ ההתקנה עצמו**, ולא רק בלוח הבקרה.
+; AppVersion למעלה עונה על "איזו גרסה מותקנת באתר". השורות האלה עונות על
+; שאלה אחרת שנשאלת קודם: טכנאי עם שלושה ParkomatAgentSetup.exe בתיקיית
+; ההורדות — איזה מהם החדש? בלעדיהן מאפייני הקובץ ריקים לגמרי, והתשובה
+; היחידה היא תאריך השינוי, שמשתנה בכל העתקה.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 ; התקנה למשתמש הנוכחי בלבד — בלי הרשאת מנהל, בלי חלון UAC.
 PrivilegesRequired=lowest

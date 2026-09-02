@@ -67,6 +67,17 @@ public class AgentVersionTests
     }
 
     [Fact]
+    public void TheInstallerFileItselfIsStamped()
+    {
+        // ⚠️ AppVersion עונה על "איזו גרסה מותקנת באתר". זו עונה על שאלה
+        // שנשאלת קודם: טכנאי עם שלושה ParkomatAgentSetup.exe בתיקיית
+        // ההורדות — איזה מהם החדש? בלי VersionInfoVersion מאפייני הקובץ
+        // ריקים, והתשובה היחידה היא תאריך השינוי — שמשתנה בכל העתקה.
+        string iss = File.ReadAllText(Path.Combine(AgentRoot().FullName, "installer.iss"));
+        Assert.Matches(new Regex(@"VersionInfoVersion={#MyAppVersion}"), iss);
+    }
+
+    [Fact]
     public void NoProjectDeclaresItsOwnVersion()
     {
         // ⚠️ csproj שמכריז Version משלו **גובר** על Directory.Build.props,
