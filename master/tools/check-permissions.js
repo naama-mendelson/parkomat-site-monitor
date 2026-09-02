@@ -3,27 +3,49 @@
 // ============================================================
 // למה שער חי ולא בדיקת יחידה
 // ============================================================
-// הכלל מפוזר על פני שלוש שכבות שאף אחת מהן אינה רואה את השנייה: middleware
-// ב-Express (`requireManager`), טריגרים על `auth.users`, ו-RLS ב-Postgres.
-// בדיקה בזיכרון מאמתת שכל שכבה עושה את שלה — ולא שהצירוף שלהן מייצר את
-// הכלל שהוזמן.
+// הכלל מפוזר על פני שלוש שכבות שאף אחת מהן אינה רואה את השנייה: גוף
+// פונקציות ה-RPC (`app.require_manager()`), טריגרים על `auth.users`, ו-RLS
+// על הטבלאות. בדיקה בזיכרון מאמתת שכל שכבה עושה את שלה — ולא שהצירוף
+// שלהן מייצר את הכלל שהוזמן.
 //
 // ⚠️ וזה כבר קרה כאן פעמיים: `requireAuth` נוסף ל-17 מסלולים ו-`askAssistant`
 // נשכח כי הוא fetch עצמאי; והשבתת משתמש "עבדה" בשרת בזמן שה-RLS עדיין נתן
 // לו לקרוא. בשני המקרים כל בדיקות היחידה היו ירוקות.
 //
-// לכן כאן נכנסים באמת: מנהל אמיתי ובקר אמיתי, אסימונים אמיתיים, מול השרת
-// שרץ — ומנסים כל פעולה משני הצדדים.
+// לכן כאן נכנסים באמת: מנהל אמיתי ובקר אמיתי, אסימונים אמיתיים, מול
+// Supabase — ומנסים כל פעולה משני הצדדים.
+//
+// ============================================================
+// ⚠️ השער כוון מחדש — הצד שהוא בדק **נמחק**
+// ============================================================
+// עד היום הוא קרא ל-`/api/users`, `/api/users/invite` ו-`/api/sites` על
+// שרת ב-:4000. אף אחד מהמסלולים האלה אינו קיים: `api/routes.js` מגיש היום
+// **שניים** — `/api/chat` ו-`/health`. כלומר בדיקת הנגישות שבראש הקובץ
+// נכשלה בכל הרצה, השער יצא בקוד 2, ו-`gates.js` הדפיס "אין עליהם ידיעה".
+//
+// ⚠️ וזה גרוע מ"לא רץ": ההודעה *"הפעילי את השרת"* שולחת מישהו לנסות לתקן
+// דבר בלתי אפשרי. שרת שיעלה לא יגיש את המסלולים האלה, כי הם אינם בקוד.
+//
+// המטריצה עצמה לא השתנתה — רק היכן היא נאכפת:
+//
+//   רשימת משתמשים · השבתה · שינוי דרגה · מחיקה  →  RPC דרך PostgREST
+//   הזמנה                                        →  Edge Function invite-user
+//   קריאת אתרים                                  →  PostgREST על הטבלה
+//
+// ⚠️ **וההפרש בין 401 ל"אפס שורות" הוא ממצא, לא פרט טכני.** בשרת, קריאה
+// בלי אסימון קיבלה 401 — דחייה מפורשת. מול PostgREST עם המפתח הציבורי
+// היא מקבלת **200 ורשימה ריקה**, כי RLS מסננת שורות ואינה דוחה בקשות.
+// שתי התשובות בטוחות באותה מידה, אבל קוד שמצפה לשגיאה יראה "אין אתרים"
+// ויציג מסך ריק במקום לבקש התחברות. לכן שתי הצורות נבדקות בנפרד.
 //
 // ============================================================
 // מה נדרש
 // ============================================================
 //   node --env-file=.env tools/check-permissions.js
-// דורש שהשרת ירוץ (PARITY_API, ברירת מחדל http://localhost:4000).
+// אין צורך בשרת.
 const fs = require("node:fs");
 const path = require("node:path");
 
-const API = process.env.PARITY_API || "http://localhost:4000";
 const SB_URL = process.env.SUPABASE_URL;
 const SECRET = process.env.SUPABASE_SECRET_KEY;
 
@@ -33,7 +55,20 @@ const ANON = (ENV.match(/^VITE_SUPABASE_PUBLISHABLE_KEY=(.*)$/m) || [])[1]?.trim
 const STAMP = `permcheck${Date.now()}`;
 const MGR = `${STAMP}.mgr@parkomat.co.il`;
 const OPR = `${STAMP}.opr@parkomat.co.il`;
-const PW = "PermCheck!2026";
+// ============================================================
+// ⚠️ סיסמה אקראית לכל ריצה — קבועה כאן הייתה חור אבטחה אמיתי
+// ============================================================
+// כאן היה `"PermCheck!2026"`, כלומר **סיסמה שכתובה בקוד הפתוח** שבה נוצר
+// חשבון **מנהל** במסד הייצור. הניקוי רץ ביציאה ובכל מסלול כשל — אבל לא
+// כשהתהליך נהרג: Ctrl+C, נפילת חשמל, או שער שמישהו עוצר באמצע.
+//
+// ⚠️ **וזה כבר קרה בפרויקט הזה**: חשבון מנהל שנשאר פעיל בייצור מריצת
+// שער שהופסקה. עם סיסמה קבועה, חשבון כזה אינו רק "שורה מיותרת" — הוא
+// כניסה פתוחה בדרגת מנהל, ומנהל מוחק אתר ואת כל ההיסטוריה שלו.
+//
+// אקראית אינה מונעת את החשבון היתום; היא מונעת שיהיה לו ערך למי שקורא
+// את המאגר. `check-no-residue` הוא מה שתופס את היתום עצמו.
+const PW = require("node:crypto").randomBytes(24).toString("base64url") + "!aA9";
 
 // ⚠️ הרשת כאן מנתקת חיבורים מיוזמתה (נמדד: בערך כל בקשה שנייה). בלי חזרה
 // השער היה נופל באקראי — כלומר הופך לרעש שמתעלמים ממנו.
@@ -57,27 +92,59 @@ async function createUser(email, role) {
   return b.id;
 }
 
-async function signIn(email) {
+async function signIn(email, password = PW) {
   const r = await f(`${SB_URL}/auth/v1/token?grant_type=password`, {
     method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password: PW }),
+    body: JSON.stringify({ email, password }),
   });
   const b = await r.json();
   if (!r.ok) throw new Error(`התחברות ${email} נכשלה: ${r.status} ${b.msg || b.error_description || ""}`);
   return b.access_token;
 }
 
-/** קריאה ל-API של השרת עם אסימון, ומחזירה את הסטטוס בלבד. */
-async function call(token, method, route, body) {
-  const r = await f(`${API}${route}`, {
-    method,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+// ⚠️ הכותרות **בדיוק כמו בדפדפן**: apikey ציבורי + Bearer של המשתמש. זו
+// לא קוסמטיקה — שליחת האסימון לבדו מחזירה 401 מ-PostgREST, ומי שיראה זאת
+// יסיק "אין הרשאה" במקום "חסרה כותרת".
+const hdr = (token) => ({
+  apikey: ANON,
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  "Content-Type": "application/json",
+});
+
+/** קריאת RPC דרך PostgREST — מחזירה סטטוס בלבד. */
+async function rpc(token, name, args = {}) {
+  const r = await f(`${SB_URL}/rest/v1/rpc/${name}`, {
+    method: "POST", headers: hdr(token), body: JSON.stringify(args),
   });
   return r.status;
+}
+
+/** קריאה ל-Edge Function — מחזירה סטטוס בלבד. */
+async function edge(token, name, body) {
+  const r = await f(`${SB_URL}/functions/v1/${name}`, {
+    method: "POST", headers: hdr(token), body: JSON.stringify(body),
+  });
+  return r.status;
+}
+
+/**
+ * כמה שורות אתרים המשתמש הזה רואה.
+ *
+ * ⚠️ **מספר ולא סטטוס.** RLS מסננת שורות; היא אינה דוחה בקשות. משתמש
+ * מושבת מקבל 200 עם `[]`, וזו התשובה הנכונה — אבל בדיקה שמסתכלת בסטטוס
+ * בלבד הייתה מדווחת שהכול תקין בדיוק כשההגנה נעלמה.
+ *
+ * ⚠️ **וכשל חוזר כמחרוזת, לא כמספר — וזה היה באג אמיתי כאן.** הגרסה
+ * הראשונה החזירה `r.status`, והבדיקה "בקר רואה את האתרים" שאלה
+ * `> 0`. תשובת `403` הייתה עוברת אותה — כלומר **חסימה מלאה הייתה
+ * נקראת כהצלחה**, וזו בדיוק הבדיקה שאמורה להוכיח שבקר כן רואה.
+ * מחרוזת נכשלת ב-`> 0` וגם מודפסת קריא בטבלה.
+ */
+async function siteRows(token) {
+  const r = await f(`${SB_URL}/rest/v1/sites?select=id&limit=5`, { headers: hdr(token) });
+  if (!r.ok) return `HTTP ${r.status}`;
+  const b = await r.json().catch(() => []);
+  return Array.isArray(b) ? b.length : 0;
 }
 
 async function cleanup() {
@@ -88,26 +155,29 @@ async function cleanup() {
   }
   const db = require("../db/db");
   await db.prepare("DELETE FROM app_users WHERE email LIKE 'permcheck%'").run();
+
+  // ============================================================
+  // ⚠️ ושורות הביקורת — עקבה שהשער הזה לא הותיר קודם כי הוא לא רץ
+  // ============================================================
+  // כל פעולת ניהול כאן (הזמנה, השבתה, שינוי דרגה, מחיקה) כותבת שורת
+  // ביקורת דרך `app.record_write_audit`, ו-`audit_log` **נקרא ע"י כל
+  // משתמש פעיל**. 21 שורות על שם "permcheck…" הופיעו בייצור ברגע שהשער
+  // חזר לרוץ — כלומר עקבה שנוצרה מיד כשהתיקון עבד.
+  //
+  // ⚠️ ולמה זה חשוב יותר משאר העקבות: הן נראות **בדיוק כמו** פעולות ניהול
+  // אמיתיות של אדם, במסך שאנשים קוראים כדי לענות על "מי עשה מה".
+  //
+  // ⚠️ ביטוי רגולרי ולא `LIKE 'permcheck%'`: `actor_name` מגיע מ-
+  // `app.actor_display_name()`, שמעדיף שם מלא על כתובת. היום אין שם מלא
+  // למשתמשי השער ולכן זו הכתובת — אבל בדיקה שנשענת על כך הייתה מפסיקה
+  // לנקות ברגע שמישהו יוסיף שם, בלי שום סימן.
+  await db.prepare("DELETE FROM audit_log WHERE actor_name ~ 'permcheck[0-9]'").run();
 }
 
 (async () => {
   if (!SB_URL || !SECRET || !ANON) {
     console.error("check-permissions: חסרים SUPABASE_URL / SUPABASE_SECRET_KEY / VITE_SUPABASE_PUBLISHABLE_KEY");
     process.exit(1);
-  }
-
-  // השרת חייב לרוץ — בלעדיו כל בקשה נכשלת וזה נראה כמו "הכול חסום".
-  //
-  // ⚠️ **קוד 2 ולא 1.** שרת שאינו רץ הוא **אין ידיעה**, לא כשל הרשאות.
-  // על מכונת פיתוח הוא רץ ב-Docker על DELL008 ולא מקומית, ולכן דיווח
-  // ככישלון היה צובע את השער באדום בכל הרצה — וזה בדיוק איך ששער
-  // הופך למשהו שמדלגים עליו בעין. gates.js מדווח על קוד 2 כ"לא רץ",
-  // עם המשפט הנכון: "אין עליהם ידיעה, לא אישור".
-  try {
-    await f(`${API}/api/sites`);
-  } catch {
-    console.error(`check-permissions: השרת אינו עונה ב-${API} — השער לא רץ. הפעילי אותו, או קבעי PARITY_API.`);
-    process.exit(2);
   }
 
   const checks = [];
@@ -133,25 +203,25 @@ async function cleanup() {
   await createUser(OPR, "operator");
   const mgrTok = await signIn(MGR);
 
-  // ⚠️ **PATCH מצפה למזהה המספרי של app_users, לא ל-UUID של Supabase.**
-  // שליחת ה-UUID מחזירה 400 "מזהה משתמש לא תקין" — וזו בדיוק אי-ההתאמה
-  // שכבר שברה את כפתור ההשבתה במסך פעם אחת (ראה ההערה ב-GET /api/users).
+  // ⚠️ **ה-RPC מצפה למזהה המספרי של app_users, לא ל-UUID של Supabase.**
+  // שליחת ה-UUID מחזירה 404 על חתימה שאינה קיימת (PGRST202) — וזו בדיוק
+  // אי-ההתאמה שכבר שברה את כפתור ההשבתה במסך פעם אחת.
   const appId = async (email) =>
     (await db.prepare("SELECT id FROM app_users WHERE LOWER(email) = LOWER(?)").get(email))?.id;
   const oprAppId = await appId(OPR);
   const mgrAppId = await appId(MGR);
 
   // ---- מה שמנהל יכול ----
-  add("מנהל רואה את רשימת המשתמשים",       await call(mgrTok, "GET", "/api/users"), 200);
-  add("מנהל מוסיף בקר",                     await call(mgrTok, "POST", "/api/users/invite",
+  add("מנהל רואה את רשימת המשתמשים", await rpc(mgrTok, "list_users"), 200);
+  add("מנהל מוסיף בקר", await edge(mgrTok, "invite-user",
       { email: `${STAMP}.new1@parkomat.co.il`, role: "operator" }), 200);
-  add("מנהל מוסיף מנהל",                    await call(mgrTok, "POST", "/api/users/invite",
+  add("מנהל מוסיף מנהל", await edge(mgrTok, "invite-user",
       { email: `${STAMP}.new2@parkomat.co.il`, role: "manager" }), 200);
 
   // ⚠️ **והמנהל שהוזמן הוא באמת מנהל — זו הבדיקה שתופסת את הבאג האמיתי.**
   // "ההזמנה החזירה 200" אינה מוכיחה כלום: היא החזירה 200 גם כשהמוזמן נחת
   // כבקר, כי `parkomat_role` נכתב ל-Supabase בלבד ו-app_users נשאר
-  // 'operator'. לכן נבדק כאן מה שקובע — שהוא מצליח לבצע פעולת ניהול.
+  // 'operator'. לכן נבדק כאן מה שקובע — הדרגה בטבלה.
   const invitedRole = await db
     .prepare("SELECT role FROM app_users WHERE LOWER(email) = LOWER(?)")
     .get(`${STAMP}.new2@parkomat.co.il`);
@@ -161,26 +231,46 @@ async function cleanup() {
     .prepare("SELECT role FROM app_users WHERE LOWER(email) = LOWER(?)")
     .get(`${STAMP}.new1@parkomat.co.il`);
   add("...והמוזמן כבקר נשאר בקר", invitedOprRole?.role, "operator");
-  add("מנהל משבית בקר",                     await call(mgrTok, "PATCH", `/api/users/${oprAppId}`, { is_active: false }), 200);
-  add("מנהל מחזיר בקר",                     await call(mgrTok, "PATCH", `/api/users/${oprAppId}`, { is_active: true }), 200);
-  add("מנהל משנה דרגה",                     await call(mgrTok, "PATCH", `/api/users/${oprAppId}`, { role: "manager" }), 200);
+
+  add("מנהל משבית בקר",
+      await rpc(mgrTok, "set_user_active", { p_user_id: oprAppId, p_active: false }), 200);
+  add("מנהל מחזיר בקר",
+      await rpc(mgrTok, "set_user_active", { p_user_id: oprAppId, p_active: true }), 200);
+  add("מנהל משנה דרגה",
+      await rpc(mgrTok, "set_user_role", { p_user_id: oprAppId, p_role: "manager" }), 200);
 
   // ---- ⚠️ ומה שבקר **אינו** יכול — זה החצי שקובע ----
-  await call(mgrTok, "PATCH", `/api/users/${oprAppId}`, { role: "operator" });
+  await rpc(mgrTok, "set_user_role", { p_user_id: oprAppId, p_role: "operator" });
   const oprFresh = await signIn(OPR);
 
-  add("⚠️ בקר אינו רואה את רשימת המשתמשים", await call(oprFresh, "GET", "/api/users"), 403);
-  add("⚠️ בקר אינו מוסיף משתמש",            await call(oprFresh, "POST", "/api/users/invite",
+  add("⚠️ בקר אינו רואה את רשימת המשתמשים", await rpc(oprFresh, "list_users"), 403);
+  add("⚠️ בקר אינו מוסיף משתמש", await edge(oprFresh, "invite-user",
       { email: `${STAMP}.hack@parkomat.co.il`, role: "operator" }), 403);
-  add("⚠️ בקר אינו משבית אף אחד",           await call(oprFresh, "PATCH", `/api/users/${mgrAppId}`, { is_active: false }), 403);
-  add("⚠️ בקר אינו מעלה את עצמו למנהל",     await call(oprFresh, "PATCH", `/api/users/${oprAppId}`, { role: "manager" }), 403);
+  add("⚠️ בקר אינו משבית אף אחד",
+      await rpc(oprFresh, "set_user_active", { p_user_id: mgrAppId, p_active: false }), 403);
+  add("⚠️ בקר אינו מעלה את עצמו למנהל",
+      await rpc(oprFresh, "set_user_role", { p_user_id: oprAppId, p_role: "manager" }), 403);
 
   // ---- ומה שבקר כן צריך לראות ----
-  add("בקר רואה את האתרים",                 await call(oprFresh, "GET", "/api/sites"), 200);
+  add("בקר רואה את האתרים", (await siteRows(oprFresh)) > 0, true);
 
   // ---- בלי אסימון בכלל ----
-  add("⚠️ בלי אסימון — אתרים חסומים",        await call(null, "GET", "/api/sites"), 401);
-  add("⚠️ בלי אסימון — משתמשים חסומים",      await call(null, "GET", "/api/users"), 401);
+  //
+  // ⚠️ שתי צורות, ולא אחת — ושתיהן חוזרות **401**, וזה היה ממצא.
+  //
+  // הציפייה הראשונה כאן הייתה "200 ורשימה ריקה": RLS מסננת שורות ואינה
+  // דוחה בקשות, ולכן `anon` אמור היה לקבל `[]`. **נמדד שלא** — המפתח
+  // הציבורי בפורמט החדש (`sb_publishable_…`) אינו JWT, ולכן PostgREST
+  // דוחה עוד לפני שכל מדיניות נבחנת.
+  //
+  // זו תשובה **חזקה יותר** מסינון שורות, ולכן היא נבדקת כפי שהיא: בקשה
+  // אנונימית נעצרת בשער ולא בטבלה. אילו הפורמט היה חוזר ל-JWT ציבורי,
+  // הבדיקה הזו הייתה מתחילה להחזיר 200 — וזה בדיוק הרגע שבו צריך לחזור
+  // ולוודא שהמדיניות עדיין דורשת `authenticated`.
+  const noKey = await f(`${SB_URL}/rest/v1/sites?select=id&limit=1`);
+  add("⚠️ בלי מפתח כלל — נדחה", noKey.status, 401);
+  add("⚠️ מפתח ציבורי בלבד — אתרים חסומים", await siteRows(null), "HTTP 401");
+  add("⚠️ מפתח ציבורי בלבד — אין רשימת משתמשים", await rpc(null, "list_users"), 401);
 
   // ---- דומיין זר ----
   let foreignBlocked = false;
@@ -188,30 +278,29 @@ async function cleanup() {
   add("⚠️ דומיין זר נדחה", foreignBlocked, true);
 
   // ---- ⚠️ משתמש מושבת אינו קורא, גם עם אסימון תקף ----
-  // זה הכשל שכבר קרה: השרת השבית, וה-RLS עדיין נתן לקרוא.
+  // זה הכשל שכבר קרה: השרת השבית, וה-RLS עדיין נתן לקרוא. היום המדיניות
+  // עצמה קוראת `app.is_active_user()`, וזו הבדיקה שמוכיחה זאת.
   const victim = `${STAMP}.dead@parkomat.co.il`;
   await createUser(victim, "operator");
   const victimAppId = await appId(victim);
   const victimTok = await signIn(victim);
-  add("משתמש פעיל קורא אתרים", await call(victimTok, "GET", "/api/sites"), 200);
-  await call(mgrTok, "PATCH", `/api/users/${victimAppId}`, { is_active: false });
-  add("⚠️ ואחרי השבתה — אותו אסימון נחסם", await call(victimTok, "GET", "/api/sites"), 403);
+  add("משתמש פעיל קורא אתרים", (await siteRows(victimTok)) > 0, true);
+  await rpc(mgrTok, "set_user_active", { p_user_id: victimAppId, p_active: false });
+  add("⚠️ ואחרי השבתה — אותו אסימון מקבל אפס שורות", await siteRows(victimTok), 0);
 
   // ============================================================
   // ⚠️ השרשרת האמיתית: הזמנה → סיסמה זמנית → **כניסה בפועל**
   // ============================================================
   // כל שאר הבדיקות כאן יוצרות משתמשים עם סיסמה שאנחנו קובעים, ולכן אף
-  // אחת מהן לא נוגעת בחוליה שבאמת משמשת: הסיסמה ש-`auth/admin.js`
+  // אחת מהן לא נוגעת בחוליה שבאמת משמשת: הסיסמה שה-Edge Function
   // **מייצר** ומחזיר פעם אחת, ושמישהו מקליד בפועל.
   //
-  // ⚠️ אם `createUser` יפסיק להחזיר `tempPassword`, או יחזיר סיסמה שאינה
-  // זו שנקבעה, או ישכח `email_confirm` — כל הבדיקות האחרות יישארו ירוקות
-  // והמסך ימשיך להציג סיסמה. היא פשוט לא תעבוד, ואיש לא יידע עד שמישהו
-  // ינסה להיכנס איתה.
+  // ⚠️ אם היא תפסיק לחזור, או תחזור שונה מזו שנקבעה, או `email_confirm`
+  // יישכח — כל הבדיקות האחרות יישארו ירוקות והמסך ימשיך להציג סיסמה.
+  // היא פשוט לא תעבוד, ואיש לא יידע עד שמישהו ינסה להיכנס איתה.
   const fresh = `${STAMP}.flow@parkomat.co.il`;
-  const invRes = await f(`${API}/api/users/invite`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${mgrTok}`, "Content-Type": "application/json" },
+  const invRes = await f(`${SB_URL}/functions/v1/invite-user`, {
+    method: "POST", headers: hdr(mgrTok),
     body: JSON.stringify({ email: fresh, role: "operator" }),
   });
   const invBody = await invRes.json().catch(() => ({}));
@@ -231,8 +320,8 @@ async function cleanup() {
   const victim2AppId = await appId(victim2);
   const victim2Tok = await signIn(victim2);
 
-  add("⚠️ בקר אינו מוחק אף אחד", await call(oprFresh, "DELETE", `/api/users/${victim2AppId}`), 403);
-  add("מנהל מוחק בקר",          await call(mgrTok, "DELETE", `/api/users/${victim2AppId}`), 200);
+  add("⚠️ בקר אינו מוחק אף אחד", await rpc(oprFresh, "delete_user", { p_id: victim2AppId }), 403);
+  add("מנהל מוחק בקר", await rpc(mgrTok, "delete_user", { p_id: victim2AppId }), 200);
 
   // ⚠️ "200" אינו מוכיח מחיקה. שלוש בדיקות נפרדות, כי המחיקה נוגעת בשלושה
   // מקומות ואפשר להצליח בחלקם.
@@ -247,8 +336,8 @@ async function cleanup() {
   });
   add("...ואינו יכול להתחבר יותר", gone.ok, false);
 
-  // והאסימון שכבר היה בידו מת גם הוא.
-  add("...והאסימון הישן שלו נחסם", await call(victim2Tok, "GET", "/api/sites"), 403);
+  // והאסימון שכבר היה בידו מת גם הוא — כלומר אינו רואה שורה אחת.
+  add("...והאסימון הישן שלו מקבל אפס שורות", await siteRows(victim2Tok), 0);
 
   // ---- ⚠️ ומחיקת מי שכבר צירף אחרים — המקרה שנופל בלי ON DELETE SET NULL ----
   // `created_by` ו-`disabled_by` הם FK פנימיים בתוך app_users. בלי הסעיף
@@ -262,13 +351,14 @@ async function cleanup() {
   await db.prepare("UPDATE app_users SET created_by = ? WHERE LOWER(email) = LOWER(?)")
     .run(inviterAppId, invitee);
 
-  add("⚠️ מי שצירף אחרים ניתן למחיקה", await call(mgrTok, "DELETE", `/api/users/${inviterAppId}`), 200);
+  add("⚠️ מי שצירף אחרים ניתן למחיקה",
+      await rpc(mgrTok, "delete_user", { p_id: inviterAppId }), 200);
   const orphan = await db
     .prepare("SELECT created_by FROM app_users WHERE LOWER(email) = LOWER(?)").get(invitee);
   add("...וההצבעה אליו התאפסה ל-NULL", orphan?.created_by, null);
 
   // ---- ⚠️ המנהל הפעיל האחרון אינו ניתן למחיקה ----
-  add("⚠️ מנהל אינו מוחק את עצמו", await call(mgrTok, "DELETE", `/api/users/${mgrAppId}`), 400);
+  add("⚠️ מנהל אינו מוחק את עצמו", await rpc(mgrTok, "delete_user", { p_id: mgrAppId }), 400);
 
   console.log("בדיקה                                          בפועל     צפוי");
   let bad = 0;
