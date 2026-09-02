@@ -42,7 +42,11 @@ const ANON = (ENV.match(/^VITE_SUPABASE_PUBLISHABLE_KEY=(.*)$/m) || [])[1]?.trim
 const STAMP = `wcheck${Date.now()}`;
 const EMAIL = `${STAMP}@parkomat.co.il`;
 const MGR_EMAIL = `${STAMP}mgr@parkomat.co.il`;
-const PW = "WriteCheck!2026";
+// ⚠️ אקראית לכל ריצה. כאן היה `"WriteCheck!2026"` — סיסמה בקוד הפתוח
+// שבה נוצר חשבון **מנהל** במסד הייצור (שורה 149). ריצה שנקטעת לפני
+// הניקוי משאירה אותו חי, וזה כבר קרה בפרויקט הזה. ראה את אותו הסבר
+// ב-`tools/lib/gate-user.js`.
+const PW = require("node:crypto").randomBytes(24).toString("base64url") + "!aA9";
 // ⚠️ הקוד חייב להתאים ל-`^[A-Za-z0-9_-]{1,64}$` — הוא נכנס לנתיב MQTT.
 const NEW_CODE = `zz-${STAMP}`;
 
