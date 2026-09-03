@@ -4,7 +4,7 @@ import { useState } from "react";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
-import { updateSite, deleteSite, provisionAgent } from "../../services/dataSource";
+import { updateSite, deleteSite, provisionAgent, markControllerReplaced } from "../../services/dataSource";
 import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
@@ -28,6 +28,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
   const [draft, setDraft] = useState({ name: "", code: "" });
   // ⚠️ פרטי הזהות שהונפקה — נשארים על המסך עד סגירה ידנית.
   const [agentIssued, setAgentIssued] = useState(null);
+  // ⚠️ אישור נפרד: הפעולה משנה את משמעות המונה ואינה הפיכה.
+  const [confirmController, setConfirmController] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,6 +131,30 @@ function AdminPanel({ sites, onClose, onChanged }) {
     try {
       const r = await provisionAgent(site.code);
       setAgentIssued({ code: site.code, email: r.email, password: r.password });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ============================================================
+  // "הוחלף בקר" — הקריאה הבאה נקלטת כבסיס, בלי להוסיף למונה
+  // ============================================================
+  // ⚠️ **באישור ולא בלחיצה אחת.** הפעולה משנה את משמעות המונה, ולחיצה
+  // בטעות על אתר שלא הוחלף בו בקר תגרום לקריאה הבאה להיקלט כבסיס —
+  // כלומר המחזורים שנעשו מאז הקריאה האחרונה **לא ייספרו**.
+  //
+  // ⚠️ והנזק אינו סימטרי: לא לסמן כשצריך מוסיף עשרות מחזורים מדומים;
+  // לסמן כשלא צריך מאבד את מה שנעשה בין שתי הקריאות. שניהם בלתי הפיכים.
+  async function replaceController(site) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await markControllerReplaced(site.code);
+      setConfirmController(null);
+      onChanged();
+      flash(`${site.site_name}: הבקר סומן כמוחלף — המונה נשאר ${r.cycleTotal?.toLocaleString() ?? "?"}`);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -380,6 +406,20 @@ function AdminPanel({ sites, onClose, onChanged }) {
                         <button className="adm-btn-ghost"
                           onClick={() => { setEditing(null); setErr(null); }}>ביטול</button>
                       </>
+                    ) : confirmController === s.code ? (
+                      <>
+                        {/* ⚠️ הטקסט אומר מה **יקרה**, לא "האם את בטוחה".
+                            "בטוחה?" הוא שאלה שאין עליה תשובה מושכלת. */}
+                        <span className="adm-confirm-text">
+                          הקריאה הבאה תיקלט כבסיס — המונה יישאר {(s.cycle_total ?? 0).toLocaleString()}
+                        </span>
+                        <button className="adm-btn" disabled={busy}
+                          onClick={() => replaceController(s)}>
+                          {busy ? "מסמן…" : "כן, הוחלף בקר"}
+                        </button>
+                        <button className="adm-btn-ghost"
+                          onClick={() => setConfirmController(null)}>ביטול</button>
+                      </>
                     ) : isConfirming ? (
                       <>
                         <span className="adm-confirm-text">למחוק לצמיתות?</span>
@@ -401,6 +441,14 @@ function AdminPanel({ sites, onClose, onChanged }) {
                         <button className="adm-btn-ghost" disabled={busy}
                           onClick={() => issueAgent(s)}>
                           {busy ? "מנפיק…" : "זהות סוכן"}
+                        </button>
+                        {/* ⚠️ נמדד: בקר חדש שמגיע עם 87 מחזורי בדיקות מפעל
+                            מוסיף אותם כמחזורים אמיתיים, ו-cycle_total הוא
+                            בלתי הפיך. אי אפשר להסיק — בקר שהתאפס במקום
+                            ובקר שהוחלף נראים זהים מהמספר. */}
+                        <button className="adm-btn-ghost"
+                          onClick={() => { setConfirmController(s.code); setErr(null); }}>
+                          הוחלף בקר
                         </button>
                         <button className="adm-btn-ghost adm-danger-text"
                           onClick={() => { setConfirmDelete(s.code); setErr(null); }}>

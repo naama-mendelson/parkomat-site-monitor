@@ -62,6 +62,8 @@ const BOUNDED = {
   register_site: "כתיבה",
   update_site: "כתיבה",
   delete_site: "כתיבה",
+  // כתיבה שמחזירה שורה אחת — האתר שסומן. RETURNS TABLE עם SELECT יחיד.
+  mark_controller_replaced: "כתיבה",
   set_user_active: "כתיבה",
   set_user_role: "כתיבה",
   delete_user: "כתיבה",

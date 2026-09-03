@@ -98,6 +98,30 @@ export async function registerSiteDirect(payload = {}) {
 }
 
 /**
+ * סימון "הוחלף בקר" — הקריאה הבאה נקלטת כבסיס בלי להוסיף למונה.
+ *
+ * ⚠️ **הבעיה שאי אפשר להסיק ממנה.** בקר שהתאפס במקום (נפילת חשמל)
+ * וב-5 דקות ספר 5 מחזורים — חמשת אלה **אמיתיים**, ולכן הקליטה מוסיפה
+ * אותם. בקר **שהוחלף** מגיע עם מחזורי בדיקות מפעל, ואותם אסור להוסיף.
+ * שני המקרים נראים זהים לחלוטין מהמספר, ולכן צריך לומר למערכת.
+ *
+ * ⚠️ נמדד: בקר חדש עם 87 מחזורי מפעל מוסיף 87 מחזורים מדומים,
+ * ו-`cycle_total` הוא בלתי הפיך.
+ */
+export async function markControllerReplacedDirect(code) {
+  assertConfigured();
+
+  const { data, error } = await supabase.rpc("mark_controller_replaced", {
+    p_code: String(code),
+  });
+
+  if (error) throw new Error(messageFor(error, "סימון החלפת הבקר נכשל"));
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return { ok: true, code: row?.code, cycleTotal: row?.cycle_total };
+}
+
+/**
  * יצירת זהות סוכן לאתר — Edge Function `provision-agent`.
  *
  * ⚠️ **Edge Function ולא RPC**, ומאותה סיבה בדיוק כמו `invite-user`:

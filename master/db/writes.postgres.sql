@@ -1927,3 +1927,77 @@ $$;
 
 REVOKE ALL ON FUNCTION public.request_service_ping() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.request_service_ping() TO authenticated;
+
+-- ============================================================
+-- public.mark_controller_replaced — הוחלף בקר, והמונה לא זז
+-- ============================================================
+-- ⚠️ **הבעיה שאי אפשר להסיק ממנה, ולכן חייבים לומר אותה.**
+-- בקר שנפל לו החשמל והתאפס ל-0 בשעה 09:00, וב-09:05 הוא על 5 — חמשת
+-- המחזורים האלה **אמיתיים**, ולכן `decide_cycle_update` מוסיפה אותם.
+-- בקר **שהוחלף** מגיע עם מחזורי בדיקות מפעל, ואותם אסור להוסיף.
+--
+-- שני המקרים נראים **זהים לחלוטין** מהמספר. נמדד: בקר חדש עם 87 מחזורי
+-- מפעל מוסיף 87 מחזורים מדומים למונה, ו-`cycle_total` הוא בלתי הפיך.
+--
+-- ============================================================
+-- ⚠️ ולמה זה **אינו** נוגע בקוד הקליטה
+-- ============================================================
+-- `decide_cycle_update` כבר יודעת לעשות בדיוק את זה — זה מה שקורה
+-- בהתקנה ראשונה: `plc_cycle_last IS NULL` + `is_new_site = 1` פירושו
+-- "קח את הקריאה כבסיס, אל תוסיף אותה למונה".
+--
+-- נמדד על הפונקציה עצמה, מונה 1,200,000 ובקר חדש על 87:
+--   is_new_site = 1  →  מונה 1,200,000, בסיס 87   ✅
+--   is_new_site = 0  →  מונה 87                   ❌ המונה נהרס
+--
+-- ⚠️ **ולכן שני השדות חייבים להשתנות יחד.** איפוס הבסיס לבדו הורס את
+-- המונה ההיסטורי — וזו פעולה שאין ממנה דרך חזרה.
+--
+-- ⚠️ **ו-`is_new_site = 1` כאן אינו טריק אלא המצב הנכון.** המשמעות שלו
+-- היא "אל תאמץ את המונה ההיסטורי של הבקר", ולבקר חדש **אין** מונה
+-- היסטורי לאמץ. אתר שהוחלף בו בקר לעולם לא אמור לאמץ שוב.
+CREATE OR REPLACE FUNCTION public.mark_controller_replaced(p_code text)
+RETURNS TABLE (code text, site_name text, cycle_total integer, previous_baseline integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor    text := app.require_manager();
+  v_id       integer;
+  v_name     text;
+  v_total    integer;
+  v_baseline integer;
+BEGIN
+  -- ⚠️ מוסמך `sites.` בכל שדה: `code` ו-`site_name` הם גם שמות עמודות
+  -- וגם פרמטרי פלט, ובלי ההסמכה זה `column reference is ambiguous` (42702)
+  -- ש-PostgREST מתרגם ל-400. זה כבר קרה ב-update_site.
+  SELECT sites.id, sites.site_name, sites.cycle_total, sites.plc_cycle_last
+    INTO v_id, v_name, v_total, v_baseline
+    FROM sites WHERE sites.code = p_code;
+
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'אתר לא נמצא: %', p_code USING ERRCODE = 'PT404';
+  END IF;
+
+  UPDATE sites
+     SET plc_cycle_last = NULL,   -- הקריאה הבאה תיקלט כבסיס
+         is_new_site    = 1       -- ⚠️ ובלי הוספה למונה. חובה יחד עם השורה מעליה.
+   WHERE sites.id = v_id;
+
+  -- ⚠️ שורת ביקורת חובה: זו פעולה שמשנה את משמעות המונה, ובלי רישום
+  -- "למה המונה קפא לרגע" הופך לשאלה בלי תשובה בעוד חצי שנה.
+  PERFORM app.record_write_audit('site.controller_replaced', v_actor,
+                                 app.current_app_role(), 'site', p_code,
+                                 jsonb_build_object('cycle_total', v_total,
+                                                    'previous_baseline', v_baseline));
+
+  RETURN QUERY SELECT p_code, v_name, v_total, v_baseline;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.mark_controller_replaced(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mark_controller_replaced(text) TO authenticated;
+
+COMMENT ON FUNCTION public.mark_controller_replaced(text) IS
+  'הוחלף בקר: הקריאה הבאה נקלטת כבסיס בלי להוסיף למונה. מנהל בלבד.';
