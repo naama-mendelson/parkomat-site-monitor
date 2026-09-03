@@ -860,7 +860,14 @@ public class Worker : BackgroundService
                 //
                 // מה שנשלח קודם הן ההודעות מהתור — הישנות ביותר תחילה —
                 // כדי שסדר ההגעה יישמר.
-                if (supabase is not null)
+                // ⚠️ **הבדיקה קודמת לגישה לדיסק, ולא להפך.** `LoadAll` סורק
+                // תיקייה, וקריאה לו בכל סבב פירושה עשרות אלפי סריקות ביום על
+                // תיקייה ריקה — במחשב שגם מריץ את המחסום. כאן נוגעים בדיסק רק
+                // כשממילא עומדים לצאת לרשת.
+                //
+                // ⚠️ והמשמעות: תור שהתמלא מתרוקן תוך **דקה לכל היותר**, כי
+                // הפעימה מבטיחה סבב שליחה כל 60 שניות גם באתר שקט לגמרי.
+                if (supabase is not null && (mirrored.Count > 0 || beatDue))
                 {
                     var retry = supaQueue.LoadAll<BatchItem>()
                         // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה
@@ -872,7 +879,6 @@ public class Worker : BackgroundService
                     foreach (var (_, m) in retry) outgoing.Add(m);
                     outgoing.AddRange(mirrored);
 
-                    if (outgoing.Count > 0 || beatDue)
                     {
                         // ⚠️ **שתי דלתות שונות, וזה לא סגנון.** `SendAsync` חוסם
                         // אצווה ריקה בשורה הראשונה ומחזיר הצלחה בלי לשלוח — אז

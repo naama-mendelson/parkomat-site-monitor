@@ -71,10 +71,15 @@ public class HeartbeatWiringTests
         // בלבד היה משאיר אתר שקט להיראות מת.
         string src = Worker();
         Assert.Matches(new Regex(@"beatDue\s*=.*mirrored\.Count\s*==\s*0", RegexOptions.Singleline), src);
-        // ⚠️ `outgoing` ולא `mirrored`: מאז הניסיון החוזר, האצווה היוצאת היא
-        // התור + החדשות. פעימה נשלחת רק כששתיהן ריקות — אחרת יש מה לכתוב,
-        // והכתיבה ממילא מעדכנת את `alive`.
-        Assert.Matches(new Regex(@"outgoing\.Count\s*>\s*0\s*\|\|\s*beatDue"), src);
+        // ⚠️ **התנאי החיצוני נשען על `mirrored`, לא על `outgoing` — ובכוונה.**
+        // `outgoing` נבנה מקריאה לדיסק (`LoadAll`), ובדיקה שלו בתנאי הכניסה
+        // הייתה מכריחה סריקת תיקייה **בכל סבב של הלולאה** — עשרות אלפי
+        // סריקות ביום על תיקייה ריקה, במחשב שגם מריץ את המחסום.
+        //
+        // המחיר: תור שהתמלא ממתין עד הפעימה הבאה. זה חסום ב-60 שניות, כי
+        // הפעימה מבטיחה סבב שליחה גם באתר שקט לגמרי.
+        Assert.Matches(new Regex(
+            @"supabase is not null && \(mirrored\.Count\s*>\s*0\s*\|\|\s*beatDue\)"), src);
     }
 
     [Fact]
