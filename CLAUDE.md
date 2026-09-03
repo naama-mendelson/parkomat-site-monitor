@@ -593,3 +593,54 @@ Function, in `tools/provision-agent-user.js` (`emailFor`), and in the agent
 (`SupabaseDefaults.EmailFor`). If one drifts, the agent signs in as a user that was never
 created and gets `400` on every cycle. The agent side is pinned by a test; the other two are
 not, and that is a known gap.
+
+## ⚠️ First site live on the direct path — 2438 (מגדל 1), 03/09/2026
+
+The dotted line in the architecture diagram is no longer dotted for one site.
+
+```
+אתר 2438 · פעימות עולות כל 60 שניות · גרסה 1.0.23
+```
+
+Measured within minutes of the install, and each line answers a question that had no answer
+before:
+
+- **It writes over HTTPS straight to Supabase**, with no hop through DELL008. If the office PC
+  dies today, this is the one site of eighteen that keeps reporting.
+- **The heartbeat beats.** `beats` increments on a steady 60-second cadence — the first proof
+  that `BeatAsync` reaches the wire, after a first implementation that never sent a request.
+- **`agent_version` reports `1.0.23`.** The documented gap — *"no version is reported on any
+  topic; there is no way to know remotely which agent is where"* — is closed.
+
+### ⚠️ And dual-path writing does **not** duplicate operations
+
+The original plan warned in bold: *"do not write on both paths at once — it will double the
+operations."* **Measured on the live site: zero duplicates.** What appears instead is one
+`state_no_change` row in `ingest_drops` — the same message arrived twice (MQTT and direct),
+and the no-change guard rejected the second. The protection holds in the field, so MQTT can
+stay authoritative during the pilot instead of being switched off blind.
+
+**Rollback is one field.** Clearing the password in the site's settings turns the direct path
+off; `SupabaseConfig.Enabled` is derived, so there is no half-on state to clean up.
+
+## ⚠️ The gates run against production, and it shows on the bill
+
+Free-plan egress is 5 GB per cycle. Measured on 03/09/2026: **6.03 GB used, 1.03 GB over.**
+
+The daily chart is not flat — it spikes on *development* days (~970 MB on 01/09, ~570 MB on
+18/08). Eighteen edge-triggered sites do not produce that; **the gate suite does.** `parity`
+alone pulls 2,400 comparisons across 18 sites × week/month/year, and the full suite was run
+six times in one day.
+
+⚠️ **A second symptom points the same way: `1,857 MAU` against 32 real users.** Every gate run
+creates a throwaway auth user and deletes it — but deletion does not un-count it. Roughly
+1,800 one-shot users in a cycle. Far from the 50,000 limit, and a clear fingerprint.
+
+**The mechanism to fix it already exists and was never switched on:** `master/.env.test.example`
+is a template for a **separate Supabase project** for tests, and `db/test-guard.js` enforces a
+positive marker so destructive tools refuse to touch production. Only the template is in the
+repo; no `.env.test` exists.
+
+Until that is configured, the rule is behavioural: **do not re-run the full suite to confirm a
+result you have already verified.** Run the one gate you changed. A full run that teaches
+nothing still costs ~300 MB against a quota that is already exceeded.
