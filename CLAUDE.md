@@ -33,9 +33,20 @@ AI assistant.
 | `dashboard/` | React 19 / Vite. Reads Supabase directly. |
 
 ⚠️ **The dotted line is real code with 32 gates behind it, and it is off at all 16 sites.**
-`SupabaseConfig.Enabled` is *derived* from four fields, so "on but incomplete" cannot be
-expressed. Turning one site on is `tools/provision-agent-user.js <code>` plus four fields in
-that site's settings form; turning it off is clearing them.
+`SupabaseConfig.Enabled` is *derived*, never stored, so "on but incomplete" cannot be
+expressed. Turning one site on is `tools/provision-agent-user.js <code>` plus **one field** —
+the password — in that site's settings form; turning it off is clearing it.
+
+⚠️ **It used to be four fields, and three of them were noise.** The project URL and the
+publishable key are identical at all 16 sites (and the key is not a secret — it ships to every
+browser that opens the dashboard), and the user name is derivable from the site code the agent
+already holds: `site-{code}@parkomat.co.il`, the same string `provision-agent-user.js` writes.
+Three fields whose answer is known in advance are not flexibility; they are three chances to
+mistype something that surfaces only when somebody notices a site stopped reporting. They live
+in `SupabaseDefaults` now, and the config fields survive as **overrides** — empty means default
+— because a burned-in address is exactly what would otherwise turn leaving Supabase into a
+16-machine reinstall. The overrides are not in the form: they are carried through `OnSave`
+untouched, since a form that rebuilds the config would otherwise erase them on every save.
 
 ---
 
@@ -68,17 +79,133 @@ Supabase?"* — whose real motive was **retiring DELL008**, the office PC whose 
 | Piece | State |
 |---|---|
 | Per-site identity | **Live.** `role = 'agent'` + `site_id` on `app_users`; a partial unique index makes two active agents for one site impossible. Replaces one shared MQTT password used by all 16 sites, extractable from any installer with `strings`. |
+
+⚠️ **Per-site was questioned and then reaffirmed by the product owner, and the reasoning is
+worth keeping** — because the objection was a good one and the answer is not "security wins".
+
+The objection: today a technician types **nothing**. `MqttConfig.Username` is `"agent"` and the
+password is burned into the build from a git-ignored file, so an install is zero steps, sixteen
+times over. Per-site identity replaces that with a paste per site. That is a real regression in
+effort, and it was raised as one.
+
+Three things were established along the way, and only the third settled it:
+
+- **A leaked agent credential cannot touch a barrier.** Not the PLC, not a gate, not a car. It
+  reaches **data only**. Overstating this is how a security argument loses credibility.
+- **A shared account cannot work as built, and that is mechanical rather than a policy.**
+  `app.agent_site_id()` reads `site_id` off the account row, so one account carries one site:
+  a shared one would funnel all 16 sites into whichever site it points at, or — with a NULL
+  `site_id` — reject every write everywhere. Supporting it means the agent *declares* its own
+  site code and the server trusts it, which is exactly the property `ingest_batch` was built
+  without.
+- **What a shared credential would then allow:** writing false data as *any* site — inflating
+  the cycle counter irreversibly, reporting `ready` over a real fault, or beating for a car park
+  that is dead. And **no way to tell which site a bad write came from**, which is the part that
+  cannot be recovered after the fact.
+
+⚠️ **A middle option was offered and declined, and it was not a bad one:** one account per site
+with a *shared, burned-in* password. Zero technician effort, no code change, and the isolation
+becomes real later by rotating a single site's password. It is exactly as strong as MQTT today
+— no regression, no improvement. It was declined in favour of real per-site passwords.
+
+**So the effort objection is answered with tooling, not with a weaker design.**
+`tools/provision-agent-user.js --all` provisions the whole fleet in one command and writes
+`agent-passwords-<stamp>.txt` (git-ignored). Two properties are load-bearing: it writes **one
+line per site as it goes**, so a failure at site 9 cannot take the eight already-issued
+passwords with it — they are unrecoverable — and an already-provisioned site is a **skip**, not
+a failure, so re-running against a partly-provisioned fleet finishes the rest.
+
+⚠️ **The remaining ongoing cost is real and unsolved:** every *new* site needs its account
+created. The fix is to make site registration create it — `register_site` is an RPC and account
+creation needs the Secret key, so it would go through an Edge Function, for which `invite-user`
+is the precedent. Until that exists, adding a site means remembering one command, and forgetting
+it produces a site that looks installed and silently never reports.
 | Ingestion in SQL | **Live, unused.** Five functions, 1,098 comparisons against the existing path. |
 | The public door | **Live, unused.** `public.ingest_batch` takes **no site id** — it derives it from the identity, so an agent cannot write to another site by changing a number. |
 | Durable queue in the agent | **Shipped in 1.0.22.** |
-| The agent speaks HTTP | **Shipped in 1.0.22, disabled.** |
+| The agent speaks HTTPS | **Shipped in 1.0.22, disabled.** ⚠️ And **only** HTTPS since — `SupabaseConfig.Enabled` requires an absolute `https` URL, because the first request carries the site's **password in the body** and every batch after it carries the token in a header. There was no validation before: a technician who typed `http://` got a working agent, which is exactly what makes that failure invisible. |
+| Heartbeat + silence scan | **Built.** See below. |
 
-⚠️ **What this does *not* yet allow: switching HiveMQ off.** Disconnect detection is the
-blocker, and it is an open product decision, not missing code. Today a dead site PC is
-reported by the broker holding the bridge's will — **HTTP has no equivalent of a will**. The
-options are a heartbeat plus a server-side timer (which the product owner disliked: *"I'm not
-settled on it, I like polling less"*), or Realtime presence. Until it is decided, the direct
-path runs **beside** MQTT and buys resilience, not the retirement of the broker.
+### Disconnect detection — decided, and it is a heartbeat
+
+⚠️ **This was the blocker on switching HiveMQ off, and it is now settled.** The record of
+*why* is worth keeping, because the reasoning is not obvious.
+
+**Silence cannot be the signal, and that is measured.** The agent is edge-triggered, so a
+quiet site is normal: per-site gaps between messages reach **61–68 hours** routinely. A
+threshold long enough to avoid noise is *longer than the outages we are trying to catch* —
+the DELL008 blackout was 59.5 hours. This is not a tuning problem.
+
+**So detecting absence needs either a held connection or a periodic beat. There is no third
+mechanism** — and MQTT's will is already the second one: `keepalive_interval 60` means each
+of the 16 sites sends a PINGREQ every minute (**25,920 a day, today**), and the "90 second
+rule" is 1.5 × that. Moving to HTTPS does not introduce polling; it moves the clock from
+HiveMQ into `pg_cron`.
+
+⚠️ **And removing the server removes the will even if HiveMQ keeps running** — the bridge
+still publishes it, but `master` is what subscribes and turns it into `no_comm`. Nothing in
+Supabase speaks MQTT.
+
+How it works, and why each piece is where it is:
+
+- **The beat is `ingest_batch` with an empty array.** No new endpoint and no new grants — it
+  already derives the site from the identity.
+- **It lands in `public.alive`: one table for all sites, one row per site, upserted.** ⚠️ The
+  first version was a column on `sites`, and that was wrong for a reason that only shows up
+  under load: `applyStateChange` holds `SELECT … FOR UPDATE` on the site row for the length of
+  the ingestion transaction, so a beat writing the same row **contends with ingestion itself**
+  — and the faster the beat, the more often. A separate table decouples them, which is what
+  makes a 60-second beat affordable at all. A table *per site* was considered and rejected:
+  it means DDL inside site registration, and turns *"who is silent?"* from one scan into one
+  query per site.
+- **It never grows.** `ON CONFLICT DO UPDATE` overwrites, so 18 rows stay 18 forever — no
+  prune job, unlike `events`.
+- **Every call writes it, before the messages are processed.** A batch that fails on a
+  malformed message still proves the agent is alive and the network works; recording after
+  processing would turn a data fault into "the site is dead" and send someone to drive to a
+  car park over a bad field.
+- **60 seconds — the same cadence the system already runs.** MQTT's `keepalive_interval` is
+  60 and the "90 second rule" is 1.5 × it, so each site already beats once a minute today.
+  Moving to HTTPS **does not add polling**; it moves the clock from HiveMQ into `pg_cron`.
+  Cost: 18 × 1,440 = **25,920 requests/day, ~0.9 GB/month**, ~18% of the free egress tier.
+  ⚠️ Two seconds was requested and is **not** what was built: 777,600 requests/day and
+  ~26.7 GB/month, 5.3 × the entire free tier — and it buys nothing, because detection latency
+  is set by the *scan*, not the beat.
+- **`app.mark_silent_agents(3)` has its own `pg_cron` job, every minute.** ⚠️ It used to be a
+  fourth section inside `check_ingestion_health`; it was pulled out because the two measure on
+  different clocks — ingestion health is a **hours** question, agent silence is a **minutes**
+  one, and one job runs at the faster of the two. It runs *inside Postgres*, so it survives the
+  fall of `master` — precisely why the other sections of that job caught none of the three
+  blackouts.
+- ⚠️ **Only sites with an agent identity are expected to beat.** A site still on MQTT alone has
+  no `alive` row, and a naive scan would mark all 16 dead the moment it is switched on. The
+  marker is a `role='agent'` row in `app_users` — the list maintains itself. The join is
+  `LEFT … WHERE seen_at IS NOT NULL` rather than a plain `JOIN`: both filter it out today, but
+  the day someone seeds a default row at registration, `JOIN` would light every new site red.
+- **Marking goes through `app.ingest_state`, never a direct `UPDATE`.** That is where segment
+  closing lives, where the rule that `no_comm` does not touch `last_seen` lives, and where the
+  event is published. A direct update would move the chip on screen and leave history without
+  the segment — availability that does not know the site was offline.
+- **`agent_version` rides along on the beat.** It closes a documented gap — *"no version is
+  reported on any topic; there is no way to know remotely which agent is where"* — for the
+  price of one column, since the request goes out every minute anyway. `COALESCE` keeps the
+  last reported value when a beat omits it, so the column does not empty itself during an
+  upgrade, which is the one moment anyone reads it.
+
+**The cost, stated plainly:** detection moves from ~90 seconds to **3–4 minutes** (60-second
+beat, 3-minute threshold = three missed beats, 1-minute scan). ⚠️ But the comparison misleads:
+in the three real blackouts, detection actually took **days**, because the alert never fired
+at all.
+
+⚠️ **And the first implementation of the beat never sent a single request.** `SupabaseWriter.
+SendAsync` returns `Success(0)` on an empty list *before* touching the network, so the beat
+"succeeded", the agent's timer advanced, and nothing left the wire. Three structural tests
+passed, because all three read `Worker.cs` rather than counting HTTP requests. `BeatAsync` is
+now the only door that sends an empty batch, and `SupabaseWriterTests` counts requests.
+
+⚠️ **And the beat only covers sites where the direct path is on — zero today.** While MQTT
+runs, its will still gives 90 seconds for free. The heartbeat does not replace it; it is what
+makes turning it off possible.
 
 ⚠️ **And retiring DELL008 needs more than this anyway** — the assistant still holds
 `GROQ_API_KEY` and the backup daemon still runs there. Two Edge Functions already exist
@@ -422,3 +549,47 @@ that would have crashed the server on every request lacking the header.
 
 **המשמעות:** הדשבורד שמוגש מ-DELL008 נגיש **רק ברשת המשרד**. זו אינה
 תקלה — זו הסיבה ש-Cloudflare Pages הוא המסלול האמיתי.
+
+## Agent identity is created by the dashboard, not by a command anyone must remember
+
+Registering a site now provisions its agent in the same action. `registerSiteDirect` calls
+`register_site` (RPC) and then the **`provision-agent` Edge Function**, and the modal shows the
+password once.
+
+⚠️ **The command was the problem, not the effort.** `tools/provision-agent-user.js` works, but it
+is something a person has to *remember* — and forgetting it produces a site that looks perfectly
+installed, raises no error, writes no log line, and simply never reports. There is no screen on
+which that failure is visible.
+
+- **Edge Function, not RPC** — creating a user is `POST /auth/v1/admin/users`, which needs the
+  Secret key. SQL cannot call it and the browser must never hold it (root rule 7). `invite-user`
+  is the precedent, and this follows it line for line: role checked with `my_role()` **against
+  the table**, not against the token, so a manager demoted five minutes ago cannot provision.
+- ⚠️ **No dependency on `master`.** The function runs inside Supabase, so registering a site
+  works with DELL008 switched off — which is the entire point of the move.
+- **The site row is read as the *caller*, not as `service_role`.** `service_role` has no grant on
+  `sites`, deliberately: the narrow grant list is the documentation of who writes where. A
+  manager may already read sites, so no grant needed to be widened.
+- ⚠️ **A failed provisioning does not fail the registration, and must not.** `register_site` has
+  already committed; the site exists. Reporting "registration failed" would send the manager to
+  try again and hit "code already exists". So the result carries `agentError` and the modal says
+  plainly *the site was registered without an identity and cannot report until one is issued.*
+- ⚠️ **The modal does not close by itself, and the password is not a `flash`.** Supabase stores
+  only a hash, so the password is displayed exactly once — an auto-dismissing toast or a
+  click-outside would destroy it and leave a site that cannot be connected. Closing is a
+  deliberate act ("העתקתי — סגור").
+- **The recovery path exists in the UI**, not only in a terminal: every row in `AdminPanel` has a
+  *זהות סוכן* button. Without it the only way back from a failed provisioning is the command on
+  DELL008 — precisely what this change exists to remove.
+- **A site that already has an identity returns `409`, not a silent re-issue.** Rotating breaks a
+  working site until its config is updated, so it has to be asked for explicitly.
+
+`provisionAgent` in `dataSource.js` has **no server arm**, and that is not an omission: `master`
+serves two routes and never knew how to create an agent identity, so there is nothing to fall
+back to. In server mode it throws a message saying so.
+
+⚠️ **Three copies of one convention.** `site-{code}@parkomat.co.il` is written in the Edge
+Function, in `tools/provision-agent-user.js` (`emailFor`), and in the agent
+(`SupabaseDefaults.EmailFor`). If one drifts, the agent signs in as a user that was never
+created and gets `400` on every cycle. The agent side is pinned by a test; the other two are
+not, and that is a known gap.

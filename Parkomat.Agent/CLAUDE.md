@@ -194,6 +194,10 @@ These are enforced by the server; changing them silently breaks ingestion:
 
 ## Disconnect detection — two LWT layers (do not collapse them)
 
+⚠️ **This is about the MQTT path, and stays true of it.** The *direct* path does have a
+heartbeat (see *The heartbeat* below) — it exists precisely because switching HiveMQ off also
+removes the will.
+
 There is no heartbeat and no server-side watchdog. "90 seconds" is **1.5 × the 60s keepalive**,
 enforced by the brokers. Two layers, because one is not enough:
 
@@ -313,7 +317,7 @@ PLC reading never taken is not recoverable by anything.
 ## Direct write to Supabase — built, tested, and **off**
 
 The agent can write straight to Postgres through PostgREST, bypassing MQTT entirely. It
-ships **disabled** and stays that way until four fields are filled in.
+ships **disabled** and stays that way until **one field** — the site password — is filled in.
 
 ```
 PLC -> Agent --+-> (MQTT) -> Mosquitto -> HiveMQ -> server -> Supabase
@@ -323,6 +327,17 @@ PLC -> Agent --+-> (MQTT) -> Mosquitto -> HiveMQ -> server -> Supabase
 - **`SupabaseConfig.Enabled` is *derived*, never stored.** A separate boolean would allow
   "on but incomplete" — an agent that tries every cycle, fails every cycle, and fills the
   log. That state cannot be expressed here.
+- ⚠️ **One field, not four — and the other three were removed, not hidden.** The project URL
+  and publishable key are the same at every site (`SupabaseDefaults`), and the user name is
+  derived: `site-{SiteId}@parkomat.co.il`, which must stay byte-identical to `emailFor` in
+  `tools/provision-agent-user.js` or the agent signs in as a user that was never created.
+  `ConfigStore.Load` stamps `SiteId` onto the Supabase settings — without it the derivation
+  runs on an empty string, `Enabled` stays false forever, and **nothing is logged**: the
+  direct write simply never happens and it looks exactly like "this site was not switched on".
+- **The overrides (`Url`, `AnonKey`, `Email`) stay in `config.json` but not in the form.**
+  They are the exit door — repointing to another Postgres without touching 16 installers. The
+  form carries them through `OnSave` in `_sbOverrides` because it rebuilds `SiteConfig` from
+  scratch, and without that every "Save" would silently reset a repointed site.
 - **Dual write, MQTT authoritative.** The direct path is best-effort: a failed batch is
   logged and *not* retried, because the message already went out over MQTT. Same staging
   pattern as `VITE_SUPABASE_DIRECT` in the dashboard and the dormant auth provider.
@@ -341,6 +356,33 @@ PLC -> Agent --+-> (MQTT) -> Mosquitto -> HiveMQ -> server -> Supabase
 - **The server derives the site from the identity, never from the payload.**
   `public.ingest_batch` takes no site id; `app.agent_site_id()` supplies it. An agent that
   received the site as a parameter could write to any other site by changing one number.
+
+### The heartbeat — `BeatAsync`, every 60 seconds
+
+The agent sends an **empty batch** when it has nothing to say. That is the whole signal: *the
+agent is alive and the network works.* `app.mark_silent_agents` in Postgres marks any site
+whose last beat is older than 3 minutes as `no_comm` — the replacement for MQTT's will once
+HiveMQ is switched off.
+
+- **60 seconds is not a new cadence.** `bridge.conf` already sets `keepalive_interval 60`, so
+  every site already emits a PINGREQ per minute; the server's "90 second rule" is 1.5 × it.
+  The move to HTTPS changes the *carrier*, not the rate.
+- ⚠️ **`BeatAsync`, never `SendAsync([])` — and this was a real, shipped bug.** `SendAsync`
+  short-circuits an empty list with `Success(0)` **before** it touches the network. The first
+  heartbeat called it, so every beat reported success, `lastBeat` advanced, and **not one
+  request was ever sent**. Three tests passed on it, because all three matched patterns in
+  `Worker.cs` instead of counting requests. `SupabaseWriterTests` now asserts the request
+  actually appears in the fake handler's list — a structural test could not have caught this
+  and did not.
+- **The stamp advances only on success.** A beat that failed on the network is not a sign of
+  life that arrived, and recording it would delay the next attempt by a full minute — exactly
+  when the link is shaky.
+- **`lastBeat` starts at `MinValue`**, so the first beat goes out immediately at start-up. An
+  agent that just came back from a power cut must look alive at once, not in a minute.
+- **`LogDebug`, not `LogInformation`** — 1,440 lines a day would bury everything that matters.
+- **The version rides along** (`AssemblyInformationalVersion`, trimmed at `+` to drop the
+  commit sha). It answers *"which agent is at which site"*, which nothing else does; the
+  server keeps the previous value when a beat omits it.
 
 ### The contract is one file, pinned from both sides
 

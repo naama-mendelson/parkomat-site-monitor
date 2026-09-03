@@ -195,6 +195,10 @@ Never `0%` — that reads as "totally broken" when it means "we don't know".
 
 ## Disconnect detection: two LWT layers, no server-side timer
 
+⚠️ **This describes the MQTT path only, and it is still true of it.** The *direct* path has a
+heartbeat — see *`public.alive`* at the foot of this file — because nothing in Supabase speaks
+MQTT, so the will disappears with the server.
+
 There is **no watchdog and no heartbeat** — one was written and deliberately removed. The "90
 second rule" is **1.5 × the 60s MQTT keepalive**, enforced by the brokers, not by a `setInterval`.
 
@@ -1105,3 +1109,125 @@ operations/errors/measured would drop it and quietly remove real maintenance hou
 screen — and production holds **zero** such buckets today, so it would have passed the
 production comparison in full. That is why the field list is locked *mechanically* rather than
 argued ("this field is protected by that one" is a rule someone will break without noticing).
+
+## `public.alive` — the agent heartbeat, and why it is a table
+
+Written in English like the rest of this file.
+
+One row per site, upserted on **every** `ingest_batch` call including an empty one, *before*
+the messages are processed. `app.mark_silent_agents(3)` runs on its own `pg_cron` job every
+minute and marks any site whose last beat is older than 3 minutes as `no_comm`.
+
+**It began as a column on `sites` and that was wrong** — not stylistically, but under load:
+`applyStateChange` holds `SELECT … FOR UPDATE` on the site row for the whole ingestion
+transaction, so a beat writing that same row contends with ingestion, and more so the faster
+the beat. A separate table decouples the two writes entirely, which is what makes a 60-second
+beat affordable. The column was dropped after measuring **18 sites, zero non-null values** —
+the direct path is off everywhere, so nothing was lost.
+
+- **One table for all sites, not one per site.** A table per site means DDL inside site
+  registration — a manager pressing a button in the browser — and turns *"who is silent?"*
+  from a single scan into a query per site that grows with the fleet.
+- **It never grows.** `ON CONFLICT DO UPDATE` overwrites; 18 rows stay 18. No prune job,
+  unlike `events`.
+- ⚠️ **`timestamptz`, not TEXT — a deliberate exception to the file-wide rule.** That rule
+  exists so lexical filtering uses an index on the big history tables. Here there is one row
+  per site, the scan reads all of them anyway, and there is no range to scan; TEXT would force
+  a `::timestamptz` on every comparison for nothing, and invite a silent timezone bug.
+- ⚠️ **No `INSERT`/`UPDATE` grant to anyone.** The agent authenticates as an ordinary
+  `authenticated` user, so a write grant would let one site's agent stamp a future `seen_at`
+  on **another** site — silencing the alarm for a dead car park, which is the exact failure
+  this table exists to catch. Writes go only through `ingest_batch` (`SECURITY DEFINER`,
+  site derived from `app.agent_site_id()`). **Measured against production, both directions:**
+
+  | caller | `SELECT` | `INSERT` | `UPDATE` |
+  |---|---|---|---|
+  | publishable key only | `401` | `401` | `401` |
+  | authenticated user | `200` | **`403`** (42501) | **`403`** (42501) |
+- `ON DELETE CASCADE`, unlike `events` — "when was the agent of a nonexistent site last seen"
+  is not information, it is a row the scan skips forever.
+
+### ⚠️ Adding a parameter to a `CREATE OR REPLACE FUNCTION` creates an overload, not a replacement
+
+`ingest_batch` gained `p_version text DEFAULT NULL`. `CREATE OR REPLACE` then defines a
+**second** function; the one-argument version stays live, PostgREST resolves by the keys in the
+body, and old callers keep hitting old code. **Measured: both signatures were live in
+production** after the first apply — the file carried a `DROP FUNCTION` guard and a `sed` that
+was updating the `GRANT` lines had rewritten the `DROP` to name the *new* signature, so it
+dropped the function it was about to create and left the stale one untouched.
+
+The `DROP FUNCTION IF EXISTS public.ingest_batch(jsonb);` above the definition must name the
+**old** signature. Verify after any signature change:
+
+```sql
+SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'ingest_batch';
+```
+
+More than one row is the bug.
+
+### Where each heartbeat property is proved
+
+`check-agent-heartbeat` writes to `alive` directly and exercises the **scan** — first beat,
+silence, marking, re-scan, maintenance, a site with no agent, the threshold. It cannot prove
+anything about `ingest_batch`, because it never calls it.
+
+`check-agent-write` covers the **write**, through PostgREST with a real agent identity: an
+empty batch is accepted, the stamp moves, `beats` increments, the version is recorded, a beat
+without a version does not erase it, and a batch *with* messages beats too. Both mutations
+were run — removing the `COALESCE`, and moving the beat after processing — and both fail the
+gate.
+
+⚠️ **The version check belongs there and not in `check-agent-heartbeat`.** A version assertion
+in that gate would write to `alive` itself and then confirm its own write did not erase
+anything — testing the gate, not the `COALESCE`, and passing even if the `COALESCE` were
+deleted.
+
+## ⚠️ Two gates went red because the *data* moved, not the code
+
+Both were found in the same run, both are the failure mode this file already names —
+*"a gate that goes red because the data moved is a gate people learn to ignore"* — and both
+were real defects in the gate, not in the product.
+
+### `check-ingest-recorder` counted the whole database
+
+It snapshotted global `COUNT(*)` on `sites`, `operations`, `status_history` and
+`ingest_drops` before and after its run, and demanded the four numbers be unchanged. Against
+a **live** system that is not a residue check, it is a bet that no car enters a car park for
+the duration of the gate. **Measured: site 2438 recorded a real operation at 05:38:51 mid-run**
+and the gate reported "traces left in production" about a customer's barrier moving.
+
+It now counts rows **belonging to its own synthetic site id**, which is exactly the claim it
+means to make and is immune to live traffic. Only the `sites` count stays global — real
+traffic never creates a site, and a leftover site is precisely what `check-no-residue` hunts.
+Verified by pointing the check at a real site id: it goes red.
+
+### `parity-shape` pinned a subtree that scrolls out of view
+
+`GET /api/insights` failed on `log.entries[].reason`. Nothing had changed in the code — the
+gate passed at 08:18 and failed at 08:46 the same morning.
+
+`fetchInsights` asks for the **newest 300** entries of the year with `filter: "all"`, and
+`log.entries` is heterogeneous: only a maintenance row carries `reason`, `durationHours`,
+`expiresAt`; only an operation row carries `card`, `entryExit`. Production's newest
+maintenance window is 30/08, so as ordinary operations accumulate that row is pushed past
+300 — and **27 fields go with it**. `reason` merely fell out first.
+
+`VOLATILE` in `tools/parity-shape.js` therefore excuses `log.entries[]` **for the two insights
+labels only**. Three things make that safe rather than a hole:
+
+- **The same structure is pinned deterministically elsewhere.** `log` here is literally the
+  `fetchActivityDirect` call, and `GET /api/activity` (year, 200) plus
+  `GET /api/activity (תחזוקה)` — whose filter *guarantees* maintenance rows — already record
+  it. A third pinning from a sample that cannot guarantee coverage adds flapping, not cover.
+- **The exclusion is keyed by label**, so `entries[].reason` stays required on the maintenance
+  case. Verified by mutation: deleting `reason: m.reason` from `shared/timeline.mjs` still
+  fails the gate.
+- **It applies to the shrink guard too.** Without that, any `--update` run at a moment when
+  the maintenance row had scrolled out would be refused as a shrink — turning re-recording
+  into a race.
+
+⚠️ **A mutation that is not written looks exactly like a mutation that was not caught.** The
+first attempt at the check above replaced `"      reason: m.reason,\n"`, which never matched:
+these files are **CRLF**. The gate stayed green and the natural reading was "the exclusion
+opened a hole". Always assert the file actually changed — count the occurrences before and
+after — before drawing a conclusion from a passing run.
