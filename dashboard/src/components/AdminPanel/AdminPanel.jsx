@@ -4,7 +4,7 @@ import { useState } from "react";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
-import { updateSite, deleteSite } from "../../services/dataSource";
+import { updateSite, deleteSite, provisionAgent } from "../../services/dataSource";
 import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
@@ -26,6 +26,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
   const [code, setCode] = useState("");
   const [editing, setEditing] = useState(null);       // קוד האתר שנערך
   const [draft, setDraft] = useState({ name: "", code: "" });
+  // ⚠️ פרטי הזהות שהונפקה — נשארים על המסך עד סגירה ידנית.
+  const [agentIssued, setAgentIssued] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -105,6 +107,28 @@ function AdminPanel({ sites, onClose, onChanged }) {
         `האתר "${r.deleted.name}" נמחק — ` +
         `${r.deleted.operations} פעולות ו-${r.deleted.statusHistory} שינויי מצב הוסרו`,
       );
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ============================================================
+  // הנפקת זהות סוכן לאתר קיים
+  // ============================================================
+  // ⚠️ **הסיסמה מוצגת פעם אחת ואינה ניתנת לשחזור**, ולכן היא לא נכנסת
+  // ל-flash שנעלם מעצמו — היא נשארת על המסך עד שסוגרים אותה ידנית.
+  //
+  // ⚠️ ו-409 ("כבר קיימת") אינו כישלון שצריך להסתיר: הוא אומר שהאתר כבר
+  // מוגדר, וזו התשובה הנכונה. החלפה מנתקת אתר עובד, ולכן היא אינה קורית
+  // בלחיצה אחת — צריך לבקש אותה במפורש.
+  async function issueAgent(site) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await provisionAgent(site.code);
+      setAgentIssued({ code: site.code, email: r.email, password: r.password });
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -226,6 +250,41 @@ function AdminPanel({ sites, onClose, onChanged }) {
         {msg && <div className="adm-msg">{msg}</div>}
         {err && <div className="adm-err adm-err-bar">{err}</div>}
 
+        {/* ==========================================================
+            הזהות שהונפקה — נשארת עד סגירה ידנית
+            ==========================================================
+            ⚠️ **לא flash.** flash נעלם אחרי 2.6 שניות, והסיסמה כאן אינה
+            ניתנת לשחזור — היעלמות אוטומטית הייתה מאבדת אותה לתמיד ומשאירה
+            אתר שאי אפשר לחבר. הסגירה חייבת להיות פעולה של אדם. */}
+        {agentIssued && (
+          <div className="adm-msg" style={{ textAlign: "start" }}>
+            <b>{`נוצרה זהות לאתר ${agentIssued.code}`}</b>
+            <div style={{ marginTop: 8, fontFamily: "monospace", direction: "ltr" }}>
+              {agentIssued.email}
+            </div>
+            <div style={{ fontFamily: "monospace", direction: "ltr", wordBreak: "break-all" }}>
+              {agentIssued.password}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              ⚠️ הסיסמה מוצגת <b>פעם אחת בלבד</b>. היא נכנסת להגדרות הסוכן
+              במחשב שבאתר, בשדה "סיסמת האתר".
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button className="adm-btn" onClick={async () => {
+                // ⚠️ try/catch: בהקשר לא-מאובטח clipboard נכשל ומחזיר Promise
+                // דחוי, כלומר שגיאה לא-מטופלת והמשתמשת חושבת שהעתיקה.
+                try {
+                  await navigator.clipboard.writeText(
+                    `${agentIssued.email}\n${agentIssued.password}`);
+                  flash("הועתק");
+                } catch { setErr("ההעתקה נכשלה — יש להעתיק ידנית"); }
+              }}>העתק</button>
+              <button className="adm-btn-ghost"
+                onClick={() => setAgentIssued(null)}>העתקתי, סגור</button>
+            </div>
+          </div>
+        )}
+
         {/* שינוי קוד מנהל */}
         {pwOpen && (
           <form className="adm-pw" onSubmit={handleChangeCode}>
@@ -334,6 +393,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
                     ) : (
                       <>
                         <button className="adm-btn-ghost" onClick={() => startEdit(s)}>ערוך</button>
+                        {/* ⚠️ **הכפתור הזה הוא מסלול השחזור, לא נוחות.**
+                            הזהות נוצרת אוטומטית בהרשמת האתר — אבל אם ההנפקה
+                            נכשלה שם, האתר קיים ו**לא יוכל לדווח לעולם**. בלי
+                            כפתור, הדרך היחידה חזרה היא פקודה על DELL008, וזה
+                            בדיוק מה שהאוטומציה נועדה לבטל. */}
+                        <button className="adm-btn-ghost" disabled={busy}
+                          onClick={() => issueAgent(s)}>
+                          {busy ? "מנפיק…" : "זהות סוכן"}
+                        </button>
                         <button className="adm-btn-ghost adm-danger-text"
                           onClick={() => { setConfirmDelete(s.code); setErr(null); }}>
                           מחק

@@ -74,7 +74,62 @@ export async function registerSiteDirect(payload = {}) {
   if (error) throw new Error(messageFor(error, "רישום האתר נכשל"));
 
   const row = Array.isArray(data) ? data[0] : data;
-  return { ok: true, site: { id: row?.id ?? null, code: row?.code, site_name: row?.site_name } };
+  const site = { id: row?.id ?? null, code: row?.code, site_name: row?.site_name };
+
+  // ============================================================
+  // ⚠️ הזהות נוצרת כאן, מיד, ולא בפקודה שצריך לזכור
+  // ============================================================
+  // בלי זה, הפעלת אתר חדש דורשת להריץ `tools/provision-agent-user.js` על
+  // DELL008 — ומי ששוכח מתקין אתר שנראה תקין לחלוטין ופשוט **אינו מדווח**:
+  // אין שגיאה, אין שורה בלוג, ואין שום מסך שבו זה נראה שבור.
+  //
+  // ⚠️ **וכישלון כאן אינו מבטל את רישום האתר, בכוונה.** האתר כבר נרשם,
+  // וזו עובדה שאי אפשר "לבטל" בשקט — `register_site` התחייב. לכן מדווחים
+  // אתר-שנרשם-בלי-זהות כמצב מפורש, ולא כשגיאת רישום: הודעת "הרישום נכשל"
+  // הייתה שולחת את המנהל לנסות שוב ולקבל "קוד כבר קיים".
+  let agent = null, agentError = null;
+  try {
+    agent = await provisionAgentDirect(site.code);
+  } catch (e) {
+    agentError = e.message || "יצירת זהות הסוכן נכשלה";
+  }
+
+  return { ok: true, site, agent, agentError };
+}
+
+/**
+ * יצירת זהות סוכן לאתר — Edge Function `provision-agent`.
+ *
+ * ⚠️ **Edge Function ולא RPC**, ומאותה סיבה בדיוק כמו `invite-user`:
+ * יצירת משתמש היא `POST /auth/v1/admin/users`, שדורש את ה-Secret key.
+ * SQL אינו יכול לקרוא לו, ולדפדפן אסור להחזיק אותו.
+ *
+ * ⚠️ ו**אין כאן תלות ב-master**: הפונקציה רצה בתוך Supabase, כך שהרשמת
+ * אתר עובדת גם כש-DELL008 כבוי.
+ *
+ * ⚠️ הכלל "מנהלים בלבד" אינו כאן אלא בפונקציה, שבודקת `my_role()` מול
+ * המסד. בדיקה בקוד הזה הייתה נעקפת בפתיחת DevTools.
+ */
+export async function provisionAgentDirect(code, { rotate = false } = {}) {
+  assertConfigured();
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("נדרשת התחברות מחדש");
+
+  const res = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/provision-agent`, {
+      method: "POST",
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ code: String(code), rotate }),
+    });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "יצירת זהות הסוכן נכשלה");
+  return body;
 }
 
 /**

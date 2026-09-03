@@ -72,7 +72,7 @@ import {
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
-import { registerSiteDirect, updateSiteDirect, deleteSiteDirect } from "./sitesWriteDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
@@ -453,6 +453,18 @@ export async function cancelMaintenance(code, name) {
 // את הבאג. זה נרשם במפורש כדי שלא ייראה כמו "המתג עובד בשני הכיוונים".
 
 /** רישום אתר חדש. `{ ok, site }` בשתי הזרועות. */
+/**
+ * הנפקת זהות סוכן לאתר — Edge Function `provision-agent`.
+ *
+ * ⚠️ **אין לזה זרוע שרת, וזו אינה השמטה.** `master` מגיש היום שני מסלולים
+ * בלבד (/api/chat ו-/health); הוא מעולם לא ידע ליצור זהות סוכן, ולכן אין
+ * מה "לחזור אליו". במצב השרת הפעולה פשוט אינה זמינה, והמסך אומר זאת
+ * במקום להיכשל בשקט.
+ */
+export async function provisionAgent(code, opts) {
+  if (!useDirect) throw new Error("הנפקת זהות סוכן זמינה רק במצב הישיר");
+  return provisionAgentDirect(code, opts);
+}
 export async function registerSite(payload) {
   if (!useDirect) return registerSiteViaServer(payload);
   return registerSiteDirect(payload);

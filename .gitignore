@@ -90,3 +90,8 @@ master/public/
 
 # קבצי עבודה זמניים של סקריפטים חד-פעמיים
 .tmp-*
+
+# ⚠️ סיסמאות הסוכנים שמנפיק provision-agent-user --all.
+# קובץ טקסט גלוי עם סיסמה לכל אתר — לא נכנס לגיט לעולם.
+agent-passwords*.txt
+master/agent-passwords*.txt

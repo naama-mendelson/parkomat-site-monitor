@@ -20,6 +20,9 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [tier, setTier] = useState("basic");
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  // תוצאת ההרשמה כשיש מה להראות אחריה — סיסמת הסוכן, או כישלון בהנפקתה.
+  const [issued, setIssued] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -37,12 +40,26 @@ function AddSiteModal({ onClose, onSuccess }) {
 
     setSaving(true);
     try {
-      await registerSite({
+      const res = await registerSite({
         code: trimmedCode,
         site_name: trimmedName,
         tier,
         plc_type: plcType.trim() || undefined,
       });
+
+      // ============================================================
+      // ⚠️ האתר נרשם — אבל אסור לסגור עדיין
+      // ============================================================
+      // הסיסמה של הסוכן מוצגת **פעם אחת בלבד**; Supabase מחזיק גיבוב בלבד.
+      // סגירה אוטומטית כאן הייתה מוחקת אותה מהמסך לנצח, והאתר החדש היה
+      // נשאר בלי דרך להתחבר עד שמישהו מנפיק סיסמה חדשה.
+      //
+      // ⚠️ וגם כשההנפקה **נכשלה** נשארים פתוחים: האתר כבר קיים, ו-onSuccess
+      // שסוגר את החלון היה מציג "נרשם בהצלחה" על אתר שלא יוכל לדווח לעולם.
+      if (res?.agent?.password || res?.agentError) {
+        setIssued(res);
+        return;
+      }
       onSuccess();
     } catch (err) {
       // שגיאת השרת (קוד כפול, קוד לא תקין, שרת לא זמין) — הדיאלוג נשאר פתוח
@@ -56,6 +73,79 @@ function AddSiteModal({ onClose, onSuccess }) {
   // בזמן שמירה חוסמים סגירה (רקע / ✕) — סגירה באמצע הבקשה הייתה מנתקת את
   // מסלול ההצלחה (reload) ומעדכנת state על קומפוננטה שהוסרה.
   const closeIfIdle = () => { if (!saving) onClose(); };
+
+  // ============================================================
+  // מסך התוצאה — מוצג במקום הטופס אחרי הרשמה מוצלחת
+  // ============================================================
+  // ⚠️ **אין כאן ✕ ואין סגירה בלחיצה על הרקע.** הסיסמה מוצגת פעם אחת,
+  // ולחיצה מקרית מחוץ לחלון הייתה מוחקת אותה בלי דרך חזרה. היציאה היחידה
+  // היא הכפתור, שאומר במפורש מה קורה.
+  if (issued) {
+    const { site, agent, agentError } = issued;
+    return (
+      <div className="addsite-overlay">
+        <div className="addsite-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="addsite-header">
+            <h2>{`האתר ${site?.code ?? ""} נרשם`}</h2>
+          </div>
+
+          <div className="addsite-form">
+            {agentError ? (
+              // ⚠️ מצב אמיתי ולא תיאורטי: `register_site` התחייב, ולכן האתר
+              // קיים. מה שנכשל הוא הזהות — כלומר האתר **לא יוכל לדווח** עד
+              // שמישהו ינפיק לו אחת. הודעה כללית כמו "הרישום נכשל" הייתה
+              // שולחת לנסות שוב ולקבל "קוד כבר קיים".
+              <div className="addsite-error" role="alert">
+                <b>האתר נרשם, אך לא נוצרה לו זהות סוכן.</b>
+                <div style={{ marginTop: 6 }}>{agentError}</div>
+                <div style={{ marginTop: 6 }}>
+                  ⚠️ עד שתונפק זהות, האתר לא יוכל לכתוב נתונים. אפשר לנסות שוב
+                  ממסך הניהול.
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="addsite-field">
+                  <span>שם משתמש של האתר</span>
+                  <input type="text" readOnly value={agent.email} />
+                </div>
+
+                <div className="addsite-field">
+                  <span>סיסמת האתר</span>
+                  <input type="text" readOnly value={agent.password}
+                         style={{ fontFamily: "monospace", direction: "ltr" }} />
+                  <small className="addsite-hint">
+                    ⚠️ הסיסמה מוצגת <b>פעם אחת בלבד</b> ואינה ניתנת לשחזור.
+                    היא נכנסת להגדרות הסוכן במחשב שבאתר, בשדה "סיסמת האתר".
+                  </small>
+                </div>
+
+                <button type="button" className="btn btn-ghost"
+                        onClick={async () => {
+                          // ⚠️ navigator.clipboard נכשל בהקשר לא-מאובטח ומחזיר
+                          // Promise דחוי. בלי catch זו שגיאה לא-מטופלת שמפילה
+                          // את הלחיצה בשקט, והמשתמשת חושבת שהעתיקה.
+                          try {
+                            await navigator.clipboard.writeText(
+                              `${agent.email}\n${agent.password}`);
+                            setCopied(true);
+                          } catch { setCopied(false); }
+                        }}>
+                  {copied ? "✓ הועתק" : "העתק שם משתמש וסיסמה"}
+                </button>
+              </>
+            )}
+
+            <div className="addsite-actions">
+              <button type="button" className="btn btn-primary" onClick={onSuccess}>
+                {agentError ? "הבנתי, סגור" : "העתקתי — סגור"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="addsite-overlay" onClick={closeIfIdle}>
