@@ -82,6 +82,37 @@ function shapeOf(v, prefix = "", depth = 0, out = new Set(), pruned = new Set())
   return out;
 }
 
+// ============================================================
+// ⚠️ תת-עצים תנודתיים — נוכחותם תלויה באילו שורות **הכי חדשות**
+// ============================================================
+// `fetchInsights` מבקש את 300 השורות האחרונות של השנה עם `filter: "all"`,
+// ו-`log.entries` הוא מערך הטרוגני: לשורת תחזוקה יש `reason` ו-`durationHours`,
+// לשורת תפעול יש `card` ו-`entryExit`. שורת התחזוקה האחרונה בייצור היא
+// מ-30/08 — וככל שנכנסות פעולות חדשות היא **נדחקת מחוץ ל-300**, ואיתה
+// 27 השדות שרק היא נושאת.
+//
+// ⚠️ **נמדד: השער עבר ב-08:18 ונפל ב-08:46 באותו יום, בלי שינוי קוד.**
+// זה בדיוק "שער שנופל כי הנתונים זזו הוא שער שלומדים להתעלם ממנו".
+//
+// ⚠️ **וההחרגה אינה מאבדת כיסוי, וזו כל הסיבה שהיא מותרת:** `log` כאן הוא
+// פשוטו כמשמעו הקריאה ל-`fetchActivityDirect`, ואותו מבנה בדיוק מקובע
+// **דטרמיניסטית** בשני מקרים אחרים — `GET /api/activity` (שנה, 200 שורות)
+// ו-`GET /api/activity (תחזוקה)`, שהפילטר שלו **מבטיח** שורות תחזוקה.
+// קיבוע שלישי ממדגם שאינו יכול להבטיח כיסוי מוסיף רעידות ולא הגנה.
+//
+// ⚠️ ההחרגה היא לפי **תווית**, ולא גלובלית: `entries[].reason` במקרה
+// התחזוקה חייב להישאר נדרש, אחרת מחיקתו מהקוד לא תיתפס בשום מקום.
+const VOLATILE = {
+  "GET /api/insights": ["log.entries[]"],
+  "GET /api/sites/:code/insights": ["log.entries[]"],
+};
+
+const stripVolatile = (label, keys) => {
+  const prefixes = VOLATILE[label];
+  if (!prefixes) return keys;
+  return keys.filter((k) => !prefixes.some((p) => k.startsWith(p + ".")));
+};
+
 function compareShape(label, expected, b, pruned) {
   checks++;
 
@@ -100,7 +131,7 @@ function compareShape(label, expected, b, pruned) {
 
   // ⚠️ רק שדות ש**החוזה מכיל והזרוע הישירה לא**. ההפך אינו כשל: שדה נוסף
   // אינו שובר מסך שאינו קורא אותו — ואם הוא כן נחוץ, `--update` יקליט אותו.
-  const missing = expected.filter((k) => !b.has(k) && !excused(k));
+  const missing = stripVolatile(label, expected).filter((k) => !b.has(k) && !excused(k));
   if (!missing.length) return;
 
   failures++;
@@ -370,7 +401,10 @@ function compareShape(label, expected, b, pruned) {
           lost.push(`${label}: המקרה כולו — ${keys.length} שדות, נמחק מ-CASES?`);
           continue;
         }
-        const gone = keys.filter((k) => !captured[label].includes(k));
+        // ⚠️ אותה החרגה כמו בהשוואה, ומאותה סיבה: בלעדיה שומר-הצמצום היה
+        // חוסם כל `--update` שנעשה ברגע שבו שורת תחזוקה נדחקה מחוץ ל-300,
+        // כלומר הופך את ההקלטה למי-שיצליח-ראשון.
+        const gone = stripVolatile(label, keys).filter((k) => !captured[label].includes(k));
         if (gone.length) lost.push(`${label}: ${gone.length} שדות — ${gone.slice(0, 6).join(", ")}`);
       }
       if (lost.length && !process.argv.includes("--shrink")) {

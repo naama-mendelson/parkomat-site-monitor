@@ -31,16 +31,22 @@ const ok = (name, cond, detail = "") => {
   console.log("=== check-ingest-recorder ===\n");
   await db.init();
 
-  const before = await db.prepare(
-    "SELECT (SELECT COUNT(*)::int FROM sites) s, (SELECT COUNT(*)::int FROM operations) o, " +
-    "(SELECT COUNT(*)::int FROM status_history) h, (SELECT COUNT(*)::int FROM ingest_drops) d"
-  ).get();
+  // ⚠️ **רק מספר האתרים נמדד גלובלית, והשאר לפי האתר הסינתטי.**
+  // הגרסה הקודמת השוותה ספירות גלובליות של operations ו-status_history
+  // לפני ואחרי — ונמדד שהיא נופלת על **תנועה אמיתית**: אתר 2438 רשם תפעול
+  // ב-05:38:51 באמצע ריצה, והשער דיווח "עקבות בייצור" על מכונית שנכנסה
+  // לחניון. שער שנופל כי הנתונים זזו הוא שער שלומדים להתעלם ממנו.
+  //
+  // מה שהוא באמת בודק: שהאתר הסינתטי וכל מה שהוא כתב נעלמו. זה נמדד לפי
+  // מזהה האתר, והוא חסין לתנועה חיה לחלוטין.
+  const sitesBefore = (await db.prepare("SELECT COUNT(*)::int n FROM sites").get()).n;
 
   const t0 = Math.floor(Date.now() / 1000) - 600;
-  let snap = null;
+  let snap = null, ghost = null;
 
   await db.transaction(async () => {
     const site = await makeSite();
+    ghost = { id: site.id, code: site.code };
 
     snap = await runJs(site, [
       { kind: "state",     payload: { timestamp: t0,      state: "ready" } },
@@ -86,15 +92,26 @@ const ok = (name, cond, detail = "") => {
   ok("אין זריקות ברצף תקין", snap.drops.length === 0,
      JSON.stringify(snap.drops));
 
-  const after = await db.prepare(
-    "SELECT (SELECT COUNT(*)::int FROM sites) s, (SELECT COUNT(*)::int FROM operations) o, " +
-    "(SELECT COUNT(*)::int FROM status_history) h, (SELECT COUNT(*)::int FROM ingest_drops) d"
-  ).get();
+  const sitesAfter = (await db.prepare("SELECT COUNT(*)::int n FROM sites").get()).n;
+
+  // ⚠️ נמדד לפי מזהה האתר הסינתטי — כלומר בדיוק מה שהשער יצר, ולא מה
+  // ש-16 החניונים עשו בינתיים.
+  const leftovers = await db.prepare(
+    "SELECT (SELECT COUNT(*)::int FROM sites          WHERE id      = ?) s, " +
+    "       (SELECT COUNT(*)::int FROM operations     WHERE site_id = ?) o, " +
+    "       (SELECT COUNT(*)::int FROM status_history WHERE site_id = ?) h, " +
+    "       (SELECT COUNT(*)::int FROM ingest_drops   WHERE site_code = ?) d"
+  ).get(ghost.id, ghost.id, ghost.id, ghost.code);
 
   console.log("");
-  ok("⚠️ אפס עקבות בייצור",
-     JSON.stringify(before) === JSON.stringify(after),
-     `לפני ${JSON.stringify(before)} · אחרי ${JSON.stringify(after)}`);
+  ok("⚠️ האתר הסינתטי וכל מה שכתב נעלמו",
+     leftovers.s === 0 && leftovers.o === 0 && leftovers.h === 0 && leftovers.d === 0,
+     `נשארו ${JSON.stringify(leftovers)} עבור אתר ${ghost.code}`);
+
+  // ⚠️ נשמר גלובלית **רק** בגלל שתנועה חיה אינה יוצרת אתרים. אתר שנשאר
+  // הוא בדיוק הזיהום ש-check-no-residue קיים כדי לתפוס.
+  ok("⚠️ ומספר האתרים לא השתנה", sitesBefore === sitesAfter,
+     `${sitesBefore} → ${sitesAfter}`);
 
   console.log(`\n${"=".repeat(50)}`);
   console.log(fail === 0 ? `✅ עברו ${pass}` : `❌ נפלו ${fail} · עברו ${pass}`);
