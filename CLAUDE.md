@@ -12,7 +12,7 @@ Agent (on site) ──→ HiveMQ ──→ Node server ──→ Supabase (Postg
        ╎                            ↓                  ↑
        ╎                      SSE + assistant    dashboard reads directly
        ╎
-       ╌╌╌╌╌ (HTTPS, direct) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌→   ⚠️ built · OFF at every site
+       ╌╌╌╌╌ (HTTPS, direct) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌→   ⚠️ LIVE at 2438 · off at 17
 ```
 
 ⚠️ **`master` now serves exactly two routes** — `POST /api/chat` (the assistant) and
@@ -28,11 +28,11 @@ AI assistant.
 
 | Component | Role |
 |---|---|
-| `Parkomat.Agent/` | C# / .NET 10, on a PC at the site. Reads the PLC over Modbus-TCP, publishes to MQTT — and, **when configured**, writes to Supabase directly as well. v1.0.22. |
+| `Parkomat.Agent/` | C# / .NET 10, on a PC at the site. Reads the PLC over Modbus-TCP, publishes to MQTT — and, **when configured**, writes to Supabase directly as well. v1.0.23. |
 | `master/` | Node/Express. MQTT ingestion + the AI assistant. Two routes. |
 | `dashboard/` | React 19 / Vite. Reads Supabase directly. |
 
-⚠️ **The dotted line is real code with 32 gates behind it, and it is off at all 16 sites.**
+⚠️ **The dotted line is live at one site (2438, since 03/09/2026) and off at the other 17.**
 `SupabaseConfig.Enabled` is *derived*, never stored, so "on but incomplete" cannot be
 expressed. Turning one site on is `tools/provision-agent-user.js <code>` plus **one field** —
 the password — in that site's settings form; turning it off is clearing it.
