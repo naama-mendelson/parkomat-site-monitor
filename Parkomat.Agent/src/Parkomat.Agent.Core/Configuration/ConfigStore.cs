@@ -66,6 +66,15 @@ public static class ConfigStore
         // בו היא משימת רקע מנותקת, ולכן החריגה הייתה הופכת ל-unobserved ו**משתיקה
         // את סנכרון השעון לצמיתות בלי שום שורה בלוג** — כשל שקט לגמרי.
         result.NtpSyncIntervalMinutes = ClampNtpSyncIntervalMinutes(result.NtpSyncIntervalMinutes);
+
+        // ⚠️ מטביעים את קוד האתר בהגדרות Supabase. שם המשתמש שם **נגזר** ממנו
+        // (site-{code}@parkomat.co.il) כדי שלא יהיה שדה שמקלידים, ובלי ההטבעה
+        // הזו הוא היה נגזר ממחרוזת ריקה — כלומר Enabled=false לנצח, בלי שום
+        // שגיאה: הכתיבה הישירה פשוט לא הייתה קורית, והלוג היה שקט.
+        //
+        // ⚠️ וזה נעשה **כאן** ולא ב-Worker, כי Load הוא הדלת היחידה לקובץ —
+        // ההטבעה בצרכן הייתה מתפספסת אצל הצרכן הבא (הטופס ב-Tray).
+        result.Supabase.SiteId = result.SiteId;
         return result;
     }
 

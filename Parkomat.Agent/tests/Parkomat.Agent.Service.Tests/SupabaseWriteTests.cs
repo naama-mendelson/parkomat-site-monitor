@@ -39,17 +39,87 @@ public class SupabaseWriteTests
     {
         // ⚠️ שדה שמכיל רווח נראה מלא בטופס ההגדרות. בלי הבדיקה הזו הוא היה
         // מפעיל את המסלול, וכל סבב היה נכשל וממלא את הלוג.
-        var cfg = new SupabaseConfig
-        {
-            Url = "  ", AnonKey = "k", Email = "a@parkomat.co.il", Password = "p",
-        };
+        //
+        // ⚠️ **וזו הסיסמה, לא הכתובת** — הכתובת אינה עוד שדה שמקלידים, ורווח
+        // בעקיפה שלה פירושו "השתמש בברירת המחדל". הסיסמה היא המתג היחיד,
+        // ולכן היא המקום היחיד שבו רווח חייב להיקרא כ"ריק".
+        var cfg = new SupabaseConfig { SiteId = "2438", Password = "  " };
         Assert.False(cfg.Enabled);
+
+        cfg.Password = "p";
+        Assert.True(cfg.Enabled);
     }
 
     [Fact]
     public void SiteConfigDefaultsToDisabled()
     {
         Assert.False(new SiteConfig().Supabase.Enabled);
+    }
+
+    [Fact]
+    public void TheBurnedInProjectMatchesTheDashboard()
+    {
+        // ⚠️ **שני עותקים של אותו ערך, ולכן בדיקה.** הכתובת והמפתח חיים גם
+        // ב-<c>SupabaseDefaults</c> וגם ב-<c>dashboard/.env</c>, ו-check-agent-write
+        // קורא דווקא את השני. בלי ההשוואה הזו הם יכולים להיפרד בשקט: השער
+        // ימשיך לעבור מול הפרויקט הנכון, בעוד 16 הסוכנים בשטח פונים לפרויקט
+        // שאינו קיים — וזה ייראה כמו "הכתיבה הישירה לא עובדת", בלי רמז לסיבה.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "dashboard")))
+            dir = dir.Parent;
+
+        // ⚠️ דילוג ולא כישלון: עץ המקור אינו קיים על מכונת בנייה מנותקת.
+        // (הבדיקה חיה בשער `check-agent-live`, שרץ מתוך הריפו.)
+        string env = Path.Combine(dir?.FullName ?? "", "dashboard", ".env");
+        if (!File.Exists(env)) return;
+
+        string text = File.ReadAllText(env);
+        string? Val(string key) => text
+            .Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.StartsWith(key + "="))?[(key.Length + 1)..].Trim();
+
+        Assert.Equal(Val("VITE_SUPABASE_URL"), SupabaseDefaults.Url);
+        Assert.Equal(Val("VITE_SUPABASE_PUBLISHABLE_KEY"), SupabaseDefaults.AnonKey);
+    }
+
+    [Fact]
+    public void TheUserNameIsDerivedFromTheSiteCode()
+    {
+        // ⚠️ חייב להסכים מילה במילה עם emailFor ב-provision-agent-user.js.
+        // אי-הסכמה כאן פירושה סוכן שמנסה להתחבר כמשתמש שלא נוצר — 400 בכל
+        // סבב, ואף שורה במסד.
+        Assert.Equal("site-2438@parkomat.co.il", SupabaseDefaults.EmailFor("2438"));
+        Assert.Equal("site-2438@parkomat.co.il", SupabaseDefaults.EmailFor("  2438  "));
+        Assert.Equal("", SupabaseDefaults.EmailFor(""));
+    }
+
+    [Fact]
+    public void AnExplicitUserNameStillWins()
+    {
+        // דלת היציאה: אתר שהועבר להתקנה אחרת עם מוסכמת שמות אחרת.
+        var c = new SupabaseConfig { SiteId = "2438", Email = "other@parkomat.co.il" };
+        Assert.Equal("other@parkomat.co.il", c.EffectiveEmail);
+    }
+
+    [Fact]
+    public void ConfigStoreStampsTheSiteCodeOntoTheSupabaseSettings()
+    {
+        // ⚠️ **בדיקה מבנית, ובכוונה: ConfigStore קורא וכותב תחת ProgramData**,
+        // ובדיקה התנהגותית הייתה נוגעת בתיקייה של סוכן אמיתי.
+        //
+        // ומה היא מונעת: בלי ההשמה הזו שם המשתמש נגזר ממחרוזת ריקה, Enabled
+        // נשאר false לנצח, ו**שום שגיאה אינה נרשמת** — הכתיבה הישירה פשוט
+        // אינה קורית, וזה נראה בדיוק כמו "לא הפעילו את האתר".
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Core", "Configuration", "ConfigStore.cs"));
+        Assert.Matches(new System.Text.RegularExpressions.Regex(
+            @"\.Supabase\.SiteId\s*=\s*result\.SiteId\s*;"), src);
     }
 
     // ===== מדיניות האסימון =====

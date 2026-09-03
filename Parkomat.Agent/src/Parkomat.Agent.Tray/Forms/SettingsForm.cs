@@ -25,10 +25,13 @@ public class SettingsForm : Form
 
     // ⚠️ הכתיבה הישירה ל-Supabase. ריק = כבוי, וזה המצב בכל 16 האתרים
     // עד שממלאים אותם אחד-אחד.
-    private readonly TextBox _sbUrl = new();
-    private readonly TextBox _sbKey = new();
-    private readonly TextBox _sbEmail = new();
     private readonly TextBox _sbPass = new();
+
+    // ⚠️ העקיפות (כתובת/מפתח/שם משתמש) אינן בטופס — אבל הן **חייבות לשרוד
+    // שמירה**. OnSave בונה SiteConfig חדש מהשדות, ולכן בלי השמירה הזו בזיכרון
+    // כל לחיצה על "שמור" הייתה מוחקת אותן בשקט: אתר שהופנה ל-Postgres אחר
+    // היה חוזר לברירת המחדל ברגע שמישהו שינה כתובת PLC. אותו דפוס כמו _plc.
+    private SupabaseConfig _sbOverrides = new();
 
     // מחזיק את הגדרות ה-PLC (כולל הכתובות) בזיכרון, נערך דרך חלונית הכתובות.
     private PlcConfig _plc = new();
@@ -155,43 +158,53 @@ public class SettingsForm : Form
     }
 
     // ============================================================
-    // כתיבה ישירה — ארבעה שדות, וכולם ריקים כברירת מחדל
+    // כתיבה ישירה — שדה אחד, וריק כברירת מחדל
     // ============================================================
     // ⚠️ **ריק = כבוי, ואין כאן מתג.** מתג נפרד היה מאפשר מצב "מופעל אבל
     // בלי פרטים" — סוכן שמנסה לכתוב, נכשל בכל סבב, וממלא את הלוג. כאן
-    // המצב הזה אינו ניתן לביטוי: SupabaseConfig.Enabled נגזר מארבעת השדות.
+    // המצב הזה אינו ניתן לביטוי: SupabaseConfig.Enabled נגזר מהסיסמה.
+    //
+    // ⚠️ **שדה אחד, ולא ארבעה — וזה תיקון ולא קיצור.** הכתובת והמפתח זהים
+    // בכל 16 האתרים, ושם המשתמש נגזר מקוד האתר שכבר מוקלד למעלה. שלושה
+    // שדות שהתשובה בהם ידועה מראש אינם גמישות — הם שלוש הזדמנויות לשגיאת
+    // הקלדה שמתגלה רק כשמישהו שם לב שאתר הפסיק לדווח.
+    //
+    // ⚠️ העקיפות נשארות בקובץ ה-config (Url / AnonKey / Email) ולא בטופס:
+    // הן דלת היציאה — מעבר ל-Postgres אחר בלי 16 התקנות — ומי שנוגע בהן
+    // יודע מה הוא עושה. בטופס הן היו מזמינות מילוי מיותר.
     //
     // ⚠️ וזה גם מה שמאפשר לשגר את הגרסה ל-16 האתרים בבת אחת ולהפעיל אתר
     // אחד בכל פעם — אותו דפוס כמו מתג VITE_SUPABASE_DIRECT בדשבורד.
     private GroupBox BuildSupabaseGroup()
     {
         var g = NewGroup("כתיבה ישירה ל-Supabase (רשות)");
-        var t = NewTable(6);
+        // ⚠️ שלוש שורות, לא שש. הטבלה נבנתה ל-6 כשהיו כאן ארבעה שדות;
+        // אחרי הצמצום לשדה אחד נשארו שלוש שורות ריקות באמצע — רווח לבן
+        // שנראה כמו שדות שלא נטענו.
+        var t = NewTable(3);
 
         t.Controls.Add(new Label(), 0, 0);
         t.Controls.Add(new Label
         {
-            Text = "השאירו ריק כדי להשאיר כבוי. האתר ימשיך לשדר ב-MQTT כרגיל.",
+            Text = "הדביקו את סיסמת האתר כדי להפעיל. מחיקתה מכבה."
+                   + Environment.NewLine +
+                   "כל השאר (כתובת, מפתח, שם משתמש) נקבע לפי קוד האתר שלמעלה.",
             AutoSize = true,
             ForeColor = System.Drawing.Color.FromArgb(0x55, 0x55, 0x55)
         }, 1, 0);
 
-        AddRow(t, 1, "כתובת הפרויקט:", _sbUrl);
-        AddRow(t, 2, "מפתח ציבורי:", _sbKey);
-        AddRow(t, 3, "משתמש האתר:", _sbEmail);
-
         // ⚠️ מוסתרת בתצוגה, כמו סיסמת ה-MQTT. היא מונפקת פעם אחת
         // (provision-agent-user) ואינה ניתנת לשחזור.
         _sbPass.UseSystemPasswordChar = true;
-        AddRow(t, 4, "סיסמת האתר:", _sbPass);
+        AddRow(t, 1, "סיסמת האתר:", _sbPass);
 
-        t.Controls.Add(new Label(), 0, 5);
+        t.Controls.Add(new Label(), 0, 2);
         t.Controls.Add(new Label
         {
             Text = "⚠️ הסיסמה שונה לכל אתר ומוצגת פעם אחת בלבד בעת ההנפקה.",
             AutoSize = true,
             ForeColor = System.Drawing.Color.FromArgb(0x8A, 0x65, 0x00)
-        }, 1, 5);
+        }, 1, 2);
 
         g.Controls.Add(t);
         return g;
@@ -286,9 +299,7 @@ public class SettingsForm : Form
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
 
-        _sbUrl.Text = c.Supabase.Url;
-        _sbKey.Text = c.Supabase.AnonKey;
-        _sbEmail.Text = c.Supabase.Email;
+        _sbOverrides = c.Supabase;
         _sbPass.Text = c.Supabase.Password;
     }
 
@@ -330,9 +341,12 @@ public class SettingsForm : Form
             // SupabaseWriteTests.WhitespaceIsNotAValue.
             Supabase = new SupabaseConfig
             {
-                Url = _sbUrl.Text.Trim(),
-                AnonKey = _sbKey.Text.Trim(),
-                Email = _sbEmail.Text.Trim(),
+                // ⚠️ קוד האתר מהשדה שלמעלה, לא מהקובץ: שם המשתמש נגזר ממנו,
+                // ובלעדיו Enabled היה נשאר false אחרי שמירה עד לטעינה הבאה.
+                SiteId = siteId,
+                Url = _sbOverrides.Url,
+                AnonKey = _sbOverrides.AnonKey,
+                Email = _sbOverrides.Email,
                 Password = _sbPass.Text.Trim()
             }
         };

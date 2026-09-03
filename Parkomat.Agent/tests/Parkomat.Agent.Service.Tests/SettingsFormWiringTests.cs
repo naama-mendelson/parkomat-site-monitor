@@ -28,41 +28,44 @@ public class SettingsFormWiringTests
         return File.ReadAllText(path);
     }
 
-    // ארבעת השדות שמרכיבים את SupabaseConfig.Enabled.
-    private static readonly (string Field, string ConfigProp)[] Fields =
-    [
-        ("_sbUrl", "Url"),
-        ("_sbKey", "AnonKey"),
-        ("_sbEmail", "Email"),
-        ("_sbPass", "Password"),
-    ];
-
     [Fact]
-    public void EveryFieldIsLoadedFromTheConfig()
+    public void ThePasswordIsLoadedFromTheConfig()
     {
         // ⚠️ שדה שאינו נטען מוצג ריק גם כשהוא מוגדר — והטכנאי שילחץ שמור
         // **ימחק אותו** בלי לדעת.
-        string src = Form();
-        foreach (var (field, prop) in Fields)
-            Assert.Matches(new Regex($@"{field}\.Text\s*=\s*c\.Supabase\.{prop}\s*;"), src);
+        Assert.Matches(new Regex(@"_sbPass\.Text\s*=\s*c\.Supabase\.Password\s*;"), Form());
     }
 
     [Fact]
-    public void EveryFieldIsSavedBackToTheConfig()
-    {
-        string src = Form();
-        foreach (var (field, prop) in Fields)
-            Assert.Matches(new Regex($@"{prop}\s*=\s*{field}\.Text"), src);
-    }
-
-    [Fact]
-    public void EveryFieldIsTrimmedOnSave()
+    public void ThePasswordIsSavedAndTrimmed()
     {
         // ⚠️ רווח שנדבק בהדבקה נראה כערך תקין בטופס, ו-Enabled היה נדלק על
-        // הגדרות שאינן שלמות — סוכן שמנסה לכתוב ונכשל בכל סבב.
+        // סיסמה שאינה סיסמה — סוכן שמנסה לכתוב ונכשל בכל סבב.
+        Assert.Matches(new Regex(@"Password\s*=\s*_sbPass\.Text\.Trim\(\)"), Form());
+    }
+
+    [Fact]
+    public void TheOverridesSurviveASave()
+    {
+        // ⚠️ **הבדיקה שנולדה מהצמצום לשדה אחד.** הכתובת, המפתח ושם המשתמש
+        // כבר אינם בטופס, אבל הם עדיין בקובץ ההגדרות — והם דלת היציאה.
+        // OnSave בונה SiteConfig **חדש**, ולכן בלי הנשיאה הזו כל לחיצה על
+        // "שמור" הייתה מוחקת אותם בשקט: אתר שהופנה ל-Postgres אחר היה חוזר
+        // לברירת המחדל ברגע שמישהו שינה כתובת PLC.
         string src = Form();
-        foreach (var (field, prop) in Fields)
-            Assert.Matches(new Regex($@"{prop}\s*=\s*{field}\.Text\.Trim\(\)"), src);
+        Assert.Matches(new Regex(@"_sbOverrides\s*=\s*c\.Supabase\s*;"), src);
+        foreach (string prop in new[] { "Url", "AnonKey", "Email" })
+            Assert.Matches(new Regex($@"{prop}\s*=\s*_sbOverrides\.{prop}"), src);
+    }
+
+    [Fact]
+    public void TheSiteCodeReachesTheSupabaseConfig()
+    {
+        // ⚠️ שם המשתמש נגזר מקוד האתר. בלי ההשמה הזו ב-OnSave, השמירה
+        // הייתה מייצרת הגדרות עם קוד ריק — Enabled=false עד הטעינה הבאה,
+        // כלומר "שמרתי סיסמה ולא קרה כלום".
+        Assert.Matches(new Regex(@"SiteId\s*=\s*siteId,[\s\S]{0,200}?Password\s*=\s*_sbPass"),
+            Form());
     }
 
     [Fact]
@@ -86,8 +89,19 @@ public class SettingsFormWiringTests
     [Fact]
     public void TheFormSaysThatEmptyMeansOff()
     {
-        // ⚠️ בלי המשפט הזה, טכנאי שרואה ארבעה שדות ריקים מניח שמשהו חסר
-        // וממלא אותם בניחוש — כלומר מפעיל בטעות אתר שלא היה אמור לעבור.
-        Assert.Contains("השאירו ריק", Form());
+        // ⚠️ בלי המשפט הזה, טכנאי שרואה שדה ריק מניח שמשהו חסר וממלא אותו
+        // בניחוש — כלומר מפעיל בטעות אתר שלא היה אמור לעבור.
+        Assert.Contains("מחיקתה מכבה", Form());
+    }
+
+    [Fact]
+    public void TheThreeDerivedFieldsAreGoneFromTheForm()
+    {
+        // ⚠️ **הבדיקה שמונעת את החזרתם.** כתובת ומפתח זהים בכל 16 האתרים,
+        // ושם המשתמש נגזר מקוד האתר. שדה שהתשובה בו ידועה מראש אינו גמישות
+        // אלא הזדמנות לשגיאת הקלדה שמתגלה רק כשאתר מפסיק לדווח.
+        string src = Form();
+        foreach (string field in new[] { "_sbUrl", "_sbKey", "_sbEmail" })
+            Assert.DoesNotContain(field, src);
     }
 }
