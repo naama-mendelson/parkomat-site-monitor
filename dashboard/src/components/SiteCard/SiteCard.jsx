@@ -6,6 +6,7 @@ import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import RepairChart from "./RepairChart";
+import FaultTimer from "./FaultTimer";
 import "./SiteCard.css";
 
 // צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
@@ -127,10 +128,23 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     </div>
   ) : null;
 
+  // ==========================================================
+  // ⚠️ סטופר תקלה — הזמן עצמו הוא הנתון
+  // ==========================================================
+  // ההבדל בין תקלה בת 4 דקות לתקלה בת 4 שעות הוא ההבדל בין "קורה" לבין
+  // "אף אחד לא שם לב". עד עכשיו הכרטיס אמר "בתקלה" ותו לא, והמשך הופיע
+  // רק בכרטיס המורחב — כלומר בדיוק המידע שקובע דחיפות היה מוסתר.
+  //
+  // ⚠️ **גם `no_comm` מקבל אותו**, ומסיבה נפרדת: אתר מנותק אינו נספר
+  // בזמינות כלל ("לא יודעים אינו כישלון"), ולכן הוא **נעלם מהמדדים**.
+  // הסטופר הוא הדבר היחיד שאומר כמה זמן הוא נעלם.
+  const showTimer = (status === "error" || status === "no_comm") && site.statusSince;
+
   const statusTag = (
     <span className="card-status" style={{ background: colors.bg, color: colors.text }}>
       <span className="status-dot" style={{ background: colors.dot }} />
       {label}
+      {showTimer && <FaultTimer since={site.statusSince} tone={status} />}
     </span>
   );
 

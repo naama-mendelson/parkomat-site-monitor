@@ -1,0 +1,53 @@
+/* ============================================================
+   FaultTimer — כמה זמן האתר בתקלה, מתקתק
+   ============================================================
+   ⚠️ הצבעים מגיעים מ-STATUS_COLORS ב-constants.js, לא מהמצאה חדשה:
+   אדום אחד לתקלה בכל המערכת. גוון שני היה אומר למי שמסתכל שמדובר
+   בשני דברים שונים. */
+
+.fault-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+  /* ⚠️ ספרות בעלות רוחב אחיד. בלי זה הסטופר "רועד" בכל שנייה — הרוחב
+     של 1 שונה מזה של 8 — וזה מושך את העין בדיוק כשצריך להסתכל על
+     משהו אחר. */
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  white-space: nowrap;
+}
+
+.fault-timer--error {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+
+.fault-timer--no_comm {
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
+/* הנקודה הפועמת — מה שהופך מספר סטטי ל"קורה עכשיו". */
+.fault-timer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: fault-timer-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes fault-timer-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.25; }
+}
+
+/* ⚠️ מי שביקש לצמצם תנועה מקבל מספר שקט. הסטופר עצמו ממשיך לתקתק —
+   המידע נשאר, רק ההבהוב נעצר. */
+@media (prefers-reduced-motion: reduce) {
+  .fault-timer-dot { animation: none; }
+}
