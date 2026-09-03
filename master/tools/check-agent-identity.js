@@ -48,13 +48,33 @@ const ok = (name, cond, detail = "") => {
   console.log("\n── התנהגות מול המסד ──");
 
   const before = await db.prepare("SELECT COUNT(*)::int AS n FROM app_users").get();
-  const site = await db.prepare("SELECT id, code FROM sites ORDER BY id LIMIT 1").get();
-  if (!site) { console.log("אין אתרים — לא ניתן לבדוק"); process.exit(2); }
 
+  // ============================================================
+  // ⚠️ אתר סינתטי, ולא האתר הראשון בייצור
+  // ============================================================
+  // הגרסה הקודמת לקחה `ORDER BY id LIMIT 1` — האתר האמיתי הראשון — והוסיפה
+  // לו סוכן. זה עבד בדיוק כל עוד לאף אתר לא הייתה עדיין זהות.
+  //
+  // ⚠️ **וביום שהצי הונפק, השער מת:** `idx_app_users_one_agent_per_site`
+  // חוסם סוכן פעיל שני לאותו אתר, והשער נפל על
+  // `duplicate key value violates unique constraint`. זו ההגנה עובדת
+  // כשורה — ובאג בשער, שנשען על כך שהייצור ריק.
+  //
+  // אתר משלו פותר את זה לתמיד, והוא גם מבודד: השער אינו נוגע בנתוני לקוח.
+  //
+  // ⚠️ **והוא נוצר בתוך הטרנזקציה**, לא לפניה. יצירה מחוץ לה הייתה שורדת
+  // את ה-ROLLBACK ומשאירה אתר סינתטי בייצור — בדיוק הזיהום ש-check-no-residue
+  // קיים כדי לתפוס, ומיוצר על ידי השער שאמור להיות נקי.
   const uid = require("node:crypto").randomUUID();
   const email = `agentcheck${Date.now()}@parkomat.co.il`;
+  let site = null;
 
   await db.transaction(async () => {
+    site = await db.prepare(
+      "INSERT INTO sites (code, site_name, status, registered_at, is_new_site) " +
+      "VALUES (?, ?, 'no_comm', ?, 1) RETURNING id, code"
+    ).get(`agchk${Date.now()}`, "בדיקת זהות סוכן — סינתטי", new Date().toISOString());
+
     await db.prepare(
       "INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, site_id, created_at) " +
       "VALUES (?, ?, 'agent', TRUE, ?::uuid, ?, now()::text)"
