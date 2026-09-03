@@ -50,7 +50,7 @@ public class HeartbeatWiringTests
         // "הצליחה", `lastBeat` התקדם, ו**שום בקשה לא יצאה לרשת מעולם**.
         // שלוש בדיקות חיווט עברו, כי כולן בדקו את Worker ולא את הכבל.
         string src = Worker();
-        Assert.Matches(new Regex(@"mirrored\.Count\s*>\s*0\s*\?[\s\S]{0,200}?BeatAsync"), src);
+        Assert.Matches(new Regex(@"outgoing\.Count\s*>\s*0\s*\?[\s\S]{0,300}?BeatAsync"), src);
     }
 
     [Fact]
@@ -71,7 +71,10 @@ public class HeartbeatWiringTests
         // בלבד היה משאיר אתר שקט להיראות מת.
         string src = Worker();
         Assert.Matches(new Regex(@"beatDue\s*=.*mirrored\.Count\s*==\s*0", RegexOptions.Singleline), src);
-        Assert.Matches(new Regex(@"mirrored\.Count\s*>\s*0\s*\|\|\s*beatDue"), src);
+        // ⚠️ `outgoing` ולא `mirrored`: מאז הניסיון החוזר, האצווה היוצאת היא
+        // התור + החדשות. פעימה נשלחת רק כששתיהן ריקות — אחרת יש מה לכתוב,
+        // והכתיבה ממילא מעדכנת את `alive`.
+        Assert.Matches(new Regex(@"outgoing\.Count\s*>\s*0\s*\|\|\s*beatDue"), src);
     }
 
     [Fact]

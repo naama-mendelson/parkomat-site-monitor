@@ -214,6 +214,22 @@ public class Worker : BackgroundService
         string? agentVersion = typeof(Worker).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
             .InformationalVersion.Split('+')[0];
+
+        // ============================================================
+        // ⚠️ תור הניסיון החוזר של המסלול הישיר
+        // ============================================================
+        // תיקייה נפרדת מזו של MQTT: שני המסלולים נכשלים באופן בלתי תלוי,
+        // ותור משותף היה כופה עליהם גורל אחד.
+        //
+        // ⚠️ **התקרה היא הגנה ולא נוחות.** נתק של יומיים באתר עסוק ימלא
+        // את הדיסק של מחשב שגם מריץ את המחסום. PendingQueue מוחק את הישן
+        // ביותר בחריגה — הודעה בת יומיים שווה פחות מדיסק מלא, ובעיקר
+        // פחות מסוכן שקרס.
+        var supaQueue = new PendingQueue(AgentPaths.SupabaseQueueFolder);
+        if (supaQueue.Count > 0)
+            _logger.LogInformation(
+                "Supabase retry queue restored from disk: {Count} message(s) survived the restart.",
+                supaQueue.Count);
         if (supabase is not null)
         {
             mqtt.OnPublished = payload =>
@@ -831,35 +847,78 @@ public class Worker : BackgroundService
                 bool beatDue = supabase is not null && mirrored.Count == 0 &&
                                DateTimeOffset.UtcNow - lastBeat >= HeartbeatInterval;
 
-                if (supabase is not null && (mirrored.Count > 0 || beatDue))
+                // ============================================================
+                // ⚠️ הניסיון החוזר — מה שהופך את המסלול הישיר לעצמאי
+                // ============================================================
+                // עד כה אצווה שנכשלה **נזרקה**, והנימוק היה נכון כל עוד הוא
+                // הצד המשני: "ההודעות כבר נמסרו ל-MQTT ומשם הן יגיעו".
+                //
+                // ⚠️ אבל זה בדיוק מה שמונע לכבות את MQTT: ביום שהוא יורד,
+                // כל גמגום רשת הופך לאובדן נתונים קבוע. וזה לא תיאורטי —
+                // 1,097 מחזורי מכונה אבדו כך בשלוש הנפילות, והם לא "מאוחרים",
+                // הם מעולם לא הגיעו.
+                //
+                // מה שנשלח קודם הן ההודעות מהתור — הישנות ביותר תחילה —
+                // כדי שסדר ההגעה יישמר.
+                if (supabase is not null)
                 {
-                    // ⚠️ **שתי דלתות שונות, וזה לא סגנון.** `SendAsync` חוסם
-                    // אצווה ריקה בשורה הראשונה ומחזיר הצלחה בלי לשלוח — אז
-                    // פעימה שעברה דרכו "הצליחה" בלי ששום בקשה יצאה לרשת.
-                    // `BeatAsync` היא הדרך היחידה לשלוח ריק, והיא גם זו
-                    // שנושאת את מספר הגרסה.
-                    WriteResult res = mirrored.Count > 0
-                        ? await supabase.SendAsync(mirrored, stoppingToken)
-                        : await supabase.BeatAsync(agentVersion, stoppingToken);
-                    // ⚠️ החותם מתעדכן רק על הצלחה. פעימה שנכשלה ברשת אינה
-                    // סימן חיים שהגיע ליעדו, ורישומה כאילו הצליחה היה דוחה
-                    // את הניסיון הבא בדקה נוספת — בדיוק כשהקשר רעוע.
-                    if (res.Ok) lastBeat = DateTimeOffset.UtcNow;
+                    var retry = supaQueue.LoadAll<BatchItem>()
+                        // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה
+                        // נדחית **כולה**. חצי מהתקרה משאיר מקום להודעות
+                        // החדשות של הסבב הזה בלי לחשב הרכבות.
+                        .Take(100).ToList();
 
-                    if (res.Ok && mirrored.Count > 0)
-                        _logger.LogInformation(
-                            "-> Supabase: {Count} message(s) written directly.", mirrored.Count);
-                    else if (res.Ok)
-                        // ⚠️ Debug ולא Information: פעימה כל דקה היא
-                        // 1,440 שורות ביום, והן היו קוברות את מה שכן קרה.
-                        _logger.LogDebug("-> Supabase: heartbeat.");
-                    else
-                        // ⚠️ אזהרה ולא שגיאה, ובלי ניסיון חוזר: ההודעות כבר
-                        // נמסרו ל-MQTT ומשם הן יגיעו. כשל כאן הוא **הפסד של
-                        // המסלול החדש בלבד**, וכל עוד הוא הצד המשני זו אינה
-                        // תקלה שדורשת פעולה.
-                        _logger.LogWarning(
-                            "Supabase write failed ({Status}): {Error}", res.Status, res.Error);
+                    var outgoing = new List<BatchItem>(retry.Count + mirrored.Count);
+                    foreach (var (_, m) in retry) outgoing.Add(m);
+                    outgoing.AddRange(mirrored);
+
+                    if (outgoing.Count > 0 || beatDue)
+                    {
+                        // ⚠️ **שתי דלתות שונות, וזה לא סגנון.** `SendAsync` חוסם
+                        // אצווה ריקה בשורה הראשונה ומחזיר הצלחה בלי לשלוח — אז
+                        // פעימה שעברה דרכו "הצליחה" בלי ששום בקשה יצאה לרשת.
+                        // `BeatAsync` היא הדרך היחידה לשלוח ריק, והיא גם זו
+                        // שנושאת את מספר הגרסה.
+                        WriteResult res = outgoing.Count > 0
+                            ? await supabase.SendAsync(outgoing, stoppingToken)
+                            : await supabase.BeatAsync(agentVersion, stoppingToken);
+
+                        // ⚠️ החותם מתעדכן רק על הצלחה. פעימה שנכשלה ברשת אינה
+                        // סימן חיים שהגיע ליעדו, ורישומה כאילו הצליחה היה דוחה
+                        // את הניסיון הבא בדקה נוספת — בדיוק כשהקשר רעוע.
+                        if (res.Ok) lastBeat = DateTimeOffset.UtcNow;
+
+                        if (res.Ok)
+                        {
+                            // ⚠️ **המחיקה רק אחרי אישור.** מחיקה לפני השליחה,
+                            // או בלי לבדוק את התוצאה, מחזירה בדיוק את האובדן
+                            // שהתור נבנה למנוע. אותו כלל כמו ב-PendingQueue.
+                            foreach (var (path, _) in retry) supaQueue.Remove(path);
+
+                            if (outgoing.Count > 0)
+                                _logger.LogInformation(
+                                    "-> Supabase: {Count} message(s) written directly{Retried}.",
+                                    outgoing.Count,
+                                    retry.Count > 0 ? $" ({retry.Count} from the retry queue)" : "");
+                            else
+                                // ⚠️ Debug ולא Information: פעימה כל דקה היא
+                                // 1,440 שורות ביום, והן היו קוברות את מה שכן קרה.
+                                _logger.LogDebug("-> Supabase: heartbeat.");
+                        }
+                        else
+                        {
+                            // ⚠️ **רק ההודעות החדשות נכנסות לתור.** אלה שכבר
+                            // היו בו נשארות שם — הן לא נמחקו, כי המחיקה קורית
+                            // רק על הצלחה. הוספה חוזרת שלהן הייתה מכפילה אותן
+                            // בכל כישלון, והתור היה מתפוצץ דווקא בנתק ארוך.
+                            foreach (var m in mirrored) supaQueue.Enqueue(m);
+
+                            _logger.LogWarning(
+                                "Supabase write failed ({Status}): {Error}. " +
+                                "{Queued} message(s) queued for retry ({Total} waiting).",
+                                res.Status, res.Error, mirrored.Count, supaQueue.Count);
+                        }
+                    }
 
                     mirrored.Clear();
                 }

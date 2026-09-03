@@ -126,6 +126,16 @@ public static class AgentPaths
     public static string QueueFolder { get; } = Path.Combine(BaseFolder, "queue");
 
     /// <summary>
+    /// תור נפרד לכתיבה הישירה ל-Supabase.
+    ///
+    /// ⚠️ <b>נפרד מ-<see cref="QueueFolder"/> ובכוונה.</b> שני המסלולים נכשלים
+    /// באופן בלתי תלוי — MQTT יכול לעבוד בזמן ש-Supabase לא נגיש, ולהפך —
+    /// ותור משותף היה כופה עליהם גורל אחד: הודעה שנמסרה ל-MQTT הייתה נשארת
+    /// בתור עד שגם הכתיבה הישירה תצליח, או להפך.
+    /// </summary>
+    public static string SupabaseQueueFolder { get; } = Path.Combine(BaseFolder, "queue-supabase");
+
+    /// <summary>
     /// מוודא שתיקיית הבסיס קיימת. בטוח לקרוא לזה כמה פעמים —
     /// אם התיקייה כבר קיימת, לא קורה כלום.
     /// </summary>
