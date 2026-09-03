@@ -31,5 +31,6 @@
       "status": "error",
       "fault_text": "מיטה 5 - בוכנה 2: זמן מקסימלי לפעולה"
     }
-  ]
+  ],
+  "p_version": "1.0.0-contract"
 }

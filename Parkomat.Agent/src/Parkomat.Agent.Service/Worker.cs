@@ -1,4 +1,5 @@
 using Parkomat.Agent.Core.Configuration;
+using System.Reflection;
 using System.Threading;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Queue;
@@ -197,6 +198,22 @@ public class Worker : BackgroundService
         // כל מה ששודר בסבב הנוכחי. מתמלא דרך הצופה של MqttPublisher —
         // התפר היחיד שרואה **כל** שידור, ולכן אין אתר שאפשר לשכוח.
         var mirrored = new List<BatchItem>();
+
+        // ⚠️ **60 שניות — בדיוק ה-keepalive של MQTT היום.**
+        // הגשר שולח PINGREQ כל 60 שניות לכל אתר, ו"כלל 90 השניות" בשרת הוא
+        // 1.5 × אותו מספר. כלומר המערכת כבר פועמת בקצב הזה, וההעברה ל-HTTPS
+        // **אינה מוסיפה סקר** — היא מזיזה את השעון מ-HiveMQ ל-pg_cron.
+        // בצד השרת: סף 3 דקות (שלוש פעימות שהוחמצו) וסריקה כל דקה.
+        var HeartbeatInterval = TimeSpan.FromSeconds(60);
+        // ⚠️ MinValue ולא UtcNow: הפעימה הראשונה יוצאת מיד עם העלייה, כדי
+        // שסוכן שעלה מחדש ייראה חי בלי להמתין דקה.
+        var lastBeat = DateTimeOffset.MinValue;
+        // ⚠️ הגרסה נקראת פעם אחת ולא בכל פעימה, ונחתכת ב-'+': הערך המלא הוא
+        // "1.0.22+<sha>", ו-40 תווי גיבוב בעמודה שנועדה לענות "איזו גרסה
+        // רצה באתר" הופכים אותה לבלתי קריאה בדיוק במקום שבו קוראים אותה.
+        string? agentVersion = typeof(Worker).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+')[0];
         if (supabase is not null)
         {
             mqtt.OnPublished = payload =>
@@ -793,12 +810,49 @@ public class Worker : BackgroundService
                 //
                 // ⚠️ ונשלח **אחרי** ה-MQTT, לא לפניו: MQTT הוא מקור האמת
                 // בשלב הזה, ואסור שכשל ברשת החדשה יעכב אותו.
-                if (supabase is not null && mirrored.Count > 0)
+                // ============================================================
+                // ⚠️ סימן חיים — אצווה ריקה כשאין מה לשלוח
+                // ============================================================
+                // זה מה שיחליף את הצוואה של MQTT. הצוואה עובדת כי הברוקר
+                // סופר PINGREQ שלא הגיע (keepalive 60 שניות, וכלל 90
+                // השניות הוא 1.5 × זה) — כלומר גם היא דופק, רק שהשעון
+                // נמצא ב-HiveMQ. ב-HTTPS אין מי שיספור, ולכן הסוכן אומר
+                // זאת בעצמו.
+                //
+                // ⚠️ **ואי אפשר להסתמך על התעבורה הרגילה.** הסוכן משדר על
+                // שינוי MODE בלבד, ונמדד שאתר שקט 61–68 שעות ברוטינה —
+                // סף שיימנע רעש היה ארוך מהתקלה שמחפשים.
+                //
+                // ⚠️ ורק כשהוא שקט: אצווה עם הודעות כבר כותבת את החותם
+                // בצד השרת, ופעימה נוספת לצדה היא בקשה מיותרת. נמדד
+                // שהאתרים שקטים 99% מהזמן, כלומר כמעט כל הבקשות במסלול
+                // הישיר יהיו פעימות — 18 אתרים × 1,440 ביום = 25,920,
+                // כ-0.9GB לחודש.
+                bool beatDue = supabase is not null && mirrored.Count == 0 &&
+                               DateTimeOffset.UtcNow - lastBeat >= HeartbeatInterval;
+
+                if (supabase is not null && (mirrored.Count > 0 || beatDue))
                 {
-                    WriteResult res = await supabase.SendAsync(mirrored, stoppingToken);
-                    if (res.Ok)
+                    // ⚠️ **שתי דלתות שונות, וזה לא סגנון.** `SendAsync` חוסם
+                    // אצווה ריקה בשורה הראשונה ומחזיר הצלחה בלי לשלוח — אז
+                    // פעימה שעברה דרכו "הצליחה" בלי ששום בקשה יצאה לרשת.
+                    // `BeatAsync` היא הדרך היחידה לשלוח ריק, והיא גם זו
+                    // שנושאת את מספר הגרסה.
+                    WriteResult res = mirrored.Count > 0
+                        ? await supabase.SendAsync(mirrored, stoppingToken)
+                        : await supabase.BeatAsync(agentVersion, stoppingToken);
+                    // ⚠️ החותם מתעדכן רק על הצלחה. פעימה שנכשלה ברשת אינה
+                    // סימן חיים שהגיע ליעדו, ורישומה כאילו הצליחה היה דוחה
+                    // את הניסיון הבא בדקה נוספת — בדיוק כשהקשר רעוע.
+                    if (res.Ok) lastBeat = DateTimeOffset.UtcNow;
+
+                    if (res.Ok && mirrored.Count > 0)
                         _logger.LogInformation(
                             "-> Supabase: {Count} message(s) written directly.", mirrored.Count);
+                    else if (res.Ok)
+                        // ⚠️ Debug ולא Information: פעימה כל דקה היא
+                        // 1,440 שורות ביום, והן היו קוברות את מה שכן קרה.
+                        _logger.LogDebug("-> Supabase: heartbeat.");
                     else
                         // ⚠️ אזהרה ולא שגיאה, ובלי ניסיון חוזר: ההודעות כבר
                         // נמסרו ל-MQTT ומשם הן יגיעו. כשל כאן הוא **הפסד של

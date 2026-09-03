@@ -78,11 +78,13 @@ async function provisionAgent(site) {
   return { token, email, cleanup };
 }
 
-const callBatch = (token, messages) =>
+const callBatch = (token, messages, version) =>
   retry(`${SB}/rest/v1/rpc/ingest_batch`, {
     method: "POST",
     headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ p_messages: messages }),
+    body: JSON.stringify(
+      version === undefined ? { p_messages: messages }
+                            : { p_messages: messages, p_version: version }),
   });
 
 (async () => {
@@ -127,6 +129,39 @@ const callBatch = (token, messages) =>
     ok("המונה נשמר כבסיס (אתר חדש)",
       snap.site.cycle_total === 0 && snap.site.plc_cycle_last === 101,
       `total=${snap.site.cycle_total} base=${snap.site.plc_cycle_last}`);
+
+    // ---------- 1ב. הפעימה ----------
+    // ⚠️ **זו הבדיקה היחידה שמוכיחה שהדופק עובד מקצה לקצה** — אצווה ריקה,
+    // דרך PostgREST, עם זהות סוכן אמיתית. הכל למעלה ממנה בודק את הסריקה
+    // בהנחה שמישהו כתב; כאן נבדק שמישהו באמת כותב.
+    console.log("\n── הפעימה ──");
+    const aliveRow = async () => await db.prepare(
+      "SELECT seen_at, beats, agent_version FROM alive WHERE site_id = ?").get(mine.id);
+
+    const before = await aliveRow();
+    const beat = await callBatch(agent.token, [], "9.9.9-gate");
+    ok("אצווה ריקה מתקבלת", beat.status === 200, `${beat.status}`);
+    const afterBeat = await aliveRow();
+    ok("⚠️ ופעימה ריקה מקדמת את החותם",
+      afterBeat && (!before || new Date(afterBeat.seen_at) >= new Date(before.seen_at)));
+    ok("⚠️ ומונה הפעימות עלה", afterBeat?.beats > (before?.beats ?? 0),
+      `${before?.beats ?? 0} → ${afterBeat?.beats}`);
+    ok("הגרסה נרשמה", afterBeat?.agent_version === "9.9.9-gate", `${afterBeat?.agent_version}`);
+
+    // ⚠️ **ה-COALESCE, וזו הבדיקה שקשה לזייף.** סוכן ישן שאינו שולח גרסה
+    // אינו מוחק את מה שדווח. בלי זה העמודה הייתה מתרוקנת בדיוק בשדרוג —
+    // הרגע היחיד שבו מישהו קורא אותה.
+    await callBatch(agent.token, []);
+    ok("⚠️ פעימה בלי גרסה אינה מוחקת את הקיימת",
+      (await aliveRow())?.agent_version === "9.9.9-gate",
+      `${(await aliveRow())?.agent_version}`);
+
+    // ⚠️ ואצווה **עם** הודעות פועמת גם היא: הדופק נרשם לפני העיבוד, כך
+    // שאתר עסוק לעולם לא ייראה שקט.
+    const busyBefore = (await aliveRow()).beats;
+    await callBatch(agent.token, [{ kind: "state", status: "ready",
+      occurred_at: new Date().toISOString() }]);
+    ok("⚠️ גם אצווה עם הודעות פועמת", (await aliveRow()).beats > busyBefore);
 
     // ---------- 2. הבידוד ----------
     console.log("\n── הבידוד ──");

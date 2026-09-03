@@ -813,7 +813,17 @@ COMMENT ON FUNCTION app.classify_timestamp(bigint, bigint, bigint, boolean) IS
 --
 -- כאן הן מגיעות יחד, בקריאה אחת, בטרנזקציה אחת. הבעיה אינה נפתרת — היא
 -- אינה קיימת.
-CREATE OR REPLACE FUNCTION public.ingest_batch(p_messages jsonb)
+-- ⚠️ **DROP לפני CREATE, ובכוונה.** תוספת פרמטר עם ברירת מחדל אינה
+-- מחליפה את הפונקציה — היא יוצרת **עומס יתר**, ושתי החתימות חיות זו
+-- לצד זו. PostgREST בוחר לפי שמות השדות בגוף, כך שקריאה ישנה הייתה
+-- ממשיכה לעבוד ולכתוב לגרסה הישנה של הקוד — ההתנהגות הכי קשה לאבחון
+-- שיש: שתי גרסאות של אותה פונקציה, שתיהן חיות, ואיש אינו יודע.
+DROP FUNCTION IF EXISTS public.ingest_batch(jsonb);
+
+CREATE OR REPLACE FUNCTION public.ingest_batch(
+  p_messages jsonb,
+  p_version  text DEFAULT NULL
+)
 RETURNS TABLE (
   idx     integer,
   kind    text,
@@ -845,6 +855,32 @@ BEGIN
   IF jsonb_typeof(p_messages) <> 'array' THEN
     RAISE EXCEPTION 'p_messages חייב להיות מערך' USING ERRCODE = 'check_violation';
   END IF;
+
+  -- ============================================================
+  -- ⚠️ הדופק — נרשם על **כל** קריאה, גם ריקה
+  -- ============================================================
+  -- הסוכן קורא לכאן כשיש לו מה לשלוח, וגם כשאין — אצווה ריקה היא
+  -- "אני חי". שתי הצורות מוכיחות בדיוק אותו דבר, ולכן שתיהן כותבות
+  -- כאן ולא רק אחת מהן.
+  --
+  -- ⚠️ **וזה לפני העיבוד ולא אחריו.** אצווה שתיפול על הודעה פגומה עדיין
+  -- מוכיחה שהסוכן חי, והרשת עובדת. רישום אחרי העיבוד היה הופך תקלת
+  -- נתונים ל"האתר מת" — ושולח מישהו לנסוע לחניון בגלל שדה שגוי.
+  --
+  -- ⚠️ **`beats` אינו קישוט.** הוא עונה על השאלה שאי אפשר לענות עליה
+  -- מ-`seen_at` לבדו: סוכן שמוגדר לא נכון ופועם פי מאה מהצפוי נראה
+  -- בריא לחלוטין לפי החותם. ההפרש בין שתי סריקות חושף אותו.
+  --
+  -- ⚠️ **`COALESCE` על הגרסה, ולא דריסה.** סוכן ישן שאינו שולח גרסה
+  -- היה מוחק את מה שדווח קודם, והשדה היה מתרוקן בדיוק כשמשדרגים —
+  -- כלומר ברגע היחיד שבו שואלים אותו.
+  INSERT INTO alive (site_id, seen_at, beats, agent_version)
+  VALUES (v_site, now(), 1, NULLIF(p_version, ''))
+  ON CONFLICT (site_id) DO UPDATE
+     SET seen_at       = now(),
+         beats         = alive.beats + 1,
+         agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''),
+                                  alive.agent_version);
 
   IF jsonb_array_length(p_messages) > MAX_BATCH THEN
     RAISE EXCEPTION 'אצווה גדולה מדי (% > %)', jsonb_array_length(p_messages), MAX_BATCH
@@ -893,8 +929,8 @@ $fn$;
 -- ⚠️ REVOKE מפורש לפני GRANT, כמו כל פונקציה ב-writes.postgres.sql:
 -- ברירת המחדל של Postgres היא EXECUTE ל-PUBLIC, כלומר גם ל-anon. פונקציה
 -- שכותבת קליטה ופתוחה ל-anon היא הדלת שהמפתח הפומבי פותח.
-REVOKE ALL ON FUNCTION public.ingest_batch(jsonb) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.ingest_batch(jsonb) TO authenticated;
+REVOKE ALL ON FUNCTION public.ingest_batch(jsonb, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ingest_batch(jsonb, text) TO authenticated;
 
-COMMENT ON FUNCTION public.ingest_batch(jsonb) IS
+COMMENT ON FUNCTION public.ingest_batch(jsonb, text) IS
   'הדלת היחידה של הסוכן. האתר נגזר מהזהות ולא מהמטען — סוכן אינו יכול לכתוב לאתר אחר.';

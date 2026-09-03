@@ -60,8 +60,16 @@ public class IngestContractTests
                 Timestamp = t + 35, State = SiteState.Error,
                 FaultText = "מיטה 5 - בוכנה 2: זמן מקסימלי לפעולה",
             }),
-        ]);
+        ], ContractVersion);
     }
+
+    /// <summary>
+    /// ⚠️ <b>מספר קבוע ולא הגרסה האמיתית, ובכוונה.</b> הסוכן שולח את גרסת
+    /// ההרכבה שלו, שמשתנה בכל שחרור. חוזה שנועל אותה היה נשבר בכל עדכון
+    /// גרסה — כישלון שאינו מעיד על דבר, ושער אדום שמופיע בכל שחרור הוא
+    /// שער שלומדים להתעלם ממנו. מה שנעול כאן הוא ש<b>השדה קיים ובשמו</b>.
+    /// </summary>
+    private const string ContractVersion = "1.0.0-contract";
 
     [Fact]
     public void ContractFileExists()

@@ -610,6 +610,26 @@ CREATE POLICY suppressed_faults_read_authenticated ON suppressed_faults
   FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
 
 -- ============================================================
+-- alive — הדופק. קריאה בלבד, וכתיבה **רק** דרך ingest_batch
+-- ============================================================
+-- ⚠️ **אין `GRANT INSERT/UPDATE` לאיש, וזה עיקר ההגנה.**
+-- הסוכן מגיע כמשתמש `authenticated` רגיל, בדיוק כמו הדפדפן. אילו היה
+-- לו `UPDATE` על הטבלה, סוכן של אתר אחד היה יכול לכתוב `seen_at` עתידי
+-- לאתר אחר — כלומר **להשתיק את ההתראה על אתר מת**, וזו בדיוק התקלה
+-- שהמערכת הזו קיימת כדי לתפוס.
+--
+-- הכתיבה עוברת ב-`public.ingest_batch`, שהיא `SECURITY DEFINER` וגוזרת
+-- את האתר מ-`app.agent_site_id()` — כלומר מהזהות ולא מהגוף. אותו נימוק
+-- בדיוק שבגללו `ingest_batch` אינה מקבלת מזהה אתר כפרמטר.
+ALTER TABLE alive ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS alive_read_authenticated ON alive;
+CREATE POLICY alive_read_authenticated ON alive
+  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
+
+GRANT SELECT ON alive TO authenticated;
+
+-- ============================================================
 -- settings — **אין מדיניות, וזה מכוון**
 -- ============================================================
 -- הטבלה מחזיקה את גיבוב קוד המנהל (ADMIN_KEY). קריאה שלה ע"י הדשבורד

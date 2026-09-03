@@ -246,4 +246,74 @@ public class SupabaseWriterTests
         Assert.Contains("access_token", r.Error);
         Assert.DoesNotContain("/rest/v1/rpc/ingest_batch", h.Paths);
     }
+
+    // ============================================================
+    // הפעימה — אצווה ריקה שכן יוצאת לרשת
+    // ============================================================
+
+    [Fact]
+    public async Task TheBeatActuallyReachesTheNetwork()
+    {
+        // ⚠️ **הבדיקה שהייתה חסרה, והפיצ'ר היה מת בלעדיה.**
+        // הגרסה הראשונה של הדופק קראה ל-`SendAsync` עם רשימה ריקה. השורה
+        // הראשונה שם מחזירה `Success(0)` בלי לשלוח — כלומר הפעימה החזירה
+        // הצלחה, החותם בסוכן התקדם, ו**שום בקשה לא יצאה מהכבל מעולם**.
+        //
+        // שלוש בדיקות חיווט עברו על זה, כי כולן קראו את `Worker.cs`. רק
+        // ספירת בקשות HTTP תופסת את ההבדל בין "הוחזר Ok" ל"נשלח".
+        var h = new FakeHandler(req =>
+            req.RequestUri!.AbsolutePath.Contains("token")
+                ? (HttpStatusCode.OK, TokenBody)
+                : (HttpStatusCode.OK, "[]"));
+
+        var w = new SupabaseWriter(Cfg(), new HttpClient(h));
+        var r = await w.BeatAsync("1.0.22", CancellationToken.None);
+
+        Assert.True(r.Ok);
+        Assert.Contains("/rest/v1/rpc/ingest_batch", h.Paths);
+
+        // ⚠️ ומערך ריק בגוף, לא היעדר שדה: `ingest_batch` דורשת מערך
+        // ומפילה `check_violation` על כל דבר אחר — כלומר פעימה שנשלחה
+        // בלי `p_messages` הייתה נכשלת בכל קריאה, לנצח.
+        string body = h.Bodies[^1];
+        Assert.Contains("\"p_messages\":[]", body);
+        Assert.Contains("\"p_version\":\"1.0.22\"", body);
+    }
+
+    [Fact]
+    public async Task AnEmptyBatchThroughSendAsyncStillSendsNothing()
+    {
+        // ⚠️ הצד השני של אותה החלטה, ולכן הוא נעול גם הוא: `SendAsync` היא
+        // המסלול של הודעות אמיתיות, ואצווה ריקה שם היא סבב שאין בו מה
+        // לכתוב. אילו הייתה שולחת, כל סבב שקט היה בקשת רשת — כלומר סקר
+        // בקצב הלולאה ולא בקצב הפעימה.
+        var h = new FakeHandler(_ => (HttpStatusCode.OK, "[]"));
+        var w = new SupabaseWriter(Cfg(), new HttpClient(h));
+
+        var r = await w.SendAsync([], CancellationToken.None);
+
+        Assert.True(r.Ok);
+        Assert.Empty(h.Paths);
+    }
+
+    [Fact]
+    public async Task TheBeatOmitsTheVersionWhenItIsUnknown()
+    {
+        // ⚠️ null נשמט מהגוף. מה ששומר על זה הוא `DefaultIgnoreCondition`
+        // ב-`BatchPayload.Json` — **לא** תנאי בקוד השליחה; מוטציה הוכיחה
+        // שתנאי כזה היה קוד מת, והוסר.
+        //
+        // ולמה זה חשוב: `COALESCE` בצד ה-SQL שומר את הגרסה הקודמת רק כשהשדה
+        // חסר. שדה שנשלח כ-null בכל פעימה היה מוחק את מה שדווח בהתקנה —
+        // כלומר העמודה הייתה מתרוקנת בדיוק ברגע שבו שואלים אותה.
+        var h = new FakeHandler(req =>
+            req.RequestUri!.AbsolutePath.Contains("token")
+                ? (HttpStatusCode.OK, TokenBody)
+                : (HttpStatusCode.OK, "[]"));
+
+        var w = new SupabaseWriter(Cfg(), new HttpClient(h));
+        await w.BeatAsync(null, CancellationToken.None);
+
+        Assert.DoesNotContain("p_version", h.Bodies[^1]);
+    }
 }

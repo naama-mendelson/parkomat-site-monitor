@@ -115,9 +115,26 @@ public static class BatchPayload
         Cycle = m.CycleCounter,
     };
 
-    /// <summary>גוף הבקשה המלא: <c>{"p_messages": [...]}</c>.</summary>
-    public static string Serialize(IEnumerable<BatchItem> items) =>
-        JsonSerializer.Serialize(new { p_messages = items }, Json);
+    /// <summary>
+    /// גוף הבקשה המלא: <c>{"p_messages": [...], "p_version": "1.0.22"}</c>.
+    ///
+    /// ⚠️ <b>הגרסה נשלחת כאן ולא ב-topic נפרד</b>, כי אין topic נפרד: הפער
+    /// מתועד במפורש — *"אין דיווח גרסה בשום topic, אי אפשר לדעת מרחוק מי
+    /// קיבל מה"*. הפעימה ממילא יוצאת כל דקה, אז היא הנשא הזול ביותר שיש.
+    ///
+    /// ⚠️ <b>וכשהיא null היא נשמטת מהגוף</b> — לא בזכות תנאי כאן, אלא בזכות
+    /// <c>DefaultIgnoreCondition = WhenWritingNull</c> ב-<c>Json</c> למעלה.
+    /// הגרסה הראשונה כאן הייתה טרנרי שבחר בין שני אובייקטים, והוא היה
+    /// <b>קוד מת</b>: מוטציה שביטלה אותו לא הפילה דבר, כי ההשמטה מעולם לא
+    /// הייתה שלו. מי ששומר על ההתנהגות הוא <c>Json</c>, ותיאור לא מדויק של
+    /// מי מגן על מה הוא בדיוק איך שמישהו מוחק את ההגנה האמיתית.
+    ///
+    /// ⚠️ וזה חשוב לחוזה: שדה שקיים תמיד היה מחייב את הדוגמה לנעול מספר
+    /// גרסה אמיתי — כלומר <c>IngestContractTests</c> נשבר בכל שחרור, ושער
+    /// אדום שמופיע בכל שחרור הוא שער שלומדים להתעלם ממנו.
+    /// </summary>
+    public static string Serialize(IEnumerable<BatchItem> items, string? version = null) =>
+        JsonSerializer.Serialize(new { p_messages = items, p_version = version }, Json);
 }
 
 /// <summary>

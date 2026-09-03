@@ -60,9 +60,33 @@ public sealed class SupabaseWriter
     /// ⚠️ אצווה ריקה אינה נשלחת: בקשת רשת שאין בה מה לכתוב היא עלות בלי
     /// תמורה, ובאתר שקט זה כל 30 שניות, כל היום.
     /// </summary>
-    public async Task<WriteResult> SendAsync(IReadOnlyList<BatchItem> items, CancellationToken ct)
+    public Task<WriteResult> SendAsync(IReadOnlyList<BatchItem> items, CancellationToken ct)
     {
-        if (items.Count == 0) return WriteResult.Success(0);
+        // ⚠️ אצווה ריקה **מכאן** אינה נשלחת, ובכוונה: זו קריאה שאין בה מה
+        // לכתוב. הפעימה עוברת ב-BeatAsync, שהיא הדרך היחידה לשלוח ריק.
+        if (items.Count == 0) return Task.FromResult(WriteResult.Success(0));
+        return SendCoreAsync(items, null, ct);
+    }
+
+    /// <summary>
+    /// הפעימה: אצווה ריקה, שאומרת "אני חי" ותו לא.
+    ///
+    /// ⚠️ <b>היא חייבת דלת נפרדת, וזה נמדד.</b> הגרסה הראשונה של הדופק
+    /// קראה ל-<c>SendAsync</c> עם רשימה ריקה — והשורה הראשונה שם מחזירה
+    /// <c>Success(0)</c> בלי לשלוח דבר. כלומר הפעימה "הצליחה", החותם
+    /// בשעון התקדם, ו<b>שום בקשה לא יצאה לרשת מעולם</b>. הבדיקות עברו כי
+    /// הן בדקו את החיווט ב-<c>Worker</c>, לא את מה שיוצא מהכבל.
+    ///
+    /// ⚠️ ולכן גם <c>check-agent-heartbeat</c> אינו מספיק לבדו: הוא כותב
+    /// לטבלה ישירות ובודק את הסריקה. רק בדיקה שסופרת בקשות HTTP תופסת
+    /// פעימה שלא נשלחה.
+    /// </summary>
+    public Task<WriteResult> BeatAsync(string? version, CancellationToken ct) =>
+        SendCoreAsync(Array.Empty<BatchItem>(), version, ct);
+
+    private async Task<WriteResult> SendCoreAsync(
+        IReadOnlyList<BatchItem> items, string? version, CancellationToken ct)
+    {
         if (!_cfg.Enabled) return WriteResult.Failure(0, "הכתיבה הישירה כבויה");
 
         if (TokenPolicy.ShouldRefresh(_token, _expiresAt, _now()))
@@ -71,7 +95,7 @@ public sealed class SupabaseWriter
             if (!auth.Ok) return auth;
         }
 
-        WriteResult sent = await PostBatchAsync(items, ct).ConfigureAwait(false);
+        WriteResult sent = await PostBatchAsync(items, version, ct).ConfigureAwait(false);
 
         // ⚠️ 401 אחד ⇒ מתחברים מחדש ומנסים **פעם אחת**. זה אינו "ניסיון
         // חוזר" אלא טיפול בסיבה ידועה: אסימון שפג מוקדם מהצפוי (שעון סוטה,
@@ -82,7 +106,7 @@ public sealed class SupabaseWriter
             _expiresAt = null;
             WriteResult auth = await SignInAsync(ct).ConfigureAwait(false);
             if (!auth.Ok) return auth;
-            sent = await PostBatchAsync(items, ct).ConfigureAwait(false);
+            sent = await PostBatchAsync(items, version, ct).ConfigureAwait(false);
         }
 
         return sent;
@@ -93,10 +117,10 @@ public sealed class SupabaseWriter
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post,
-                $"{_cfg.Url.TrimEnd('/')}/auth/v1/token?grant_type=password");
-            req.Headers.TryAddWithoutValidation("apikey", _cfg.AnonKey);
+                $"{_cfg.EffectiveUrl.TrimEnd('/')}/auth/v1/token?grant_type=password");
+            req.Headers.TryAddWithoutValidation("apikey", _cfg.EffectiveAnonKey);
             req.Content = new StringContent(
-                JsonSerializer.Serialize(new { email = _cfg.Email, password = _cfg.Password }),
+                JsonSerializer.Serialize(new { email = _cfg.EffectiveEmail, password = _cfg.Password }),
                 Encoding.UTF8, "application/json");
 
             using HttpResponseMessage res = await _http.SendAsync(req, ct).ConfigureAwait(false);
@@ -128,15 +152,15 @@ public sealed class SupabaseWriter
         }
     }
 
-    private async Task<WriteResult> PostBatchAsync(IReadOnlyList<BatchItem> items, CancellationToken ct)
+    private async Task<WriteResult> PostBatchAsync(IReadOnlyList<BatchItem> items, string? version, CancellationToken ct)
     {
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post,
-                $"{_cfg.Url.TrimEnd('/')}/rest/v1/rpc/ingest_batch");
-            req.Headers.TryAddWithoutValidation("apikey", _cfg.AnonKey);
+                $"{_cfg.EffectiveUrl.TrimEnd('/')}/rest/v1/rpc/ingest_batch");
+            req.Headers.TryAddWithoutValidation("apikey", _cfg.EffectiveAnonKey);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-            req.Content = new StringContent(BatchPayload.Serialize(items), Encoding.UTF8, "application/json");
+            req.Content = new StringContent(BatchPayload.Serialize(items, version), Encoding.UTF8, "application/json");
 
             using HttpResponseMessage res = await _http.SendAsync(req, ct).ConfigureAwait(false);
             string body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
