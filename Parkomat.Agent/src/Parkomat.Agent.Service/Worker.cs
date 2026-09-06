@@ -111,11 +111,24 @@ public class Worker : BackgroundService
         EnsureCaCertPresent();
 
         // --- כתיבת קובץ הגישור של Mosquitto לפי ההגדרות ---
+        // ⚠️ וכשה-MQTT כבוי — **מוחקים** אותו ולא רק נמנעים מלכתוב. ה-Tray
+        // מחליט אם להעלות את Mosquitto לפי remote_username שבקובץ הזה, כך
+        // שקובץ ישן שנשאר היה מחזיר את הברוקר לאוויר בעלייה הבאה — כלומר
+        // "כיביתי את MQTT" שמחזיק עד ההפעלה מחדש הראשונה.
         try
         {
-            _logger.LogInformation("Writing Mosquitto bridge config to {Path}...", AgentPaths.BridgeConfigFile);
-            BridgeConfigWriter.Write(config);
-            _logger.LogInformation("Mosquitto bridge config written successfully.");
+            if (config.MqttEnabled)
+            {
+                _logger.LogInformation("Writing Mosquitto bridge config to {Path}...", AgentPaths.BridgeConfigFile);
+                BridgeConfigWriter.Write(config);
+                _logger.LogInformation("Mosquitto bridge config written successfully.");
+            }
+            else if (File.Exists(AgentPaths.BridgeConfigFile))
+            {
+                File.Delete(AgentPaths.BridgeConfigFile);
+                _logger.LogInformation("MQTT is OFF — removed {Path} so Mosquitto stays down.",
+                    AgentPaths.BridgeConfigFile);
+            }
         }
         catch (Exception ex)
         {
@@ -277,18 +290,32 @@ public class Worker : BackgroundService
                 "Supabase retry queue restored from disk: {Count} message(s) survived the restart.",
                 supaWaiting);
         // --- התחברות ל-Broker (כולל הגדרת ה-LWT) ---
-        try
-        {
-            _logger.LogInformation("Attempting to connect to local broker (localhost:1883)...");
-            await mqtt.ConnectAsync(stoppingToken);
-            _logger.LogInformation("Connected to local broker.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                "Failed to connect to local broker on startup: {Message}. Will keep retrying in the loop.",
-                ex.Message);
-        }
+        // ⚠️ שורה אחת שאומרת במפורש באיזה מצב האתר. אתר שאינו מדווח הוא
+        // התקלה שהכי קשה לאתר, ו"מה מוגדר כאן" חייב להיות קריא מהלוג בלי
+        // לפתוח config.json במחשב שיושב בחניון.
+        if (!config.MqttEnabled)
+            _logger.LogInformation(
+                "MQTT is OFF for this site — direct write to Supabase only.");
+        else if (config.Mqtt.Disabled)
+            _logger.LogWarning(
+                "MQTT was asked to be OFF but the direct path is not configured — " +
+                "staying on MQTT. A site must report somewhere.");
+
+            if (config.MqttEnabled)
+            {
+                try
+                {
+                    _logger.LogInformation("Attempting to connect to local broker (localhost:1883)...");
+                    await mqtt.ConnectAsync(stoppingToken);
+                    _logger.LogInformation("Connected to local broker.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        "Failed to connect to local broker on startup: {Message}. Will keep retrying in the loop.",
+                        ex.Message);
+                }
+            }
 
         // מונה כשלונות רצופים של ה-PLC, ודגל שמונע שידור error חוזר שוב ושוב.
         int consecutiveFailures = 0;
@@ -643,7 +670,10 @@ public class Worker : BackgroundService
             foreach (var op in result.Operations)
             {
                 // התקרה והמחיקה של הישן ביותר נאכפות בתוך PendingQueue.
-                pendingOps.Enqueue(op);
+                // ⚠️ ולא כשה-MQTT כבוי: תור שאיש לא ירוקן גדל עד התקרה ואז
+                // מוחק את הישן ביותר בכל סבב — כתיבה לדיסק בלי סוף, במחשב
+                // שגם מריץ את המחסום, בשביל הודעות שלא יישלחו לעולם.
+                if (config.MqttEnabled) pendingOps.Enqueue(op);
 
                 // ⚠️ **המרכוז ל-Supabase קורה כאן — בנקודת ההפקה, ואל הדיסק.**
                 //
@@ -734,195 +764,205 @@ public class Worker : BackgroundService
             }
 
             // ===== שלב ג': שידור ל-Broker (טיפול שגיאות נפרד; כולל חיבור-מחדש) =====
-            try
+            // ⚠️ מדלגים לגמרי כשהמסלול כבוי. בלי הדילוג EnsureConnectedAsync
+            // היה זורק בכל סבב — שורת Debug כל שנייה, ועיכוב של קריאת PLC
+            // בכל timeout של חיבור.
+            // ⚠️ מדלגים על השלב כולו כשה-MQTT כבוי — ולא זורקים חריגה כדי
+            // לצאת ממנו. גרסה ראשונה עשתה בדיוק את זה, וה-catch שלמטה היה
+            // מדווח "הברוקר נפל" בכל סבב על אתר שכובה בכוונה: שורת אזהרה
+            // שקרית היא גרועה משורה חסרה, כי היא שולחת מישהו לתקן ברוקר תקין.
+            if (config.MqttEnabled)
             {
-                // מוודא חיבור — יתחבר מחדש אם התנתקנו (או אם Mosquitto רק עכשיו עלה).
-                await mqtt.EnsureConnectedAsync(stoppingToken);
-
-                // סנכרון מצב מאולץ בשלושה מקרים:
-                //  1. חזרנו להתחבר ל-Broker המקומי (אחרת שינוי בזמן הנתק היה אובד).
-                //  2. ה-PLC התאושש מתקלה — לאחר שידור error צריך לשדר שוב את המצב האמיתי,
-                //     אחרת אם ה-MODE זהה למה שהיה לפני התקלה, ה-detector לא ישדר כלום
-                //     והשרת יישאר "תקוע" על error.
-                //  3. **הגשר ל-HiveMQ חזר** — וזה קריטי מאז שהשרת מסמן no_comm
-                //     כשהגשר נופל.
-                //
-                //     בזמן נתק אינטרנט ה-Agent ממשיך לשדר ל-Mosquitto המקומי,
-                //     שמצבור את ההודעות ומזרים אותן כשהגשר חוזר — עם חותמי הזמן
-                //     *המקוריים*.
-                //
-                //     ⚠️ **הפסקה הזו תיארה כוונה שלא התקיימה, ורק עכשיו היא
-                //     נכונה.** `bridge.conf` הגדיר `cleansession true`, ובמדידה
-                //     (tools/cleansession-test.sh) זה אומר **0 מתוך 5** הודעות
-                //     שורדות נתק — הברוקר המקומי מוחק את המנוי של הגשר ואין
-                //     למי לצבור. עם `false`: 5 מתוך 5. ראה
-                //     BridgeConfigWriter.cs.
-                //
-                //     אבל השרת כבר פתח מקטע no_comm, וההגנה מפני
-                //     הודעות מאוחרות (backfill) תדחה כל הודעת state ישנה ממנו.
-                //     בלי הסנכרון הזה האתר היה נשאר תקוע ב"אין תקשורת" עד
-                //     שינוי המצב האמיתי הבא — שעלול לא להגיע שעות.
-                //
-                //     שידור עם חותם זמן *טרי* סוגר את מקטע ה-no_comm ומחזיר את
-                //     המצב האמיתי. הפעולות (operation) לא נפגעות ממילא — הן
-                //     נשמרות בלי קשר להגנה הזו.
-                bool bridgeJustReconnected = mqtt.HiveMqBridgeConnected && !bridgeWasConnected;
-
-                // ההחלטה עצמה (מתי/מה לשדר מחדש, כולל ה-birth בעלייה) חיה ב-ResyncPolicy —
-                // פונקציה טהורה שמכוסה ב-unit tests. כאן רק מבצעים אותה.
-                ResyncDecision resync = ResyncPolicy.Decide(
-                    birthMessageSent, mqttWasConnected, plcJustRecovered,
-                    bridgeJustReconnected, currentState, lastKnownState);
-
-                if (resync.ShouldPublish)
+                try
                 {
-                    _logger.LogInformation(
-                        "Resyncing current state to broker ({Reason}) -> {State}.",
-                        resync.Reason, resync.State);
-                    var resyncMessage = new StateMessage
-                    {
-                        Timestamp = clock.UnixNow(),
-                        State = resync.State,
-                        // ⚠️ בלי זה, אתר שנפל **ואז** איבד תקשורת חוזר לשרת
-                        // כתקלה חדשה וריקה — ראה ReadFaultTextOrNull.
-                        FaultText = await ReadFaultTextOrNullAsync(resync.State, stoppingToken)
-                    };
+                    // מוודא חיבור — יתחבר מחדש אם התנתקנו (או אם Mosquitto רק עכשיו עלה).
+                    await mqtt.EnsureConnectedAsync(stoppingToken);
 
-                    // ⚠️ גם ה-resync ממורכז בנקודת ההפקה שלו. הוא נולד כאן,
-                    // בתוך שלב ג', כי עצם ההחלטה נשענת על אירועי MQTT — אבל
-                    // ההודעה עצמה היא מצב לכל דבר, ואם לא תמורכז כאן היא לא
-                    // תגיע ל-Supabase כלל: הצופה כבר אינו מודיע על מצבים.
-                    if (supabase is not null) mirrored.Add(BatchPayload.From(resyncMessage));
-
-                    await mqtt.PublishStateAsync(resyncMessage, stoppingToken);
-                    birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
-                }
-                mqttWasConnected = true;
-                bridgeWasConnected = mqtt.HiveMqBridgeConnected;
-
-                // משדרים את מה שהמוח החליט (אם יש) — שינוי state.
-                //
-                // הסוכן משדר *רק על שינוי*, ובכוונה. אין כאן סימן חיים תקופתי:
-                // זיהוי הניתוק הוא תפקידו של פרוטוקול ה-MQTT (keepalive + LWT),
-                // בשתי השכבות — הסוכן מול Mosquitto, והגשר מול HiveMQ
-                // (ראה BridgeConfigWriter). הצפת הברוקר בהודעות "אני חי" כל 30
-                // שניות × מספר האתרים רק כדי לשחזר מידע שהפרוטוקול כבר נותן
-                // בחינם היא בזבוז, והיא גם מסתירה את הבעיה האמיתית במקום לתקן אותה.
-                if (result.State is not null)
-                {
-                    // ============================================================
-                    // תיאור התקלה — נקרא רק כשיש תקלה, ורק על שינוי מצב
-                    // ============================================================
-                    // עד היום כל התקלות נראו זהות במסך: "מושבת". אין דרך לדעת
-                    // אם זו תקלת חיישן, כרטיס שלא נקרא או תקלה מכנית.
+                    // סנכרון מצב מאולץ בשלושה מקרים:
+                    //  1. חזרנו להתחבר ל-Broker המקומי (אחרת שינוי בזמן הנתק היה אובד).
+                    //  2. ה-PLC התאושש מתקלה — לאחר שידור error צריך לשדר שוב את המצב האמיתי,
+                    //     אחרת אם ה-MODE זהה למה שהיה לפני התקלה, ה-detector לא ישדר כלום
+                    //     והשרת יישאר "תקוע" על error.
+                    //  3. **הגשר ל-HiveMQ חזר** — וזה קריטי מאז שהשרת מסמן no_comm
+                    //     כשהגשר נופל.
                     //
-                    // ⚠️ **התנאי הכפול חוסך פי כמה מאות בתעבורה.** 80 registers
-                    // הם קריאה גדולה בהרבה מהרגילה (3), והיא רלוונטית רק ברגע
-                    // אחד: כשהמצב משתנה לתקלה. קריאה בכל דגימה הייתה מכפילה את
-                    // העומס על הבקר בלי להוסיף מידע.
+                    //     בזמן נתק אינטרנט ה-Agent ממשיך לשדר ל-Mosquitto המקומי,
+                    //     שמצבור את ההודעות ומזרים אותן כשהגשר חוזר — עם חותמי הזמן
+                    //     *המקוריים*.
                     //
-                    // ⚠️ וכשל בקריאה אינו מפיל את השידור: ReadFaultText מחזיר
-                    // ריק, והתקלה משודרת בלי תיאור. **התקלה עצמה חשובה יותר
-                    // מהתיאור שלה**, ובקר ישן שאין בו את הכתובת הזו חייב
-                    // להמשיך לעבוד בדיוק כמו קודם.
-                    result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
+                    //     ⚠️ **הפסקה הזו תיארה כוונה שלא התקיימה, ורק עכשיו היא
+                    //     נכונה.** `bridge.conf` הגדיר `cleansession true`, ובמדידה
+                    //     (tools/cleansession-test.sh) זה אומר **0 מתוך 5** הודעות
+                    //     שורדות נתק — הברוקר המקומי מוחק את המנוי של הגשר ואין
+                    //     למי לצבור. עם `false`: 5 מתוך 5. ראה
+                    //     BridgeConfigWriter.cs.
+                    //
+                    //     אבל השרת כבר פתח מקטע no_comm, וההגנה מפני
+                    //     הודעות מאוחרות (backfill) תדחה כל הודעת state ישנה ממנו.
+                    //     בלי הסנכרון הזה האתר היה נשאר תקוע ב"אין תקשורת" עד
+                    //     שינוי המצב האמיתי הבא — שעלול לא להגיע שעות.
+                    //
+                    //     שידור עם חותם זמן *טרי* סוגר את מקטע ה-no_comm ומחזיר את
+                    //     המצב האמיתי. הפעולות (operation) לא נפגעות ממילא — הן
+                    //     נשמרות בלי קשר להגנה הזו.
+                    bool bridgeJustReconnected = mqtt.HiveMqBridgeConnected && !bridgeWasConnected;
 
-                    _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
-                    await mqtt.PublishStateAsync(result.State, stoppingToken);
-                    _logger.LogInformation("-> Published STATE: {State}", result.State.State);
+                    // ההחלטה עצמה (מתי/מה לשדר מחדש, כולל ה-birth בעלייה) חיה ב-ResyncPolicy —
+                    // פונקציה טהורה שמכוסה ב-unit tests. כאן רק מבצעים אותה.
+                    ResyncDecision resync = ResyncPolicy.Decide(
+                        birthMessageSent, mqttWasConnected, plcJustRecovered,
+                        bridgeJustReconnected, currentState, lastKnownState);
 
-                    // תקלה ששודרה בלי תיאור — ממשיכים לחפש (ראה למעלה).
-                    awaitingLateFaultText =
-                        result.State.State == SiteState.Error &&
-                        string.IsNullOrEmpty(result.State.FaultText);
-                    lateFaultTextPolls = 0;
-                }
-
-                // ============================================================
-                // התיאור שהגיע באיחור — שידור משלים אחד
-                // ============================================================
-                // ⚠️ **רק כשהמצב עדיין תקלה.** אם הבקר כבר התאושש, הטקסט
-                // שנקרא עכשיו הוא של תקלה שנגמרה — ושליחתו הייתה מדביקה
-                // תיאור שגוי למקטע הבא.
-                if (awaitingLateFaultText)
-                {
-                    // ⚠️ דרך ModeTranslator ולא `== 5`: מיפוי ה-MODE הוא
-                    // הגדרה אחת במערכת, ומספר קשיח כאן היה נשאר מאחור
-                    // ביום שהיא תשתנה.
-                    if (ModeTranslator.FromMode(reading.Mode) != SiteState.Error
-                        || ++lateFaultTextPolls > LateFaultTextMaxPolls)
+                    if (resync.ShouldPublish)
                     {
-                        awaitingLateFaultText = false;
+                        _logger.LogInformation(
+                            "Resyncing current state to broker ({Reason}) -> {State}.",
+                            resync.Reason, resync.State);
+                        var resyncMessage = new StateMessage
+                        {
+                            Timestamp = clock.UnixNow(),
+                            State = resync.State,
+                            // ⚠️ בלי זה, אתר שנפל **ואז** איבד תקשורת חוזר לשרת
+                            // כתקלה חדשה וריקה — ראה ReadFaultTextOrNull.
+                            FaultText = await ReadFaultTextOrNullAsync(resync.State, stoppingToken)
+                        };
+
+                        // ⚠️ גם ה-resync ממורכז בנקודת ההפקה שלו. הוא נולד כאן,
+                        // בתוך שלב ג', כי עצם ההחלטה נשענת על אירועי MQTT — אבל
+                        // ההודעה עצמה היא מצב לכל דבר, ואם לא תמורכז כאן היא לא
+                        // תגיע ל-Supabase כלל: הצופה כבר אינו מודיע על מצבים.
+                        if (supabase is not null) mirrored.Add(BatchPayload.From(resyncMessage));
+
+                        await mqtt.PublishStateAsync(resyncMessage, stoppingToken);
+                        birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                     }
-                    else
+                    mqttWasConnected = true;
+                    bridgeWasConnected = mqtt.HiveMqBridgeConnected;
+
+                    // משדרים את מה שהמוח החליט (אם יש) — שינוי state.
+                    //
+                    // הסוכן משדר *רק על שינוי*, ובכוונה. אין כאן סימן חיים תקופתי:
+                    // זיהוי הניתוק הוא תפקידו של פרוטוקול ה-MQTT (keepalive + LWT),
+                    // בשתי השכבות — הסוכן מול Mosquitto, והגשר מול HiveMQ
+                    // (ראה BridgeConfigWriter). הצפת הברוקר בהודעות "אני חי" כל 30
+                    // שניות × מספר האתרים רק כדי לשחזר מידע שהפרוטוקול כבר נותן
+                    // בחינם היא בזבוז, והיא גם מסתירה את הבעיה האמיתית במקום לתקן אותה.
+                    if (result.State is not null)
                     {
-                        FaultText late = plc.ReadFaultText();
-                        if (!string.IsNullOrEmpty(late.Text))
+                        // ============================================================
+                        // תיאור התקלה — נקרא רק כשיש תקלה, ורק על שינוי מצב
+                        // ============================================================
+                        // עד היום כל התקלות נראו זהות במסך: "מושבת". אין דרך לדעת
+                        // אם זו תקלת חיישן, כרטיס שלא נקרא או תקלה מכנית.
+                        //
+                        // ⚠️ **התנאי הכפול חוסך פי כמה מאות בתעבורה.** 80 registers
+                        // הם קריאה גדולה בהרבה מהרגילה (3), והיא רלוונטית רק ברגע
+                        // אחד: כשהמצב משתנה לתקלה. קריאה בכל דגימה הייתה מכפילה את
+                        // העומס על הבקר בלי להוסיף מידע.
+                        //
+                        // ⚠️ וכשל בקריאה אינו מפיל את השידור: ReadFaultText מחזיר
+                        // ריק, והתקלה משודרת בלי תיאור. **התקלה עצמה חשובה יותר
+                        // מהתיאור שלה**, ובקר ישן שאין בו את הכתובת הזו חייב
+                        // להמשיך לעבוד בדיוק כמו קודם.
+                        result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
+
+                        _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
+                        await mqtt.PublishStateAsync(result.State, stoppingToken);
+                        _logger.LogInformation("-> Published STATE: {State}", result.State.State);
+
+                        // תקלה ששודרה בלי תיאור — ממשיכים לחפש (ראה למעלה).
+                        awaitingLateFaultText =
+                            result.State.State == SiteState.Error &&
+                            string.IsNullOrEmpty(result.State.FaultText);
+                        lateFaultTextPolls = 0;
+                    }
+
+                    // ============================================================
+                    // התיאור שהגיע באיחור — שידור משלים אחד
+                    // ============================================================
+                    // ⚠️ **רק כשהמצב עדיין תקלה.** אם הבקר כבר התאושש, הטקסט
+                    // שנקרא עכשיו הוא של תקלה שנגמרה — ושליחתו הייתה מדביקה
+                    // תיאור שגוי למקטע הבא.
+                    if (awaitingLateFaultText)
+                    {
+                        // ⚠️ דרך ModeTranslator ולא `== 5`: מיפוי ה-MODE הוא
+                        // הגדרה אחת במערכת, ומספר קשיח כאן היה נשאר מאחור
+                        // ביום שהיא תשתנה.
+                        if (ModeTranslator.FromMode(reading.Mode) != SiteState.Error
+                            || ++lateFaultTextPolls > LateFaultTextMaxPolls)
                         {
                             awaitingLateFaultText = false;
-                            _logger.LogInformation(
-                                "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
-                                lateFaultTextPolls, late.Text);
-
-                            await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(new StateMessage
+                        }
+                        else
+                        {
+                            FaultText late = plc.ReadFaultText();
+                            if (!string.IsNullOrEmpty(late.Text))
                             {
-                                Timestamp = clock.UnixNow(),
-                                State = SiteState.Error,
-                                FaultText = late.Text,
-                            }, stoppingToken), "late fault text", stoppingToken);
+                                awaitingLateFaultText = false;
+                                _logger.LogInformation(
+                                    "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
+                                    lateFaultTextPolls, late.Text);
+
+                                await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(new StateMessage
+                                {
+                                    Timestamp = clock.UnixNow(),
+                                    State = SiteState.Error,
+                                    FaultText = late.Text,
+                                }, stoppingToken), "late fault text", stoppingToken);
+                            }
                         }
                     }
-                }
 
-                // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
-                // זורקת, יוצאים ל-catch כשהיא עדיין ראש התור — כך היא (וכל מה שאחריה)
-                // תשודר שוב בסבב הבא, עם החותם המקורי. אין אובדן ואין קידום-לפני-שידור.
-                foreach (var (queuedPath, queuedOp) in pendingOps.LoadAll<OperationMessage>())
+                    // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
+                    // זורקת, יוצאים ל-catch כשהיא עדיין ראש התור — כך היא (וכל מה שאחריה)
+                    // תשודר שוב בסבב הבא, עם החותם המקורי. אין אובדן ואין קידום-לפני-שידור.
+                    foreach (var (queuedPath, queuedOp) in pendingOps.LoadAll<OperationMessage>())
+                    {
+                        // חיוּת גם *בתוך* הריקון: התור מחזיק עד 1000 פעולות, ולכל
+                        // שידור timeout של 5 שניות. מול ברוקר איטי (לא מת — מת נכשל
+                        // מהר) ריקון ארוך עובר את סף התקיעה בזמן שהסוכן עובד כשורה,
+                        // וה-watchdog הורג אותו.
+                        //
+                        // ⚠️ **הסיפה של ההערה הזו כבר אינה נכונה, וזה השינוי.** קודם
+                        // כתוב היה כאן ש"התור חי בזיכרון בלבד — כלומר כל הפעולות שהוא
+                        // נועד להציל היו אובדות בדיוק כאן". מאז התור יושב על הדיסק
+                        // (PendingQueue), והריגה בידי ה-watchdog כבר אינה מאבדת אותו.
+                        // השורה נשארת כי הריגה מיותרת היא עדיין תקלה — רק לא תקלה
+                        // שעולה בנתונים.
+                        WriteLiveness();
+
+                        var op = queuedOp;
+                        await mqtt.PublishOperationAsync(op, stoppingToken);
+                        // ⚠️ נמחק **אחרי** שידור מוצלח בלבד. כשל זורק לפני השורה
+                        // הזו, הקובץ נשאר, וההודעה תשודר שוב בסבב הבא עם החותם
+                        // המקורי — ה-dedup בשרת סופג את הכפילות.
+                        pendingOps.Remove(queuedPath);
+                        _logger.LogInformation(
+                            "-> Published OPERATION: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle}",
+                            op.StartEnd, op.EntryExit, op.User, op.CycleCounter);
+                    }
+
+                    // ============================================================
+                    // הכתיבה הישירה — אצווה אחת לכל סבב
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    // חיוּת גם *בתוך* הריקון: התור מחזיק עד 1000 פעולות, ולכל
-                    // שידור timeout של 5 שניות. מול ברוקר איטי (לא מת — מת נכשל
-                    // מהר) ריקון ארוך עובר את סף התקיעה בזמן שהסוכן עובד כשורה,
-                    // וה-watchdog הורג אותו.
-                    //
-                    // ⚠️ **הסיפה של ההערה הזו כבר אינה נכונה, וזה השינוי.** קודם
-                    // כתוב היה כאן ש"התור חי בזיכרון בלבד — כלומר כל הפעולות שהוא
-                    // נועד להציל היו אובדות בדיוק כאן". מאז התור יושב על הדיסק
-                    // (PendingQueue), והריגה בידי ה-watchdog כבר אינה מאבדת אותו.
-                    // השורה נשארת כי הריגה מיותרת היא עדיין תקלה — רק לא תקלה
-                    // שעולה בנתונים.
-                    WriteLiveness();
-
-                    var op = queuedOp;
-                    await mqtt.PublishOperationAsync(op, stoppingToken);
-                    // ⚠️ נמחק **אחרי** שידור מוצלח בלבד. כשל זורק לפני השורה
-                    // הזו, הקובץ נשאר, וההודעה תשודר שוב בסבב הבא עם החותם
-                    // המקורי — ה-dedup בשרת סופג את הכפילות.
-                    pendingOps.Remove(queuedPath);
-                    _logger.LogInformation(
-                        "-> Published OPERATION: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle}",
-                        op.StartEnd, op.EntryExit, op.User, op.CycleCounter);
+                    // כיבוי מסודר — לא שגיאה.
+                    break;
                 }
+                catch (Exception ex)
+                {
+                    // תקלת Broker (למשל Mosquitto לא זמין) — נרשמת בנפרד מתקלות PLC,
+                    // ולא נוגעת במונה כשלי ה-PLC. ננסה להתחבר שוב בסבב הבא.
+                    // מדווחים את *איבוד* החיבור פעם אחת (Warning); בזמן שהוא עדיין למטה
+                    // ממשיכים ב-Debug כדי לא לרשום שורה בכל שנייה.
+                    if (mqttWasConnected)
+                        _logger.LogWarning("Broker connection lost, will keep retrying: {Message}", ex.Message);
+                    else
+                        _logger.LogDebug("Broker still unavailable: {Message}", ex.Message);
 
-                // ============================================================
-                // הכתיבה הישירה — אצווה אחת לכל סבב
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                // כיבוי מסודר — לא שגיאה.
-                break;
-            }
-            catch (Exception ex)
-            {
-                // תקלת Broker (למשל Mosquitto לא זמין) — נרשמת בנפרד מתקלות PLC,
-                // ולא נוגעת במונה כשלי ה-PLC. ננסה להתחבר שוב בסבב הבא.
-                // מדווחים את *איבוד* החיבור פעם אחת (Warning); בזמן שהוא עדיין למטה
-                // ממשיכים ב-Debug כדי לא לרשום שורה בכל שנייה.
-                if (mqttWasConnected)
-                    _logger.LogWarning("Broker connection lost, will keep retrying: {Message}", ex.Message);
-                else
-                    _logger.LogDebug("Broker still unavailable: {Message}", ex.Message);
-
-                mqttWasConnected = false;
+                    mqttWasConnected = false;
+                }
             }
 
             // ===== שלב ד': המסלול הישיר — try משלו, מחוץ ל-MQTT =====

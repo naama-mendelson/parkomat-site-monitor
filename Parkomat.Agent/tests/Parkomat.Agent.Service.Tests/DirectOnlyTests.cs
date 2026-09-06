@@ -1,0 +1,153 @@
+using Parkomat.Agent.Core.Configuration;
+
+namespace Parkomat.Agent.Service.Tests;
+
+/// <summary>
+/// כיבוי MQTT — המצב שבו הכתיבה הישירה היא המסלול <b>היחיד</b>.
+///
+/// ⚠️ <b>הכלל היחיד שחייב להחזיק: אתר תמיד מדווח לאיפשהו.</b> אתר שאינו
+/// מדווח לשום מקום הוא התקלה הגרועה ביותר במערכת הזו — הסוכן רץ, ה-PLC
+/// נקרא, הסמל ירוק, ואף שורה בלוג אינה אומרת שהנתונים אינם מגיעים לאיש.
+/// בדיוק לכן הכיבוי <b>נגזר</b> ואינו נקרא ישירות מהקובץ.
+/// </summary>
+public class DirectOnlyTests
+{
+    private static SiteConfig Configured()
+    {
+        var c = new SiteConfig { SiteId = "2438" };
+        c.Supabase.SiteId = "2438";
+        c.Supabase.Password = "issued-once";
+        return c;
+    }
+
+    [Fact]
+    public void ByDefaultMqttIsOn()
+    {
+        // 17 האתרים שלא נגעו בהם חייבים להישאר בדיוק כפי שהם.
+        Assert.True(new SiteConfig().MqttEnabled);
+        Assert.False(new SiteConfig().Mqtt.Disabled);
+    }
+
+    [Fact]
+    public void DisablingMqttWorksOnlyWhenTheDirectPathIsConfigured()
+    {
+        var c = Configured();
+        Assert.True(c.Supabase.Enabled, "התנאי המקדים לא מתקיים — הבדיקה חסרת ערך");
+
+        c.Mqtt.Disabled = true;
+        Assert.False(c.MqttEnabled);
+    }
+
+    [Fact]
+    public void ASiteWithNoDirectPathStaysOnMqttEvenIfAskedToStop()
+    {
+        // ⚠️ **זה הלב.** מי שיערוך את config.json ידנית באתר שאין בו סיסמה
+        // מקבל אתר שאינו מדווח לשום מקום — וזה כשל שקט לחלוטין. המצב הזה
+        // פשוט אינו ניתן לביטוי, אותו עיקרון בדיוק כמו SupabaseConfig.Enabled.
+        var c = new SiteConfig { SiteId = "1358" };
+        c.Supabase.SiteId = "1358";      // בלי סיסמה
+        c.Mqtt.Disabled = true;
+
+        Assert.False(c.Supabase.Enabled);
+        Assert.True(c.MqttEnabled, "אתר בלי מסלול ישיר כובה מ-MQTT — הוא אינו מדווח לאיש");
+    }
+
+    [Fact]
+    public void LosingTheSupabasePasswordBringsMqttBack()
+    {
+        // ⚠️ והתרחיש שנמדד בשטח כל היום: הסיסמה נמחקת בשדרוג. באתר שכובה
+        // מ-MQTT זה היה משאיר אותו **מת**, ולא "מדווח בערוץ הישן".
+        // הגזירה הופכת את זה לנפילה חזרה למסלול שעובד.
+        var c = Configured();
+        c.Mqtt.Disabled = true;
+        Assert.False(c.MqttEnabled);
+
+        c.Supabase.Password = "";        // מה שההתקנה עשתה
+        Assert.True(c.MqttEnabled, "אתר שאיבד את הסיסמה נשאר בלי שום מסלול");
+    }
+
+    [Fact]
+    public void TheChoiceSurvivesAnUpgrade()
+    {
+        // ⚠️ אחרת כל שדרוג מדליק מחדש את MQTT באתר שכובה בכוונה — והוא
+        // מתחיל לשדר בשני המסלולים בלי שאיש ביקש.
+        var inTheField = Configured();
+        inTheField.Mqtt.Disabled = true;
+
+        var after = ConfigStore.BuildResetConfig(inTheField);
+        Assert.True(after.Mqtt.Disabled);
+
+        after.Supabase.SiteId = after.SiteId;
+        Assert.False(after.MqttEnabled);
+    }
+
+    [Fact]
+    public void TheDecisionIsPersistedButTheDerivationIsNot()
+    {
+        // Disabled נשמר לקובץ (זו החלטה), MqttEnabled לא (הוא נגזר) —
+        // אחרת קובץ ישן היה יכול לשאת ערך נגזר שסותר את המקורות שלו.
+        var c = Configured();
+        c.Mqtt.Disabled = true;
+        string json = ConfigStore.ToJson(c);
+
+        Assert.Contains("\"Disabled\": true", json);
+        Assert.DoesNotContain("MqttEnabled", json);
+    }
+
+    // ============================================================
+    // החיווט ב-Worker — בדיקות מבניות, אין כאן ברוקר ואין רשת
+    // ============================================================
+
+    private static string Worker()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        return File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Service", "Worker.cs"));
+    }
+
+    [Fact]
+    public void TheBrokerStageIsSkippedNotThrownOutOf()
+    {
+        // ⚠️ הגרסה הראשונה יצאה מהשלב ב-`throw`, וה-catch שלמטה דיווח
+        // "Broker connection lost" בכל סבב — על אתר שכובה בכוונה. שורת
+        // אזהרה שקרית גרועה משורה חסרה: היא שולחת מישהו לתקן ברוקר תקין.
+        string w = Worker();
+        Assert.DoesNotContain("mqtt-off", w);
+        Assert.Contains("if (config.MqttEnabled)", w);
+    }
+
+    [Fact]
+    public void TheMqttQueueIsNotFilledWhenNobodyWillDrainIt()
+    {
+        // ⚠️ תור שאיש לא ירוקן גדל עד התקרה ואז מוחק את הישן ביותר **בכל
+        // סבב** — כתיבה ומחיקה בלי סוף על הדיסק של מחשב שמריץ מחסום, בשביל
+        // הודעות שלא יישלחו לעולם.
+        string w = Worker();
+        Assert.Contains("if (config.MqttEnabled) pendingOps.Enqueue(op);", w);
+    }
+
+    [Fact]
+    public void TheBridgeConfigIsRemovedNotJustSkipped()
+    {
+        // ⚠️ ה-Tray מחליט אם להעלות את Mosquitto לפי remote_username שב-
+        // bridge.conf. קובץ ישן שנשאר היה מחזיר את הברוקר לאוויר בהפעלה
+        // הבאה — כלומר "כיביתי את MQTT" שמחזיק עד ה-reboot הראשון.
+        string w = Worker();
+        Assert.Contains("File.Delete(AgentPaths.BridgeConfigFile)", w);
+    }
+
+    [Fact]
+    public void TheModeIsStatedInTheLogAtStartup()
+    {
+        // אתר שאינו מדווח הוא התקלה שהכי קשה לאתר. "באיזה מצב האתר הזה"
+        // חייב להיקרא מהלוג, בלי לפתוח config.json במחשב שיושב בחניון.
+        string w = Worker();
+        Assert.Contains("MQTT is OFF for this site", w);
+        // ⚠️ וגם המצב שנחסם: מי שביקש לכבות בלי מסלול ישיר חייב לדעת למה
+        // זה לא קרה, אחרת הוא יחשוב שהכיבוי עבד.
+        Assert.Contains("MQTT was asked to be OFF but the direct path is not configured", w);
+    }
+}

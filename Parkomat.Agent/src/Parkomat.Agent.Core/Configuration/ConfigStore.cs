@@ -210,6 +210,13 @@ public static class ConfigStore
         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
         fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);
 
+        // ⚠️ וגם "האם MQTT כבוי" — זו החלטה **לאתר הזה**, שאין ממה לגזור
+        // מחדש. איפוס שהיה מחזיר אותה ל-false פירושו ש**כל שדרוג מדליק
+        // מחדש את MQTT** באתר שכובה בכוונה: הוא היה מתחיל לשדר בשני
+        // המסלולים בלי שאיש ביקש, והדרך היחידה לגלות היא לשים לב
+        // שהברוקר חזר.
+        fresh.Mqtt.Disabled = old.Mqtt?.Disabled ?? fresh.Mqtt.Disabled;
+
         // ==========================================================
         // ⚠️ וגם פרטי Supabase — אותו נימוק בדיוק, ובלעדיו השדרוג מכבה
         // ==========================================================

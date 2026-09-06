@@ -94,7 +94,14 @@
 ;          ⚠️ וזו הייתה הסיבה האמיתית מאחורי יום שלם של אבחון: כל התיקונים
 ;          ב-ConfigStore שומרים שדות **מקובץ שכבר נמחק**.
 ;          נמחק עכשיו רק מה שנוצר מחדש מעצמו; config.json והלוגים נשארים.
-#define MyAppVersion "1.0.32"
+; 1.0.33 — **מצב ישיר בלבד.** Mqtt.Disabled ב-config.json מכבה את מסלול
+;          ה-MQTT לגמרי: אין חיבור לברוקר, bridge.conf נמחק (ולכן ה-Tray
+;          אינו מעלה את Mosquitto), ותפעולים אינם נכנסים לתור שאיש לא
+;          ירוקן. ⚠️ הכיבוי **נגזר** ומותנה ב-Supabase.Enabled: אתר בלי
+;          סיסמה נשאר על MQTT, כי אתר שאינו מדווח לשום מקום הוא הכשל
+;          השקט הגרוע ביותר במערכת הזו. אין תיבת סימון בטופס בכוונה —
+;          לחיצה אחת בשדה הייתה משביתה אתר, כמו תיבת ה-TLS שהוסרה.
+#define MyAppVersion "1.0.33"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

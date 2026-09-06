@@ -24,6 +24,28 @@ public class SiteConfig
     /// </summary>
     public SupabaseConfig Supabase { get; set; } = new();
 
+    /// <summary>
+    /// האם לשדר ב-MQTT. <b>נגזר, ולא נקרא ישירות מהקובץ</b>.
+    ///
+    /// ============================================================
+    /// ⚠️ כיבוי MQTT תופס רק כשיש מסלול ישיר שעובד
+    /// ============================================================
+    /// <c>Mqtt.Disabled</c> לבדו אינו מספיק. אתר שבו כיבו את MQTT ואין בו
+    /// סיסמת Supabase אינו "אתר במצב חדש" — הוא <b>אתר שאינו מדווח לשום
+    /// מקום</b>, והכשל שקט לחלוטין: הסוכן רץ, ה-PLC נקרא, הסמל ירוק, ואף
+    /// שורה בלוג אינה אומרת שהנתונים אינם מגיעים לאיש.
+    ///
+    /// לכן הכיבוי מותנה ב-<c>Supabase.Enabled</c>. אותו שיקול בדיוק שבגללו
+    /// <c>SupabaseConfig.Enabled</c> נגזר ואינו נשמר: <b>מצב שאסור שיתקיים
+    /// לא צריך להיות ניתן לביטוי</b>.
+    ///
+    /// ⚠️ ולכן גם אין תיבת סימון בטופס. אין כאן גמישות אלא מלכודת — לחיצה
+    /// אחת של טכנאי בשדה הייתה משביתה אתר, בדיוק כמו שהוסרה תיבת ה-TLS.
+    /// ההפעלה היא עריכה ידנית של <c>config.json</c>, פעולה מודעת.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool MqttEnabled => !(Mqtt.Disabled && Supabase.Enabled);
+
     /// <summary>כל כמה מילי-שניות לקרוא מה-PLC. ברירת מחדל: שנייה.</summary>
     public int PollIntervalMs { get; set; } = 1000;
 
@@ -104,6 +126,18 @@ public class PlcConfig
 /// </summary>
 public class MqttConfig
 {
+    /// <summary>
+    /// כיבוי מוחלט של מסלול ה-MQTT באתר הזה.
+    ///
+    /// ⚠️ <b>אינו נקרא ישירות — עוברים דרך <c>SiteConfig.MqttEnabled</c></b>,
+    /// שמתנה אותו בכך שהמסלול הישיר באמת מוגדר. הנימוק המלא נמצא שם.
+    ///
+    /// כשהוא תופס: הסוכן אינו מתחבר לברוקר, אינו כותב <c>bridge.conf</c>
+    /// (ולכן ה-Tray אינו מעלה את Mosquitto), ואינו מכניס תפעולים לתור
+    /// ה-MQTT — תור שאיש לא ירוקן היה גדל עד התקרה ומוחק בכל סבב.
+    /// </summary>
+    public bool Disabled { get; set; } = false;
+
     /// <summary>כתובת ה-Broker של HiveMQ.</summary>
     public string Host { get; set; } = "af3d50e1ce154ed1af570331a0df4ff7.s1.eu.hivemq.cloud";
 

@@ -420,6 +420,34 @@ HiveMQ is switched off.
   commit sha). It answers *"which agent is at which site"*, which nothing else does; the
   server keeps the previous value when a beat omits it.
 
+### Direct only — turning MQTT off at a single site
+
+`Mqtt.Disabled` in `config.json` removes the MQTT path entirely: no broker
+connection, `bridge.conf` is **deleted** (so the Tray does not bring Mosquitto up),
+and operations are not queued for a drain that will never happen.
+
+- ⚠️ **The switch is derived, not read.** `SiteConfig.MqttEnabled` is
+  `!(Mqtt.Disabled && Supabase.Enabled)`. A site with no Supabase password stays on
+  MQTT no matter what the file says — because *"reports nowhere"* is the worst
+  failure in this system: the agent runs, the PLC is read, the tray icon is green,
+  and no line anywhere says the data reaches nobody. Same principle as
+  `SupabaseConfig.Enabled`: **a state that must not exist should not be expressible.**
+- ⚠️ **And it is what makes losing the password survivable.** That bug is still open,
+  and on a direct-only site it would mean a *dead* site rather than a degraded one.
+  The derivation turns it into a fall back onto the path that works.
+- **No checkbox in the settings form, deliberately** — one click in the field would
+  silence a site, exactly the trap the TLS checkbox was removed for. Turning it on is
+  a hand edit of `config.json`.
+- **The choice survives a reset** (`BuildResetConfig`), or every upgrade would switch
+  MQTT back on at a site that was deliberately taken off it.
+- ⚠️ **The stage is skipped, not thrown out of.** The first version left the broker
+  stage with a `throw`, and the `catch` below reported *"Broker connection lost"*
+  every cycle on a site that was switched off on purpose. A false warning is worse
+  than a missing one — it sends someone to fix a broker that is fine.
+- **Expect one `no_comm` at cutover.** HiveMQ holds the bridge's will, so stopping
+  Mosquitto publishes it once and the server marks the site disconnected. The next
+  direct write clears it. It is a blip, not a flap.
+
 ### The contract is one file, pinned from both sides
 
 `shared/contracts/ingest-batch.sample.json` is the source of truth for the request body.
