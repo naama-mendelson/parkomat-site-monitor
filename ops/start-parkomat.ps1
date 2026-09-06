@@ -208,8 +208,19 @@ try {
     foreach ($n in (docker ps -a --format "{{.Names}}" 2>$null | Where-Object { $_ -like "parkomat*" })) {
         $i = docker inspect $n --format "{{.State.Status}}|{{.RestartCount}}" 2>$null
         if (-not $i) { continue }
-        $p2 = $i -split "|"
-        if ($p2[0] -eq "restarting" -or [int]$p2[1] -gt 3) {
+        # ⚠️ `-split` ב-PowerShell הוא **ביטוי רגולרי**, ו-`|` בו פירושו
+        # "או" — כלומר תבנית ריקה שמפצלת על כל תו. התוצאה הייתה
+        # `$p2[1] = "r"` (האות השנייה של "restarting"), ואז `[int]"r"`
+        # זרק InvalidCastFromStringToInteger **בדיוק במקרה שהסקריפט נבנה
+        # בשבילו** — קונטיינר שקורס בלולאה.
+        #
+        # `.Split('|')` הוא פיצול מחרוזת רגיל, בלי רג'קס.
+        $p2 = $i.Split('|')
+        $restarts = 0
+        # ⚠️ ולא סומכים על ההמרה: אם הפורמט ישתנה, ברירת המחדל 0 משאירה
+        # את הבדיקה על `restarting` לבדה במקום להפיל את הסקריפט כולו.
+        [void][int]::TryParse($p2[1], [ref]$restarts)
+        if ($p2[0] -eq "restarting" -or $restarts -gt 3) {
             Say ("⛔ {0} קורס בלולאה ({1} הפעלות מחדש) — הפעלה נוספת לא תעזור." -f $n, $p2[1]) "Red"
             $loop = $true
         }
