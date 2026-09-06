@@ -40,7 +40,16 @@ public class Worker : BackgroundService
     {
         // --- טעינת הגדרות ---
         SiteConfig config = ConfigStore.Load();
-        _logger.LogInformation("=== Parkomat Agent starting ===");
+        // ⚠️ **הגרסה בשורת העלייה, ולא רק בפעימה.** היא דווחה עד כה רק דרך
+        // `alive.agent_version`, כלומר **רק כשהמסלול הישיר דולק** — ולכן
+        // בדיוק באתר שבו משהו השתבש, הלוג לא ידע לומר איזו גרסה רצה.
+        // נמדד ב-06/09/2026: שתי עליות באותו קובץ לוג, אחת עם המסלול דולק
+        // ואחת בלי, ולא הייתה שום דרך לדעת אם הותקנה אותה גרסה בשתיהן.
+        // שאלה שאי אפשר לענות עליה מהלוג היא שאלה שחוקרים אותה בניחושים.
+        _logger.LogInformation("=== Parkomat Agent {Version} starting ===",
+            typeof(Worker).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion.Split('+')[0] ?? "unknown");
         _logger.LogInformation("Config loaded for site '{SiteId}'", config.SiteId);
 
         // ============================================================
@@ -203,6 +212,26 @@ public class Worker : BackgroundService
             _logger.LogInformation(
                 "Direct Supabase write is ON for {Email} -> {Url}",
                 config.Supabase.EffectiveEmail, config.Supabase.EffectiveUrl);
+        else
+            // ============================================================
+            // ⚠️ **כבוי חייב לומר שהוא כבוי — ולמה**
+            // ============================================================
+            // עד כה מצב כבוי לא הדפיס דבר. זה נראה נכון ("אין מה לדווח"),
+            // והוא הפך חקירה אמיתית לניחוש: ב-06/09/2026 היו שתי עליות
+            // באותו קובץ לוג, ובאחת מהן המסלול היה כבוי — וזה נודע **רק
+            // מהיעדר** השורה השנייה. היעדר אינו ראיה; הוא נראה זהה לגרסה
+            // שלא יודעת להדפיס את השורה בכלל.
+            //
+            // ⚠️ ו-`Enabled` נגזר משלושה תנאים, אז "כבוי" לבדו אינו תשובה.
+            // השורה מפרטת איזה מהם נכשל — בלי להדפיס את הסיסמה עצמה, רק
+            // אם היא קיימת.
+            _logger.LogInformation(
+                "Direct Supabase write is OFF — password:{HasPw} url:{Url} email:{Email}",
+                string.IsNullOrWhiteSpace(config.Supabase.Password) ? "missing" : "present",
+                string.IsNullOrWhiteSpace(config.Supabase.EffectiveUrl)
+                    ? "missing" : config.Supabase.EffectiveUrl,
+                string.IsNullOrWhiteSpace(config.Supabase.EffectiveEmail)
+                    ? "missing" : config.Supabase.EffectiveEmail);
 
         // כל מה ששודר בסבב הנוכחי. מתמלא דרך הצופה של MqttPublisher —
         // התפר היחיד שרואה **כל** שידור, ולכן אין אתר שאפשר לשכוח.

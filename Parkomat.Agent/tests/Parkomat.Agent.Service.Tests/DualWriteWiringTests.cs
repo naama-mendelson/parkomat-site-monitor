@@ -237,6 +237,44 @@ public class DualWriteWiringTests
     }
 
     [Fact]
+    public void AnOffDirectPathSaysSoInsteadOfSayingNothing()
+    {
+        // ============================================================
+        // ⚠️ היעדר שורה אינו ראיה — נמדד בחקירה אמיתית
+        // ============================================================
+        // ב-06/09/2026 היו שתי עליות באותו קובץ לוג, ובאחת מהן המסלול היה
+        // כבוי. זה נודע **רק מכך שהשורה השנייה חסרה** — והיעדר נראה זהה
+        // לגרסה שאינה יודעת להדפיס אותה בכלל. חקירה שנשענת על היעדר היא
+        // ניחוש עם ביטחון עצמי.
+        //
+        // ו-`Enabled` נגזר משלושה תנאים, אז "כבוי" לבדו אינו תשובה: השורה
+        // חייבת לומר איזה מהם נכשל.
+        string w = Worker();
+        int off = w.IndexOf("Direct Supabase write is OFF", StringComparison.Ordinal);
+        Assert.True(off > 0, "מצב כבוי אינו מדפיס דבר — היעדר שורה יילמד כראיה");
+
+        string args = w[off..(off + 420)];
+        Assert.Contains("Password", args);          // האם קיימת
+        Assert.Contains("EffectiveUrl", args);
+        Assert.Contains("EffectiveEmail", args);
+
+        // ⚠️ ורק *האם* קיימת. סיסמת אתר בקובץ לוג היא סיסמה שנשלחת
+        // בצילום מסך בוואטסאפ ברגע שמישהו מבקש "תשלחי את הלוג".
+        Assert.DoesNotContain("{Password}", args);
+    }
+
+    [Fact]
+    public void TheStartupLineNamesTheVersion()
+    {
+        // ⚠️ הגרסה דווחה רק דרך `alive.agent_version`, כלומר **רק כשהמסלול
+        // הישיר דולק**. באתר שבו משהו השתבש — בדיוק המקרה שחוקרים — הלוג
+        // לא ידע לומר איזו גרסה רצה. שאלה שאי אפשר לענות עליה מהלוג היא
+        // שאלה שעונים עליה בניחושים.
+        string w = Worker();
+        Assert.Contains("=== Parkomat Agent {Version} starting ===", w);
+    }
+
+    [Fact]
     public void OperationsAreMirroredToDiskNotToAnInMemoryList()
     {
         // ============================================================
