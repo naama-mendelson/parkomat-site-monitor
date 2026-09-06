@@ -134,6 +134,11 @@ public static class ConfigStore
     ///
     /// PLC וכל השאר כן נדרסים: הם ניתנים לגזירה מחדש מברירות המחדל, וזו כל
     /// מטרת האיפוס — לנקות סחף הגדרות מהתקנות ישנות.
+    ///
+    /// ⚠️ <b>המבחן הוא "האם אפשר לגזור מחדש", ולא "האם זה סוד".</b> זה מה
+    /// שמכניס לרשימה גם את שלוש העקיפות של Supabase, שאינן סודות כלל אבל הן
+    /// דלת היציאה — כתובת שהוזנה ידנית אין ממה לגזור מחדש, והתקנה שדורסת
+    /// אותה מחזירה אתר שהופנה לשרת אחר אל Supabase בלי שאיש ביקש.
     /// </summary>
     public static SiteConfig BuildResetConfig(SiteConfig? old)
     {
@@ -145,6 +150,33 @@ public static class ConfigStore
         fresh.SiteId = Keep(old.SiteId, fresh.SiteId);
         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
         fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);
+
+        // ==========================================================
+        // ⚠️ וגם פרטי Supabase — אותו נימוק בדיוק, ובלעדיו השדרוג מכבה
+        // ==========================================================
+        // הסיסמה של האתר מונפקת פעם אחת ומוצגת פעם אחת (Supabase שומר גיבוב
+        // בלבד), ולכן היא זהות ולא העדפה — בדיוק כמו סיסמת HiveMQ למעלה.
+        //
+        // ⚠️ **ובלי זה שדרוג גרסה מכבה את המסלול הישיר בשקט מוחלט.**
+        // `SupabaseConfig.Enabled` נגזר מהסיסמה, כך שסיסמה שנמחקה אינה
+        // שגיאה ואינה שורת לוג — היא פשוט "האתר הזה לא הופעל". האתר ימשיך
+        // לדווח דרך MQTT וייראה תקין לגמרי, וביום שיכבו את MQTT הוא ייעלם.
+        // וההחזרה אינה הקלדה מחדש: הסיסמה המקורית אינה קיימת בשום מקום, אז
+        // צריך להנפיק חדשה — כלומר שדרוג שגרתי הופך לפעולת ניהול.
+        //
+        // ⚠️ **וגם שלוש העקיפות**, ומאותה סיבה שהן לא בטופס: הן דלת היציאה.
+        // אתר שהופנה ל-Postgres אחר היה חוזר ל-Supabase בהתקנה הבאה, בלי
+        // שאיש ביקש ובלי שדבר יצביע על כך.
+        // ⚠️ והחתמת קוד האתר, בדיוק כמו ב-Load. בלעדיה `Enabled` נשאר false
+        // גם כשהסיסמה שרדה — האימייל נגזר מ-SiteId, וגזירה על מחרוזת ריקה
+        // מחזירה ריק. בפועל Load מתקן את זה בעלייה הבאה, אבל אז ה-config
+        // שנכתב לדיסק מתאר אתר כבוי בזמן שהוא מוגדר: כל מי שיקרא את הקובץ
+        // כדי לברר "למה האתר לא כותב" יקבל תשובה שגויה.
+        fresh.Supabase.SiteId = fresh.SiteId;
+        fresh.Supabase.Password = Keep(old.Supabase?.Password, fresh.Supabase.Password);
+        fresh.Supabase.Url = Keep(old.Supabase?.Url, fresh.Supabase.Url);
+        fresh.Supabase.AnonKey = Keep(old.Supabase?.AnonKey, fresh.Supabase.AnonKey);
+        fresh.Supabase.Email = Keep(old.Supabase?.Email, fresh.Supabase.Email);
 
         return fresh;
 

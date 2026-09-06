@@ -182,4 +182,69 @@ public class ConfigResetTests
         // מחרוזת — קוד הגשר כותב אותו ל-bridge.conf בלי בדיקת null.
         Assert.NotNull(CompiledDefaultPassword);
     }
+
+    // ===== Supabase שורד שדרוג =====
+
+    [Fact]
+    public void Upgrade_KeepsTheSitesSupabasePassword()
+    {
+        // ============================================================
+        // ⚠️ באג אמיתי שנתפס רגע לפני התקנה בשטח, ולא חשש תיאורטי
+        // ============================================================
+        // רק SiteId ופרטי MQTT שרדו איפוס. אתר 2438 — היחיד שרץ על המסלול
+        // הישיר — היה מאבד את סיסמת Supabase בשדרוג הבא.
+        //
+        // ⚠️ **והכיבוי היה שקט לחלוטין.** `Enabled` נגזר מהסיסמה, כך שסיסמה
+        // שנמחקה אינה שגיאה ואינה שורת לוג: היא נראית זהה ל"האתר הזה לא
+        // הופעל". האתר ממשיך לדווח ב-MQTT ונראה תקין, וההיעלמות מתגלה רק
+        // ביום שמכבים את MQTT — כלומר בדיוק כשאין דרך חזרה.
+        //
+        // וההחזרה אינה הקלדה מחדש: Supabase שומר גיבוב בלבד, אז הסיסמה
+        // המקורית אינה קיימת בשום מקום וצריך להנפיק חדשה.
+        var inTheField = new SiteConfig();
+        inTheField.SiteId = "2438";
+        inTheField.Supabase.Password = "issued-once-never-shown-again";
+
+        var afterUpgrade = ConfigStore.BuildResetConfig(inTheField);
+
+        Assert.Equal("issued-once-never-shown-again", afterUpgrade.Supabase.Password);
+        Assert.True(afterUpgrade.Supabase.Enabled,
+            "המסלול הישיר כבוי אחרי שדרוג — האתר יפסיק לכתוב ישירות בלי שום סימן");
+    }
+
+    [Fact]
+    public void Upgrade_KeepsTheExitDoorOverrides()
+    {
+        // ⚠️ שלוש העקיפות אינן סודות — הן דלת היציאה. אתר שהופנה ל-Postgres
+        // אחר היה חוזר ל-Supabase בהתקנה הבאה, בלי שאיש ביקש ובלי שדבר
+        // יצביע על כך. המבחן הוא "האם אפשר לגזור מחדש", לא "האם זה סוד".
+        var repointed = new SiteConfig();
+        repointed.SiteId = "2438";
+        repointed.Supabase.Password = "pw";
+        repointed.Supabase.Url = "https://postgrest.parkomat.internal";
+        repointed.Supabase.AnonKey = "self-hosted-key";
+        repointed.Supabase.Email = "agent-2438@parkomat.internal";
+
+        var after = ConfigStore.BuildResetConfig(repointed);
+
+        Assert.Equal("https://postgrest.parkomat.internal", after.Supabase.Url);
+        Assert.Equal("self-hosted-key", after.Supabase.AnonKey);
+        Assert.Equal("agent-2438@parkomat.internal", after.Supabase.Email);
+    }
+
+    [Fact]
+    public void Upgrade_OnAMachineThatWasNeverConfigured_StaysOff()
+    {
+        // ⚠️ הצד השני, ולא פחות חשוב: שדה ריק **אינו** שורד — הוא נופל
+        // לברירת המחדל. אחרת התקנה על מחשב חדש הייתה גוררת ערכי-רפאים,
+        // ו-`Enabled` היה יכול להידלק באתר שאיש לא הפעיל.
+        var never = new SiteConfig();
+        never.SiteId = "1358";
+
+        var after = ConfigStore.BuildResetConfig(never);
+
+        Assert.False(after.Supabase.Enabled,
+            "המסלול הישיר נדלק באתר שמעולם לא הוגדר");
+        Assert.True(string.IsNullOrWhiteSpace(after.Supabase.Password));
+    }
 }
