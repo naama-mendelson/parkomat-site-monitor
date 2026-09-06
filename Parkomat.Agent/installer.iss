@@ -108,7 +108,12 @@
 ;          "MQTT is OFF" ו-Mosquitto רץ לצדו, כלומר האתר שידר בשני
 ;          המסלולים בזמן שהוגדר לאחד. + כיבוי אקטיבי: Mosquitto שכבר רץ
 ;          נעצר, אחרת המתג היה דורש הפעלה מחדש כדי לתפוס.
-#define MyAppVersion "1.0.34"
+; 1.0.35 — ⚠️ **לחיצה על "שמור" בטופס הדליקה מחדש את MQTT.** OnSave בונה
+;          MqttConfig מאפס מארבעה שדות, ואין בטופס תיבה ל-Disabled (בכוונה),
+;          ולכן הערך אבד בכל שמירה. בשטח זה נראה כאילו ההתקנה מחקה את הדגל:
+;          מתקינים, מקלידים סיסמה, לוחצים שמור — ו-Mosquitto חוזר לאוויר.
+;          אותו דפוס בדיוק כמו _sbOverrides.
+#define MyAppVersion "1.0.35"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

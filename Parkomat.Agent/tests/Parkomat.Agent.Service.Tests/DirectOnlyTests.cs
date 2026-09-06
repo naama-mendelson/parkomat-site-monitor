@@ -187,4 +187,43 @@ public class DirectOnlyTests
                 "Parkomat.Agent.Tray", "Services", "ServiceManager.cs"));
         }
     }
+
+    [Fact]
+    public void SavingTheSettingsFormDoesNotTurnMqttBackOn()
+    {
+        // ============================================================
+        // ⚠️ נמדד באתר 2438, והוליך את האבחון שולל
+        // ============================================================
+        // `OnSave` בונה `MqttConfig` **מאפס** מארבעה שדות של הטופס, ואין
+        // בו תיבה ל-`Disabled` — בכוונה, כי לחיצה אחת בשדה הייתה משביתה
+        // אתר. אבל בלי לשאת את הערך, **כל לחיצה על "שמור" מדליקה מחדש את
+        // MQTT בשקט**.
+        //
+        // ⚠️ ובשטח זה נראה בדיוק כמו באג אחר: הדגל הודלק ידנית, ההתקנה
+        // הבאה דרשה הקלדת סיסמה, ולחיצת "שמור" החזירה את Mosquitto —
+        // כלומר האשמה נפלה על ההתקנה, שלא עשתה דבר.
+        //
+        // אותו דפוס בדיוק כמו `_sbOverrides`, שכבר מתועד באותו קובץ.
+        string form = Form();
+
+        Assert.Contains("private bool _mqttDisabled;", form);
+        Assert.Contains("_mqttDisabled = c.Mqtt.Disabled;", form);
+        Assert.Contains("Disabled = _mqttDisabled,", form);
+
+        // ⚠️ והנשיאה חייבת להיות **בתוך** בניית ה-MqttConfig שב-OnSave,
+        // לא איפשהו בקובץ: שורה שהתנתקה משם היא שורה שאינה עושה דבר.
+        int build = form.IndexOf("Mqtt = new MqttConfig", StringComparison.Ordinal);
+        Assert.True(build > 0, "לא נמצאה בניית MqttConfig ב-OnSave");
+        Assert.Contains("Disabled = _mqttDisabled,", form[build..(build + 400)]);
+
+        static string Form()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine(dir!.FullName, "src",
+                "Parkomat.Agent.Tray", "Forms", "SettingsForm.cs"));
+        }
+    }
 }

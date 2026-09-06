@@ -33,6 +33,19 @@ public class SettingsForm : Form
     // היה חוזר לברירת המחדל ברגע שמישהו שינה כתובת PLC. אותו דפוס כמו _plc.
     private SupabaseConfig _sbOverrides = new();
 
+    // ============================================================
+    // ⚠️ "האם MQTT כבוי" — נישא דרך הטופס, בדיוק כמו העקיפות שמעל
+    // ============================================================
+    // `OnSave` בונה `MqttConfig` **מאפס** מארבעה שדות, ואין בטופס תיבה
+    // ל-`Disabled` (בכוונה — לחיצה אחת בשדה הייתה משביתה אתר). התוצאה, אם
+    // לא נושאים אותו: **כל לחיצה על "שמור" מדליקה מחדש את MQTT בשקט**.
+    //
+    // ⚠️ נמדד באתר 2438: הדגל הודלק ידנית, ההתקנה הבאה דרשה הקלדת סיסמה,
+    // ולחיצת "שמור" החזירה את Mosquitto לאוויר — בזמן שהלוג עדיין הראה
+    // הגדרה של מסלול ישיר. זה נראה בדיוק כאילו ההתקנה מחקה את הדגל,
+    // ושלח את האבחון למקום הלא נכון.
+    private bool _mqttDisabled;
+
     // מחזיק את הגדרות ה-PLC (כולל הכתובות) בזיכרון, נערך דרך חלונית הכתובות.
     private PlcConfig _plc = new();
 
@@ -299,6 +312,7 @@ public class SettingsForm : Form
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
 
+        _mqttDisabled = c.Mqtt.Disabled;
         _sbOverrides = c.Supabase;
         _sbPass.Text = c.Supabase.Password;
     }
@@ -331,6 +345,8 @@ public class SettingsForm : Form
             },
             Mqtt = new MqttConfig
             {
+                // ⚠️ נישא כפי שהוא — אין לו שדה בטופס. ראה _mqttDisabled.
+                Disabled = _mqttDisabled,
                 Host = _mqttHost.Text.Trim(),
                 Port = (int)_mqttPort.Value,
                 Username = _mqttUser.Text.Trim(),
