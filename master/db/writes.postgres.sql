@@ -547,18 +547,26 @@ $fn$;
 -- כמו deleteSite ב-JS, שהמסך מציג למשתמשת כאישור.
 DROP FUNCTION IF EXISTS public.delete_site(text);
 
+-- ⚠️ DROP לפני CREATE: שינוי ב-RETURNS TABLE אינו ניתן ל-CREATE OR REPLACE
+-- ("cannot change return type of existing function"), והשגיאה עוצרת את כל
+-- הקובץ — כלומר גם את הפונקציות שאחריה.
+DROP FUNCTION IF EXISTS public.delete_site(text);
+
 CREATE OR REPLACE FUNCTION public.delete_site(p_code text)
-RETURNS TABLE (code text, site_name text, operations integer, status_history integer)
+RETURNS TABLE (code text, site_name text, operations integer, status_history integer,
+               agent_email text, agent_uid text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
-  v_id    integer;
-  v_name  text;
-  v_ops   integer;
-  v_hist  integer;
+  v_actor       text := app.require_manager();
+  v_id          integer;
+  v_name        text;
+  v_ops         integer;
+  v_hist        integer;
+  v_agent_uid   uuid;
+  v_agent_email text;
 BEGIN
   SELECT s.id, s.site_name INTO v_id, v_name FROM sites s WHERE s.code = p_code;
   IF v_id IS NULL THEN
@@ -578,9 +586,40 @@ BEGIN
   PERFORM app.record_write_event(p_code, 'site-deleted',
                                  jsonb_build_object('type','site-deleted','code',p_code));
 
+  -- ============================================================
+  -- ⚠️ שלילת ההרשאה של הסוכן — באותה טרנזקציה
+  -- ============================================================
+  -- **נמדד לפני התיקון:** אחרי `DELETE FROM sites`, הסוכן של האתר נשאר
+  -- `is_active = true` עם `site_id` שמצביע לאתר שאינו קיים —
+  -- `app.agent_site_id()` המשיך להחזיר 17510, ו-`is_agent()` המשיך
+  -- להחזיר true. כלומר **קרדנציאל תקף לאתר מחוק.**
+  --
+  -- ⚠️ ואין FK על `site_id`, בכוונה (כלל 1 בשורש: אין FK לגרף המשתמשים),
+  -- ולכן המסד לא ניקה את זה בעצמו ולא התלונן.
+  --
+  -- ⚠️ **מוחקים את השורה ולא רק משביתים אותה**, ומסיבה מעשית: השבתה
+  -- משאירה `site-{code}@parkomat.co.il` בטבלה, ואם אותו קוד אתר יירשם
+  -- שוב — `provision-agent` יחזיר 409 "כבר קיימת זהות" ואי אפשר יהיה
+  -- להנפיק לו. מחיקה משאירה את הדרך חזרה פתוחה.
+  --
+  -- ⚠️ ומחיקת חשבון ה-auth עצמו דורשת את ה-Admin API, ש-SQL אינו יכול
+  -- לקרוא לו. לכן ה-uid מוחזר לקורא, שינקה אותו. **וגם אם הניקוי ההוא
+  -- ייכשל — הכתיבה כבר נשללה כאן**, כי `agent_site_id()` קורא מ-`app_users`
+  -- ובלי שורה הוא מחזיר NULL.
+  SELECT u.supabase_uid, u.email INTO v_agent_uid, v_agent_email
+    FROM app_users u WHERE u.site_id = v_id AND u.role = 'agent';
+
+  IF v_agent_email IS NOT NULL THEN
+    DELETE FROM app_users WHERE app_users.site_id = v_id AND app_users.role = 'agent';
+    PERFORM app.record_write_audit('site.agent_revoked', v_actor,
+                                   app.current_app_role(), 'site', p_code,
+                                   jsonb_build_object('email', v_agent_email,
+                                                      'supabase_uid', v_agent_uid));
+  END IF;
+
   DELETE FROM sites WHERE sites.id = v_id;
 
-  RETURN QUERY SELECT p_code, v_name, v_ops, v_hist;
+  RETURN QUERY SELECT p_code, v_name, v_ops, v_hist, v_agent_email, v_agent_uid::text;
 END;
 $fn$;
 

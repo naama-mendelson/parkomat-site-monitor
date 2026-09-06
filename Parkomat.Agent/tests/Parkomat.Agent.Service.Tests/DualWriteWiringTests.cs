@@ -56,17 +56,50 @@ public class DualWriteWiringTests
     }
 
     [Fact]
-    public void ObserverRunsOnlyAfterASuccessfulPublish()
+    public void TheObserverRunsEvenWhenTheBrokerIsDown()
     {
-        // ⚠️ הודעה שנכשלה ב-MQTT אסור שתיכתב במקום אחר כאילו נמסרה.
-        // הקריאה חייבת להיות **אחרי** ה-await של הפרסום.
+        // ============================================================
+        // ⚠️ הבדיקה הזו **הפוכה** ממה שהיא הייתה, וזו החלטה שנמדדה
+        // ============================================================
+        // היא דרשה שהצופה ייקרא **אחרי** הפרסום, בנימוק "הודעה שנכשלה
+        // ב-MQTT אסור שתיכתב במקום אחר כאילו נמסרה". הנימוק היה נכון כל
+        // עוד MQTT הוא ערוץ המסירה וה-Supabase רק משקף אותו.
+        //
+        // ⚠️ **אבל זו בדיוק הסיבה שאי אפשר היה לכבות את MQTT.** ברוקר מת
+        // פירושו אפס פרסומים → אפס קריאות לצופה → אפס כתיבה ל-Supabase,
+        // בזמן שהדופק ממשיך לפעום ומראה אתר תקין לחלוטין.
+        //
+        // ⚠️ **ונמדד בשטח באתר 2438**, ולא רק נקרא בקוד: כל שש הכתיבות
+        // הישירות בלוג התרחשו אחרי שהברוקר חזר —
+        //     14:14:37  Broker connection lost
+        //     14:14:39  reconnected
+        //     14:14:40  -> Supabase: 1 message written directly
+        // אף אחת מהן לא קרתה בזמן שהברוקר היה למטה.
+        //
+        // הכתיבה הישירה היא **ערוץ מסירה שני**, לא רישום של מסירת MQTT.
         string src = Publisher();
         int publish = src.IndexOf("await _client.PublishAsync", StringComparison.Ordinal);
         int notify = src.IndexOf("OnPublished?.Invoke", StringComparison.Ordinal);
 
         Assert.True(publish > 0 && notify > 0, "לא נמצאו שני העוגנים");
-        Assert.True(notify > publish,
-            "הצופה נקרא לפני הפרסום — הודעה שנכשלה תיכתב כאילו נמסרה");
+        Assert.True(notify < publish,
+            "הצופה נקרא אחרי הפרסום — ברוקר מת ישתיק גם את הכתיבה הישירה");
+    }
+
+    [Fact]
+    public void TheSentAuditStaysAfterThePublish()
+    {
+        // ⚠️ ו-`SentAuditLog` **לא** עבר למעלה עם הצופה, ובכוונה: הוא עונה
+        // על "מה שודר ב-MQTT", וזו שאלה אחרת מ"מה נמסר". ערבוב השניים היה
+        // הופך את `agent-sent-*.jsonl` לחסר משמעות בדיוק כשחוקרים נתק —
+        // הקובץ היה מראה הודעות ששודרו, בזמן שהברוקר היה מנותק.
+        string src = Publisher();
+        int publish = src.IndexOf("await _client.PublishAsync", StringComparison.Ordinal);
+        int audit = src.IndexOf("SentAuditLog.Log", StringComparison.Ordinal);
+
+        Assert.True(publish > 0 && audit > 0, "לא נמצאו שני העוגנים");
+        Assert.True(audit > publish,
+            "לוג השידורים נכתב לפני הפרסום — הוא יתעד הודעות שלא שודרו");
     }
 
     [Fact]
