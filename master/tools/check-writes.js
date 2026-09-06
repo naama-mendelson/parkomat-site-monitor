@@ -163,6 +163,67 @@ const rpc = (fn, body, token) =>
   // מדווח על באג שאינו קיים. (זה בדיוק מה שקרה בפועל למשתמשת אמיתית.)
   await db.prepare("UPDATE app_users SET role = 'manager' WHERE LOWER(email) = LOWER(?)").run(MGR_EMAIL);
 
+  // ============================================================
+  // ⚠️ מכאן ואילך קיימים אובייקטים סינתטיים בייצור
+  // ============================================================
+  // ולכן מכאן ואילך הניקוי חייב לרוץ **גם על זריקה**. הפתיחה
+  // היא כאן ולא למעלה: לפני הנקודה הזו הקובץ קורא ל-process.exit
+  // בכמה מקומות, ו-process.exit מדלג על finally — אז עטיפה רחבה
+  // יותר הייתה נראית מגינה בלי להגן.
+  // ============================================================
+  // ⚠️ הניקוי הוא פונקציה ונקרא גם ממסלול הכשל
+  // ============================================================
+  // הוא ישב כשורות רגילות בסוף — כלומר **רק במסלול ההצלחה**.
+  // כל זריקה באמצע השאירה שורות סינתטיות בייצור, וזה לא תיאורטי:
+  // ריצה שנפלה ב-03/09/2026 השאירה אירוע site-deleted בשם wcheck...,
+  // ו-check-no-residue מצא אותו שלושה ימים אחר כך.
+  //
+  // ⚠️ ולא try/finally סביב הכול: הקובץ קורא ל-process.exit בכמה
+  // נקודות מוקדמות, ו-process.exit **מדלג על finally** — לקח שכבר עלה
+  // בפרויקט הזה. קריאה מפורשת היא מה שבאמת רץ, וכל הפעולות
+  // הן DELETE ממוקד — קריאה כפולה בטוחה.
+  async function cleanup() {
+    try {
+    // ---- ניקוי ----
+    // ⚠️ **האתר נמחק תמיד, גם אם המחיקה כבר עברה.** אחרת כשל באמצע היה
+    // משאיר אתר בדיקה בייצור — והוא היה מופיע בדשבורד כאתר אמיתי מנותק.
+    await db.prepare("DELETE FROM sites WHERE code = ?").run(NEW_CODE);
+    await db.prepare("DELETE FROM events WHERE site_code = ?").run(NEW_CODE);
+    await db.prepare("DELETE FROM audit_log WHERE target_type = 'site' AND target_id = ?").run(NEW_CODE);
+
+    const list = await (await f(`${SB}/auth/v1/admin/users`, { headers: admin })).json();
+    for (const u of (list.users || []).filter((x) => x.email === EMAIL || x.email === MGR_EMAIL)) {
+      await f(`${SB}/auth/v1/admin/users/${u.id}`, { method: "DELETE", headers: admin });
+    }
+    for (const mail of [EMAIL, MGR_EMAIL]) {
+      await db.prepare("DELETE FROM app_users WHERE LOWER(email) = LOWER(?)").run(mail);
+      await db.prepare("DELETE FROM audit_log WHERE actor_name = ?").run(mail);
+
+      // ============================================================
+      // ⚠️ וגם חלונות התחזוקה — שנפתחו על **אתר אמיתי**
+      // ============================================================
+      // השער בודק את start/cancel maintenance, ואין לו אתר משלו לעשות זאת
+      // עליו: הוא בוחר את האתר הראשון במסד (`ORDER BY code LIMIT 1`). הניקוי
+      // כאן טיפל רק באתר שהשער **יצר**, ולכן החלונות נשארו.
+      //
+      // ⚠️ **וזה לא היה בלתי-נראה.** הם מופיעים בלוג הפעילות של אתר אמיתי
+      // כ"תחזוקה הופעלה / בוטלה" בידי `wcheck…@parkomat.co.il`, ומשתמשת
+      // שמסתכלת על האתר שלה רואה פעולות שאיש לא עשה. נמדד: **62 חלונות**
+      // הצטברו על אתר 1284 לפני שנוקו ידנית.
+      //
+      // ⚠️ והם גם נוגעים במספרים: חלון תחזוקה מוציא זמן ממדידת הזמינות.
+      // כל חלון כאן בן שנייה בערך, כלומר ההשפעה זניחה — אבל "זניח" אינו
+      // "אפס", ואין סיבה שנתוני בדיקה ישתתפו במדד כלשהו.
+      await db.prepare("DELETE FROM maintenance_windows WHERE set_by_name = ?").run(mail);
+    }
+
+    } catch (e) {
+      console.error("  ⚠️ הניקוי נכשל חלקית:", e.message);
+    }
+  }
+
+  try {
+
   const mgrToken = (await (await f(`${SB}/auth/v1/token?grant_type=password`, {
     method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
     body: JSON.stringify({ email: MGR_EMAIL, password: PW }),
@@ -531,37 +592,9 @@ const rpc = (fn, body, token) =>
     if (!ok) console.log(`     │ בפועל: ${JSON.stringify(got)}\n     │ צפוי:  ${JSON.stringify(want)}`);
   }
 
-  // ---- ניקוי ----
-  // ⚠️ **האתר נמחק תמיד, גם אם המחיקה כבר עברה.** אחרת כשל באמצע היה
-  // משאיר אתר בדיקה בייצור — והוא היה מופיע בדשבורד כאתר אמיתי מנותק.
-  await db.prepare("DELETE FROM sites WHERE code = ?").run(NEW_CODE);
-  await db.prepare("DELETE FROM events WHERE site_code = ?").run(NEW_CODE);
-  await db.prepare("DELETE FROM audit_log WHERE target_type = 'site' AND target_id = ?").run(NEW_CODE);
 
-  const list = await (await f(`${SB}/auth/v1/admin/users`, { headers: admin })).json();
-  for (const u of (list.users || []).filter((x) => x.email === EMAIL || x.email === MGR_EMAIL)) {
-    await f(`${SB}/auth/v1/admin/users/${u.id}`, { method: "DELETE", headers: admin });
-  }
-  for (const mail of [EMAIL, MGR_EMAIL]) {
-    await db.prepare("DELETE FROM app_users WHERE LOWER(email) = LOWER(?)").run(mail);
-    await db.prepare("DELETE FROM audit_log WHERE actor_name = ?").run(mail);
-
-    // ============================================================
-    // ⚠️ וגם חלונות התחזוקה — שנפתחו על **אתר אמיתי**
-    // ============================================================
-    // השער בודק את start/cancel maintenance, ואין לו אתר משלו לעשות זאת
-    // עליו: הוא בוחר את האתר הראשון במסד (`ORDER BY code LIMIT 1`). הניקוי
-    // כאן טיפל רק באתר שהשער **יצר**, ולכן החלונות נשארו.
-    //
-    // ⚠️ **וזה לא היה בלתי-נראה.** הם מופיעים בלוג הפעילות של אתר אמיתי
-    // כ"תחזוקה הופעלה / בוטלה" בידי `wcheck…@parkomat.co.il`, ומשתמשת
-    // שמסתכלת על האתר שלה רואה פעולות שאיש לא עשה. נמדד: **62 חלונות**
-    // הצטברו על אתר 1284 לפני שנוקו ידנית.
-    //
-    // ⚠️ והם גם נוגעים במספרים: חלון תחזוקה מוציא זמן ממדידת הזמינות.
-    // כל חלון כאן בן שנייה בערך, כלומר ההשפעה זניחה — אבל "זניח" אינו
-    // "אפס", ואין סיבה שנתוני בדיקה ישתתפו במדד כלשהו.
-    await db.prepare("DELETE FROM maintenance_windows WHERE set_by_name = ?").run(mail);
+  } finally {
+    await cleanup();
   }
 
   console.log(bad === 0 ? "\n✅ הכתיבה הישירה מתנהגת כמתוכנן" : `\n❌ ${bad} כשלים`);
