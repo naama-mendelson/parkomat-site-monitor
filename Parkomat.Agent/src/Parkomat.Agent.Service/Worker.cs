@@ -39,7 +39,7 @@ public class Worker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // --- טעינת הגדרות ---
-        SiteConfig config = ConfigStore.Load();
+        SiteConfig config = ConfigStore.LoadAtStartup();
         // ⚠️ **הגרסה בשורת העלייה, ולא רק בפעימה.** היא דווחה עד כה רק דרך
         // `alive.agent_version`, כלומר **רק כשהמסלול הישיר דולק** — ולכן
         // בדיוק באתר שבו משהו השתבש, הלוג לא ידע לומר איזו גרסה רצה.

@@ -272,6 +272,46 @@ public class ConfigResetTests
     }
 
     [Fact]
+    public void OnlyTheStartupDoorConsumesTheResetFlag()
+    {
+        // ============================================================
+        // ⚠️ קריאה שהיא גם כתיבה — ומארבעה מקומות
+        // ============================================================
+        // האיפוס ישב בתוך `Load`, ולכן **כל** קריאה של ההגדרות יכלה לשכתב
+        // אותן. `Load` נקראת מה-Worker, מטופס ההגדרות, מ-StatusForm,
+        // ומ-`ServiceManager` — שקורא אותה **בכל בדיקת שומר**, כלומר כמה
+        // פעמים בדקה, רק כדי לדעת את קצב הדגימה.
+        //
+        // ⚠️ ובזמן התקנה זה חמור במיוחד: תהליך של הגרסה **הקודמת** שעדיין
+        // רץ יכול לצרוך את הדגל בקוד הישן שלו — כלומר האיפוס מתבצע לפי
+        // הכללים של גרסה שכבר הוחלפה, ומוחק שדות שהגרסה החדשה שומרת.
+        //
+        // האיפוס הוא אירוע בעלייה, ולכן הוא שייך למי שעולה — ורק לו.
+        string core = Source("Parkomat.Agent.Core", "Configuration", "ConfigStore.cs");
+
+        // `Load` הרגילה אינה נוגעת בדגל
+        int plainLoad = core.IndexOf("public static SiteConfig Load()", StringComparison.Ordinal);
+        Assert.True(plainLoad > 0, "לא נמצאה Load");
+        int endOfLoad = core.IndexOf("private static void ApplyResetMarkerIfPresent",
+                                     plainLoad, StringComparison.Ordinal);
+        Assert.True(endOfLoad > plainLoad);
+        Assert.DoesNotContain("ApplyResetMarkerIfPresent()", core[plainLoad..endOfLoad]);
+
+        // ורק ה-Worker עובר דרך הדלת שכן צורכת אותו
+        string worker = Source("Parkomat.Agent.Service", "Worker.cs");
+        Assert.Contains("ConfigStore.LoadAtStartup()", worker);
+
+        static string Source(params string[] parts)
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine([dir!.FullName, "src", .. parts]));
+        }
+    }
+
+    [Fact]
     public void TheResetFlagIsConsumedBeforeTheWriteNotAfter()
     {
         // ============================================================

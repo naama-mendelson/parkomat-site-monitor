@@ -22,7 +22,23 @@ public static class ConfigStore
     /// אם הקובץ לא קיים עדיין — יוצר קובץ ברירת מחדל ומחזיר אותו,
     /// כדי שבהרצה ראשונה במחשב חדש לא ניפול.
     /// </summary>
-    public static SiteConfig Load()
+    /// <summary>
+    /// טעינה בעלייה של הסוכן — <b>הדלת היחידה שצורכת את דגל האיפוס</b>.
+    ///
+    /// ============================================================
+    /// ⚠️ למה זו מתודה נפרדת, ולא דגל בתוך <c>Load</c>
+    /// ============================================================
+    /// האיפוס ישב בתוך <c>Load</c>, כלומר <b>קריאה</b> של ההגדרות הייתה
+    /// גם <b>כתיבה</b> שלהן. ו-<c>Load</c> נקראת מארבעה מקומות — ה-Worker,
+    /// טופס ההגדרות, <c>StatusForm</c>, ו-<c>ServiceManager</c>, שקורא
+    /// אותה <b>בכל בדיקת שומר</b> רק כדי לדעת את קצב הדגימה.
+    ///
+    /// ⚠️ פונקציה שנקראת כדי לקרוא מספר אחד אינה אמורה לשכתב את
+    /// <c>config.json</c>, ובוודאי לא לאפס אותו — וכל אחת מארבע הדלתות
+    /// הייתה יכולה לעשות זאת, בכל רגע, גם מתהליך של גרסה קודמת שעדיין
+    /// רץ בזמן התקנה. האיפוס הוא אירוע בעלייה, ולכן הוא שייך למי שעולה.
+    /// </summary>
+    public static SiteConfig LoadAtStartup()
     {
         AgentPaths.EnsureBaseFolderExists();
 
@@ -30,6 +46,12 @@ public static class ConfigStore
         // אך *שומרים את ה-SiteId* — אחרת עדכון היה מוחק את זהות האתר (topics ריקים
         // sites// שהשרת דוחה, ו-remote_clientid ריק שמתנגש בין אתרים משוכפלים).
         ApplyResetMarkerIfPresent();
+        return Load();
+    }
+
+    public static SiteConfig Load()
+    {
+        AgentPaths.EnsureBaseFolderExists();
 
         SiteConfig result;
         if (!File.Exists(AgentPaths.ConfigFile))
