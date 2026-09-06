@@ -616,6 +616,87 @@ Two things the gate itself got wrong first, both worth keeping:
   A neighbouring template that happened to look right would have produced a **green** gate on
   broken code. The anchor now requires `const` / `string` before the name.
 
+## ⚠️ MQTT is OFF at site 2438 — 06/09/2026
+
+The dotted line is not merely live at one site; at that site it is now the **only**
+line. Measured end to end, with both halves observed in the same minutes:
+
+```
+מחשב האתר:   Parkomat.Agent.Service · Parkomat.Agent.Tray      ← ואין mosquitto
+config.json: Mqtt.Disabled = true
+Supabase:    beats 4314 → 4315 · status ready · agent 1.0.36
+```
+
+**There is no local broker running, so the agent cannot publish over MQTT at all** —
+not "does not", *cannot*. `master` receives nothing from this site. And `beats` only
+moves through `public.ingest_batch`, which is reachable solely through PostgREST with
+the site's own identity; the server has no route to it and never did.
+
+⚠️ **The sharper proof came from a controlled outage**, because a heartbeat alone
+proves liveness rather than delivery. The agent was run with the broker deliberately
+down, and the two logs line up to the second:
+
+```
+site log   14:47:51.765  [ERR] Failed to connect to local broker
+site log   14:47:56.867  -> Supabase: 1 message(s) written directly
+database   11:47:51Z     ready
+```
+
+A real message was produced, the broker was provably dead, and the row landed.
+
+### What that day cost, and the four bugs it found
+
+Getting here took eleven agent versions in one day, and **none of the four defects was
+in the direct path itself** — all four were in things around it that made the path
+silently ineffective:
+
+1. **The direct write sat inside the MQTT `try`.** Stage ג' opens with
+   `EnsureConnectedAsync`, which throws when the local broker is down — so the write
+   *and the heartbeat* were skipped. The path built to survive MQTT going down could
+   only run in a cycle where MQTT was up. This is exactly why every direct write in the
+   logs appeared seconds after a reconnect.
+2. **Uninstall deleted `{commonappdata}\Parkomat`.** Reinstalling therefore erased
+   `config.json` — site id, HiveMQ password, Supabase password. The log said
+   `Config loaded for site ''` and the agent published nothing. ⚠️ And this is why five
+   fixes to `ConfigStore` changed nothing: they preserve fields from a file that had
+   already been deleted.
+3. **Saving the settings form re-enabled MQTT.** `OnSave` rebuilds `MqttConfig` from
+   four form fields, and `Disabled` has no control, so every save silently reset it.
+   In the field this looked exactly like the installer erasing the flag.
+4. **`bridge.conf` as the tray's signal was a race.** `Start()` launches the agent and
+   immediately checks the file — before the agent deletes it. The log said
+   *"MQTT is OFF"* while Mosquitto ran beside it, i.e. the site published on both paths
+   while configured for one. The tray now reads the config, and **kills** Mosquitto
+   rather than merely declining to start it.
+
+⚠️ **And one gap that only a measurement could have found:** with MQTT off the site kept
+beating and the screen still said `no_comm`. The birth message and the resync live
+*inside* stage ג', which direct-only skips. **A heartbeat proves the agent is alive; it
+says nothing about state** — and `sites.status` moves only on a state message, which at
+a site doing one operation a day may not arrive for days. A live site that reads as
+disconnected is precisely the failure this migration exists to remove.
+
+### The switch, and why it is derived
+
+`Mqtt.Disabled` in `config.json`, and `SiteConfig.MqttEnabled` is
+`!(Mqtt.Disabled && Supabase.Enabled)`. A site with no Supabase password stays on MQTT
+whatever the file says, because *"reports nowhere"* is the worst state in this system:
+the agent runs, the PLC is read, the tray icon is green, and nothing anywhere says the
+data reaches no one. Same principle as `SupabaseConfig.Enabled` — **a state that must
+not exist should not be expressible.**
+
+⚠️ **No checkbox in the settings form, deliberately.** One click in the field would
+silence a site — the same trap the TLS checkbox was removed for. Turning it on is a
+hand edit.
+
+### Still open
+
+- **The password does not always survive an install.** It is far more dangerous now:
+  with MQTT off, a wiped password means a *dead* site rather than a degraded one. The
+  derivation above is what keeps that survivable — it falls back to MQTT.
+- **17 sites still need an agent identity** before they can follow. The dashboard
+  already issues one per site (*זהות סוכן* on every row in `AdminPanel`).
+
 ## ⚠️ First site live on the direct path — 2438 (מגדל 1), 03/09/2026
 
 The dotted line in the architecture diagram is no longer dotted for one site.
