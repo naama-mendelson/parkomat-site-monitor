@@ -183,6 +183,11 @@ const rpc = (fn, body, token) =>
   // בפרויקט הזה. קריאה מפורשת היא מה שבאמת רץ, וכל הפעולות
   // הן DELETE ממוקד — קריאה כפולה בטוחה.
   async function cleanup() {
+  // ⚠️ מוצהר **מחוץ** ל-try: הסיכום מודפס אחרי ה-finally, ו-let
+  // הוא בלוקי. ההצהרה בפנים עברה node --check וזרקה
+  // ReferenceError בריצה הראשונה — אחרי שכל 60 הבדיקות כבר עברו.
+  let bad = 0;
+
     try {
     // ---- ניקוי ----
     // ⚠️ **האתר נמחק תמיד, גם אם המחיקה כבר עברה.** אחרת כשל באמצע היה
@@ -580,7 +585,7 @@ const rpc = (fn, body, token) =>
   add("⚠️ אין שורות app_users פעילות בלי חשבון Supabase", orphans.length, 0);
 
   console.log("בדיקה                                              בפועל     צפוי");
-  let bad = 0;
+  bad = 0;
   for (const [name, got, want] of checks) {
     const ok = got === want;
     if (!ok) bad++;
