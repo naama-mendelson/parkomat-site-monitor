@@ -233,6 +233,45 @@ public class ConfigResetTests
     }
 
     [Fact]
+    public void Upgrade_SurvivesTheRoundTripToDiskAndBack()
+    {
+        // ============================================================
+        // ⚠️ הפער שהיה בין הבדיקה לבין מה שקורה באתר
+        // ============================================================
+        // `BuildResetConfig` טהורה, ולכן קלה לבדיקה — אבל מה שמגיע לאתר עובר
+        // אחריה `Save` ואז `Load`. שתיהן נוגעות ב-C:\ProgramData, שאסור
+        // לבדיקה לכתוב אליו, ולכן ההמרה עצמה לא נבדקה מעולם.
+        //
+        // ⚠️ **ושדה שנעלם בהמרה נראה בדיוק כמו שדה ששרד**: הבדיקה על
+        // הפונקציה הטהורה עוברת, ה-config שנכתב לדיסק חסר את הסיסמה, והאתר
+        // מפסיק לכתוב ישירות בלי שום שגיאה. `[JsonIgnore]` על השדה הלא נכון,
+        // ‎setter שנשמט, שינוי שם — כל אחד מהם עושה זאת.
+        //
+        // ToJson/FromJson הן אותן Options בדיוק ששני המסלולים משתמשים בהן.
+        var inTheField = new SiteConfig();
+        inTheField.SiteId = "2438";
+        inTheField.Mqtt.Password = "hivemq-pw";
+        inTheField.Supabase.Password = "issued-once-never-shown-again";
+        inTheField.Supabase.Url = "https://postgrest.parkomat.internal";
+
+        var afterReset = ConfigStore.BuildResetConfig(inTheField);
+        var onDisk = ConfigStore.FromJson(ConfigStore.ToJson(afterReset));
+
+        Assert.NotNull(onDisk);
+        Assert.Equal("2438", onDisk!.SiteId);
+        Assert.Equal("hivemq-pw", onDisk.Mqtt.Password);
+        Assert.Equal("issued-once-never-shown-again", onDisk.Supabase.Password);
+        Assert.Equal("https://postgrest.parkomat.internal", onDisk.Supabase.Url);
+
+        // ⚠️ ו-SiteId ב-Supabase מסומן [JsonIgnore] בכוונה — הוא מוטבע מחדש
+        // ב-Load ולא נשמר. לכן `Enabled` נבדק **אחרי** ההטבעה, שזה בדיוק מה
+        // ש-Load עושה בשורה האחרונה שלו.
+        onDisk.Supabase.SiteId = onDisk.SiteId;
+        Assert.True(onDisk.Supabase.Enabled,
+            "אחרי מעבר לדיסק ובחזרה המסלול הישיר כבוי — האתר יפסיק לכתוב בלי סימן");
+    }
+
+    [Fact]
     public void Upgrade_OnAMachineThatWasNeverConfigured_StaysOff()
     {
         // ⚠️ הצד השני, ולא פחות חשוב: שדה ריק **אינו** שורד — הוא נופל

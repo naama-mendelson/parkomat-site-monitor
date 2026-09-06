@@ -43,7 +43,7 @@ public static class ConfigStore
             SiteConfig? config;
             try
             {
-                config = JsonSerializer.Deserialize<SiteConfig>(json, Options);
+                config = FromJson(json);
             }
             catch (JsonException)
             {
@@ -95,8 +95,7 @@ public static class ConfigStore
             {
                 try
                 {
-                    old = JsonSerializer.Deserialize<SiteConfig>(
-                        File.ReadAllText(AgentPaths.ConfigFile), Options);
+                    old = FromJson(File.ReadAllText(AgentPaths.ConfigFile));
                 }
                 catch { /* config פגום — מתחילים נקי */ }
             }
@@ -208,11 +207,29 @@ public static class ConfigStore
     /// כותבים קודם לקובץ זמני ואז מחליפים, כדי שאם החשמל נופל
     /// באמצע הכתיבה — קובץ ההגדרות המקורי לא נהרס.
     /// </summary>
+    /// <summary>
+    /// ההמרה לטקסט ובחזרה — <b>שתי פונקציות טהורות, ובכוונה</b>.
+    ///
+    /// ⚠️ בלעדיהן היה פער שאי אפשר לסגור בבדיקה: <c>BuildResetConfig</c> טהורה
+    /// וניתנת לבדיקה, אבל מה שבאמת מגיע לאתר עובר <c>Save</c> ואז <c>Load</c> —
+    /// ושתיהן נוגעות ב-<c>C:\ProgramData</c>, שאסור לבדיקה לכתוב אליו. כלומר
+    /// שדה שהיה נעלם בהמרה עצמה (מסומן להתעלמות, שם שהשתנה, ‎setter חסר)
+    /// היה עובר את כל הבדיקות ונופל רק באתר.
+    ///
+    /// אותם <c>Options</c> בדיוק שמשמשים את שני המסלולים — לא עותק שלהם.
+    /// </summary>
+    public static string ToJson(SiteConfig config) =>
+        JsonSerializer.Serialize(config, Options);
+
+    /// <inheritdoc cref="ToJson"/>
+    public static SiteConfig? FromJson(string json) =>
+        JsonSerializer.Deserialize<SiteConfig>(json, Options);
+
     public static void Save(SiteConfig config)
     {
         AgentPaths.EnsureBaseFolderExists();
 
-        string json = JsonSerializer.Serialize(config, Options);
+        string json = ToJson(config);
 
         string tempFile = AgentPaths.ConfigFile + ".tmp";
         File.WriteAllText(tempFile, json);
