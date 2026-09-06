@@ -78,6 +78,48 @@ public class AgentVersionTests
     }
 
     [Fact]
+    public void UninstallNeverDeletesTheSitesIdentity()
+    {
+        // ============================================================
+        // ⚠️ שורה אחת במתקין שעלתה יום שלם של אבחון
+        // ============================================================
+        // `[UninstallDelete]` הכיל `{commonappdata}\Parkomat` — כלומר הסרה
+        // מחקה את **כל** נתוני הסוכן, ובהם `config.json`: מזהה האתר, סיסמת
+        // HiveMQ, וסיסמת Supabase.
+        //
+        // ⚠️ נמדד באתר 2438: אחרי התקנה הלוג אמר `Config loaded for site ''`
+        // ואחריו SITE ID IS INVALID — הסוכן הפסיק לשדר לגמרי. וסיסמת
+        // Supabase מוצגת **פעם אחת בהנפקה**, כך שאין מאיפה להעתיק אותה.
+        //
+        // ⚠️ וזה גם מה שהפך את האבחון לרדיפה אחרי הזנב: כל התיקונים
+        // ב-`ConfigStore` שומרים שדות מקובץ — והקובץ כבר לא היה שם.
+        //
+        // בדיקה על הטקסט כי אין דרך אחרת: `installer.iss` הוא Inno Setup
+        // ואינו ניתן להרצה מכאן. אותו שיקול כמו ביתר הבדיקות בקובץ הזה.
+        string iss = File.ReadAllText(Path.Combine(AgentRoot().FullName, "installer.iss"));
+        int section = iss.IndexOf("[UninstallDelete]", StringComparison.Ordinal);
+        Assert.True(section > 0, "לא נמצא [UninstallDelete]");
+
+        int next = iss.IndexOf("\n[", section + 1, StringComparison.Ordinal);
+        string body = next > 0 ? iss[section..next] : iss[section..];
+
+        foreach (string line in body.Split('\n'))
+        {
+            string t = line.Trim();
+            if (t.StartsWith(';') || !t.StartsWith("Type:", StringComparison.Ordinal)) continue;
+
+            // מחיקה גורפת של תיקיית ProgramData — בכל צורה שהיא
+            Assert.False(
+                t.Contains("{commonappdata}\\Parkomat\"", StringComparison.Ordinal) ||
+                t.Contains("{commonappdata}\\Parkomat\\Agent\"", StringComparison.Ordinal),
+                $"הסרה מוחקת את כל נתוני הסוכן, כולל זהות האתר: {t}");
+
+            Assert.DoesNotContain("config.json", t);
+            Assert.DoesNotContain("\\logs", t);
+        }
+    }
+
+    [Fact]
     public void TheInstallerFileNameCarriesTheVersion()
     {
         // ============================================================

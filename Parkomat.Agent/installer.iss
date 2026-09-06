@@ -85,7 +85,16 @@
 ;          + מצב ו-resync ממורכזים בנקודת ההפקה, והתפר OnPublished הוסר:
 ;          הוא ישב על ניסיון השידור ולא על הפקת ההודעה, ומשם נולדו שני
 ;          באגים בלתי תלויים.
-#define MyAppVersion "1.0.31"
+; 1.0.32 — ⚠️ **הסרה הפסיקה למחוק את זהות האתר.** [UninstallDelete] הכיל
+;          {commonappdata}\Parkomat, כלומר הסרה-והתקנה מחקה את config.json
+;          כולו: מזהה האתר, סיסמת HiveMQ, וסיסמת Supabase. נמדד באתר 2438 —
+;          הלוג אמר `Config loaded for site ''` ואחריו SITE ID IS INVALID,
+;          והסוכן הפסיק לשדר לגמרי. וסיסמת Supabase מוצגת פעם אחת בהנפקה,
+;          אז אין מאיפה להעתיק אותה.
+;          ⚠️ וזו הייתה הסיבה האמיתית מאחורי יום שלם של אבחון: כל התיקונים
+;          ב-ConfigStore שומרים שדות **מקובץ שכבר נמחק**.
+;          נמחק עכשיו רק מה שנוצר מחדש מעצמו; config.json והלוגים נשארים.
+#define MyAppVersion "1.0.32"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -209,8 +218,42 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im mosquitto.exe"; Flags: runhi
 ; מוחקים את כל תיקיית ההתקנה (service, tray, mosquitto) ואת נתוני הריצה,
 ; כדי שלא יישאר שום עקבות.
 Type: filesandordirs; Name: "{app}"
-; נתוני ה-Agent + Mosquitto ב-ProgramData (config, bridge.conf, logs, cacert, persistence).
-Type: filesandordirs; Name: "{commonappdata}\Parkomat"
+
+; ============================================================
+; ⚠️ ProgramData **אינו** נמחק כולו — וזו הייתה שורה אחת שעלתה יום שלם
+; ============================================================
+; כאן עמד:  Type: filesandordirs; Name: "{commonappdata}\Parkomat"
+; בנימוק "שלא יישאר שום עקבות". המחיר התגלה ב-06/09/2026: הסרה-והתקנה
+; מוחקת את config.json, כלומר את **זהות האתר** — מזהה האתר, סיסמת
+; HiveMQ, וסיסמת Supabase.
+;
+; ⚠️ ושלושתם אינם ניתנים לשחזור באותה מידה:
+;   • מזהה האתר — הסוכן מסרב לשדר בלעדיו ומדפיס SITE ID IS INVALID.
+;   • סיסמת HiveMQ — יש ברירת מחדל צרובה, אז היא שורדת.
+;   • סיסמת Supabase — **מוצגת פעם אחת בהנפקה**. Supabase שומר גיבוב
+;     בלבד, ולכן אין מאיפה להעתיק אותה: צריך להנפיק חדשה, כלומר
+;     שדרוג שגרתי הופך לפעולת ניהול.
+;
+; ⚠️ והכשל שקט לחלוטין: `SupabaseConfig.Enabled` נגזר, אז סיסמה שנמחקה
+; אינה שגיאה — היא נראית זהה ל"האתר הזה לא הופעל".
+;
+; נמחק רק מה שנוצר מחדש מעצמו. **`config.json` והלוגים נשארים** —
+; הלוגים כי הם הראיה היחידה כשחוקרים למה אתר הפסיק לדווח.
+;
+; ⚠️ המחיר המודע: `config.json` מכיל סיסמאות בטקסט גלוי והוא נשאר על
+; המכונה אחרי הסרה. זה נכון גם היום בזמן שהסוכן מותקן, המחשב יושב
+; בחניון ולא עובר יד, והחלופה — מחיקת זהות האתר בכל שדרוג — הוכחה
+; כיקרה בהרבה.
+Type: filesandordirs; Name: "{commonappdata}\Parkomat\Agent\queue"
+Type: filesandordirs; Name: "{commonappdata}\Parkomat\Agent\queue-supabase"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\bridge.conf"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\cacert.pem"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\heartbeat"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\alive"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\detector-state"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\clock-offset"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\hivemq-status"
+Type: files; Name: "{commonappdata}\Parkomat\Agent\reset-to-defaults.flag"
 
 [Code]
 // מריץ פקודה חבויה ומחכה לסיומה; מתעלם מכל שגיאה — ניקוי הגנתי בלבד.
