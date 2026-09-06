@@ -967,6 +967,48 @@ public class Worker : BackgroundService
 
             // ===== שלב ד': המסלול הישיר — try משלו, מחוץ ל-MQTT =====
             // ============================================================
+            // ⚠️ ה-resync במצב ישיר-בלבד — פער שנמדד בשטח מיד עם ההפעלה
+            // ============================================================
+            // הודעת ה"לידה" וה-resync חיות בתוך שלב ג', שמדולג כשה-MQTT
+            // כבוי. התוצאה, שנצפתה באתר 2438 דקות אחרי הכיבוי: הפעימות
+            // עלו כרגיל (4,294) והסטטוס נשאר תקוע על `no_comm` — הצוואה
+            // של הגשר סימנה אותו כשה-Mosquitto נעצר, ולא היה מי שינקה.
+            //
+            // ⚠️ **פעימה מוכיחה חיים, לא מצב.** `alive` מתעדכן בכל דקה,
+            // אבל `sites.status` משתנה רק מהודעת מצב — ובאתר שקט הודעה כזו
+            // עשויה לא להגיע במשך ימים. אתר חי שנראה מנותק על המסך הוא
+            // בדיוק הכשל שהמעבר הזה נועד למנוע.
+            //
+            // ⚠️ ולמה שכפול ולא הזזת הבלוק המקורי: שלב ג' משרת 17 אתרים
+            // בייצור, וההחלטה עצמה חיה ב-ResyncPolicy — פונקציה טהורה
+            // שמכוסה בבדיקות. מה שמשוכפל כאן הוא ההפעלה, לא הכלל.
+            //
+            // ‎mqttWasConnected=true ו-bridgeJustReconnected=false בכוונה:
+            // שני הטריגרים האלה הם אירועי MQTT שאינם קיימים כאן, והעברתם
+            // כ-false הייתה מייצרת resync **בכל סבב**.
+            if (!config.MqttEnabled && supabase is not null)
+            {
+                ResyncDecision direct = ResyncPolicy.Decide(
+                    birthMessageSent, mqttWasConnected: true, plcJustRecovered,
+                    bridgeJustReconnected: false, currentState, lastKnownState);
+
+                if (direct.ShouldPublish)
+                {
+                    _logger.LogInformation(
+                        "Resyncing current state directly ({Reason}) -> {State}.",
+                        direct.Reason, direct.State);
+
+                    mirrored.Add(BatchPayload.From(new StateMessage
+                    {
+                        Timestamp = clock.UnixNow(),
+                        State = direct.State,
+                        FaultText = await ReadFaultTextOrNullAsync(direct.State, stoppingToken)
+                    }));
+                    birthMessageSent = true;
+                }
+            }
+
+            // ============================================================
             // ⚠️ זה היה בתוך ה-try של שלב ג', וזה **ביטל את כל המסלול**
             // ============================================================
             // שלב ג' פותח ב-`EnsureConnectedAsync`, שזורק כשהברוקר המקומי

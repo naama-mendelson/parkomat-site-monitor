@@ -226,4 +226,44 @@ public class DirectOnlyTests
                 "Parkomat.Agent.Tray", "Forms", "SettingsForm.cs"));
         }
     }
+
+    [Fact]
+    public void ADirectOnlySiteStillReportsItsStateAtStartup()
+    {
+        // ============================================================
+        // ⚠️ נצפה באתר 2438 דקות אחרי הכיבוי, וזה כשל אמיתי
+        // ============================================================
+        // הודעת ה"לידה" וה-resync חיות בתוך שלב ג', שמדולג כשה-MQTT כבוי.
+        // התוצאה: הפעימות עלו כרגיל (4,294) והסטטוס נשאר תקוע על no_comm —
+        // הצוואה של הגשר סימנה אותו כשה-Mosquitto נעצר, ולא היה מי שינקה.
+        //
+        // ⚠️ **פעימה מוכיחה חיים, לא מצב.** `alive` מתעדכן בכל דקה, אבל
+        // `sites.status` משתנה רק מהודעת מצב — ובאתר שקט הודעה כזו עשויה
+        // לא להגיע במשך ימים. אתר חי שנראה מנותק על המסך הוא בדיוק הכשל
+        // שהמעבר למסלול ישיר נועד למנוע.
+        string w = Worker();
+        Assert.Contains("if (!config.MqttEnabled && supabase is not null)", w);
+        Assert.Contains("Resyncing current state directly", w);
+
+        // ⚠️ ושני הטריגרים של MQTT מנוטרלים במפורש. העברתם כ-false הייתה
+        // מייצרת resync **בכל סבב** — הצפה של הודעות מצב זהות.
+        int at = w.IndexOf("ResyncDecision direct = ResyncPolicy.Decide", StringComparison.Ordinal);
+        Assert.True(at > 0, "לא נמצאה ההחלטה הישירה");
+        string call = w[at..(at + 260)];
+        Assert.Contains("mqttWasConnected: true", call);
+        Assert.Contains("bridgeJustReconnected: false", call);
+
+        // וה-birth נסגר, אחרת הוא היה חוזר בכל סבב
+        Assert.Contains("birthMessageSent = true;", w);
+
+        static string Worker()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine(dir!.FullName, "src",
+                "Parkomat.Agent.Service", "Worker.cs"));
+        }
+    }
 }
