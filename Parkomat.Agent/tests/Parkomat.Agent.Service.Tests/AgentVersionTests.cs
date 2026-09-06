@@ -78,6 +78,35 @@ public class AgentVersionTests
     }
 
     [Fact]
+    public void TheInstallerFileNameCarriesTheVersion()
+    {
+        // ============================================================
+        // ⚠️ מאפייני קובץ אינם מספיקים — נמדד, ועלה שעה
+        // ============================================================
+        // הבדיקה שמעליה מוודאת ש-VersionInfoVersion מוטבע, וזו הייתה
+        // התשובה ל"איזה מהם החדש". היא נכונה ולא מספיקה: **אף אחד אינו
+        // פותח מאפיינים לפני שהוא לוחץ פעמיים.**
+        //
+        // ב-06/09/2026 נבנו 1.0.25 ו-1.0.26 לאותו נתיב בדיוק, אחת מהן
+        // הותקנה באתר 2438, ולא הייתה שום דרך לדעת בדיעבד איזו. השאלה
+        // העובדתית "האם תיקון האיפוס עבד?" הפכה לבלתי-פתירה, ונענתה
+        // בניחושים על גבי לוגים — שהם עצמם לא דיווחו גרסה.
+        //
+        // שם הקובץ הוא המקום היחיד שנראה **לפני** ההתקנה ואחריה, ושורד
+        // העתקה, שליחה בוואטסאפ, ותיקיית הורדות עם שלושה קבצים.
+        Assert.Matches(new Regex(@"OutputBaseFilename=\S*\{#MyAppVersion\}"), iss2());
+
+        static string iss2()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "installer.iss")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine(dir!.FullName, "installer.iss"));
+        }
+    }
+
+    [Fact]
     public void NoProjectDeclaresItsOwnVersion()
     {
         // ⚠️ csproj שמכריז Version משלו **גובר** על Directory.Build.props,
