@@ -71,6 +71,10 @@ const GATES = [
   { name: "parity-exec-series", what: "executive_series מול החישוב מהשורות הגולמיות" },
   { name: "check-row-cap",     what: "אף קריאה ישירה אינה מתקרבת לתקרת 1,000 השורות" },
   { name: "check-agent-identity", what: "סוכן מתוחם לאתר שלו — ואינו נחסם ב-MFA" },
+  // ⚠️ noEnv: שער סטטי — קורא שלושה קבצים ואינו נוגע ברשת. הוא גם היחיד
+  // שקושר את שלוש השפות: הסוכן נכנס בכתובת שהכלי או ה-Edge Function יצרו,
+  // ואין ביניהם קובץ משותף שיאכוף זאת.
+  { name: "check-agent-email", what: "מוסכמת האימייל זהה בשלוש השפות", noEnv: true },
   { name: "check-ingest-recorder", what: "מקליט הקליטה תקין — צד הייחוס של השוואת הקליטה" },
   { name: "parity-ingest-cycle", what: "מונה המחזורים — JS מול SQL, שבעת המצבים" },
   { name: "parity-ingest-op",    what: "מסלול התפעולים — המסלול הקיים מול app.ingest_operation" },

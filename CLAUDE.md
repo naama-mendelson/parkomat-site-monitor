@@ -591,8 +591,30 @@ back to. In server mode it throws a message saying so.
 ⚠️ **Three copies of one convention.** `site-{code}@parkomat.co.il` is written in the Edge
 Function, in `tools/provision-agent-user.js` (`emailFor`), and in the agent
 (`SupabaseDefaults.EmailFor`). If one drifts, the agent signs in as a user that was never
-created and gets `400` on every cycle. The agent side is pinned by a test; the other two are
-not, and that is a known gap.
+created and gets `400` on every cycle — on a PC nobody is sitting at, with no line on any
+screen. The site looks perfectly installed and simply never reports.
+
+⚠️ **That was a known gap and it is now closed** — `check-agent-email` (static, `noEnv`, no
+network). It reads all three files, rebuilds the address from each with a real site code, and
+demands the three **resulting strings** be identical. Comparing the source text would fail on
+`${code}` vs `{siteId.Trim()}` — a difference that means nothing — and pass on a real drift
+written in the same style.
+
+It also checks the fourth party, the one that actually enforces: the domain must appear in
+`app.allowed_email_domains()`. All three copies can agree and be wrong together, and then
+`enforce_user_creation` rejects the address before there is an agent to sign in at all.
+
+Two things the gate itself got wrong first, both worth keeping:
+
+- **It read line by line and could not see the C# copy**, whose definition breaks after `=>`.
+  It reported *"the form changed"* — i.e. the gate was red about itself. It reads a
+  three-line window now, and *"not found"* stays a **failure** rather than a skip: a skipped
+  copy is exactly the one that would drift unwatched.
+- ⚠️ **The anchor matched any mention of `emailFor`, not the definition.** A mutation that
+  renamed the definition made the gate latch onto a *call site* and parse an unrelated
+  template beside it (`Bearer ${token}`). It went red — by luck, because that string differs.
+  A neighbouring template that happened to look right would have produced a **green** gate on
+  broken code. The anchor now requires `const` / `string` before the name.
 
 ## ⚠️ First site live on the direct path — 2438 (מגדל 1), 03/09/2026
 
