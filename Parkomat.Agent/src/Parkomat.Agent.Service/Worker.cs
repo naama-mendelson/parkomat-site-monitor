@@ -226,16 +226,27 @@ public class Worker : BackgroundService
         // ביותר בחריגה — הודעה בת יומיים שווה פחות מדיסק מלא, ובעיקר
         // פחות מסוכן שקרס.
         var supaQueue = new PendingQueue(AgentPaths.SupabaseQueueFolder);
-        if (supaQueue.Count > 0)
+
+        // ⚠️ **מונה בזיכרון, וספירה מהדיסק רק כשממילא יוצאים לרשת.**
+        // ‎PendingQueue.Count הוא סריקת תיקייה, וקריאה לו בכל סבב פירושה
+        // עשרות אלפי סריקות ביום על מחשב שגם מריץ את המחסום. המונה מסונכרן
+        // מחדש מהדיסק אחרי כל ניסיון שליחה — פעולה נדירה ויקרה ממילא — כך
+        // שהוא אינו יכול לסטות (התקרה של PendingQueue מוחקת את הישן ביותר,
+        // ומונה שרק גדל היה מייצר ניסיון שליחה בכל סבב, לנצח).
+        int supaWaiting = supaQueue.Count;
+        if (supaWaiting > 0)
             _logger.LogInformation(
                 "Supabase retry queue restored from disk: {Count} message(s) survived the restart.",
-                supaQueue.Count);
+                supaWaiting);
         if (supabase is not null)
         {
+            // ⚠️ **מצבים בלבד.** תפעולים ממורכזים בנקודת ההפקה, ישירות לתור
+            // שעל הדיסק — ראה את ההערה שם. הצופה נקרא בכל **ניסיון שידור**,
+            // ומצב הוא הודעה שמשודרת פעם אחת לכל שינוי, ולכן זו נקודת ההפקה
+            // שלו. מצב שאבד גם מתקן את עצמו: העלייה משדרת resync עם חותם טרי.
             mqtt.OnPublished = payload =>
             {
                 if (payload is StateMessage sm) mirrored.Add(BatchPayload.From(sm));
-                else if (payload is OperationMessage om) mirrored.Add(BatchPayload.From(om));
             };
         }
 
@@ -590,6 +601,30 @@ public class Worker : BackgroundService
             {
                 // התקרה והמחיקה של הישן ביותר נאכפות בתוך PendingQueue.
                 pendingOps.Enqueue(op);
+
+                // ⚠️ **המרכוז ל-Supabase קורה כאן — בנקודת ההפקה, ואל הדיסק.**
+                //
+                // הוא ישב ב-PublishAsync, כלומר בכל **ניסיון שידור**. תפעול
+                // שהשידור שלו נכשל נשאר בתור ומשודר שוב בכל סבב, ולכן הוא היה
+                // נשלח ל-Supabase שוב ושוב לאורך כל הנתק — עשרות בקשות לדקה
+                // בדיוק במצב שהמסלול השני קיים בשבילו.
+                //
+                // ⚠️ **ולתור ולא לרשימה בזיכרון, וזה לא סגנון.** הרשימה נמחקת
+                // עם התהליך. הפסקת חשמל בין ההפקה לשליחה המוצלחת הייתה מוחקת
+                // את התפעול מ-Supabase **לתמיד** — הוא שורד ב-pendingOps ל-MQTT,
+                // אבל השידור החוזר משם כבר אינו מודיע לצופה, ולכן הוא לא היה
+                // ממורכז שוב לעולם. זו בדיוק הנפילה שהתור העמיד קיים בשבילה,
+                // והיא הסיבה שהפרויקט הזה התחיל.
+                //
+                // תפעול הוא אירוע חד-פעמי — הגלאי מונע-קצוות ומתקדם מיד, כך
+                // שמעבר שהוחמץ אינו ניתן לזיהוי מחדש. מצב, לעומתו, מתקן את
+                // עצמו ב-resync, ולכן הוא נשאר בזיכרון. אותה הבחנה בדיוק
+                // שעליה בנוי pendingOps.
+                if (supabase is not null)
+                {
+                    supaQueue.Enqueue(BatchPayload.From(op));
+                    supaWaiting++;
+                }
             }
 
             // ===== אבחון: מונה מחזורים שירד =====
@@ -844,7 +879,7 @@ public class Worker : BackgroundService
                 // שהאתרים שקטים 99% מהזמן, כלומר כמעט כל הבקשות במסלול
                 // הישיר יהיו פעימות — 18 אתרים × 1,440 ביום = 25,920,
                 // כ-0.9GB לחודש.
-                bool beatDue = supabase is not null && mirrored.Count == 0 &&
+                bool beatDue = supabase is not null && mirrored.Count == 0 && supaWaiting == 0 &&
                                DateTimeOffset.UtcNow - lastBeat >= HeartbeatInterval;
 
                 // ============================================================
@@ -867,7 +902,7 @@ public class Worker : BackgroundService
                 //
                 // ⚠️ והמשמעות: תור שהתמלא מתרוקן תוך **דקה לכל היותר**, כי
                 // הפעימה מבטיחה סבב שליחה כל 60 שניות גם באתר שקט לגמרי.
-                if (supabase is not null && (mirrored.Count > 0 || beatDue))
+                if (supabase is not null && (mirrored.Count > 0 || supaWaiting > 0 || beatDue))
                 {
                     var retry = supaQueue.LoadAll<BatchItem>()
                         // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה
@@ -926,6 +961,12 @@ public class Worker : BackgroundService
                         }
                     }
 
+                    // ⚠️ **מסונכרן מהדיסק, לא מחושב מההפרש.** התקרה של
+                    // PendingQueue מוחקת את הישן ביותר בחריגה, ולכן מונה
+                    // שרק מחסיר את מה שנמחק היה סוטה כלפי מעלה — ומונה
+                    // שאינו יורד לאפס מייצר ניסיון שליחה בכל סבב, לנצח.
+                    // הסריקה כאן זולה יחסית: היא באה אחרי סיבוב רשת שלם.
+                    supaWaiting = supaQueue.Count;
                     mirrored.Clear();
                 }
             }

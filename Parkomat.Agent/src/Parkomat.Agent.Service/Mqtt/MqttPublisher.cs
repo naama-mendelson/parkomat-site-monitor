@@ -149,12 +149,24 @@ public class MqttPublisher : IAsyncDisposable
     public Task PublishStateAsync(StateMessage message, CancellationToken ct = default)
         => PublishAsync(StateTopic, message, ct);
 
-    /// <summary>משדר הודעת operation ל-topic של הפעולות.</summary>
+    /// <summary>
+    /// משדר הודעת operation ל-topic של הפעולות.
+    ///
+    /// ⚠️ <b>ואינו מודיע לצופה — בכוונה.</b> תפעולים נכנסים ל-<c>PendingQueue</c>
+    /// לפני השידור ומשודרים משם, וכשל משאיר אותם בתור לניסיון הבא. לכן
+    /// הודעה אחת עוברת כאן <b>פעם אחת לכל ניסיון</b>, לא פעם אחת בחיים —
+    /// והודעה לצופה כאן הייתה שולחת אותה ל-Supabase שוב ושוב לאורך כל
+    /// הנתק, כלומר מאות בקשות מיותרות בדיוק במצב שהמסלול השני קיים בשבילו.
+    ///
+    /// המרכוז שלהם קורה ב-<c>Worker</c> ברגע ההכנסה לתור — פעם אחת לכל
+    /// פעולה, וזו נקודת ה<b>הפקה</b> האמיתית שלה.
+    /// </summary>
     public Task PublishOperationAsync(OperationMessage message, CancellationToken ct = default)
-        => PublishAsync(OperationTopic, message, ct);
+        => PublishAsync(OperationTopic, message, ct, notifyObserver: false);
 
     // הליבה המשותפת: הופך אובייקט ל-JSON ומפרסם ב-QoS 1.
-    private async Task PublishAsync(string topic, object payload, CancellationToken ct)
+    private async Task PublishAsync(string topic, object payload, CancellationToken ct,
+                                    bool notifyObserver = true)
     {
         string json = JsonSerializer.Serialize(payload);
 
@@ -187,8 +199,11 @@ public class MqttPublisher : IAsyncDisposable
         // עכשיו ההודעה נמסרת ל-Supabase גם כשהברוקר נפל — וזה **אינו**
         // "כאילו נמסרה": היא באמת נמסרה, בערוץ אחר. `SentAuditLog` נשאר
         // אחרי הפרסום, כי הוא כן מתעד מה יצא ב-MQTT בלבד.
-        try { OnPublished?.Invoke(payload); }
-        catch { /* צופה שנכשל לעולם אינו מפיל שידור */ }
+        if (notifyObserver)
+        {
+            try { OnPublished?.Invoke(payload); }
+            catch { /* צופה שנכשל לעולם אינו מפיל שידור */ }
+        }
 
         // timeout על ה-publish: socket half-open (הצד השני נעלם בלי RST) היה מקפיא
         // את QoS-1 בהמתנה ל-PUBACK עד ה-keepalive הפנימי (~15s) — וכל לולאת ה-Worker

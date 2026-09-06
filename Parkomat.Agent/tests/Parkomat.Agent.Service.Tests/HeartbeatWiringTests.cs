@@ -71,15 +71,21 @@ public class HeartbeatWiringTests
         // בלבד היה משאיר אתר שקט להיראות מת.
         string src = Worker();
         Assert.Matches(new Regex(@"beatDue\s*=.*mirrored\.Count\s*==\s*0", RegexOptions.Singleline), src);
-        // ⚠️ **התנאי החיצוני נשען על `mirrored`, לא על `outgoing` — ובכוונה.**
-        // `outgoing` נבנה מקריאה לדיסק (`LoadAll`), ובדיקה שלו בתנאי הכניסה
-        // הייתה מכריחה סריקת תיקייה **בכל סבב של הלולאה** — עשרות אלפי
-        // סריקות ביום על תיקייה ריקה, במחשב שגם מריץ את המחסום.
+        // ⚠️ **התנאי החיצוני אינו נוגע בדיסק, וזה מה שהוא באמת מקבע.**
+        // `outgoing` נבנה מ-`LoadAll`, ובדיקה שלו בתנאי הכניסה הייתה מכריחה
+        // סריקת תיקייה **בכל סבב של הלולאה** — עשרות אלפי סריקות ביום על
+        // תיקייה ריקה, במחשב שגם מריץ את המחסום.
         //
-        // המחיר: תור שהתמלא ממתין עד הפעימה הבאה. זה חסום ב-60 שניות, כי
-        // הפעימה מבטיחה סבב שליחה גם באתר שקט לגמרי.
+        // ⚠️ **וגרסה קודמת שילמה על זה בהמתנה, וזה כבר לא נכון.** אז השער
+        // היה `mirrored.Count > 0 || beatDue` בלבד, כלומר תור שהתמלא המתין
+        // עד הפעימה הבאה — עד 60 שניות. `supaWaiting` הוא מונה **בזיכרון**,
+        // ולכן הוא נותן את אותה תשובה בלי סריקה ובלי ההמתנה.
         Assert.Matches(new Regex(
-            @"supabase is not null && \(mirrored\.Count\s*>\s*0\s*\|\|\s*beatDue\)"), src);
+            @"supabase is not null && \(mirrored\.Count\s*>\s*0\s*\|\|\s*supaWaiting\s*>\s*0\s*\|\|\s*beatDue\)"), src);
+        // ⚠️ ואסור שתחזור לכאן קריאה לדיסק. `Count` הוא סריקת תיקייה.
+        int gate = src.IndexOf("if (supabase is not null && (mirrored.Count > 0",
+                               StringComparison.Ordinal);
+        Assert.DoesNotContain("supaQueue.Count", src[gate..(gate + 200)]);
     }
 
     [Fact]

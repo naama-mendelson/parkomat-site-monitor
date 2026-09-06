@@ -43,7 +43,7 @@
 ;          לכבות אותו: בלי זה כל גמגום רשת הוא אובדן נתונים קבוע.
 ;          ⚠️ תקרה של 100 לאצווה: השרת דוחה מעל 200 **כולה**, ותור של
 ;          1,000 אחרי נתק ארוך היה נדחה בכל ניסיון — תור שאינו מתרוקן.
-#define MyAppVersion "1.0.24"
+#define MyAppVersion "1.0.25"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

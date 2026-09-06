@@ -338,17 +338,53 @@ PLC -> Agent --+-> (MQTT) -> Mosquitto -> HiveMQ -> server -> Supabase
   They are the exit door — repointing to another Postgres without touching 16 installers. The
   form carries them through `OnSave` in `_sbOverrides` because it rebuilds `SiteConfig` from
   scratch, and without that every "Save" would silently reset a repointed site.
-- **Dual write, MQTT authoritative.** The direct path is best-effort: a failed batch is
-  logged and *not* retried, because the message already went out over MQTT. Same staging
-  pattern as `VITE_SUPABASE_DIRECT` in the dashboard and the dormant auth provider.
-- **One seam, not six call sites.** `Worker` publishes from six places, several building the
-  message inline. Mirroring at each would be a matter of memory — *a seventh site added
-  tomorrow would reach nobody*, with no error and no sign, and it would surface only on the
-  day MQTT is switched off. So the observer (`MqttPublisher.OnPublished`) sits in
-  `PublishAsync`, which every publish already funnels through, right beside `SentAuditLog`.
-  It fires **only after a successful publish**, and is wrapped in `try/catch` — an exception
-  from the secondary path that kills an MQTT publish turns *a new route failing* into
-  *breaking the old route that works*.
+- **Dual write, MQTT authoritative — but the direct path is no longer best-effort.**
+  ⚠️ This bullet used to end *"a failed batch is logged and not retried, because the message
+  already went out over MQTT"*. That reasoning was sound **only while MQTT was the delivery
+  channel**, and it is exactly what made MQTT impossible to switch off: the day it goes down,
+  every network stutter becomes permanent data loss. `supaQueue`
+  (`AgentPaths.SupabaseQueueFolder`) now retries, oldest first, `.Take(100)`, removed **only**
+  on a confirmed write. A separate folder from the MQTT queue: the two paths fail
+  independently, and a shared queue would force one fate on both.
+- **Two kinds, two routes — and that asymmetry is the design, not an inconsistency.**
+
+  | | route | why |
+  |---|---|---|
+  | **operation** | `supaQueue.Enqueue` **at the production point** (`Worker`, beside `pendingOps.Enqueue`) | one-shot: the detector is edge-triggered and advances immediately, so a missed transition cannot be re-detected |
+  | **state** | the observer `MqttPublisher.OnPublished`, into an in-memory list | self-repairing: start-up resyncs with a **fresh** stamp, so a lost state costs nothing |
+
+  This is the same distinction `PendingQueue` was already built on, applied to the second
+  channel.
+
+  ⚠️ **Operations were mirrored in the observer, and that was two bugs at once.** The observer
+  fires on every **publish attempt**, and a failed operation stays in `pendingOps` and is
+  re-published every cycle — so one operation was sent to Supabase again and again for the
+  length of an outage, dozens of requests a minute, precisely in the situation the second path
+  exists for, and against an egress quota that is already over.
+
+  ⚠️ **And the first fix introduced the opposite bug.** Moving the mirror to the production
+  point but into the *in-memory* list opened a loss window: an operation produced, then a power
+  cut before the next successful send, is gone from Supabase **forever** — it survives in
+  `pendingOps` for MQTT, but the re-publish from there no longer notifies the observer, so it
+  is never mirrored again. A direct path that does not survive a power cut does not address
+  DELL008, which is the reason this project exists. Hence the disk, not the list.
+- **One seam for states, and the reason still holds.** `Worker` publishes from six places,
+  several building the message inline. Mirroring states at each would be a matter of memory —
+  *a seventh site added tomorrow would reach nobody*, with no error and no sign, surfacing only
+  on the day MQTT is switched off. So the observer sits in `PublishAsync`, which every publish
+  funnels through, beside `SentAuditLog`, and is wrapped in `try/catch` — an exception from the
+  secondary path that kills an MQTT publish turns *a new route failing* into *breaking the old
+  route that works*.
+  ⚠️ **It fires *before* the publish, not after** — see `TheObserverRunsEvenWhenTheBrokerIsDown`.
+  A dead broker meant zero publishes → zero observer calls → zero writes to Supabase, while the
+  heartbeat kept beating and the site looked perfectly healthy. Measured at site 2438: all six
+  direct writes in the log happened *after* the broker reconnected.
+- **`supaWaiting` is an in-memory counter, resynced from disk only after a send.**
+  `PendingQueue.Count` is a directory scan, and the send gate is evaluated every cycle — tens
+  of thousands of scans a day on a PC that also runs the barrier. It is resynced (rather than
+  decremented by what was removed) because `PendingQueue` deletes the oldest on overflow
+  without telling anyone: a counter that only subtracts drifts upward, and one that never
+  reaches zero triggers a send **every cycle, forever**.
 - ⚠️ **The batch is cleared at the *start* of each cycle**, not only after a successful send.
   A cycle that throws before the send skips the trailing clear, and the batch would grow
   every cycle until it exceeds the server's 200-message cap — after which **every** send is

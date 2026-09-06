@@ -117,10 +117,13 @@ public class DualWriteWiringTests
     {
         // ⚠️ סוג שנשכח כאן נעלם מהמסלול הישיר בשקט: הוא עדיין מגיע ל-MQTT,
         // ולכן שום דבר לא ייראה שבור עד שיכבו את MQTT.
+        //
+        // ⚠️ **שני מסלולים ולא ענף אחד עם שני סוגים**, וזו החלטה: מצב עובר
+        // דרך הצופה (זיכרון, מתקן את עצמו ב-resync), תפעול עובר דרך התור
+        // שעל הדיסק (חד-פעמי, אינו ניתן לזיהוי מחדש).
         string src = Worker();
-        Assert.Contains("is StateMessage", src);
-        Assert.Contains("is OperationMessage", src);
-        Assert.Contains("BatchPayload.From", src);
+        Assert.Contains("is StateMessage sm", src);                    // מצב → הצופה
+        Assert.Contains("supaQueue.Enqueue(BatchPayload.From(op))", src); // תפעול → הדיסק
     }
 
     [Fact]
@@ -159,5 +162,118 @@ public class DualWriteWiringTests
 
         Assert.True(drain > 0 && send > 0);
         Assert.True(send > drain, "השליחה ל-Supabase קודמת לריקון תור ה-MQTT");
+    }
+
+    [Fact]
+    public void OperationsAreMirroredAtProductionNotAtEveryPublishAttempt()
+    {
+        // ============================================================
+        // ⚠️ תפעולים **אינם** מודיעים לצופה, וזה לא חוסר עקביות
+        // ============================================================
+        // הם נכנסים ל-PendingQueue לפני השידור ומשודרים משם, וכשל משאיר
+        // אותם בתור לניסיון הבא. כלומר הודעה אחת עוברת ב-PublishAsync
+        // **פעם אחת לכל ניסיון**, לא פעם אחת בחיים.
+        //
+        // ⚠️ מרכוז שם היה שולח אותה ל-Supabase שוב ושוב לאורך כל הנתק —
+        // עשרות בקשות לדקה בדיוק במצב שהמסלול השני קיים בשבילו, ועל
+        // חשבון מכסת תעבורה שכבר חורגת.
+        // ⚠️ השוואת מחרוזת ולא רג'קס: שני ניסיונות קודמים כאן נכתבו כרג'קס
+        // ואיבדו את הבקסלאשים בדרך לקובץ — `\s` הפך ל-`s`, התבנית לא התאימה,
+        // והבדיקה נכשלה על הכתיב ולא על הקוד. מחרוזת אין לה בעיה כזו.
+        string src = Publisher();
+        Assert.Contains("PublishAsync(OperationTopic, message, ct, notifyObserver: false)", src);
+    }
+
+    [Fact]
+    public void StatesStillNotifyTheObserver()
+    {
+        // ⚠️ הצד השני של אותה החלטה: מצבים **אינם** בתור, ולכן הם עוברים
+        // ב-PublishAsync פעם אחת לכל שינוי — וזו בדיוק נקודת ההפקה שלהם.
+        // ברירת המחדל true היא מה שמשאיר אותם ממורכזים.
+        string src = Publisher();
+        Assert.Contains("bool notifyObserver = true", src);
+        Assert.Contains("PublishAsync(StateTopic, message, ct)", src);
+    }
+
+    [Fact]
+    public void TheWorkerMirrorsOperationsWhenItQueuesThem()
+    {
+        // ⚠️ ואם זה נופל — תפעולים לא ייכתבו ל-Supabase **בכלל**, כי
+        // PublishOperationAsync כבר אינו מודיע לצופה. שתי השורות האלה הן
+        // מנגנון אחד, ומחיקת אחת מהן משתיקה חצי מהנתונים בשקט.
+        string w = Worker();
+        Assert.Contains("pendingOps.Enqueue(op);", w);
+        Assert.Contains("supaQueue.Enqueue(BatchPayload.From(op));", w);
+
+        // ⚠️ והמרכוז חייב להיות **אחרי** ההכנסה לתור ובאותה לולאה: שורה
+        // שהתנתקה משם היא שורה שמישהו יזיז בלי לשים לב שהיא חצי ממנגנון.
+        int enq = w.IndexOf("pendingOps.Enqueue(op);", StringComparison.Ordinal);
+        int mir = w.IndexOf("supaQueue.Enqueue(BatchPayload.From(op));", StringComparison.Ordinal);
+        Assert.True(mir > enq && mir - enq < 1600,
+            "המרכוז אינו צמוד להכנסה לתור — שני חצאים של מנגנון אחד");
+    }
+
+    [Fact]
+    public void OperationsAreMirroredToDiskNotToAnInMemoryList()
+    {
+        // ============================================================
+        // ⚠️ חלון האובדן שהמעבר לנקודת ההפקה יצר, ונסגר כאן
+        // ============================================================
+        // ‎`mirrored` היא רשימה בזיכרון ונמחקת עם התהליך. תפעול שהופק
+        // ונפל בו החשמל לפני שליחה מוצלחת היה **נמחק מ-Supabase לתמיד**:
+        // הוא שורד ב-pendingOps ל-MQTT, אבל השידור החוזר משם כבר אינו
+        // מודיע לצופה, ולכן לא היה ממורכז שוב לעולם.
+        //
+        // ⚠️ וזו בדיוק הנפילה שבגללה הפרויקט הזה קיים — DELL008 איבד חשמל
+        // ולקח 2.5 ימים. מסלול ישיר שאינו שורד הפסקת חשמל אינו פותר אותה.
+        string w = Worker();
+
+        // התפעול נכנס לתור שעל הדיסק, ולא לרשימה
+        Assert.Contains("supaQueue.Enqueue(BatchPayload.From(op));", w);
+
+        // ⚠️ **והצופה חייב להתעלם מתפעולים לגמרי** — נבדק על גוף הלמבדה
+        // ולא על שם משתנה. ניסוח קודם השווה למחרוזת `...From(op)` בלבד,
+        // ומוטציה שהחזירה את הענף בשם `om` עברה אותה בשלמות: הצופה נקרא
+        // בכל **ניסיון שידור**, ולכן ענף כזה מחזיר את מטח הכפילויות בנתק
+        // ארוך — ובנוסף לו, התפעול כבר יושב בתור. פעמיים.
+        int lambda = w.IndexOf("mqtt.OnPublished = payload =>", StringComparison.Ordinal);
+        Assert.True(lambda > 0, "לא נמצא הצופה");
+        int end = w.IndexOf("};", lambda, StringComparison.Ordinal);
+        string body = w[lambda..end];
+        Assert.DoesNotContain("OperationMessage", body);
+
+        // ⚠️ ומצבים דווקא **כן** נשארים בזיכרון, ובכוונה: מצב מתקן את עצמו
+        // ב-resync עם חותם טרי, ולכן שמירתו לדיסק היא עבודה שתוצאתה דחייה
+        // על ידי שומר ה-backfill. אותה הבחנה בדיוק שעליה בנוי pendingOps.
+        Assert.Contains("mirrored.Add(BatchPayload.From(sm))", body);
+    }
+
+    [Fact]
+    public void AQueuedOperationTriggersASendInsteadOfWaitingForTheBeat()
+    {
+        // ⚠️ בלי `supaWaiting` בשער, תפעול שנכנס לתור היה יושב שם עד
+        // הפעימה הבאה — עד **60 שניות** של עיכוב באתר שקט, ואצווה שנכנסה
+        // לתור רק כדי להמתין. לא אובדן, אבל גם לא מה שנבנה.
+        string w = Worker();
+        int gate = w.IndexOf("if (supabase is not null && (mirrored.Count > 0",
+                             StringComparison.Ordinal);
+        Assert.True(gate > 0, "לא נמצא שער השליחה");
+        Assert.Contains("supaWaiting > 0", w[gate..(gate + 200)]);
+    }
+
+    [Fact]
+    public void TheWaitingCounterIsResyncedFromDiskAndNotDerived()
+    {
+        // ⚠️ מונה שמחסיר את מה שנמחק סוטה כלפי מעלה, כי התקרה של
+        // PendingQueue מוחקת את הישן ביותר בחריגה בלי שאיש יספור. ומונה
+        // שאינו יורד לאפס פירושו **ניסיון שליחה בכל סבב, לנצח** — פעימה
+        // כל שתי שניות במקום כל דקה, על מכסת תעבורה שכבר חורגת.
+        string w = Worker();
+        Assert.Contains("supaWaiting = supaQueue.Count;", w);
+
+        // והסנכרון אחרי השליחה, לא לפניה
+        int send = w.IndexOf("supabase.SendAsync", StringComparison.Ordinal);
+        int resync = w.LastIndexOf("supaWaiting = supaQueue.Count;", StringComparison.Ordinal);
+        Assert.True(resync > send, "המונה מסונכרן לפני השליחה — הוא ימדוד את המצב הישן");
     }
 }
