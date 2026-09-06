@@ -138,14 +138,24 @@ public class MqttPublisher : IAsyncDisposable
     }
 
     /// <summary>משדר הודעת state ל-topic של המצב.</summary>
-    /// <summary>
-    /// נקרא אחרי **כל** פרסום מוצלח, עם ההודעה עצמה.
-    ///
-    /// ⚠️ קיים כדי שיהיה מקום **אחד** שרואה את כל מה שהסוכן שידר. Worker
-    /// משדר משישה מקומות, ושכפול בכל אחד מהם הוא הזמנה לפספס את השביעי.
-    /// </summary>
-    public Action<object>? OnPublished { get; set; }
-
+    // ============================================================
+    // ⚠️ הצופה (OnPublished) הוסר — ולמה, כי הרעיון נשמע נכון
+    // ============================================================
+    // הוא נועד להיות מקום **אחד** שרואה כל שידור, במקום שכפול בשישה אתרי
+    // שידור. הכוונה נכונה, והמימוש היה במקום הלא נכון: הוא ישב על
+    // **ניסיון השידור**, ולא על **הפקת ההודעה**. משם נולדו שני באגים
+    // שונים ובלתי תלויים:
+    //
+    //   1. תפעול שנכשל נשאר בתור ומשודר בכל סבב — כלומר נשלח ל-Supabase
+    //      שוב ושוב לאורך כל הנתק.
+    //   2. וגרוע מכך: `PublishAsync` כלל אינה נקראת כשהברוקר למטה, כי
+    //      השלב כולו פותח ב-`EnsureConnectedAsync` שזורק. כלומר הצופה —
+    //      המנגנון שנבנה כדי שהמסלול הישיר לא יפספס דבר — **שתק בדיוק
+    //      במצב שהמסלול קיים בשבילו**. נמדד בשטח פעמיים.
+    //
+    // המרכוז יושב עכשיו בשתי נקודות ההפקה שב-`Worker`: מצב כשהמוח מחליט
+    // עליו (ו-resync היכן שהוא נולד), ותפעול כשהוא נכנס לתור. ההגנה מפני
+    // "אתר שידור שביעי שיישכח" נשמרת בבדיקות מבניות, לא בתפר.
     public Task PublishStateAsync(StateMessage message, CancellationToken ct = default)
         => PublishAsync(StateTopic, message, ct);
 
@@ -162,11 +172,10 @@ public class MqttPublisher : IAsyncDisposable
     /// פעולה, וזו נקודת ה<b>הפקה</b> האמיתית שלה.
     /// </summary>
     public Task PublishOperationAsync(OperationMessage message, CancellationToken ct = default)
-        => PublishAsync(OperationTopic, message, ct, notifyObserver: false);
+        => PublishAsync(OperationTopic, message, ct);
 
     // הליבה המשותפת: הופך אובייקט ל-JSON ומפרסם ב-QoS 1.
-    private async Task PublishAsync(string topic, object payload, CancellationToken ct,
-                                    bool notifyObserver = true)
+    private async Task PublishAsync(string topic, object payload, CancellationToken ct)
     {
         string json = JsonSerializer.Serialize(payload);
 
@@ -177,33 +186,11 @@ public class MqttPublisher : IAsyncDisposable
             .WithRetainFlag(false)   // לפי החוזה: retain=false בכל ההודעות
             .Build();
 
-        // ============================================================
-        // ⚠️ הצופה יורה **לפני** ניסיון הפרסום, ובכוונה
-        // ============================================================
-        // הוא ישב כאן אחרי הפרסום, עם הנימוק "הודעה שנכשלה ב-MQTT אינה
-        // אמורה להיכתב במקום אחר כאילו נמסרה". הנימוק היה נכון **כל עוד
-        // MQTT הוא ערוץ המסירה** וה-Supabase רק משקף אותו.
-        //
-        // ⚠️ **אבל זו בדיוק הסיבה שאי אפשר היה לכבות את MQTT:** הכתיבה
-        // הישירה הייתה מראה של פרסום מוצלח, לא ערוץ מסירה עצמאי. ברוקר
-        // מת פירושו אפס פרסומים, אפס קריאות לצופה, ואפס כתיבה ל-Supabase —
-        // בזמן שהדופק ממשיך לפעום ולהראות שהאתר בסדר גמור.
-        //
-        // ⚠️ **ונמדד בשטח, לא רק נקרא בקוד.** באתר 2438, כל שש הכתיבות
-        // הישירות בלוג התרחשו **אחרי** שהברוקר חזר:
-        //     14:14:37  Broker connection lost
-        //     14:14:39  reconnected
-        //     14:14:40  -> Supabase: 1 message written directly
-        // אף כתיבה ישירה אחת לא קרתה בזמן שהברוקר היה למטה.
-        //
-        // עכשיו ההודעה נמסרת ל-Supabase גם כשהברוקר נפל — וזה **אינו**
-        // "כאילו נמסרה": היא באמת נמסרה, בערוץ אחר. `SentAuditLog` נשאר
-        // אחרי הפרסום, כי הוא כן מתעד מה יצא ב-MQTT בלבד.
-        if (notifyObserver)
-        {
-            try { OnPublished?.Invoke(payload); }
-            catch { /* צופה שנכשל לעולם אינו מפיל שידור */ }
-        }
+        // ⚠️ אין כאן יותר צופה. הוא ישב בדיוק כאן, וההערה שהייתה במקומו
+        // הסבירה באריכות מדוע הוא יורה **לפני** הפרסום ולא אחריו — נימוק
+        // נכון שפתר את הבעיה הלא נכונה: כשהברוקר למטה, המתודה הזו כלל
+        // אינה נקראת. המרכוז עבר לשתי נקודות ההפקה ב-Worker; ההנמקה
+        // המלאה נמצאת ליד ההצהרה שהוסרה, בראש המחלקה.
 
         // timeout על ה-publish: socket half-open (הצד השני נעלם בלי RST) היה מקפיא
         // את QoS-1 בהמתנה ל-PUBACK עד ה-keepalive הפנימי (~15s) — וכל לולאת ה-Worker

@@ -276,18 +276,6 @@ public class Worker : BackgroundService
             _logger.LogInformation(
                 "Supabase retry queue restored from disk: {Count} message(s) survived the restart.",
                 supaWaiting);
-        if (supabase is not null)
-        {
-            // ⚠️ **מצבים בלבד.** תפעולים ממורכזים בנקודת ההפקה, ישירות לתור
-            // שעל הדיסק — ראה את ההערה שם. הצופה נקרא בכל **ניסיון שידור**,
-            // ומצב הוא הודעה שמשודרת פעם אחת לכל שינוי, ולכן זו נקודת ההפקה
-            // שלו. מצב שאבד גם מתקן את עצמו: העלייה משדרת resync עם חותם טרי.
-            mqtt.OnPublished = payload =>
-            {
-                if (payload is StateMessage sm) mirrored.Add(BatchPayload.From(sm));
-            };
-        }
-
         // --- התחברות ל-Broker (כולל הגדרת ה-LWT) ---
         try
         {
@@ -633,6 +621,23 @@ public class Worker : BackgroundService
             if (currentState.HasValue)
                 lastKnownState = currentState;
 
+            // ============================================================
+            // ⚠️ המצב ממורכז **כאן**, בנקודת ההפקה — ולא דרך הצופה
+            // ============================================================
+            // הוא מורכז ב-`MqttPublisher.OnPublished`, ולכן היה תלוי בכך
+            // ש-`PublishStateAsync` בכלל נקראת. היא נמצאת בשלב ג', שפותח
+            // ב-`EnsureConnectedAsync` — כלומר **ברוקר מת פירושו מצב שלא
+            // נכתב ל-Supabase**, וזה בדיוק מה שנמדד באתר 2438.
+            //
+            // ⚠️ ומצב הוא הדבר שהכי חשוב שיגיע כשהברוקר למטה: תקלה שנוצרה
+            // בזמן נתק MQTT היא בדיוק המקרה שהמסלול השני קיים בשבילו.
+            //
+            // בזיכרון ולא בתור שעל הדיסק, בניגוד לתפעול: מצב מתקן את עצמו —
+            // העלייה הבאה משדרת resync עם חותם טרי, ושומר ה-backfill בשרת
+            // ידחה ממילא מצב ישן שהגיע באיחור.
+            if (result.State is not null && supabase is not null)
+                mirrored.Add(BatchPayload.From(result.State));
+
             // לוכדים את הפעולות שהמוח זיהה *מיד* לתוך תור השידור — לפני כל ניסיון
             // שידור (שעלול לזרוק). כך אף כניסה/יציאה לא אובדת גם אם הברוקר נופל כאן.
             foreach (var op in result.Operations)
@@ -774,14 +779,22 @@ public class Worker : BackgroundService
                     _logger.LogInformation(
                         "Resyncing current state to broker ({Reason}) -> {State}.",
                         resync.Reason, resync.State);
-                    await mqtt.PublishStateAsync(new StateMessage
+                    var resyncMessage = new StateMessage
                     {
                         Timestamp = clock.UnixNow(),
                         State = resync.State,
                         // ⚠️ בלי זה, אתר שנפל **ואז** איבד תקשורת חוזר לשרת
                         // כתקלה חדשה וריקה — ראה ReadFaultTextOrNull.
                         FaultText = await ReadFaultTextOrNullAsync(resync.State, stoppingToken)
-                    }, stoppingToken);
+                    };
+
+                    // ⚠️ גם ה-resync ממורכז בנקודת ההפקה שלו. הוא נולד כאן,
+                    // בתוך שלב ג', כי עצם ההחלטה נשענת על אירועי MQTT — אבל
+                    // ההודעה עצמה היא מצב לכל דבר, ואם לא תמורכז כאן היא לא
+                    // תגיע ל-Supabase כלל: הצופה כבר אינו מודיע על מצבים.
+                    if (supabase is not null) mirrored.Add(BatchPayload.From(resyncMessage));
+
+                    await mqtt.PublishStateAsync(resyncMessage, stoppingToken);
                     birthMessageSent = true;   // שודר לפחות פעם אחת — ה"לידה" בוצעה
                 }
                 mqttWasConnected = true;
@@ -892,6 +905,46 @@ public class Worker : BackgroundService
 
                 // ============================================================
                 // הכתיבה הישירה — אצווה אחת לכל סבב
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // כיבוי מסודר — לא שגיאה.
+                break;
+            }
+            catch (Exception ex)
+            {
+                // תקלת Broker (למשל Mosquitto לא זמין) — נרשמת בנפרד מתקלות PLC,
+                // ולא נוגעת במונה כשלי ה-PLC. ננסה להתחבר שוב בסבב הבא.
+                // מדווחים את *איבוד* החיבור פעם אחת (Warning); בזמן שהוא עדיין למטה
+                // ממשיכים ב-Debug כדי לא לרשום שורה בכל שנייה.
+                if (mqttWasConnected)
+                    _logger.LogWarning("Broker connection lost, will keep retrying: {Message}", ex.Message);
+                else
+                    _logger.LogDebug("Broker still unavailable: {Message}", ex.Message);
+
+                mqttWasConnected = false;
+            }
+
+            // ===== שלב ד': המסלול הישיר — try משלו, מחוץ ל-MQTT =====
+            // ============================================================
+            // ⚠️ זה היה בתוך ה-try של שלב ג', וזה **ביטל את כל המסלול**
+            // ============================================================
+            // שלב ג' פותח ב-`EnsureConnectedAsync`, שזורק כשהברוקר המקומי
+            // אינו זמין — ואז כל מה שאחריו מדלג, כולל הכתיבה הישירה **וכולל
+            // הפעימה**. כלומר המסלול שנבנה כדי לשרוד את נפילת MQTT יכול היה
+            // לרוץ רק בסבב שבו MQTT דווקא עבד.
+            //
+            // ⚠️ **וזה נמדד פעמיים.** בלוג של אתר 2438 כל שש הכתיבות הישירות
+            // הופיעו מיד אחרי שורת חיבור-מחדש; ובניסוי מבוקר ב-06/09/2026
+            // סוכן שהורץ בלי ברוקר כלל לא כתב דבר במשך שלוש דקות — לא
+            // הודעה, ואפילו לא פעימה.
+            //
+            // ⚠️ ותיקון קודם — הזזת `OnPublished` לפני הפרסום — היה נכון
+            // ולא הספיק: `PublishAsync` כלל אינה נקראת, כי החיבור זורק לפניה.
+            // הבעיה הייתה שכבה אחת מעל מה שנבדק, וזו הסיבה ששלוש בדיקות
+            // מבניות ירוקות לא תפסו אותה.
+            try
+            {
                 // ============================================================
                 // ⚠️ **אצווה ולא הודעה-הודעה.** מעבר MODE אחד מייצר state
                 // ו-operation עם אותו חותם; שליחתם יחד היא מה שמאפשר לשרת
@@ -1010,21 +1063,13 @@ public class Worker : BackgroundService
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // כיבוי מסודר — לא שגיאה.
                 break;
             }
-            catch (Exception ex)
+            catch (Exception direct)
             {
-                // תקלת Broker (למשל Mosquitto לא זמין) — נרשמת בנפרד מתקלות PLC,
-                // ולא נוגעת במונה כשלי ה-PLC. ננסה להתחבר שוב בסבב הבא.
-                // מדווחים את *איבוד* החיבור פעם אחת (Warning); בזמן שהוא עדיין למטה
-                // ממשיכים ב-Debug כדי לא לרשום שורה בכל שנייה.
-                if (mqttWasConnected)
-                    _logger.LogWarning("Broker connection lost, will keep retrying: {Message}", ex.Message);
-                else
-                    _logger.LogDebug("Broker still unavailable: {Message}", ex.Message);
-
-                mqttWasConnected = false;
+                // ⚠️ נתפס בנפרד מ-MQTT: כשל בכתיבה הישירה אינו כשל ברוקר,
+                // וערבובם היה מדווח "הברוקר נפל" על תקלת רשת ל-Supabase.
+                _logger.LogWarning("Direct write cycle failed: {Message}", direct.Message);
             }
 
             // המתנה עד הדגימה הבאה, לפי ההגדרות.
