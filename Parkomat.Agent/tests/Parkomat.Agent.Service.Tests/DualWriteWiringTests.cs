@@ -214,6 +214,29 @@ public class DualWriteWiringTests
     }
 
     [Fact]
+    public void TheStartupLineNamesTheIdentityItActuallyUses()
+    {
+        // ⚠️ נמדד באתר 2438, ולא חשש: השורה יצאה כ-
+        //     Direct Supabase write is ON for  ->
+        // כי היא הדפיסה את שדות ה**עקיפה**, שריקים בכל 18 האתרים מתוכנן
+        // (ריק = ברירת המחדל הצרובה). זו השורה היחידה שעונה "באיזו זהות,
+        // מול איזה שרת", והיא לא ענתה דבר — בדיוק כשקוראים אותה כדי לברר
+        // למה אתר אינו כותב. והריקנות אף נראית כמו תקלת הגדרה, ושולחת
+        // לחפש בכיוון שבו אין דבר.
+        // ⚠️ העוגן כולל את שדות התבנית `{Email}`, שקיימים **רק בקריאה**.
+        // בלעדיהם ההתאמה הראשונה נופלת על ההערה שמעל, שמצטטת את הפלט
+        // השגוי מהשטח — והחלון הנקרא הוא הערה ולא קוד.
+        string w = Worker();
+        int line = w.IndexOf("Direct Supabase write is ON for {Email} -> {Url}",
+                             StringComparison.Ordinal);
+        Assert.True(line > 0, "לא נמצאה שורת הפתיחה של המסלול הישיר");
+
+        string args = w[line..(line + 260)];
+        Assert.Contains("EffectiveEmail", args);
+        Assert.Contains("EffectiveUrl", args);
+    }
+
+    [Fact]
     public void OperationsAreMirroredToDiskNotToAnInMemoryList()
     {
         // ============================================================

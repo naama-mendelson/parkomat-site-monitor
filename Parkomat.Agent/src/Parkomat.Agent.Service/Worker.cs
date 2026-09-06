@@ -191,9 +191,18 @@ public class Worker : BackgroundService
             : null;
 
         if (supabase is not null)
+            // ⚠️ **הערכים בפועל, לא העקיפות.** השורה הזו הדפיסה
+            // `config.Supabase.Email` ו-`.Url`, שהן שדות **עקיפה** וריקות
+            // בכל 18 האתרים מתוכנן (ריק = ברירת המחדל הצרובה). התוצאה
+            // בשטח, נמדדה באתר 2438:
+            //     Direct Supabase write is ON for  ->
+            // כלומר השורה היחידה שעונה "באיזו זהות, מול איזה שרת" לא ענתה
+            // דבר — בדיוק כשקוראים אותה כדי לברר למה אתר אינו כותב. וגרוע
+            // מכך: הריקנות נראית כמו תקלה בהגדרה, ושולחת את מי שמאבחן
+            // לחפש בכיוון שבו אין דבר.
             _logger.LogInformation(
                 "Direct Supabase write is ON for {Email} -> {Url}",
-                config.Supabase.Email, config.Supabase.Url);
+                config.Supabase.EffectiveEmail, config.Supabase.EffectiveUrl);
 
         // כל מה ששודר בסבב הנוכחי. מתמלא דרך הצופה של MqttPublisher —
         // התפר היחיד שרואה **כל** שידור, ולכן אין אתר שאפשר לשכוח.
