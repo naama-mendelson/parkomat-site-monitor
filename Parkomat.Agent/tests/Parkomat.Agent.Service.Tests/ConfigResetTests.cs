@@ -312,6 +312,43 @@ public class ConfigResetTests
     }
 
     [Fact]
+    public void APlainLoadNeverWritesTheConfigFile()
+    {
+        // ============================================================
+        // ⚠️ קריאה קוראת. כל כתיבה ב-Load היא מוקש
+        // ============================================================
+        // נשארו שתי כתיבות ב-`Load`: צריכת דגל האיפוס (הועברה החוצה),
+        // ושמירת ברירות מחדל כשהקובץ **אינו קיים**. השנייה נראית תמימה
+        // ומסוכנת בדיוק כמו הראשונה: רגע אחד שבו הקובץ אינו קיים —
+        // נעילה, סריקת אנטי-וירוס, כתיבה מקבילה — ומי שקרא במקרה דורס
+        // את ההגדרות בברירות מחדל.
+        //
+        // ⚠️ ו"מי שקרא במקרה" הוא `ServiceManager`, שקורא **כמה פעמים
+        // בדקה**. כלומר סיסמה שהוקלדה ביד יכולה להימחק בלי שאיש נגע
+        // בטופס, בלי התקנה, ובלי שורה אחת בלוג — וזה בדיוק הדפוס שנראה
+        // באתר 2438: הסיסמה עבדה 37 דקות ואז נעלמה מהקובץ.
+        string core = Source("Parkomat.Agent.Core", "Configuration", "ConfigStore.cs");
+
+        int start = core.IndexOf("public static SiteConfig Load()", StringComparison.Ordinal);
+        int end = core.IndexOf("private static void ApplyResetMarkerIfPresent",
+                               start, StringComparison.Ordinal);
+        Assert.True(start > 0 && end > start, "לא נמצא גוף Load");
+
+        string body = core[start..end];
+        Assert.DoesNotContain("Save(", body);
+        Assert.DoesNotContain("ApplyResetMarkerIfPresent()", body);
+
+        static string Source(params string[] parts)
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine([dir!.FullName, "src", .. parts]));
+        }
+    }
+
+    [Fact]
     public void TheResetFlagIsConsumedBeforeTheWriteNotAfter()
     {
         // ============================================================

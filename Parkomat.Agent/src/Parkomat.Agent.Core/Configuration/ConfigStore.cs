@@ -46,7 +46,14 @@ public static class ConfigStore
         // אך *שומרים את ה-SiteId* — אחרת עדכון היה מוחק את זהות האתר (topics ריקים
         // sites// שהשרת דוחה, ו-remote_clientid ריק שמתנגש בין אתרים משוכפלים).
         ApplyResetMarkerIfPresent();
-        return Load();
+
+        SiteConfig result = Load();
+
+        // הרצה ראשונה במחשב חדש: יוצרים את הקובץ פעם אחת, כאן ולא ב-Load.
+        if (!File.Exists(AgentPaths.ConfigFile))
+            Save(result);
+
+        return result;
     }
 
     public static SiteConfig Load()
@@ -56,8 +63,16 @@ public static class ConfigStore
         SiteConfig result;
         if (!File.Exists(AgentPaths.ConfigFile))
         {
+            // ⚠️ **מחזירים ברירות מחדל בלי לכתוב אותן.** הכתיבה כאן הייתה
+            // דלת הכתיבה הלא-מכוונת האחרונה ב-`Load`: רגע אחד שבו הקובץ
+            // אינו קיים — נעילה, סריקת אנטי-וירוס, כתיבה מקבילה — ומי
+            // שקרא במקרה (ServiceManager קורא כמה פעמים בדקה) **דורס את
+            // ההגדרות בברירות מחדל**. סיסמה שהוקלדה ביד נמחקת בלי שאיש
+            // נגע בטופס ובלי שורה בלוג.
+            //
+            // ⚠️ יצירת הקובץ בהרצה ראשונה נשארת — אבל רק ב-LoadAtStartup,
+            // כלומר בידי מי שעולה, פעם אחת. אותו עיקרון: קריאה קוראת.
             result = new SiteConfig();
-            Save(result);
         }
         else
         {
