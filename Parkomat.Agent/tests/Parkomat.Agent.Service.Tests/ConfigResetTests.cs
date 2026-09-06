@@ -272,6 +272,52 @@ public class ConfigResetTests
     }
 
     [Fact]
+    public void TheResetFlagIsConsumedBeforeTheWriteNotAfter()
+    {
+        // ============================================================
+        // ⚠️ דגל שלא נמחק הופך "איפוס בהתקנה" ל"איפוס בכל טעינה"
+        // ============================================================
+        // הסדר היה: לכתוב את ה-config המאופס, ואז למחוק את הדגל — והכול
+        // בתוך catch בולע. אם המחיקה נכשלה, או אם Save זרק, הדגל שרד.
+        //
+        // ⚠️ ו-`Load` נקראת מארבעה מקומות, ובהם `ServiceManager` שקורא
+        // אותה שוב ושוב רק כדי לקרוא את קצב הדגימה. כלומר הדגל השורד אינו
+        // "איפוס אחד נוסף" אלא **מחיקה חוזרת**: הטכנאי מקליד סיסמה, לוחץ
+        // שמור, והיא נעלמת שניות אחר כך. הטופס נפתח ריק, וזה נראה בדיוק
+        // כאילו כפתור השמירה שבור — כלומר האבחון נשלח לכיוון הלא נכון.
+        //
+        // ⚠️ **בדיקה מבנית ולא התנהגותית, ובכוונה.** המסלול האמיתי נוגע
+        // ב-C:\ProgramData, שאסור לבדיקה לכתוב אליו. אותו שיקול כמו
+        // `TheObserverRunsEvenWhenTheBrokerIsDown`: מוכיחים את הסדר.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Core", "Configuration", "ConfigStore.cs"));
+
+        int marker = src.IndexOf("ApplyResetMarkerIfPresent()\n", StringComparison.Ordinal);
+        if (marker < 0) marker = src.IndexOf("private static void ApplyResetMarkerIfPresent",
+                                             StringComparison.Ordinal);
+        Assert.True(marker > 0, "לא נמצאה ApplyResetMarkerIfPresent");
+
+        string body = src[marker..];
+        int delete = body.IndexOf("File.Delete(AgentPaths.ResetToDefaultsFlag)",
+                                  StringComparison.Ordinal);
+        int save = body.IndexOf("Save(BuildResetConfig(old))", StringComparison.Ordinal);
+
+        Assert.True(delete > 0 && save > 0, "לא נמצאו שני העוגנים");
+        Assert.True(delete < save,
+            "הדגל נמחק אחרי הכתיבה — מחיקה שנכשלת תאפס את ה-config בכל טעינה");
+
+        // ⚠️ וכשל במחיקה חייב **לצאת**, לא להמשיך לאפס. בלי היציאה הסדר
+        // החדש לא קונה דבר: הדגל נשאר והאיפוס קורה בכל זאת.
+        string between = body[delete..save];
+        Assert.Contains("return;", between);
+    }
+
+    [Fact]
     public void Upgrade_OnAMachineThatWasNeverConfigured_StaysOff()
     {
         // ⚠️ הצד השני, ולא פחות חשוב: שדה ריק **אינו** שורד — הוא נופל
