@@ -101,7 +101,14 @@
 ;          סיסמה נשאר על MQTT, כי אתר שאינו מדווח לשום מקום הוא הכשל
 ;          השקט הגרוע ביותר במערכת הזו. אין תיבת סימון בטופס בכוונה —
 ;          לחיצה אחת בשדה הייתה משביתה אתר, כמו תיבת ה-TLS שהוסרה.
-#define MyAppVersion "1.0.33"
+; 1.0.34 — ⚠️ **ה-Tray מחליט על Mosquitto מההגדרה, לא מ-bridge.conf.**
+;          1.0.33 הסתמך על כך שהסוכן מוחק את bridge.conf, ושבלעדיו ה-Tray
+;          לא יעלה את Mosquitto. זה מרוץ, והוא הפסיד בשטח: Start() מפעיל
+;          את הסוכן ומיד בודק את הקובץ — לפני שהסוכן הספיק למחוק. הלוג אמר
+;          "MQTT is OFF" ו-Mosquitto רץ לצדו, כלומר האתר שידר בשני
+;          המסלולים בזמן שהוגדר לאחד. + כיבוי אקטיבי: Mosquitto שכבר רץ
+;          נעצר, אחרת המתג היה דורש הפעלה מחדש כדי לתפוס.
+#define MyAppVersion "1.0.34"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

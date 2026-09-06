@@ -150,4 +150,41 @@ public class DirectOnlyTests
         // זה לא קרה, אחרת הוא יחשוב שהכיבוי עבד.
         Assert.Contains("MQTT was asked to be OFF but the direct path is not configured", w);
     }
+
+    [Fact]
+    public void TheTrayDecidesFromTheConfigNotFromBridgeConf()
+    {
+        // ============================================================
+        // ⚠️ נכשל בשטח: הלוג אמר "MQTT is OFF" ו-Mosquitto רץ לצדו
+        // ============================================================
+        // הגרסה הראשונה הסתמכה על כך שהסוכן מוחק את bridge.conf, ושבלעדיו
+        // ה-Tray לא יעלה את Mosquitto. זה מרוץ: `Start()` מפעיל את הסוכן
+        // ומיד בודק את הקובץ — לפני שהסוכן הספיק למחוק אותו. האתר שידר
+        // בשני המסלולים בזמן שהוגדר לאחד, ואף שורה לא אמרה זאת.
+        //
+        // ⚠️ ובנוסף — כיבוי **אקטיבי**: Mosquitto שכבר רץ מלפני הכיבוי לא
+        // הופעל בידי איש ולא נעצר בידי איש, כלומר היה ממשיך לנצח. בלי זה
+        // המתג היה דורש הפעלה מחדש כדי לתפוס, ותלוי בסדר העלייה.
+        string src = Manager();
+
+        Assert.Contains("private static bool MqttOn()", src);
+        Assert.Contains("if (MqttOn() && BridgeConfigHasUsername())", src);
+        Assert.Contains("if (!startMosquitto || !MqttOn())", src);
+        Assert.Contains("if (IsRunning(MosquittoProcName)) KillByName(MosquittoProcName);", src);
+
+        // ⚠️ וברירת המחדל בכשל קריאה היא **דולק**. קובץ שלא נקרא אינו סיבה
+        // להשבית את מסלול הדיווח היחיד שהוכח.
+        int on = src.IndexOf("private static bool MqttOn()", StringComparison.Ordinal);
+        Assert.Contains("catch { return true; }", src[on..(on + 400)]);
+
+        static string Manager()
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+                dir = dir.Parent;
+            Assert.NotNull(dir);
+            return File.ReadAllText(Path.Combine(dir!.FullName, "src",
+                "Parkomat.Agent.Tray", "Services", "ServiceManager.cs"));
+        }
+    }
 }

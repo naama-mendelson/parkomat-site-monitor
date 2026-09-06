@@ -122,7 +122,8 @@ public class ServiceManager
             return error;
 
         // Mosquitto רק אם bridge.conf תקין (remote_username לא ריק) — אחרת הוא ייכשל.
-        if (BridgeConfigHasUsername())
+        // ו**רק אם MQTT בכלל דולק לאתר הזה** — ראה MqttOn.
+        if (MqttOn() && BridgeConfigHasUsername())
         {
             WaitForValidBridgeConfig(TimeSpan.FromSeconds(10));
             return StartMosquitto();
@@ -167,7 +168,7 @@ public class ServiceManager
         if (error != null)
             return error;
 
-        if (!startMosquitto)
+        if (!startMosquitto || !MqttOn())
             return null;
 
         WaitForValidBridgeConfig(TimeSpan.FromSeconds(10));
@@ -249,6 +250,16 @@ public class ServiceManager
 
         // Mosquitto אינו מרוסן: הוא לא מייצר פעולות, ולכן הפעלה חוזרת שלו אינה
         // משחיתה נתונים — והוא כן צריך לעלות מהר כשהוא נופל.
+        // ⚠️ וכיבוי **אקטיבי**, לא רק הימנעות מהפעלה. Mosquitto שכבר רץ
+        // מלפני שכיבו את MQTT היה ממשיך לרוץ לנצח: איש אינו מפעיל אותו
+        // ואיש אינו עוצר אותו, והאתר משדר בשני המסלולים בלי שיהיה סימן.
+        // כך המתג גם מתקן את עצמו, בלי לדרוש הפעלה מחדש.
+        if (!MqttOn())
+        {
+            if (IsRunning(MosquittoProcName)) KillByName(MosquittoProcName);
+            return;
+        }
+
         if (BridgeConfigHasUsername() && !IsRunning(MosquittoProcName))
             StartMosquitto();
     }
@@ -454,6 +465,26 @@ public class ServiceManager
                 return;
             Thread.Sleep(200);
         }
+    }
+
+    // ============================================================
+    // ⚠️ ההחלטה על Mosquitto נקראת מה**הגדרה**, לא מ-bridge.conf
+    // ============================================================
+    // הגרסה הראשונה של מצב "ישיר בלבד" הסתמכה על כך שהסוכן מוחק את
+    // bridge.conf, ושבלעדיו ה-Tray לא יעלה את Mosquitto. **זה מרוץ**, והוא
+    // הפסיד בשטח: `Start()` מפעיל את הסוכן ומיד בודק את הקובץ — לפני
+    // שהסוכן הספיק למחוק אותו. התוצאה: הלוג אמר "MQTT is OFF" ו-Mosquitto
+    // רץ לצדו, כלומר האתר שידר בשני המסלולים בזמן שהוגדר לאחד.
+    //
+    // ⚠️ ותוצאה עקיפה גרועה יותר: אחרי המחיקה השומר כבר לא היה מעלה אותו,
+    // אבל גם לא הרג אותו — המצב היה תלוי בשאלה מי עלה קודם, וכל הפעלה
+    // מחדש הייתה יכולה להסתיים אחרת.
+    private static bool MqttOn()
+    {
+        // ⚠️ ברירת המחדל בכשל היא **true** — MQTT דולק. קובץ שלא נקרא אינו
+        // סיבה להשבית את מסלול הדיווח היחיד שהוכח.
+        try { return ConfigStore.Load().MqttEnabled; }
+        catch { return true; }
     }
 
     // קורא את bridge.conf ובודק אם יש שורת remote_username עם ערך לא-ריק.
