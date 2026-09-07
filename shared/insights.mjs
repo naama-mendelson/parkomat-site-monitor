@@ -144,12 +144,37 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
   // עובד קשה. שני המונים האלה יוצאים למסך.
   let flickerOps = 0;      // משכים מתחת לרצפה — ריצוד MODE
   let discardedStarts = 0; // התחלה שנדרסה בלי שנסגרה — הודעת end שאבדה
+  let cardMismatch = 0;    // התחלה וסיום עם **שני כרטיסים שונים** — לא נמדד
   // מספר כרטיס → { entry: [שניות], exit: [שניות] }
   const perCard = new Map();
 
+  // ============================================================
+  // ⚠️ המפתח הוא אתר+כיוון, **בלי הכרטיס** — וזה תיקון של באג נמדד
+  // ============================================================
+  // המפתח כלל את מספר הכרטיס, וזה נראה סביר: הוא מונע שיוך בין שני
+  // רכבים שונים. אבל הוא נשען על הנחה שגויה — שהכרטיס ידוע כבר
+  // ב-`start`.
+  //
+  // ⚠️ **נמדד על הצי, 30 יום: ב-73 זוגות (2.0%) הכרטיס בהתחלה ריק
+  // ובסיום מלא — ובכל 73 המקרים לכיוון הזה בלבד, אף פעם להפך.** זה
+  // אינו רעש אלא סדר פעולות: המחסום נכנס למצב כניסה, ורק אז הנהג
+  // מציג כרטיס. הסוכן משדר `start` ברגע שינוי ה-MODE, לפני הקריאה.
+  //
+  // התוצאה: ההתחלה נכנסה תחת `entry|""`, הסיום חיפש `entry|11`, לא
+  // מצא — **והפעולה נעלמה מכל המדדים**. וההתחלה הריקה נשארה פתוחה עד
+  // שנדרסה. כלומר שני המונים שנוספו כאן — 72 דריסות ו-82 יתומים —
+  // היו אותה בעיה בדיוק, נספרת משני קצוותיה.
+  //
+  // ⚠️ **וזה לא התפלג אחיד:** 57 מתוך 72 באתר 3501. כלומר אתר שלם
+  // שהמדדים שלו חושבו מתת-קבוצה מוטה — רק הפעולות שבהן במקרה הכרטיס
+  // כבר היה ידוע בהתחלה.
+  //
+  // מכאן: מזווגים לפי אתר+כיוון, והכרטיס נלקח מה-`end` — שם הוא תמיד
+  // קיים. הבדיקה נשמרת בצורה מדויקת יותר למטה: שני כרטיסים **שונים
+  // ולא-ריקים** הם שיוך שגוי ואינם נמדדים.
   for (const op of ops) {
     const when = new Date(op.occurred_at);
-    const key = `${op.site_id}|${op.entry_exit}|${op.card_number}`;
+    const key = `${op.site_id}|${op.entry_exit}`;
 
     if (op.start_end === "start") {
       // ⚠️ **התחלה שנדרסת היא הודעה שאבדה, לא אירוע ניטרלי.** ה-Map דרס
@@ -157,14 +182,26 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
       // קצר מדי, מומצא. נמדד בצי: 72 דריסות, מהן 57 באתר 3501 לבדו
       // ו-12 ב-1089. זה אינו רעש אחיד אלא אצבע מצביעה על שני אתרים.
       if (openStarts.has(key)) discardedStarts++;
-      openStarts.set(key, when.getTime());
+      openStarts.set(key, { at: when.getTime(), card: (op.card_number ?? "").trim() });
       continue;   // רק end נחשב "פעולה שהושלמה"
     }
 
     // --- מכאן: הודעת end ---
     const start = openStarts.get(key);
     if (start !== undefined) {
-      const seconds = (when.getTime() - start) / 1000;
+      // ⚠️ **ההגנה שהמפתח נתן, עכשיו במפורש ובלי תופעת הלוואי.** שני
+      // כרטיסים שונים ולא-ריקים פירושם שההתחלה שייכת לרכב אחר — הסיום
+      // שלה אבד. מדידה כזו הייתה מודדת את המרווח **בין שני רכבים**.
+      // נמדד: אפס מקרים כאלה בצי היום, ולכן הכלל אינו זורק דבר —
+      // הוא רק מונע את הרגרסיה שהמפתח מנע קודם.
+      const endCard = (op.card_number ?? "").trim();
+      if (start.card && endCard && start.card !== endCard) {
+        cardMismatch++;
+        openStarts.delete(key);
+        continue;
+      }
+
+      const seconds = (when.getTime() - start.at) / 1000;
       // מסננים משכים לא-סבירים משני הקצוות: ריצוד MODE מלמטה (ראה
       // MIN_PLAUSIBLE_SECONDS), ושיוך שגוי או הודעה שאבדה מלמעלה.
       if (seconds > 0 && seconds < MIN_PLAUSIBLE_SECONDS) flickerOps++;
@@ -687,7 +724,7 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
     // flicker גבוה = ריצוד MODE בבקר. discardedStarts גבוה = הודעות end
     // שאובדות בדרך. שני דברים שונים לגמרי, ושניהם דורשים טיפול בשטח
     // ולא בקוד.
-    excluded: { flickerOps, discardedStarts },
+    excluded: { flickerOps, discardedStarts, cardMismatch },
     downtime: {
       incidents,
       totalHours: hrs(totalDownMs),

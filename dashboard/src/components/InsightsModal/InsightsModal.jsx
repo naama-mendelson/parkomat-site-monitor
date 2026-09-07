@@ -661,7 +661,8 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                       ריצוד הוא **בקר שקופץ**, והתחלה שנדרסה היא **הודעה שאבדה
                       בדרך**. שניהם מטופלים בשטח ולא בקוד, ושניהם היו בלתי
                       נראים עד עכשיו. */}
-                  {(data.excluded?.flickerOps > 0 || data.excluded?.discardedStarts > 0) && (
+                  {(data.excluded?.flickerOps > 0 || data.excluded?.discardedStarts > 0
+                    || data.excluded?.cardMismatch > 0) && (
                     <p className="insights-note">
                       {data.excluded.flickerOps > 0 && (
                         <>הוחרגו {data.excluded.flickerOps} פעולות קצרות משתי שניות —
@@ -669,7 +670,11 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                       )}
                       {data.excluded.discardedStarts > 0 && (
                         <>{data.excluded.discardedStarts} פעולות נפתחו ולא נסגרו —
-                        הודעת סיום שלא הגיעה, והמשך שלהן אינו ניתן למדידה.</>
+                        הודעת סיום שלא הגיעה, והמשך שלהן אינו ניתן למדידה. </>
+                      )}
+                      {data.excluded.cardMismatch > 0 && (
+                        <>{data.excluded.cardMismatch} זוגות עם שני כרטיסים שונים —
+                        התחלה של רכב אחד וסיום של אחר, ולכן אינם משך פעולה.</>
                       )}
                     </p>
                   )}
