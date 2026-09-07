@@ -413,9 +413,19 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     >
       <div className="card-header">
         <span className="card-name">
-          {/* ⚠️ title על השם עצמו: ב-compact הוא מקוצר, וזו הדרך לראות
-              אותו במלואו בלי לפתוח את הכרטיס. */}
-          <span className="card-name-text" title={site.site_name}>{site.site_name}</span>
+          {/* ⚠️ `--name-chars` הוא מה שמאפשר ל-CSS להתאים את גודל הפונט
+              לאורך השם — ל-CSS אין דרך לספור תווים. ראה .card-name-text.
+
+              ⚠️ אורך המחרוזת ולא רוחב אמיתי: זו הערכה, וה-clamp חוסם
+              משני הצדדים, אז טעות מייצרת פונט מעט קטן — לא שם חתוך.
+
+              title נשאר: ברמות צפיפות גבוהות שם ארוך עדיין לא נכנס על
+              שורה אחת, וזו הדרך לראות אותו בלי לפתוח את הכרטיס. */}
+          <span
+            className="card-name-text"
+            style={{ "--name-chars": (site.site_name || "").length || 1 }}
+            title={site.site_name}
+          >{site.site_name}</span>
 
           {/* ============================================================
               ⚠️ התגים רק ב-normal — ולא כי אין מקום, אלא כי אין להם ערך
