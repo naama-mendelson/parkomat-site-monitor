@@ -6,7 +6,7 @@ import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import FaultTimer from "./FaultTimer";
-import { useFitText } from "../../hooks/useFitText";
+import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
 
 // צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
@@ -74,11 +74,20 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const isMini = density === "mini";
   const isNormal = density === "normal";
 
-  // ⚠️ **שם האתר הוא המזהה בכרטיס, ולכן הוא לא נחתך.** אם הוא לא נכנס
-  // ברוחב שהוקצה לו — הפונט קטן, לא הטקסט. "עמנואל הרומי 10, ת״א"
-  // ו-"עמנואל הרומי 4, ת״א" נראים זהים כשחותכים אותם, כלומר החיתוך אינו
-  // רק מסתיר מידע אלא מייצר זהות שגויה.
-  const fitName = useFitText(site.site_name);
+  // ============================================================
+  // ⚠️ שם האתר לעולם לא נחתך באמצע — סדר הוותורים קבוע
+  // ============================================================
+  // "עמנואל הרומי 10, ת״א" ו-"עמנואל הרומי 4, ת״א" נראים **זהים**
+  // כשחותכים אותם, כלומר חיתוך אינו רק מסתיר מידע — הוא מייצר
+  // זהות שגויה. לכן מוותרים לפי סדר, ותמיד על יחידות שלמות:
+  //
+  //   1. השם המלא בגודל מלא
+  //   2. בלי מה שאחרי הפסיק (העיר — החלק הכי פחות מבחין)
+  //   3. ורק אז מקטינים את הפונט
+  //
+  // ⚠️ הסדר הזה הוא הבקשה עצמה: הגרסה הקודמת הקטינה מיד, וכל
+  // שם ארוך קיבל פונט קטן גם כשהיה אפשר פשוט לוותר על "ת״א".
+  const name = useFitName(site.site_name);
 
   const failureRate = site.failureRate ?? 0;
   // null = אין מספיק מדגם להשוואה (ולא "אין שינוי") — ראה siteTrend.
@@ -428,10 +437,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               title נשאר: אם שם חורג גם ברצפת ההקטנה, זו הדרך לראות
               אותו במלואו בלי לפתוח את הכרטיס. */}
           <span
-            ref={fitName}
+            ref={name.ref}
             className="card-name-text"
             title={site.site_name}
-          >{site.site_name}</span>
+          >{name.text}</span>
 
           {/* ============================================================
               ⚠️ התגים רק ב-normal — ולא כי אין מקום, אלא כי אין להם ערך

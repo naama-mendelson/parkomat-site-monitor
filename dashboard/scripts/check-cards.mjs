@@ -56,16 +56,16 @@ if (headStart < 0 || headEnd < 0) {
 // (`min-width: 0`), אחרת flex לא יקצה לשם את מה שנשאר והמדידה חסרת
 // משמעות. אותה בדיקה בדיוק שהגנה קודם הפכה לחוסמת.
 //
-// הרצפה החדשה היא `minScale` ב-useFitText — כמה מותר להקטין לכל היותר.
+// הרצפה החדשה היא `minScale` ב-useFitName — כמה מותר להקטין לכל היותר.
 const m = css.match(/\.card-name-text\s*{[^}]*}/);
 if (!m) problems.push("לא נמצא .card-name-text ב-CSS");
 
 const hookSrcForFloor = (() => {
-  try { return readFileSync(resolve(HERE, "../src/hooks/useFitText.js"), "utf8"); }
+  try { return readFileSync(resolve(HERE, "../src/hooks/useFitName.js"), "utf8"); }
   catch { return ""; }
 })();
 const floor = hookSrcForFloor.match(/minScale\s*=\s*(0?\.\d+)/);
-if (!floor) problems.push("ל-useFitText אין minScale — השם יכול להתכווץ עד שייעלם");
+if (!floor) problems.push("ל-useFitName אין minScale — השם יכול להתכווץ עד שייעלם");
 else if (Number(floor[1]) < 0.4)
   problems.push(`‏minScale = ${floor[1]} — הקטנה כזו הופכת את השם לבלתי קריא`);
 else ok.push(`לשם יש רצפת הקטנה (minScale = ${floor[1]})`);
@@ -96,7 +96,7 @@ if (m) {
   // ⚠️ `flex: 1` + `min-width: 0` הם מה שגורם ל-flex להקצות לשם את כל
   // מה שנשאר — ולכן `clientWidth` שלו הוא הרוחב האמיתי שיש לו.
   // בלעדיהם האלמנט מתרחב לפי התוכן, `clientWidth === scrollWidth`,
-  // והמדידה ב-useFitText אף פעם לא תמצא שצריך להקטין.
+  // והמדידה ב-useFitName אף פעם לא תמצא שצריך להקטין.
   if (/flex:\s*1/.test(rule) && /min-width:\s*0/.test(rule))
     ok.push("‏flex מקצה לשם את הרוחב שנשאר — המדידה משמעותית");
   else problems.push("‎.card-name-text בלי flex:1 + min-width:0 — המדידה תמיד תראה שהכול נכנס");
@@ -109,14 +109,14 @@ if (m) {
 // ונכשלה על המסך: היא הניחה שרק קוד האתר יושב לצד השם, בזמן שב-normal
 // יש שם גם תג סוג ותג דרגה שרוחבם משתנה עם הטקסט שבתוכם. אין קבוע נכון,
 // ולכן חייבים למדוד.
-const hookPath = resolve(HERE, "../src/hooks/useFitText.js");
+const hookPath = resolve(HERE, "../src/hooks/useFitName.js");
 let hook = "";
 try { hook = readFileSync(hookPath, "utf8"); }
-catch { problems.push("useFitText.js חסר — אין מי שיתאים את גודל השם"); }
+catch { problems.push("useFitName.js חסר — אין מי שיתאים את גודל השם"); }
 
-if (/useFitText\s*\(/.test(jsx.replace(/\/\*[\s\S]*?\*\//g, "")))
-  ok.push("הכרטיס קורא ל-useFitText על שם האתר");
-else problems.push("הכרטיס אינו קורא ל-useFitText — השם ייחתך");
+if (/useFitName\s*\(/.test(jsx.replace(/\/\*[\s\S]*?\*\//g, "")))
+  ok.push("הכרטיס קורא ל-useFitName על שם האתר");
+else problems.push("הכרטיס אינו קורא ל-useFitName — השם ייחתך");
 
 if (hook) {
   // הקוד בלבד, בלי הערות — ראה הנימוק אצל useLayoutEffect למטה.
@@ -134,22 +134,22 @@ if (hook) {
   // החשובה ביותר כאן, כי התוצאה שלה נראית כמו "עיצוב", לא כמו תקלה.
   if (/style\.fontSize\s*=\s*""/.test(hook))
     ok.push("הגודל מאופס לפני כל מדידה — אין הקטנה מצטברת");
-  else problems.push("useFitText אינו מאפס לפני מדידה — השם יתכווץ בכל ריצה עד שייעלם");
+  else problems.push("useFitName אינו מאפס לפני מדידה — השם יתכווץ בכל ריצה עד שייעלם");
 
   // ⚠️ **ורוחב הטקסט נמדד ב-Range, לא ב-scrollWidth.** בעברית
   // הגלישה יוצאת לכיוון ההפוך, ויש דפדפנים שמדווחים אז
   // `scrollWidth === clientWidth` גם כשהטקסט חורג — כלומר ה-hook
   // היה מסיק "הכול נכנס" ולא מקטין כלום. הכשל נראה
   // זהה לבאג המקורי, וזו הסיבה שהוא נעול כאן.
-  if (/selectNodeContents/.test(hookCode) && /getBoundingClientRect/.test(hookCode))
-    ok.push("רוחב הטקסט נמדד ב-Range — עובד גם ב-RTL");
-  else problems.push("useFitText מודד ב-scrollWidth בלבד — בעברית זה עלול לא לזהות גלישה");
+  if (/measureText/.test(hookCode))
+    ok.push("רוחב הטקסט נמדד בקנבס — אפשר למדוד מועמד בלי להציג אותו");
+  else problems.push("useFitName אינו מודד בקנבס — אי אפשר לבדוק קיצור לפני שמציגים אותו");
 
   // ⚠️ הכרטיס משנה רוחב בלי שהשם משתנה: שינוי חלון, מעבר רמת צפיפות,
   // פתיחת הכרטיס. בלי מעקב, הגודל נשאר זה שחושב לרוחב אחר.
   if (/ResizeObserver/.test(hook))
     ok.push("הגודל נמדד מחדש כשהכרטיס משנה רוחב");
-  else problems.push("useFitText בלי ResizeObserver — הגודל לא יתעדכן בשינוי רוחב");
+  else problems.push("useFitName בלי ResizeObserver — הגודל לא יתעדכן בשינוי רוחב");
 
   // ⚠️ useEffect במקום useLayoutEffect מייצר הבהוב: השם מצויר בגודל מלא
   // ואז קופץ לגודל המוקטן.
@@ -160,7 +160,7 @@ if (hook) {
   // אישר תיעוד במקום קוד, ולכן `hookCode` (בראש הבלוק) חותך הערות.
   if (/useLayoutEffect\s*\(/.test(hookCode))
     ok.push("המדידה לפני הציור — בלי הבהוב");
-  else problems.push("useFitText אינו קורא ל-useLayoutEffect — יהיה הבהוב בכל טעינה");
+  else problems.push("useFitName אינו קורא ל-useLayoutEffect — יהיה הבהוב בכל טעינה");
 }
 
 // 3. title על השם — ב-compact הוא מקוצר, וזו הדרך היחידה לראות אותו מלא
