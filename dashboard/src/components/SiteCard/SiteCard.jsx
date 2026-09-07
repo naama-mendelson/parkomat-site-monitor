@@ -474,9 +474,27 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     >
       <div className="card-header">
         <span className="card-name">
-          <span className="card-name-text">{site.site_name}</span>
-          {!isMini && <TypeBadge type={site.plc_type} />}
-          {!isMini && <TierBadge tier={site.tier} />}
+          {/* ⚠️ title על השם עצמו: ב-compact הוא מקוצר, וזו הדרך לראות
+              אותו במלואו בלי לפתוח את הכרטיס. */}
+          <span className="card-name-text" title={site.site_name}>{site.site_name}</span>
+
+          {/* ============================================================
+              ⚠️ התגים רק ב-normal — ולא כי אין מקום, אלא כי אין להם ערך
+              ============================================================
+              ב-compact הכרטיס הוא 190px, והכותרת החזיקה שם + תג סוג + תג
+              דרגה + קוד. ה-CSS קבע שה**שם** הוא זה שמתכווץ, "כדי שתג
+              הדרגה יישאר גלוי" — וזו העדפה הפוכה.
+
+              ⚠️ **נמדד על המסך:** 19 מתוך 21 הכרטיסים הציגו שתיים עד שלוש
+              אותיות — "הר...", "אוס...", "נ." — והשניים שכן הציגו שם מלא
+              היו בדיוק אלה שאין להם `plc_type`, כלומר שבהם התג לא נוצר.
+              זה מה שהצביע על הסיבה.
+
+              ⚠️ ותג הדרגה אמר "בסיסי" ב**כל** 21 הכרטיסים: אפס מידע מבחין,
+              על חשבון הדבר היחיד שכן מבחין ביניהם. השם הוא הזיהוי; אם רק
+              אחד מהם יכול להיות גלוי, זה הוא. */}
+          {isNormal && <TypeBadge type={site.plc_type} />}
+          {isNormal && <TierBadge tier={site.tier} />}
         </span>
         {!isMini && <span className="card-code">#{site.code}</span>}
       </div>
