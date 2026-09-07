@@ -63,6 +63,23 @@ else problems.push("‎.card-name-text בלי רצפת רוחב");
 if (/className="card-name-text" title=/.test(jsx)) ok.push("‏title על שם האתר");
 else problems.push("אין title על שם האתר — שם מקוצר אינו ניתן לקריאה בכלל");
 
+// 4. הצפיפות נגזרת מהמקום שיש, לא ממספר האתרים בלבד.
+//
+// ⚠️ הכלל הישן ("מעל 20 → compact") התעלם מהמסך: 21 אתרים על מסך רחב
+// קיבלו כרטיסים מצומצמים בזמן שרוב המסך היה ריק. חזרה אליו היא חזרה
+// לאותה תצוגה, ולכן היא נאסרת כאן ולא רק מתוקנת פעם אחת.
+const grid = readFileSync(resolve(HERE, "../src/components/SiteGrid/SiteGrid.jsx"), "utf8");
+if (/resolveDensity\s*\(\s*sites\.length\s*\)/.test(grid))
+  problems.push("הצפיפות נקבעת ממספר האתרים בלבד — כרטיסים יתכווצו גם כשיש מקום");
+else if (/densityFor\(sites\.length,\s*box\.w,\s*box\.h\)/.test(grid))
+  ok.push("הצפיפות נגזרת מהרוחב והגובה שנמדדו");
+else problems.push("לא נמצאה קריאה ל-densityFor עם המידות שנמדדו");
+
+// ⚠️ ומדידת הגובה חייבת להאזין ל-resize של החלון: ResizeObserver על
+// הרשת אינו נורה כששינוי הגובה אינו משנה את הרוחב.
+if (/window\.addEventListener\("resize"/.test(grid)) ok.push("שינוי גובה החלון מודד מחדש");
+else problems.push("אין האזנה ל-resize — שינוי גובה החלון לא ישנה צפיפות");
+
 console.log("=".repeat(58));
 for (const o of ok) console.log("  ✅ " + o);
 for (const p of problems) console.log("  ❌ " + p);

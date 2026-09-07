@@ -1,15 +1,8 @@
 // components/SiteGrid/SiteGrid.jsx — רשת כרטיסי אתרים עם צפיפות דינמית (PRD 12.1)
 import { useState, useEffect, useRef } from "react";
 import SiteCard from "../SiteCard/SiteCard";
-import { DENSITY } from "../../utils/constants";
+import { densityFor } from "../../utils/constants";
 import "./SiteGrid.css";
-
-// קביעת רמת הצפיפות לפי מספר האתרים המוצגים
-function resolveDensity(count) {
-  if (count > DENSITY.MINI_THRESHOLD) return "mini";       // מעל 50 — שם + צבע בלבד
-  if (count > DENSITY.COMPACT_THRESHOLD) return "compact";  // מעל 20 — מצומצם
-  return "normal";                                          // עד 20 — מלא
-}
 
 function SiteGrid({ sites, onSiteClick }) {
   // רק כרטיס אחד מורחב בכל רגע — אחרת הרשת מתפרקת ואי אפשר לסרוק אותה
@@ -21,6 +14,16 @@ function SiteGrid({ sites, onSiteClick }) {
   const gridRef = useRef(null);
   const [cols, setCols] = useState(0);
 
+  // ============================================================
+  // ⚠️ המקום שיש — לא מספר האתרים
+  // ============================================================
+  // הצפיפות נקבעה קודם מ-`sites.length` בלבד, ולכן ב-21 אתרים על מסך
+  // רחב הכרטיסים התכווצו בזמן שרוב המסך היה ריק. נמדד ונראה על המסך.
+  //
+  // כאן נמדדים הרוחב של הרשת והגובה שנשאר לה עד תחתית החלון; הבחירה
+  // עצמה חיה ב-`densityFor` — פונקציה טהורה, בלי DOM.
+  const [box, setBox] = useState({ w: 0, h: 0 });
+
   useEffect(() => {
     const el = gridRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -28,12 +31,24 @@ function SiteGrid({ sites, onSiteClick }) {
     const measure = () => {
       const n = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length;
       setCols((prev) => (prev === n ? prev : n));
+
+      // ⚠️ הגובה נמדד מראש הרשת ולא מ-innerHeight: מעליה יושבות הכותרת
+      // והמסננים, ובלי החיסור הזה הרשת "נכנסת" בחישוב וגולשת במסך.
+      const top = el.getBoundingClientRect().top;
+      const w = el.clientWidth;
+      const h = Math.max(0, window.innerHeight - top - 16);
+      setBox((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
 
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+
+    // ⚠️ ResizeObserver על הרשת לבדו אינו מספיק: שינוי **גובה** החלון
+    // אינו משנה את רוחב הרשת, ולכן אינו מפעיל אותו — והצפיפות הייתה
+    // נשארת של הגובה הקודם.
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
   }, []);
   // לחיצה *נועלת* את הכרטיס פתוח: הוא לא ייסגר כשהעכבר יוצא, רק בלחיצה
   // מחוץ לו. ריחוף לעומת זאת הוא ארעי. בלי ההבחנה הזו, כרטיס שנפתח בלחיצה
@@ -70,7 +85,7 @@ function SiteGrid({ sites, onSiteClick }) {
     return <div className="grid-empty">לא נמצאו אתרים</div>;
   }
 
-  const density = resolveDensity(sites.length);
+  const density = densityFor(sites.length, box.w, box.h);
 
   // לחיצה — פתיחה *נעולה* (או סגירה אם כבר נעול על אותו כרטיס)
   const toggle = (code) => {
