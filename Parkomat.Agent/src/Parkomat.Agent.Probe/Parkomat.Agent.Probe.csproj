@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ParkomatProbe</AssemblyName>
+    <RootNamespace>Parkomat.Agent.Probe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Parkomat.Agent.Core\Parkomat.Agent.Core.csproj" />
+    <ProjectReference Include="..\Parkomat.Agent.Service\Parkomat.Agent.Service.csproj" />
+  </ItemGroup>
+
+  <!-- ============================================================
+       עצמאי, מאותה סיבה בדיוק כמו השירות
+       ============================================================
+       הכלי הזה נועד לרוץ על מחשב אתר שלא ראה .NET 10 מעולם. כלי אבחון
+       שדורש התקנה כדי לאבחן הוא כלי שלא ישמש אף אחד. -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
+</Project>

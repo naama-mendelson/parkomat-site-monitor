@@ -94,11 +94,26 @@ public class Worker : BackgroundService
             }
             return;
         }
+        // ⚠️ **התעבורה נרשמת, ולא רק ה-IP.** אתר UDP שאיפוס הגדרות החזיר
+        // ל-TCP נראה בלוג בדיוק כמו אתר TCP תקין — ובלי השדה הזה השאלה
+        // "למה האתר לא קורא מהבקר" נענית רק בנסיעה לשם.
         _logger.LogInformation(
-            "PLC target: {Ip}:{Port} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
+            "PLC target: {Transport} {Ip}:{Port} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
+            config.Plc.UseUdp ? "UDP" : "TCP",
             config.Plc.IpAddress, config.Plc.Port,
             config.Plc.ModeRegister, config.Plc.CardRegister, config.Plc.CycleRegister,
             config.PollIntervalMs);
+
+        // ⚠️ ערך לא מוכר נבלע ל-TCP (ראה PlcConfig.UseUdp) — אבל **בקול**.
+        // בליעה שקטה הייתה יוצרת אתר שהקובץ שלו אומר UDP והסוכן קורא TCP,
+        // וזה הפרש שאי אפשר לראות משום מקום מלבד כאן.
+        if (!config.Plc.TransportIsKnown)
+        {
+            _logger.LogWarning(
+                "PLC transport '{Value}' is not recognised — falling back to TCP. "
+              + "Valid values are 'tcp' and 'udp'.",
+                config.Plc.Transport);
+        }
         // כתובת ה-HiveMQ מגיעה לגשר של Mosquitto — נרשמת לאבחון, בלי הסיסמה.
         // TLS אינו מוצג כערך: הוא תמיד פעיל ואין דרך לכבותו.
         _logger.LogInformation(

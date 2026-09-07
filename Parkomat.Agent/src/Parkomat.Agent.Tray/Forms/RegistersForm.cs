@@ -1,4 +1,4 @@
-using Parkomat.Agent.Core.Configuration;
+﻿using Parkomat.Agent.Core.Configuration;
 using System.Windows.Forms;
 
 namespace Parkomat.Agent.Tray.Forms;
@@ -13,6 +13,18 @@ public class RegistersForm : Form
     private readonly NumericUpDown _modeReg = new();
     private readonly NumericUpDown _cardReg = new();
     private readonly NumericUpDown _cycleReg = new();
+
+    // ============================================================
+    // ⚠️ הבורר יושב כאן ולא בטופס הראשי, וזו החלטה
+    // ============================================================
+    // TCP/UDP נקבע פעם אחת בהתקנה לפי הבקר שבאתר, בדיוק כמו כתובות
+    // הרגיסטרים — ולא משנים אותו ביום-יום. הטופס הראשי הוא מה שנפתח
+    // כדי לשנות סיסמה או כתובת, ומתג שמנתק את הסוכן מהבקר לגמרי אינו
+    // צריך לשבת שם. אותו שיקול שהוציא את תיבת ה-TLS ואת Mqtt.Disabled.
+    //
+    // אבל **כן בממשק ולא רק בקובץ**, בניגוד להם: זו הגדרת חומרה שטכנאי
+    // חייב להזין באתר, ולא החלטת מדיניות שמקבלים פעם אחת מהמשרד.
+    private readonly ComboBox _transport = new();
 
     // ה-PlcConfig שאנחנו עורכים. נחשף למי שקורא אחרי סגירה.
     public PlcConfig Result { get; private set; }
@@ -53,9 +65,17 @@ public class RegistersForm : Form
             n.Width = 120;
         }
 
-        AddRow(table, 0, "כתובת MODE:", _modeReg);
-        AddRow(table, 1, "כתובת כרטיס:", _cardReg);
-        AddRow(table, 2, "כתובת Cycle Counter:", _cycleReg);
+        // רשימה סגורה ולא תיבת טקסט: ‏"UDP ", "Udp", "tcp/udp" הם ערכים
+        // שהסוכן היה בולע ל-TCP (ראה PlcConfig.UseUdp), כלומר אתר שנראה
+        // מוגדר ל-UDP וקורא ב-TCP. פקד שלא מאפשר להקליד מונע את זה מראש.
+        _transport.DropDownStyle = ComboBoxStyle.DropDownList;
+        _transport.Width = 120;
+        _transport.Items.AddRange(new object[] { "TCP", "UDP" });
+
+        AddRow(table, 0, "תעבורה:", _transport);
+        AddRow(table, 1, "כתובת MODE:", _modeReg);
+        AddRow(table, 2, "כתובת כרטיס:", _cardReg);
+        AddRow(table, 3, "כתובת Cycle Counter:", _cycleReg);
         // כשנוסיף registers בעתיד — פשוט נוסיף כאן עוד שורות, והגלילה תטפל.
 
         scroll.Controls.Add(table);
@@ -83,20 +103,28 @@ public class RegistersForm : Form
         _modeReg.Value = Math.Clamp(current.ModeRegister, (int)_modeReg.Minimum, (int)_modeReg.Maximum);
         _cardReg.Value = Math.Clamp(current.CardRegister, (int)_cardReg.Minimum, (int)_cardReg.Maximum);
         _cycleReg.Value = Math.Clamp(current.CycleRegister, (int)_cycleReg.Minimum, (int)_cycleReg.Maximum);
+
+        // ⚠️ נגזר מ-UseUdp ולא מהמחרוזת הגולמית, כדי שהחלונית תראה את מה
+        // שהסוכן **באמת יעשה**. קובץ עם "UDP " היה מציג UDP בזמן שהסוכן
+        // קורא TCP — כלומר הממשק היה מאשר את הטעות במקום לחשוף אותה.
+        _transport.SelectedItem = current.UseUdp ? "UDP" : "TCP";
     }
 
     private void OnOk()
     {
-        // בונים PlcConfig מעודכן — שומרים את שדות החיבור כמו שהיו,
-        // ומעדכנים רק את הכתובות.
-        Result = new PlcConfig
-        {
-            IpAddress = Result.IpAddress,
-            Port = Result.Port,
-            ModeRegister = (int)_modeReg.Value,
-            CardRegister = (int)_cardReg.Value,
-            CycleRegister = (int)_cycleReg.Value
-        };
+        // ⚠️ **עריכה במקום, לא בנייה מחדש.** כאן עמד `new PlcConfig { ... }`
+        // עם חמישה שדות מתוך שמונה, ולכן אישור החלונית **מחק את
+        // FaultTextRegister ו-FaultTextMaxChars** והחזיר אותם לברירת המחדל.
+        // אותו באג בדיוק היה גם ב-SettingsForm.OnSave, כלומר הוא נכתב
+        // פעמיים בנפרד — מה שמלמד שהתבנית עצמה היא הבעיה, ולא ההשמטה.
+        //
+        // עריכה במקום מבטיחה ששדה חדש ב-PlcConfig נישא מעצמו, בלי שאיש
+        // יצטרך לזכור לעדכן שתי רשימות.
+        Result.ModeRegister = (int)_modeReg.Value;
+        Result.CardRegister = (int)_cardReg.Value;
+        Result.CycleRegister = (int)_cycleReg.Value;
+        Result.Transport = (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp";
+
         DialogResult = DialogResult.OK;
         Close();
     }
