@@ -38,12 +38,31 @@ export function useFitText(text, minScale = 0.62) {
     const el = ref.current;
     if (!el) return;
 
+    // ============================================================
+    // ⚠️ רוחב הטקסט נמדד ב-Range ולא ב-scrollWidth — בגלל עברית
+    // ============================================================
+    // `scrollWidth` מתאר את אזור הגלילה, ובטקסט RTL הגלישה יוצאת לכיוון
+    // ההפוך. יש דפדפנים שמדווחים במצב הזה `scrollWidth === clientWidth`
+    // גם כשהטקסט חורג בפועל — כלומר המדידה הייתה מסיקה "הכול נכנס"
+    // ולא מקטינה כלום. הכשל היה נראה בדיוק כמו הבאג המקורי.
+    //
+    // `Range.getBoundingClientRect()` מודד את התיבה של התוכן עצמו, בלי
+    // תלות בכיוון הכתיבה ובלי תלות בגלילה.
+    function textWidth() {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const w = range.getBoundingClientRect().width;
+      range.detach?.();
+      // נפילה-לאחור אם ה-Range החזיר 0 (אלמנט מוסתר, למשל).
+      return w || el.scrollWidth;
+    }
+
     function fit() {
       // איפוס לפני מדידה — ראה ההסבר למעלה.
       el.style.fontSize = "";
 
       const available = el.clientWidth;
-      const needed = el.scrollWidth;
+      const needed = textWidth();
       if (!available || !needed || needed <= available) return;
 
       const base = parseFloat(getComputedStyle(el).fontSize);
