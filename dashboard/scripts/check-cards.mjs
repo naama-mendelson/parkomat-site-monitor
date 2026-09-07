@@ -80,6 +80,27 @@ else problems.push("לא נמצאה קריאה ל-densityFor עם המידות �
 if (/window\.addEventListener\("resize"/.test(grid)) ok.push("שינוי גובה החלון מודד מחדש");
 else problems.push("אין האזנה ל-resize — שינוי גובה החלון לא ישנה צפיפות");
 
+// 5. "טיפול בתקלה" והגרף אינם על הכרטיס — הם עברו לפירוט המלא.
+//
+// ⚠️ החלטת מוצר, ולא עניין של מקום: הכרטיס עונה על "מי דורש טיפול
+// עכשיו", וזמן טיפול ממוצע הוא שאלת ניתוח. והצירוף שם היה יקר במיוחד:
+// הממוצע לבדו מטעה (10% התקלות הארוכות הן 68% מזמן התקלה), ולכן הוא
+// חייב את הגרף לצדו — שני אלמנטים לשאלה שאיש אינו שואל בזמן סריקה.
+for (const forbidden of ["RepairChart", "avgRepairMinutes", "medianRepairMinutes"]) {
+  if (jsx.includes(forbidden))
+    problems.push(`${forbidden} חזר לכרטיס — מקומו בפירוט המלא`);
+}
+if (!problems.some((p) => p.includes("חזר לכרטיס")))
+  ok.push("זמן הטיפול והגרף אינם על הכרטיס");
+
+// ...ובאמת נמצאים בפירוט המלא. בלי זה "הוסר מהכרטיס" יכול להיות גם
+// "נמחק מהמערכת", ואלה שתי תוצאות שונות מאוד.
+const modal = readFileSync(
+  resolve(HERE, "../src/components/InsightsModal/InsightsModal.jsx"), "utf8");
+if (modal.includes("<RepairChart") && modal.includes("avgRepairMinutes"))
+  ok.push("זמן הטיפול והגרף נמצאים בפירוט המלא");
+else problems.push("זמן הטיפול/הגרף אינם בפירוט המלא — הם נמחקו ולא הועברו");
+
 console.log("=".repeat(58));
 for (const o of ok) console.log("  ✅ " + o);
 for (const p of problems) console.log("  ❌ " + p);

@@ -11,6 +11,7 @@ import ActivityLog from "../ActivityLog/ActivityLog";
 // ⚠️ פרטי האתר וטופס התחזוקה — שני הדברים היחידים שהיו בפאנל הצד ולא
 // כאן. כל השאר (מדדים, זמינות, לוג) כבר היה במודאל, ולכן לא שוכפל.
 import SiteFacts from "../SiteFacts/SiteFacts";
+import RepairChart from "../SiteCard/RepairChart";
 import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
 import Logo from "../Logo/Logo";
@@ -44,6 +45,19 @@ function fmtHours(h) {
   if (!h) return "0";
   if (h < 1) return `${Math.round(h * 60)} דקות`;
   return `${Math.round(h * 10) / 10} שעות`;
+}
+
+// ============================================================
+// זמן טיפול — כמה זמן האתר שוהה בתקלה עד שהוא חוזר לעבוד
+// ============================================================
+// ⚠️ עבר לכאן מ-SiteCard: הכרטיס עונה על "מי דורש טיפול עכשיו", וזו
+// שאלת ניתוח. דקות → צורה קריאה; מעל שעה בדקות הופך למספר שצריך לחשב.
+function repairText(min) {
+  if (min === null || min === undefined) return "—";
+  if (min < 1) return "< דקה";
+  if (min < 60) return `${Math.round(min)} דק׳`;
+  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  return m ? `${h}:${String(m).padStart(2, "0")} שע׳` : `${h} שע׳`;
 }
 
 function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false, maintenance = null, onRefresh = null }) {
@@ -212,6 +226,65 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   )}
                 </section>
               </>
+            )}
+
+            {/* ============================================================
+                טיפול בתקלות — עבר לכאן מכרטיס האתר
+                ============================================================
+                ⚠️ **הממוצע לבדו מטעה, וזה נמדד:** 10% התקלות הארוכות הן
+                68% מזמן התקלה, ובמגדל 1 הממוצע הוא 47 דקות מול חציון של
+                פחות מדקה. לכן שלושת המספרים והגרף יושבים יחד — הממוצע נותן
+                את הגודל, החציון את המצב הרגיל, והגרף מראה מיד אם הממוצע
+                נגרר על ידי שיא בודד.
+
+                בכרטיס לא היה מקום לצירוף הזה; כאן יש.
+
+                ⚠️ **ורק לאתר בודד.** ממוצע זמן טיפול על פני כל האתרים
+                מערבב מתקנים שונים ואינו אומר דבר על אף אחד מהם. */}
+            {section === "overview" && !allSites
+              && (site?.repairSeries?.length > 0 || site?.avgRepairMinutes != null) && (
+              <section className="insights-card">
+                <h3>טיפול בתקלות</h3>
+                {/* ⚠️ **התקופה נאמרת במפורש, והיא אינה בורר התקופה שלמעלה.**
+                    המספרים האלה מגיעים מסטטיסטיקת רשימת האתרים (שבוע), ולא
+                    מהנתונים של המקטע הזה. בלי המשפט הזה הם ייראו כאילו הם
+                    עוקבים אחרי הבורר — וזו בדיוק הטעות שגורמת למישהו להסיק
+                    מסקנה על חודש מתוך מספר של שבוע. */}
+                <p className="insights-sub">
+                  זמן מתקלה ועד חזרה לפעולה · בשבוע האחרון, ללא תלות בבורר התקופה
+                </p>
+                <div className="insights-kpis">
+                  <MetricCard
+                    label="ממוצע"
+                    value={repairText(site.avgRepairMinutes)}
+                    hint="כולל את התקלות הארוכות — ולכן נגרר על ידן"
+                    tone={METRIC_COLORS.errors}
+                    accent
+                  />
+                  <MetricCard
+                    label="חציון"
+                    value={repairText(site.medianRepairMinutes)}
+                    hint="מחצית מהתקלות נסגרו בזמן הזה או פחות"
+                  />
+                  <MetricCard
+                    label="מעל שעה"
+                    value={site.longRepairPercent === null || site.longRepairPercent === undefined
+                      ? "—" : `${site.longRepairPercent}%`}
+                    hint={site.longRepairCount != null
+                      ? `${site.longRepairCount} תקלות נגררו מעל שעה`
+                      : "אין נתון"}
+                  />
+                </div>
+                {site.repairSeries?.length > 0 && (
+                  <>
+                    {/* גרף מלא (42px), ולא הגרסה המצומצמת שהייתה בכרטיס */}
+                    <RepairChart series={site.repairSeries} />
+                    <p className="insights-note">
+                      מקל לכל תקלה, לפי סדר הזמן — הגובה הוא משך הטיפול.
+                    </p>
+                  </>
+                )}
+              </section>
             )}
 
             {/* ---------- פעילות ---------- */}
