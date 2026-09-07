@@ -58,6 +58,28 @@ else if (/min-width:\s*\d+ch/.test(m[0]))
   ok.push("לשם יש רצפת רוחב במידת תווים");
 else problems.push("‎.card-name-text בלי רצפת רוחב");
 
+// ⚠️ 2ב. **השם מוצג במלואו — לא נחתך ב-"..."**
+//
+// רצפת הרוחב לבדה לא הספיקה: שם ארוך עדיין קיבל ellipsis, והמשכו היה
+// זמין רק ב-tooltip. כרטיס נסרק בעין ולא מרחפים מעליו, ושני אתרים
+// באותו רחוב ("עמנואל הרומי 10" ו-"עמנואל הרומי 4") נראים זהים כשהם
+// חתוכים — כלומר הקיצור לא רק מסתיר מידע, הוא מייצר זהות שגויה.
+//
+// שלוש טענות ולא אחת: אין ellipsis, אין nowrap, ויש עטיפה. כל אחת
+// לבדה עוברת גם על גרסה שבורה — `white-space: nowrap` בלי ellipsis
+// פשוט גולש, ו-ellipsis בלי nowrap אינו נכנס לפעולה אך נשאר בקוד
+// כמלכודת למי שיחזיר nowrap.
+if (m) {
+  const rule = m[0];
+  if (/text-overflow:\s*ellipsis/.test(rule))
+    problems.push("‎.card-name-text עם text-overflow: ellipsis — השם ייחתך ב-\"...\"");
+  else if (/white-space:\s*nowrap/.test(rule))
+    problems.push("‎.card-name-text עם white-space: nowrap — השם לא יעטוף ויגלוש");
+  else if (!/overflow-wrap:\s*(anywhere|break-word)/.test(rule))
+    problems.push("‎.card-name-text בלי overflow-wrap — שם ארוך בלי רווחים יגלוש מהכרטיס");
+  else ok.push("שם האתר מוצג במלואו ועוטף, בלי \"...\"");
+}
+
 // 3. title על השם — ב-compact הוא מקוצר, וזו הדרך היחידה לראות אותו מלא
 //    בלי לפתוח את הכרטיס.
 if (/className="card-name-text" title=/.test(jsx)) ok.push("‏title על שם האתר");
