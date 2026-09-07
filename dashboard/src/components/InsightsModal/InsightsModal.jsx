@@ -430,7 +430,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                         מיציאה ב-31%, ובאתר אחד הכיוון מתהפך. "הכרטיס המהיר"
                         בלי כיוון הוא בעיקר הכרטיס שבמקרה יצא יותר משנכנס. */}
                     <MetricCard
-                      label="הכי מהיר בכניסה"
+                      label="הכרטיס המהיר בכניסה (ממוצע)"
                       value={data.cards.summary.fastestEntry
                         ? `כרטיס ${data.cards.summary.fastestEntry.card}` : "—"}
                       hint={data.cards.summary.fastestEntry
@@ -439,7 +439,7 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                       tone={ENTRY_COLOR}
                     />
                     <MetricCard
-                      label="הכי מהיר ביציאה"
+                      label="הכרטיס המהיר ביציאה (ממוצע)"
                       value={data.cards.summary.fastestExit
                         ? `כרטיס ${data.cards.summary.fastestExit.card}` : "—"}
                       hint={data.cards.summary.fastestExit
@@ -651,6 +651,29 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                   <h3>משך פעולה</h3>
                   <p className="insights-sub">כמה זמן לוקח למכונה להשלים פעולה, מרגע ההתחלה ועד הסיום</p>
 
+                  {/* ============================================================
+                      ⚠️ מה שהוחרג — נאמר, ולא מסונן בשקט
+                      ============================================================
+                      סינון שאיש אינו רואה הוא איך מספר שגוי הופך למספר שנעלם:
+                      אי אפשר להבדיל בין "האתר נקי" לבין "המסנן עובד קשה".
+
+                      ⚠️ ושני המספרים אינם אותו דבר, ולכן הם מנוסחים בנפרד:
+                      ריצוד הוא **בקר שקופץ**, והתחלה שנדרסה היא **הודעה שאבדה
+                      בדרך**. שניהם מטופלים בשטח ולא בקוד, ושניהם היו בלתי
+                      נראים עד עכשיו. */}
+                  {(data.excluded?.flickerOps > 0 || data.excluded?.discardedStarts > 0) && (
+                    <p className="insights-note">
+                      {data.excluded.flickerOps > 0 && (
+                        <>הוחרגו {data.excluded.flickerOps} פעולות קצרות משתי שניות —
+                        ריצוד MODE בבקר, ולא מעבר רכב. </>
+                      )}
+                      {data.excluded.discardedStarts > 0 && (
+                        <>{data.excluded.discardedStarts} פעולות נפתחו ולא נסגרו —
+                        הודעת סיום שלא הגיעה, והמשך שלהן אינו ניתן למדידה.</>
+                      )}
+                    </p>
+                  )}
+
                   {/* ==========================================================
                       שורה לכל כיוון — ולא רשת אחת של שש
                       ==========================================================
@@ -689,15 +712,25 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                                 tone={color}
                               />
                               <MetricCard
-                                label="הארוכה ביותר"
+                                label="הארוכה ביותר (אירוע בודד)"
                                 value={s ? fmtSeconds(s.longestSeconds) : "—"}
-                                hint="המשך הארוך שנמדד"
+                                hint="פעולה אחת, לא ממוצע"
                                 tone={color}
                               />
+                              {/* ⚠️ **"אירוע בודד" בתווית, ולא רק במספר.**
+                                  ליד המספר הזה יושב "הכי מהיר בכניסה", שהוא
+                                  **ממוצע לכרטיס**. שתי המילים "מהיר"/"קצר"
+                                  נקראו כאותה שאלה, ואז המסך סתר את עצמו:
+                                  "הקצרה ביותר: שנייה" לצד "הכי מהיר: כרטיס
+                                  13, 339 שניות" — וכרטיס 13 מעולם לא עשה
+                                  פעולה של שנייה. נצפה באתר עמנואל הרומי.
+
+                                  קיצון של מדגם אחד וממוצע של כרטיס הם שתי
+                                  שאלות שונות; התווית אומרת זאת עכשיו. */}
                               <MetricCard
-                                label="הקצרה ביותר"
+                                label="הקצרה ביותר (אירוע בודד)"
                                 value={s ? fmtSeconds(s.shortestSeconds) : "—"}
-                                hint="המשך הקצר שנמדד"
+                                hint="פעולה אחת, לא ממוצע"
                                 tone={color}
                               />
                             </div>
