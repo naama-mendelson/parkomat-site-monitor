@@ -88,15 +88,7 @@ async function gateToken(sbUrl, anonKey, secretKey, fetchFn = fetch) {
     throw new Error(`gate-user: יצירת משתמש נכשלה: ${(await created.text()).slice(0, 200)}`);
   }
   const uid = (await created.json()).id;
-
-  // ⚠️ **התפקיד נכתב ל-app_users ביד, וזה לא מיותר.** `provision_app_user`
-  // רץ ב-AFTER INSERT — לפני שגו-טרו כותב את ה-app_metadata — ולכן הוא
-  // בונה את השורה כבקר. `app.current_app_role()` קורא מ-app_users, לא
-  // מהתביעה, ובלי השורה הזו המשתמש היה מנהל בנייר בלבד.
   const db = require("../../db/db");
-  await db.prepare("UPDATE app_users SET role = 'manager' WHERE LOWER(email) = LOWER(?)").run(email);
-
-  const token = await signIn(email, PW);
 
   // ⚠️ מוחק את **שני** הצדדים. מחיקת חשבון ה-auth בלבד משאירה שורת
   // app_users יתומה — בדיוק המצב שנמצא בייצור, ושעליו check-writes נופל
@@ -145,6 +137,36 @@ async function gateToken(sbUrl, anonKey, secretKey, fetchFn = fetch) {
   process.on("uncaughtException", (e) => { bail("חריגה שלא נתפסה", e); });
   process.on("unhandledRejection", (e) => { bail("דחייה שלא טופלה", e); });
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { bail(sig, "הופסק"); });
+
+
+  // ============================================================
+  // ⚠️ מכאן והלאה **המשתמש כבר קיים בייצור**
+  // ============================================================
+  // הרשת שלמעלה הותקנה קודם, וזה תיקון של חלון עיוור שנמדד: היא ישבה
+  // אחרי `signIn`, ולכן כשל ביניהם הפיל את הקריאה **לפני** שהרשת נדרכה
+  // ולפני ש-`cleanup` הוחזר לקורא — ואז אין מי שימחק.
+  //
+  // ⚠️ וזה קרה פעמיים: פעם ראשונה תועדה כאן (gate1788088486802), והרשת
+  // נוספה בעקבותיה — אבל היא נוספה במקום הלא נכון. בפעם השנייה
+  // (gate1788764563853, 07/09/2026) נשאר בייצור שוב **חשבון מנהל פעיל**,
+  // עם הרשאה למחוק אתר ואת כל ההיסטוריה שלו, ו-check-no-residue תפס אותו.
+  //
+  // ה-try כאן הוא החגורה השנייה: גם אם הרשת תוסר יום אחד, כשל בשני
+  // השלבים שאחרי היצירה מנקה לפני שהוא זורק הלאה.
+  let token;
+  try {
+
+    // ⚠️ **התפקיד נכתב ל-app_users ביד, וזה לא מיותר.** `provision_app_user`
+    // רץ ב-AFTER INSERT — לפני שגו-טרו כותב את ה-app_metadata — ולכן הוא
+    // בונה את השורה כבקר. `app.current_app_role()` קורא מ-app_users, לא
+    // מהתביעה, ובלי השורה הזו המשתמש היה מנהל בנייר בלבד.
+    await db.prepare("UPDATE app_users SET role = 'manager' WHERE LOWER(email) = LOWER(?)").run(email);
+
+    token = await signIn(email, PW);
+  } catch (e) {
+    await runAll();
+    throw e;
+  }
 
   return { token, email, password: PW, cleanup: runAll, addCleanup };
 }
