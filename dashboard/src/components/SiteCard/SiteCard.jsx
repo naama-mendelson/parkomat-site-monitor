@@ -6,6 +6,7 @@ import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import FaultTimer from "./FaultTimer";
+import { useFitText } from "../../hooks/useFitText";
 import "./SiteCard.css";
 
 // צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
@@ -72,6 +73,12 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const label = siteStatusLabel(site);
   const isMini = density === "mini";
   const isNormal = density === "normal";
+
+  // ⚠️ **שם האתר הוא המזהה בכרטיס, ולכן הוא לא נחתך.** אם הוא לא נכנס
+  // ברוחב שהוקצה לו — הפונט קטן, לא הטקסט. "עמנואל הרומי 10, ת״א"
+  // ו-"עמנואל הרומי 4, ת״א" נראים זהים כשחותכים אותם, כלומר החיתוך אינו
+  // רק מסתיר מידע אלא מייצר זהות שגויה.
+  const fitName = useFitText(site.site_name);
 
   const failureRate = site.failureRate ?? 0;
   // null = אין מספיק מדגם להשוואה (ולא "אין שינוי") — ראה siteTrend.
@@ -413,17 +420,16 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     >
       <div className="card-header">
         <span className="card-name">
-          {/* ⚠️ `--name-chars` הוא מה שמאפשר ל-CSS להתאים את גודל הפונט
-              לאורך השם — ל-CSS אין דרך לספור תווים. ראה .card-name-text.
+          {/* ⚠️ גודל הפונט **נמדד**, לא מחושב מנוסחה — ראה useFitText.
+              הגרסה הקודמת חישבה אותו ב-CSS מאורך השם ומרוחב הכותרת,
+              והיא נכשלה על המסך: היא הניחה שרק קוד האתר יושב לצד השם,
+              בזמן שב-normal יש שם גם תג סוג ותג דרגה שרוחבם משתנה.
 
-              ⚠️ אורך המחרוזת ולא רוחב אמיתי: זו הערכה, וה-clamp חוסם
-              משני הצדדים, אז טעות מייצרת פונט מעט קטן — לא שם חתוך.
-
-              title נשאר: ברמות צפיפות גבוהות שם ארוך עדיין לא נכנס על
-              שורה אחת, וזו הדרך לראות אותו בלי לפתוח את הכרטיס. */}
+              title נשאר: אם שם חורג גם ברצפת ההקטנה, זו הדרך לראות
+              אותו במלואו בלי לפתוח את הכרטיס. */}
           <span
+            ref={fitName}
             className="card-name-text"
-            style={{ "--name-chars": (site.site_name || "").length || 1 }}
             title={site.site_name}
           >{site.site_name}</span>
 

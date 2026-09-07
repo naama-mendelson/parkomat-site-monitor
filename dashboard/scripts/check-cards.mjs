@@ -48,15 +48,27 @@ if (headStart < 0 || headEnd < 0) {
   }
 }
 
-// 2. רצפת רוחב לשם. הרשת השנייה: גם אם יתווסף אלמנט לכותרת, השם לא
-//    ייעלם בשקט אלא ידחוף את מה שלידו.
+// 2. רצפה לשם — כדי שהוא לא יתכווץ עד שייעלם.
+//
+// ⚠️ **הרצפה עברה מקום, וזה לא ניקיון.** קודם היא הייתה `min-width: 6ch`
+// ב-CSS: בגישת ה-ellipsis הרוחב היה מה שהתכווץ, אז רצפת רוחב הגנה על
+// השם. עכשיו **הפונט** הוא מה שמתכווץ והרוחב חייב להיות גמיש
+// (`min-width: 0`), אחרת flex לא יקצה לשם את מה שנשאר והמדידה חסרת
+// משמעות. אותה בדיקה בדיוק שהגנה קודם הפכה לחוסמת.
+//
+// הרצפה החדשה היא `minScale` ב-useFitText — כמה מותר להקטין לכל היותר.
 const m = css.match(/\.card-name-text\s*{[^}]*}/);
 if (!m) problems.push("לא נמצא .card-name-text ב-CSS");
-else if (/min-width:\s*0\b/.test(m[0]))
-  problems.push("‎.card-name-text עם min-width: 0 — השם יכול להתכווץ לאפס");
-else if (/min-width:\s*\d+ch/.test(m[0]))
-  ok.push("לשם יש רצפת רוחב במידת תווים");
-else problems.push("‎.card-name-text בלי רצפת רוחב");
+
+const hookSrcForFloor = (() => {
+  try { return readFileSync(resolve(HERE, "../src/hooks/useFitText.js"), "utf8"); }
+  catch { return ""; }
+})();
+const floor = hookSrcForFloor.match(/minScale\s*=\s*(0?\.\d+)/);
+if (!floor) problems.push("ל-useFitText אין minScale — השם יכול להתכווץ עד שייעלם");
+else if (Number(floor[1]) < 0.4)
+  problems.push(`‏minScale = ${floor[1]} — הקטנה כזו הופכת את השם לבלתי קריא`);
+else ok.push(`לשם יש רצפת הקטנה (minScale = ${floor[1]})`);
 
 // ⚠️ 2ב. **השם מוצג במלואו, על שורה אחת — הפונט מתכווץ, לא הטקסט**
 //
@@ -81,30 +93,61 @@ if (m) {
   if (/white-space:\s*nowrap/.test(rule)) ok.push("השם נשאר על שורה אחת");
   else problems.push("‎.card-name-text בלי white-space: nowrap — השם יתפרס על כמה שורות");
 
-  // ⚠️ **בלי ההתאמה הזו, nowrap לבדו רק גורם לגלישה.** שתי השורות
-  // הקודמות מתקיימות גם בקוד שבו השם פשוט בורח מהכרטיס.
-  if (/font-size:\s*clamp\(/.test(rule) && /cqi/.test(rule))
-    ok.push("גודל הפונט נגזר מרוחב הכותרת ומאורך השם");
-  else problems.push("‎.card-name-text בלי clamp על cqi — הפונט לא יתאים את עצמו והשם יגלוש");
-
-  // ⚠️ ו-cqi חסר משמעות בלי container. זו שורה שקל למחוק בניקיון,
-  // והתוצאה היא שה-clamp נופל לתקרה תמיד — כלומר חזרה לחיתוך.
-  const header = css.match(/\.card-header\s*{[^}]*}/);
-  if (header && /container-type:\s*inline-size/.test(header[0]))
-    ok.push("‏.card-header הוא container — ‎cqi אכן נמדד");
-  else problems.push("‎.card-header בלי container-type: inline-size — ה-cqi בשם חסר משמעות");
+  // ⚠️ `flex: 1` + `min-width: 0` הם מה שגורם ל-flex להקצות לשם את כל
+  // מה שנשאר — ולכן `clientWidth` שלו הוא הרוחב האמיתי שיש לו.
+  // בלעדיהם האלמנט מתרחב לפי התוכן, `clientWidth === scrollWidth`,
+  // והמדידה ב-useFitText אף פעם לא תמצא שצריך להקטין.
+  if (/flex:\s*1/.test(rule) && /min-width:\s*0/.test(rule))
+    ok.push("‏flex מקצה לשם את הרוחב שנשאר — המדידה משמעותית");
+  else problems.push("‎.card-name-text בלי flex:1 + min-width:0 — המדידה תמיד תראה שהכול נכנס");
 }
 
-// ⚠️ ול-CSS אין דרך לספור תווים: בלי המשתנה הזה מה-JSX הנוסחה משתמשת
-// בברירת מחדל אחת לכל השמות, וכל שם ארוך מהממוצע גולש.
-//
-// ⚠️ **נדרשת ההשמה, לא האזכור** — והבדיקה הראשונה כאן חיפשה רק את
-// המחרוזת. מוטציה שמחקה את ה-`style` עברה בשקט, כי הביטוי נמצא גם
-// בהערה שמסבירה אותו: השער אישר את **התיעוד של התכונה** במקום את
-// התכונה. זה בדיוק הכשל שכבר נתפס פעם בשער אחר בפרויקט הזה.
-if (/style=\{\{\s*"--name-chars"\s*:/.test(jsx))
-  ok.push("אורך השם מועבר ל-CSS מה-JSX");
-else problems.push("‎--name-chars אינו מוצמד כ-style ב-JSX — הפונט לא יידע להתכווץ");
+// ============================================================
+// 2ג. ההתאמה נמדדת, ולא מחושבת מנוסחה
+// ============================================================
+// ⚠️ **גרסה קודמת חישבה את גודל הפונט ב-CSS** מאורך השם ומרוחב הכותרת,
+// ונכשלה על המסך: היא הניחה שרק קוד האתר יושב לצד השם, בזמן שב-normal
+// יש שם גם תג סוג ותג דרגה שרוחבם משתנה עם הטקסט שבתוכם. אין קבוע נכון,
+// ולכן חייבים למדוד.
+const hookPath = resolve(HERE, "../src/hooks/useFitText.js");
+let hook = "";
+try { hook = readFileSync(hookPath, "utf8"); }
+catch { problems.push("useFitText.js חסר — אין מי שיתאים את גודל השם"); }
+
+if (/useFitText\s*\(/.test(jsx.replace(/\/\*[\s\S]*?\*\//g, "")))
+  ok.push("הכרטיס קורא ל-useFitText על שם האתר");
+else problems.push("הכרטיס אינו קורא ל-useFitText — השם ייחתך");
+
+if (hook) {
+  // ⚠️ **הבאג שהורג את התכונה בשקט:** בלי איפוס לפני המדידה, כל ריצה
+  // מודדת פונט שכבר הוקטן ומקטינה שוב — עד שהשם נעלם. זו הטענה
+  // החשובה ביותר כאן, כי התוצאה שלה נראית כמו "עיצוב", לא כמו תקלה.
+  if (/style\.fontSize\s*=\s*""/.test(hook))
+    ok.push("הגודל מאופס לפני כל מדידה — אין הקטנה מצטברת");
+  else problems.push("useFitText אינו מאפס לפני מדידה — השם יתכווץ בכל ריצה עד שייעלם");
+
+  // ⚠️ הכרטיס משנה רוחב בלי שהשם משתנה: שינוי חלון, מעבר רמת צפיפות,
+  // פתיחת הכרטיס. בלי מעקב, הגודל נשאר זה שחושב לרוחב אחר.
+  if (/ResizeObserver/.test(hook))
+    ok.push("הגודל נמדד מחדש כשהכרטיס משנה רוחב");
+  else problems.push("useFitText בלי ResizeObserver — הגודל לא יתעדכן בשינוי רוחב");
+
+  // ⚠️ useEffect במקום useLayoutEffect מייצר הבהוב: השם מצויר בגודל מלא
+  // ואז קופץ לגודל המוקטן.
+  //
+  // ⚠️ **נדרשת הקריאה, לא האזכור.** הגרסה הראשונה חיפשה את המילה בקובץ,
+  // ומוטציה שהחליפה את הקריאה ל-useEffect עברה בשקט — כי השם נשאר
+  // ב-import ובהערה שמסבירה אותו. זו הפעם השנייה באותו קובץ שהשער
+  // אישר תיעוד במקום קוד, ולכן כאן חותכים הערות לפני הבדיקה.
+  const hookCode = hook
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*"))
+    .join("\n");
+
+  if (/useLayoutEffect\s*\(/.test(hookCode))
+    ok.push("המדידה לפני הציור — בלי הבהוב");
+  else problems.push("useFitText אינו קורא ל-useLayoutEffect — יהיה הבהוב בכל טעינה");
+}
 
 // 3. title על השם — ב-compact הוא מקוצר, וזו הדרך היחידה לראות אותו מלא
 //    בלי לפתוח את הכרטיס.

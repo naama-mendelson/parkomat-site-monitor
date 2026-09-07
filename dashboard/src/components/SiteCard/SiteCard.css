@@ -31,10 +31,6 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-
-  /* ⚠️ זה מה שנותן ל-`100cqi` משמעות בשם האתר (ראה .card-name-text).
-     בלי השורה הזו ה-clamp שם נופל לתקרה תמיד, והשם חוזר להיחתך. */
-  container-type: inline-size;
 }
 
 .card-name {
@@ -97,12 +93,8 @@
 .card-name-text {
   white-space: nowrap;
   overflow: hidden;
-  min-width: 6ch;
-  font-size: clamp(
-    0.7rem,
-    calc((100cqi - 3.2rem) / (var(--name-chars, 16) * 0.58)),
-    1em
-  );
+  flex: 1;
+  min-width: 0;
 }
 
 .vip-badge {
