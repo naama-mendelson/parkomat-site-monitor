@@ -1,5 +1,5 @@
 diff --git a/Parkomat.Agent/installer.iss b/Parkomat.Agent/installer.iss
-index 3d5c98b..7dd19df 100644
+index 3d5c98b..038c972 100644
 --- a/Parkomat.Agent/installer.iss
 +++ b/Parkomat.Agent/installer.iss
 @@ -1,4 +1,4 @@
@@ -13,7 +13,7 @@ index 3d5c98b..7dd19df 100644
  ;          והשרת אינו מנוי אליהם: כל הבדיקות ירוקות והאתר נעדר מהדשבורד.
  ;          כעת: הסוכן מסרב לשדר, הסמל נשאר אפור, ו"בדוק חיבור" אומר למה.
 -#define MyAppVersion "1.0.20"
-+#define MyAppVersion "1.0.20.1"
++#define MyAppVersion "1.0.20.2"
  #define MyAppPublisher "Parkomat"
  #define ServiceName "ParkomatAgent"
  #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -36,6 +36,46 @@ index 3d5c98b..7dd19df 100644
  OutputDir=installer-output
  Compression=lzma2
  SolidCompression=yes
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/BridgeConfigWriter.cs b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/BridgeConfigWriter.cs
+index 3ff557a..578dfc5 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/BridgeConfigWriter.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/BridgeConfigWriter.cs
+@@ -1,4 +1,4 @@
+-using System.Linq;
++﻿using System.Linq;
+ using System.Text;
+ 
+ namespace Parkomat.Agent.Core.Configuration;
+@@ -154,7 +154,28 @@ public static class BridgeConfigWriter
+         // הגשר כמת (1.5 × keepalive = 90 שניות). לא משאירים את זה למקרה.
+         sb.AppendLine("keepalive_interval 60");
+ 
+-        sb.AppendLine("cleansession true");
++        // ============================================================
++        // ⚠️ cleansession **false**, ולא true — נמדד, לא הונח
++        // ============================================================
++        // זו היתה השורה היחידה כאן בלי נימוק, ומשמעותה היתה
++        // ש**כל הודעה שנוצרה בזמן נתק אינטרנט אבדה לנצח** — לא
++        // התעכבה, אבדה. נמדד בניסוי מבוקר (tools/cleansession-test.sh):
++        // שני ברוקרים מקומיים, אותו קונפיג בדיוק, ניתוק יזום,
++        // חמש הודעות QoS-1:
++        //
++        //     cleansession true   →  0 מתוך 5 הגיעו
++        //     cleansession false  →  5 מתוך 5 הגיעו
++        //
++        // ⚠️ וההערה ב-Worker טענה את ההפך — "Mosquitto מצבור את
++        // ההודעות ומשדר אותן כשהגשר חוזר". היא תיארה כוונה
++        // שמעולם לא התקיימה.
++        //
++        // מה שזה משחזר, בדיוק: הודעות שהמתינו נושאות את החותם
++        // ה**מקורי** שלהן, ולכן **תפעולים** נקלטים (השרת מבצע dedup
++        // על occurred_at, וזה backfill אמיתי — זהו מידע הלקוח). הודעות
++        // **מצב** מאוחרות עדיין נדחות על ידי שומר ה-backfill, וזה נכון:
++        // ה-resync בחיבור מחדש כבר מסר את המצב הנוכחי עם חותם טרי.
++        sb.AppendLine("cleansession false");
+         sb.AppendLine();
+ 
+         // --- פרטי ההתחברות ל-HiveMQ (מתוך ההגדרות) ---
 diff --git a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs
 index 8912730..049bfff 100644
 --- a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs
@@ -236,7 +276,7 @@ index 34d6acd..1ccdc6f 100644
  }
 \ No newline at end of file
 diff --git a/Parkomat.Agent/src/Parkomat.Agent.Service/Parkomat.Agent.Service.csproj b/Parkomat.Agent/src/Parkomat.Agent.Service/Parkomat.Agent.Service.csproj
-index 6fbb6b2..d896a2b 100644
+index 6fbb6b2..4e63f7f 100644
 --- a/Parkomat.Agent/src/Parkomat.Agent.Service/Parkomat.Agent.Service.csproj
 +++ b/Parkomat.Agent/src/Parkomat.Agent.Service/Parkomat.Agent.Service.csproj
 @@ -2,7 +2,7 @@
@@ -244,7 +284,7 @@ index 6fbb6b2..d896a2b 100644
    <PropertyGroup>
      <TargetFramework>net10.0</TargetFramework>
 -    <Version>1.0.20</Version>
-+    <Version>1.0.20.1</Version>
++    <Version>1.0.20.2</Version>
      <Nullable>enable</Nullable>
      <ImplicitUsings>enable</ImplicitUsings>
      <UserSecretsId>dotnet-Parkomat.Agent.Service-cd2d6f0d-883a-4e07-8b16-eed3cf1391fb</UserSecretsId>
@@ -362,7 +402,7 @@ index 4d03677..9672e45 100644
              {
                  Host = _mqttHost.Text.Trim(),
 diff --git a/Parkomat.Agent/src/Parkomat.Agent.Tray/Parkomat.Agent.Tray.csproj b/Parkomat.Agent/src/Parkomat.Agent.Tray/Parkomat.Agent.Tray.csproj
-index 1037443..ad08e2b 100644
+index 1037443..2fb2371 100644
 --- a/Parkomat.Agent/src/Parkomat.Agent.Tray/Parkomat.Agent.Tray.csproj
 +++ b/Parkomat.Agent/src/Parkomat.Agent.Tray/Parkomat.Agent.Tray.csproj
 @@ -3,7 +3,7 @@
@@ -370,12 +410,10 @@ index 1037443..ad08e2b 100644
  		<OutputType>WinExe</OutputType>
  		<TargetFramework>net10.0-windows</TargetFramework>
 -		<Version>1.0.20</Version>
-+		<Version>1.0.20.1</Version>
++		<Version>1.0.20.2</Version>
  		<Nullable>enable</Nullable>
  		<UseWindowsForms>true</UseWindowsForms>
  		<ImplicitUsings>enable</ImplicitUsings>
-
---- הבדיקה ההתנהגותית (קובץ חדש) ---
 diff --git a/Parkomat.Agent/tests/Parkomat.Agent.Service.Tests/PlcTransportTests.cs b/Parkomat.Agent/tests/Parkomat.Agent.Service.Tests/PlcTransportTests.cs
 new file mode 100644
 index 0000000..120a40c
