@@ -54,7 +54,19 @@ export async function fetchInsightsDirect(code, { from, to }) {
         .from("operations")
         .select("site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at, excluded_at")
         .gte("occurred_at", from).lt("occurred_at", to)
+        // ⚠️ **שובר שוויון ב-id, בדיוק כמו בזרוע השרת.** החותמים הם שניות
+        // שלמות, ולכן `end` של פעולה אחת ו-`start` של הבאה יכולים ליפול על
+        // אותה שנייה. נמדד: 4 מקרים ב-30 יום, ובאחד מהם שתי ההודעות באותו
+        // כיוון — כלומר הן מתחרות על אותו מפתח זיווג.
+        //
+        // בלי שובר שוויון הסדר תלוי במסד, ושתי הזרועות עלולות לזווג אחרת
+        // ולהחזיר מספרים שונים לאותם נתונים. השרת כבר עושה `ORDER BY
+        // occurred_at ASC, id ASC`; זו ההשלמה לצד השני.
+        //
+        // ⚠️ והחשיפה הזו נוצרה כאן: כשמפתח הזיווג כלל את מספר הכרטיס, שתי
+        // ההודעות האלה היו במפתחות נפרדים ולא נגעו זו בזו כלל.
         .order("occurred_at", { ascending: true })
+        .order("id", { ascending: true })
         .range(a, b)
     ), FETCH_CAP),
 
