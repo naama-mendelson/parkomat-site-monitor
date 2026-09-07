@@ -474,6 +474,86 @@ burned by that before (three gates reported "did not run" for months). Verified 
 with the test skipping unconditionally, `dotnet test` reports **Passed!** and the gate fails
 on *"zero operations: the test finished green without sending anything"*.
 
+## ⚠️ A new site that never reports: check the firewall's **outbound default**
+
+Measured at site 1326 (07/09/2026), which had been registered for a day and had never
+reported once.
+
+```
+Get-NetFirewallProfile | Select-Object Name, DefaultOutboundAction
+Domain   Block
+Private  Block
+Public   Block
+```
+
+**Windows ships `Allow` here.** Some machines arrive hardened — an image, a policy, or
+somebody's decision — and then *nothing leaves the PC* unless an explicit rule permits it.
+
+### The fingerprint, and why it is not "no internet"
+
+The connection test said:
+
+```
+✓ site 1326
+✓ PLC 192.168.1.3:502, Modbus register 290
+✗ HiveMQ: An attempt was made to access a socket in a way forbidden by its access permissions
+```
+
+That text is Windows **10013 (WSAEACCES)**, and it is the whole diagnosis: a firewall
+refuses `connect()` immediately, while a dead network produces a **timeout** and a wrong
+password produces `NotAuthorized` from the broker. ⚠️ **Three different failures that look
+identical on a dashboard, and are told apart only by that string.**
+
+Two things made it look like a working network, and both cost time:
+
+- **DNS resolved.** Windows' built-in Core Networking rules allow it, so names turned into
+  addresses and the machine seemed online.
+- **The PLC answered.** It sits on the local subnet, so the site's own hardware was fine —
+  which is exactly what makes an operator conclude the problem is in the cloud.
+
+`Test-NetConnection 1.1.1.1 -Port 443` returning **False** is what settles it: nothing
+reaches anywhere.
+
+### The fix is four rules, and it is four because of four processes
+
+Rules are per-program, and the traffic does not all come from one:
+
+| Program | Why |
+|---|---|
+| `mosquitto\mosquitto.exe` | the bridge to HiveMQ, 8883 — **this is the data path** |
+| `service\Parkomat.Agent.Service.exe` | Supabase over 443, when the direct path is on |
+| `tray\Parkomat.Agent.Tray.exe` | ⚠️ **the connection test itself** |
+| UDP 123 (any program) | time sync — see below |
+
+⚠️ **The Tray rule is the one that is forgotten**, and forgetting it is expensive: the data
+path starts working while *"בדוק שוב"* keeps failing, because the test runs in a different
+process from the thing it tests. That reads as "the fix did not work".
+
+⚠️ **And `Test-NetConnection` keeps returning False afterwards — correctly.** It runs inside
+`powershell.exe`, which has no rule. The only proof that counts is the site reporting.
+
+⚠️ **Use literal paths, never `$env:LOCALAPPDATA`.** The rules must be created from an
+elevated shell, where that variable resolves to the *administrator's* profile — producing a
+rule on a path that does not exist, which looks exactly like a rule that works.
+
+### The same block explains clock drift
+
+`w32tm /resync` fails on such a machine, and a site whose clock drifts past **300 seconds**
+has its messages rejected outright. Sites 1415 and 1416 drift 436s and 1,020s respectively —
+worth checking the same setting there before looking anywhere else. One cause, two symptoms
+that look unrelated.
+
+⚠️ On 1326 the NTP rule alone was not enough: the **Windows Time service was not running**.
+`Set-Service w32time -StartupType Automatic; Start-Service w32time` first.
+
+### What this was not
+
+`ConnectionTester.cs` and `BridgeConfigWriter.cs` were byte-identical to the day before, the
+other 17 sites were reporting through the same HiveMQ throughout, and the only agent change
+in that window was an additive config field defaulting to `false`. **The agent behaved
+correctly and said so precisely** — the diagnosis took minutes because the test names the
+operating system's own error instead of printing "connection failed".
+
 ## The version lives in one place
 
 `Directory.Build.props` holds `<Version>`; neither `.csproj` declares its own (one that does
