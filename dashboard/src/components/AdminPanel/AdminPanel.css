@@ -375,3 +375,36 @@
   .adm-row { flex-wrap: wrap; }
   .adm-actions { width: 100%; justify-content: flex-end; }
 }
+
+
+/* ============================================================
+   ⚠️ סיסמת הסוכן — מודל, ולא הודעה בראש הדף
+   ============================================================
+   נמדד בשטח: ההודעה צוירה מעל שורות האתרים וחייבה
+   לגלול עד למעלה כדי לראות אותה.
+   ⚠️ והסיסמה הזו מוצגת **פעם אחת בחייה** — Supabase שומר
+   גיבוב בלבד. הודעה שצריך לחפש היא הודעה שמישהו יסגור
+   בלי לראות, ואז האתר אינו ניתן לחיבור עד סיבוב נוסף. */
+.adm-agent-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+  padding: 16px;
+}
+
+.adm-agent-modal {
+  width: 460px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 18px;
+  text-align: start;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}

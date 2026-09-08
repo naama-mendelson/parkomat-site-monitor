@@ -317,7 +317,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
             ניתנת לשחזור — היעלמות אוטומטית הייתה מאבדת אותה לתמיד ומשאירה
             אתר שאי אפשר לחבר. הסגירה חייבת להיות פעולה של אדם. */}
         {agentIssued && (
-          <div className="adm-msg" style={{ textAlign: "start" }}>
+          <div className="adm-agent-overlay">
+          <div className="adm-agent-modal">
             <b>{agentIssued.rotated
               ? `הונפקה סיסמה חדשה לאתר ${agentIssued.code}`
               : `נוצרה זהות לאתר ${agentIssued.code}`}</b>
@@ -344,6 +345,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
               <button className="adm-btn-ghost"
                 onClick={() => setAgentIssued(null)}>העתקתי, סגור</button>
             </div>
+          </div>
           </div>
         )}
 
