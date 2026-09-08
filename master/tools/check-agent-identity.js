@@ -138,6 +138,31 @@ const ok = (name, cond, detail = "") => {
   ok("המסד חזר בדיוק למה שהיה", after.n === before.n && left.n === 0,
      `לפני ${before.n}, אחרי ${after.n}, שאריות ${left.n}`);
 
+  // ============================================================
+  // ⚠️ כיסוי הצי — טענה שלישית, ומסוג אחר לגמרי
+  // ============================================================
+  // כל מה שמעל בודק שהמנגנון **עובד**. זה בודק שהוא **הוחל על כולם**.
+  // רישום אתר מנפיק זהות דרך `provision-agent`, אבל כישלון שם **אינו
+  // מפיל את הרישום** — בכוונה, כי `register_site` כבר בוצע. התוצאה היא
+  // אתר שנראה מותקן לחלוטין, אינו מייצר שום שגיאה, ופשוט לעולם לא ידווח.
+  // אין מסך שעליו זה נראה; זה המסך.
+  const missing = await db.prepare(`
+    SELECT s.code FROM sites s
+     WHERE NOT EXISTS (SELECT 1 FROM app_users u
+                        WHERE u.site_id = s.id AND u.role = 'agent' AND u.is_active)
+     ORDER BY s.code`).all();
+  console.log("");
+  ok("לכל אתר יש זהות סוכן פעילה", missing.length === 0,
+     missing.map((r) => r.code).join(", "));
+
+  // ⚠️ **ו"יש זהות" אינו "מדווח".** זהות שאיש לא נכנס איתה נראית זהה
+  // לחלוטין לזהות עובדת בכל שאילתה. המספר הזה אינו כשל — הוא המדד
+  // שאומר כמה רחוק המעבר הגיע בפועל.
+  const live = await db.prepare(
+    "SELECT COUNT(*)::int AS n FROM alive WHERE seen_at IS NOT NULL").get();
+  const total = await db.prepare("SELECT COUNT(*)::int AS n FROM sites").get();
+  console.log(`     ℹ️  ${live.n}/${total.n} אתרים באמת פועמים — לשאר הזהות קיימת ואינה בשימוש`);
+
   console.log(`\n${"=".repeat(50)}`);
   console.log(fail === 0 ? `✅ עברו ${pass}` : `❌ נפלו ${fail} · עברו ${pass}`);
   process.exit(fail === 0 ? 0 : 1);

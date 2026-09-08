@@ -694,8 +694,21 @@ hand edit.
 - **The password does not always survive an install.** It is far more dangerous now:
   with MQTT off, a wiped password means a *dead* site rather than a degraded one. The
   derivation above is what keeps that survivable — it falls back to MQTT.
-- **17 sites still need an agent identity** before they can follow. The dashboard
-  already issues one per site (*זהות סוכן* on every row in `AdminPanel`).
+- ~~**17 sites still need an agent identity** before they can follow.~~ ⚠️ **Measured
+  08/09/2026: all 21 sites already have one.** Every site has an active `role='agent'`
+  row in `app_users`, so identity is no longer the blocker and the remaining work is
+  per-machine configuration, not provisioning.
+
+  ⚠️ **But only 18 of the 21 passwords exist anywhere.** `provision-agent-user.js --all`
+  wrote `agent-passwords-2026-09-03-*.txt` (git-ignored) for 18 sites; **1326, 1414 and
+  3510** were provisioned later through the dashboard, which shows the password **once**
+  and stores only a hash. Those three cannot be connected without rotating — and
+  rotating them is free today precisely because they are still on MQTT and the password
+  is used by nothing. It stops being free the moment one of them is switched over.
+
+  ⚠️ **And the identity count says nothing about who is actually reporting.** 21 sites
+  hold an identity; **`alive` has exactly one row — 2438.** An identity that no agent
+  signs in with looks identical in every query to one that works.
 
 ## ⚠️ First site live on the direct path — 2438 (מגדל 1), 03/09/2026
 
