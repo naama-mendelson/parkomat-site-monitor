@@ -546,6 +546,34 @@ and operations are not queued for a drain that will never happen.
   Mosquitto publishes it once and the server marks the site disconnected. The next
   direct write clears it. It is a blip, not a flap.
 
+### ⚠️ "No connection to the controller" had no route out of a direct-only site
+
+The PLC-failure path published `state: error` through `TryPublishAsync(mqtt, …)` — **MQTT
+only**. At a site where MQTT is off, that report reached nobody.
+
+**And that silently inverted a decision written two lines above it.** The code chooses
+`Error` over `no_comm` on purpose, because `no_comm` sits **outside the availability
+denominator** — sending it there hides the outage from the metrics instead of explaining it.
+But the failure path ends in `continue`, which skips the direct-write stage *and* the
+heartbeat, so `app.mark_silent_agents` marks the site `no_comm` after 3–4 minutes. Exactly
+the state that was rejected, and without the fault text that separates *"the machine broke"*
+from *"we cannot reach it"* — two different call-outs.
+
+- **The write happens inside the failure path, not through `mirrored`.** `mirrored` is
+  drained in the direct-write stage, which sits *after* the `continue`. A message put there
+  would never be sent, because a successful cycle does not arrive while the controller is
+  dead — which is the whole situation.
+- **A failed direct write is queued, not dropped.** The controller may come back in an hour;
+  the segment must open when the fault happened, not when it recovered.
+- **`plcErrorReported` is set from whichever route succeeded.** Left inside the MQTT success
+  branch it stays false at a direct-only site, and the same fault is re-sent every cycle —
+  one request per second, forever, about a fault already reported.
+
+⚠️ **`TheDirectPathIsNotInsideTheBrokerTry` went red on this correct change**, because it
+compared *positions* (`send > lost`) and so assumed the file holds exactly one direct write.
+It now checks the broker `try` **body** for a direct call, which is the actual claim — and
+re-injecting the original bug still fails it.
+
 ### The contract is one file, pinned from both sides
 
 `shared/contracts/ingest-batch.sample.json` is the source of truth for the request body.

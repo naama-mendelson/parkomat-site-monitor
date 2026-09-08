@@ -185,14 +185,25 @@ public class DualWriteWiringTests
         // ⚠️ נמדד פעמיים: בלוג של אתר 2438 כל שש הכתיבות הישירות הופיעו
         // מיד אחרי חיבור-מחדש; ובניסוי מבוקר ב-06/09/2026 סוכן שהורץ בלי
         // ברוקר כלל לא כתב דבר בשלוש דקות — לא הודעה, ואפילו לא פעימה.
+        // ⚠️ **הטענה היא "לא בתוך ה-try", ולא "אחרי המחרוזת הזו".** הגרסה
+        // הראשונה השוותה מיקומים ודרשה `send > lost`, כלומר הניחה שיש
+        // בקובץ כתיבה ישירה **אחת**. ברגע שנוספה כתיבה ישירה בנתיב כשל
+        // ה-PLC — שיושב *לפני* שלב הברוקר, ולכן בטוח בדיוק כפי שנדרש —
+        // ‏`IndexOf` תפס דווקא אותה והשער האדים על קוד תקין.
+        //
+        // עכשיו נבדק מה שבאמת חשוב: גוף ה-try של הברוקר עצמו.
         string w = Worker();
         int connect = w.IndexOf("await mqtt.EnsureConnectedAsync", StringComparison.Ordinal);
         int lost = w.IndexOf("Broker connection lost", StringComparison.Ordinal);
-        int send = w.IndexOf("supabase.SendAsync", StringComparison.Ordinal);
+        Assert.True(connect > 0 && lost > connect, "לא נמצאו העוגנים של שלב הברוקר");
 
-        Assert.True(connect > 0 && lost > 0 && send > 0, "לא נמצאו שלושת העוגנים");
-        Assert.True(send > lost,
-            "הכתיבה הישירה נמצאת בתוך ה-try של הברוקר — ברוקר מת ישתיק גם אותה");
+        string brokerTry = w[connect..lost];
+        Assert.DoesNotContain("supabase.SendAsync", brokerTry);
+        Assert.DoesNotContain("supabase.BeatAsync", brokerTry);
+
+        // ⚠️ ובלי זה הבדיקה ריקה: קובץ בלי שום כתיבה ישירה היה עובר אותה.
+        Assert.Contains("supabase.SendAsync", w[lost..]);
+        Assert.Contains("supabase.BeatAsync", w[lost..]);
     }
 
     [Fact]

@@ -624,10 +624,15 @@ public class Worker : BackgroundService
                         FaultText = PlcUnreachableFault
                     };
 
+                    // ⚠️ **דווח, ולא בהכרח ב-MQTT.** הדגל נשאר false עד
+                    // שמסלול כלשהו הצליח — אחרת אתר במסלול ישיר בלבד היה
+                    // משדר את אותה תקלה בכל סבב, לנצח.
+                    bool errorReported = false;
+
                     if (await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(errorState, stoppingToken),
                             "error state (PLC timeout)", stoppingToken))
                     {
-                        plcErrorReported = true;   // לא נשדר error שוב עד שה-PLC יחזור
+                        errorReported = true;
                         mqttWasConnected = true;
                         _logger.LogInformation("-> Published STATE: error (PLC timeout)");
                     }
@@ -635,6 +640,56 @@ public class Worker : BackgroundService
                     {
                         mqttWasConnected = false;
                     }
+
+                    // ============================================================
+                    // ⚠️ ובמסלול הישיר — כאן, ולא דרך `mirrored`
+                    // ============================================================
+                    // נתיב הכשל הזה מסתיים ב-`continue`, כלומר הוא **מדלג על
+                    // שלב הכתיבה הישירה כולו**. הודעה שהייתה נכנסת ל-`mirrored`
+                    // לא הייתה נשלחת לעולם, כי סבב מוצלח לא יגיע כל עוד הבקר
+                    // מת — וזה בדיוק המצב שבו התקלה הזו רלוונטית.
+                    //
+                    // ⚠️ **ובלי זה, ההחלטה שמעל מתהפכת בשקט באתר ישיר.** נכתב
+                    // שם במפורש שהמצב נשאר `Error` ולא `no_comm`, כדי שההשבתה
+                    // **תיספר בזמינות** ותישא תיאור. אבל כש-MQTT כבוי הדיווח לא
+                    // יוצא לשום מקום, וה-`continue` עוצר גם את הפעימה — כך
+                    // ש-`mark_silent_agents` מסמן `no_comm` תוך 3–4 דקות.
+                    // כלומר בדיוק המצב שנפסל, ומחוץ למכנה של הזמינות.
+                    if (supabase is not null)
+                    {
+                        var item = BatchPayload.From(errorState);
+                        try
+                        {
+                            WriteResult res = await supabase.SendAsync(new[] { item }, stoppingToken);
+                            if (res.Ok)
+                            {
+                                errorReported = true;
+                                _logger.LogInformation(
+                                    "-> Supabase: error state (PLC timeout) written directly.");
+                            }
+                            else
+                            {
+                                // ⚠️ לתור, ולא לזריקה. הבקר עלול לחזור בעוד שעה,
+                                // ואז הסבב המוצלח הראשון ירוקן את התור — והמקטע
+                                // ייפתח בזמן שבו התקלה קרתה ולא בזמן ההתאוששות.
+                                supaQueue.Enqueue(item);
+                                supaWaiting = supaQueue.Count;
+                                _logger.LogWarning(
+                                    "Direct write of the PLC-timeout error failed ({Status}): {Error}. " +
+                                    "Queued ({Total} waiting).", res.Status, res.Error, supaWaiting);
+                            }
+                        }
+                        catch (Exception direct)
+                        {
+                            supaQueue.Enqueue(item);
+                            supaWaiting = supaQueue.Count;
+                            _logger.LogWarning(
+                                "Direct write of the PLC-timeout error threw: {Message}. " +
+                                "Queued ({Total} waiting).", direct.Message, supaWaiting);
+                        }
+                    }
+
+                    plcErrorReported = errorReported;   // לא נשדר שוב עד שה-PLC יחזור
                 }
 
                 // קריאה נכשלה — אין מה למסור למוח; ממתינים וממשיכים לסבב הבא.
