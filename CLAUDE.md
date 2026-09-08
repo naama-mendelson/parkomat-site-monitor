@@ -698,6 +698,39 @@ says nothing about state** — and `sites.status` moves only on a state message,
 a site doing one operation a day may not arrive for days. A live site that reads as
 disconnected is precisely the failure this migration exists to remove.
 
+### ⚠️ Turning MQTT off at a site leaves a **retained will** behind on HiveMQ
+
+Mosquitto publishes its bridge notification **retained**, so HiveMQ keeps the last value and
+hands it to every new subscriber. A site that moved to the direct path and had its Mosquitto
+stopped leaves `"0"` there — *the bridge is down* — **forever**.
+
+**Measured 08/09/2026.** Every `master` restart re-delivered 2438's will from 06/09 and marked
+a live site disconnected. The fingerprint is unmistakable: five `bridge` messages from sites
+that do not exist (1122, 1234, 4444, 0, empty) inside two seconds — retained delivery to a
+fresh subscription — with the real site's `no_comm` in the same second.
+
+Two things fix it, and both are needed:
+
+- **The guard** (`ingestion/bridge-handler.js`) rejects a will for a site with a fresh beat.
+  It handles the symptom: the message still arrives and is still recorded as a drop.
+- **`tools/clear-retained-will.js` deletes it at the source** — a zero-length retained publish,
+  the only way to remove a retained message in MQTT.
+
+⚠️ **`MASTER_USERNAME` cannot publish**, and an ACL-denied publish **returns no error** — the
+PUBACK simply never arrives and the tool hangs silently. Point it at a publishing account with
+`CLEAR_USERNAME` / `CLEAR_PASSWORD` (the agent account works).
+
+⚠️ **And verifying by re-subscribing on the same connection is worthless.** The first version
+did exactly that, reported *“the wills were deleted”*, and the retained `0` was still there —
+a broker does not re-deliver a retained message to a client that already holds the subscription,
+so absence looked identical to success. The check now opens a **separate connection**, which is
+what `master` does on boot.
+
+⚠️ **The tool refuses to clear the will of a site that is still on MQTT.** There the will is
+the *only* power-loss detector, and deleting it leaves a dead site looking healthy.
+
+**Add this to the cut-over procedure for every future site.**
+
 ### The switch, and why it is derived
 
 `Mqtt.Disabled` in `config.json`, and `SiteConfig.MqttEnabled` is
