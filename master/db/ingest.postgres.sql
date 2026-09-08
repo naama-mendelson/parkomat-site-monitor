@@ -333,6 +333,26 @@ BEGIN
     END IF;
   END IF;
 
+  -- ⚠️ אותו אירוע שהמסלול של master משדר, ומאותה סיבה — ראה ההערה
+  -- המקבילה ב-`app.ingest_state`. `cardNumber` הוא **הכרטיס המושלם**
+  -- (`v_card`) ולא זה שהגיע בהודעה: אחרת הכרטיס נשמר נכון במסד אבל
+  -- הכרטיס שעל המסך מתעדכן בזמן אמת לערך ריק, ורק רענון מלא מתקן.
+  INSERT INTO events (site_id, site_code, type, payload, created_at)
+  SELECT p_site_id, s.code, 'operation',
+         jsonb_build_object(
+           'type',         'operation',
+           'code',         s.code,
+           'startEnd',     p_start_end,
+           'entryExit',    p_entry_exit,
+           'cardNumber',   v_card,
+           'cycleCounter', p_cycle,
+           'cycleTotal',   v_cyc_total,
+           'state',        p_state,
+           'isAnomaly',    v_anomaly,
+           'occurredAt',   p_occurred_at),
+         v_now
+    FROM sites s WHERE s.id = p_site_id;
+
   RETURN QUERY SELECT v_id, true, v_card, v_cut, v_cut_by,
                       v_cyc_mode, v_cyc_total, v_synced;
 END;
@@ -557,6 +577,37 @@ BEGIN
                                       THEN v_at ELSE last_seen END
      WHERE id = p_site_id;
   END IF;
+
+  -- ============================================================
+  -- ⚠️ האירוע — בלעדיו המסך פשוט אינו זז
+  -- ============================================================
+  -- `events` הוא **חוזה האירועים** של המערכת (כלל 8): גם ה-SSE וגם
+  -- Realtime קוראים ממנו, ומשם מגיע גם ה-replay אחרי שטאב התנתק.
+  -- המסלול של master כותב שורה כזו בכל שינוי (`bus.publish`); המסלול
+  -- הישיר **לא כתב כלל**.
+  --
+  -- ⚠️ **נמדד ב-08/09/2026:** שלושה משינויי המצב של 2438 באותו יום היו
+  -- ב-`status_history` בלי שורת `events` מקבילה, מול 5 מתוך 5 עם באתר
+  -- שעל MQTT. הנתונים היו נכונים — אבל הכרטיס במסך לא זז עד רענון ידני,
+  -- וזה נראה בדיוק כמו אתר תקוע. עם אתר אחד זה מטרד; ביום שעשרה אתרים
+  -- יעברו, זה חצי מהמסך.
+  --
+  -- ⚠️ **המבנה חייב להיות זהה לזה של `bus.publish`**, ולא "דומה":
+  -- הדשבורד קורא את אותם שדות בדיוק משני המקורות, ושדה חסר מופיע כערך
+  -- ריק על הכרטיס רק במסלול אחד — הבדל שאי אפשר לראות בלי להשוות.
+  -- `faultText` נכלל גם כשהוא NULL, בדיוק כמו בצד ה-JS, אחרת התקלה
+  -- הייתה מופיעה מיד והתיאור שלה רק ברענון.
+  INSERT INTO events (site_id, site_code, type, payload, created_at)
+  SELECT p_site_id, s.code, 'state',
+         jsonb_build_object(
+           'type',       'state',
+           'code',       s.code,
+           'oldStatus',  v_site.status,
+           'newStatus',  p_status,
+           'occurredAt', v_at,
+           'faultText',  p_fault_text),
+         v_now
+    FROM sites s WHERE s.id = p_site_id;
 
   RETURN QUERY SELECT true, 'applied'::text, v_at;
 END;
