@@ -100,25 +100,32 @@ async function main() {
   }
   if (targets.length === 0) { console.log("\nאין מה למחוק."); return; }
 
+  // ⚠️ **שני חיבורים, ולא מסיבות סגנון.** הקריאה חייבת להיעשות בחשבון של
+  // master — הוא המנוי האמיתי, ומה שהוא רואה בעלייה הוא כל השאלה. קריאה
+  // בחשבון המפרסם עלולה להחזיר "אין" רק מפני שה-ACL שלו אינו מתיר לו
+  // לראות את ה-topic, ואז **"אסור לי לראות" נראה בדיוק כמו "אין מה
+  // למחוק"** — אותה מלכודת היעדר שהפילה כאן כבר את בדיקת ה"אחרי".
+  const reader = mqtt.connect(`mqtts://${HOST}:${PORT}`, {
+    username: USERNAME, password: PASSWORD,
+    clientId: `${CLIENT_ID}-read`, clean: true,
+  });
+  await new Promise((res, rej) => { reader.once("connect", res); reader.once("error", rej); });
+
   const client = mqtt.connect(`mqtts://${HOST}:${PORT}`, {
     username: PUB_USER, password: PUB_PASS, clientId: CLIENT_ID, clean: true,
   });
-
-  await new Promise((res, rej) => {
-    client.once("connect", res);
-    client.once("error", rej);
-  });
-  console.log(`\nמחובר ל-HiveMQ כ-${CLIENT_ID}`);
+  await new Promise((res, rej) => { client.once("connect", res); client.once("error", rej); });
+  console.log(`\nמחובר: פרסום כ-${PUB_USER === USERNAME ? "master" : PUB_USER} · קריאה כ-master`);
 
   // ---------- לפני: מה שמור באמת ----------
   // ⚠️ קוראים לפני שמוחקים. מחיקה של משהו שלא היה שם נראית זהה להצלחה,
   // וזו בדיוק הדרך לדווח "טופל" על בעיה שנשארה.
   const seen = new Map();
   const topics = targets.map((c) => `sites/${c}/bridge`);
-  client.on("message", (t, p, packet) => {
+  reader.on("message", (t, p, packet) => {
     if (packet.retain) seen.set(t, p.toString() || "(ריק)");
   });
-  await new Promise((r) => client.subscribe(topics, { qos: 1 }, r));
+  await new Promise((r) => reader.subscribe(topics, { qos: 1 }, r));
   await sleep(3000);
 
   console.log("\nשמור כרגע:");
@@ -141,6 +148,7 @@ async function main() {
   }
 
   client.end(true);
+  reader.end(true);
 
   // ---------- אחרי: **חיבור חדש לגמרי** ----------
   // ⚠️ **הגרסה הראשונה עשתה unsubscribe+subscribe על אותו חיבור,
