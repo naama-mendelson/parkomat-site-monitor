@@ -564,6 +564,30 @@ async function recordBridgeState(siteId, connected, at) {
     .run(connected ? 1 : 0, at, siteId);
 }
 
+// ============================================================
+// ⚠️ האם לאתר יש פעימה טרייה במסלול הישיר
+// ============================================================
+// נולד מתקלה שנמדדה ב-08/09/2026: אתר 2438 עבר למסלול הישיר
+// ו-Mosquitto אצלו כבוי מאז 06/09 — אבל HiveMQ עדיין מחזיק את
+// **הצוואה של הגשר** מאותו רגע, ומוסר אותה מחדש **בכל פעם
+// ש-master עולה ונרשם**. נצפה במפורש: חמש הודעות bridge מאתרים
+// שאינם קיימים (1122, 1234, 4444, 0, ריק) בשתי שניות, ובאותה
+// שנייה 2438 סומן no_comm בזמן שפעם כל 60 שניות.
+//
+// ⚠️ **והשומר הקיים לא יכול לתפוס את זה.** הוא בודק `last_seen`,
+// והפעימות **אינן מעדכנות** אותו — הן מעדכנות את `alive`. אתר
+// שקט ותקין על המסלול הישיר נראה לו בן שעות.
+async function getAgentBeatAgeSeconds(siteId) {
+  const row = await db
+    .prepare(
+      "SELECT EXTRACT(EPOCH FROM (now() - seen_at)) AS age FROM alive WHERE site_id = ?"
+    )
+    .get(siteId);
+  // NULL = אין לאתר מסלול ישיר כלל. ⚠️ **וזה לא "טרי"** — 17 האתרים
+  // שעדיין על MQTT בלבד חייבים להמשיך לקבל את הצוואה כרגיל.
+  return row?.age == null ? null : Number(row.age);
+}
+
 async function getActiveMaintenance(siteId) {
   const now = new Date().toISOString();
   return await db
@@ -2403,6 +2427,7 @@ module.exports = {
   startMaintenance,
   getActiveMaintenance,
   recordBridgeState,
+  getAgentBeatAgeSeconds,
   cancelMaintenance,
   getSiteStats,
   getSiteUptime,

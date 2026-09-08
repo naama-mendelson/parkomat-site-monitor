@@ -19,9 +19,14 @@
 // והפורמט שלה קבוע ("1" או "0"). לכן היא הולכת ל-topic נפרד ולא ל-state,
 // שם החוזה מחייב JSON.
 
-const { applyStateChange, recordBridgeState, recordIngestDrop } = require("../db/queries");
+const { applyStateChange, recordBridgeState, recordIngestDrop,
+        getAgentBeatAgeSeconds } = require("../db/queries");
 const { shouldApplyNoComm } = require("./lwt-order");
 const bus = require("../bus");
+
+// ⚠️ זהה לסף של `app.mark_silent_agents(3)`. שני מספרים שונים היו יוצרים
+// חלון שבו אף מנגנון אינו מסמן, או חלון שבו שניהם מתנגשים.
+const BEAT_FRESH_SECONDS = 180;
 
 // ⚠️ כמו בדיספצ'ר: כשל ברישום הזריקה אינו מפיל את הקליטה.
 function noteDrop(row) {
@@ -65,6 +70,43 @@ async function handleBridgeState(site, payload) {
 
   if (site.status === "no_comm") {
     return;   // כבר מסומן — אין מה לעשות
+  }
+
+  // ============================================================
+  // ⚠️ צוואה של אתר שכבר עזב את MQTT
+  // ============================================================
+  // נמדד ב-08/09/2026, וזו התקלה שהשביתה את האתר הראשון
+  // במסלול הישיר: באתר 2438 אין Mosquitto מאז 06/09, אבל HiveMQ
+  // מחזיק את צוואת הגשר מאותו רגע ומוסר אותה מחדש **בכל
+  // עלייה של master**. נצפה במפורש: חמש הודעות bridge מאתרים
+  // שאינם קיימים (1122, 1234, 4444, 0, ריק) בשתי שניות — טביעת
+  // אצבע של מסירה מחדש למנוי חדש — ובאותה שנייה 2438 סומן
+  // no_comm, בזמן שפעם כל 60 שניות בלי להחסיר אף אחת.
+  //
+  // ⚠️ **השומר שמתחת אינו יכול לתפוס את זה**, ולכן זה שומר
+  // נפרד ולא תנאי נוסף בתוך אותו: הוא מודד את `last_seen`,
+  // והפעימות אינן מעדכנות אותו בכלל. אתר שקט ותקין על
+  // המסלול הישיר נראה לו בן שעות, והצוואה מתקבלת.
+  //
+  // ⚠️ **הסף הוא 3 דקות — בדיוק זה של `mark_silent_agents`.** שני
+  // מספרים שונים היו יוצרים חלון שבו אף אחד מהשניים אינו
+  // מסמן — או גרוע מכך, שבו שניהם מסמנים ומתנגשים.
+  //
+  // מה שאינו משתנה: אתר בלי שורה ב-`alive` — כלומר 20 האתרים
+  // שעדיין על MQTT בלבד — ממשיך לקבל את הצוואה בדיוק כמקודם.
+  const beatAge = await getAgentBeatAgeSeconds(site.id);
+  if (beatAge !== null && beatAge < BEAT_FRESH_SECONDS) {
+    console.warn(
+      `[bridge] ⏮️ אתר ${site.code}: הודעת נתק נדחתה — הסוכן פעם לפני ${Math.round(beatAge)}s`);
+    noteDrop({
+      topic: `sites/${site.code}/bridge`,
+      siteCode: site.code,
+      kind: "bridge",
+      reason: "bridge_will_vs_live_beat",
+      detail: `הסוכן פועם במסלול הישיר (לפני ${Math.round(beatAge)}s) · צוואת MQTT ישנה`,
+      payload: String(payload),
+    });
+    return;
   }
 
   // אותו שומר סדר כמו ב-state-handler: להודעת הגשר אין חותם זמן משלה, ולכן

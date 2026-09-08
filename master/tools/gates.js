@@ -69,6 +69,9 @@ const GATES = [
   // מתוך 1,055 השורות ב-ingest_drops הגיעו משם, כי ingest_batch החזירה
   // את הסיבה לקורא ולא כתבה אותה.
   { name: "check-direct-drops", what: "...וגם הודעה שנזרקה במסלול הישיר" },
+  // ⚠️ הצד השני של mark_silent_agents. הוא רק **מסמן**, ועד 08/09/2026
+  // לא היה בשום מקום מי שמבטל — אתר חי נשאר no_comm לצמיתות.
+  { name: "check-beat-recovery", what: "פעימה מבטלת נתק — אחרת אין דרך חזרה" },
   { name: "check-mfa",          what: "אימות דו-שלבי — אוכף ב-SQL, לא במסך" },
   { name: "check-security",     what: "חשיפה לרשת — 11 בדיקות על הייצור החי" },
   { name: "check-message-loss", what: "למה הודעות מתפספסות — חמישה גלאים" },

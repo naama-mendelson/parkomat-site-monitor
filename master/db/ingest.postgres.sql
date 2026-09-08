@@ -852,6 +852,9 @@ DECLARE
   v_i      integer := 0;
   v_kind   text;
   v_res    record;
+  v_status text;
+  v_prev   text;
+  v_now    text;
 BEGIN
   v_site := app.agent_site_id();
   IF v_site IS NULL THEN
@@ -888,6 +891,51 @@ BEGIN
          beats         = alive.beats + 1,
          agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''),
                                   alive.agent_version);
+
+  -- ============================================================
+  -- ⚠️ והפעימה **מבטלת** נתק — אחרת אין דרך חזרה
+  -- ============================================================
+  -- `app.mark_silent_agents` רק **מסמן**. עד כאן לא היה בשום מקום
+  -- הצד השני: אתר שסומן `no_comm` נשאר כך **לצמיתות**, גם כשהוא
+  -- פועם כל 60 שניות, כי רק הודעת מצב מזיזה את `sites.status` —
+  -- והסוכן משדר רק על שינוי MODE, שבאתר שקט עשוי לא להגיע ימים.
+  --
+  -- ⚠️ **נמדד ב-08/09/2026:** אתר 2438 סומן `no_comm` ב-08:22 מצוואת MQTT
+  -- ישנה, ונשאר כך בזמן שפעם במדויק כל 60.4 שניות. המסך אמר
+  -- מנותק על אתר שהוכח חי.
+  --
+  -- ⚠️ **והחזרת המצב הקודם אינה ניחוש**, וזו הנקודה שמחזיקה את
+  -- כל ההיגיון הזה. שתי תכונות של הסוכן:
+  --
+  --   1. נתיב כשל קריאת ה-PLC מסתיים ב-`continue` **לפני** שלב
+  --      הפעימה, ולכן **פעימה מוכיחה שקריאת הבקר הצליחה**
+  --      בשנייה האחרונה — לא רק שהתהליך חי.
+  --   2. הסוכן משדר רק על שינוי. אם לא שידר — המצב לא השתנה.
+  --
+  -- שתי אלה יחד אומרות שהמצב שקדם ל-`no_comm` הוא **המצב עכשיו**.
+  --
+  -- ⚠️ `maintenance` מווצא מההחזרה במפורש: חלון תחזוקה עשוי
+  -- היה לפוג בינתיים, והקמה מחדש שלו הייתה משתיקה אתר שאיש
+  -- לא ביקש להשתיק — והשתקה מוציאה את האתר ממכנה הזמינות.
+  --
+  -- ⚠️ וההחזרה עוברת ב-`ingest_state`, כמו הסימון: שם נסגר המקטע
+  -- הפתוח ונרשם האירוע. `UPDATE` ישיר היה מחזיר את הצ'יפ לירוק
+  -- ומשאיר מקטע נתק פתוח לנצח — זמינות שאינה יודעת שהאתר חזר.
+  SELECT s.status INTO v_status FROM sites s WHERE s.id = v_site;
+
+  IF v_status = 'no_comm' THEN
+    SELECT h.status INTO v_prev
+      FROM status_history h
+     WHERE h.site_id = v_site
+       AND h.status NOT IN ('no_comm', 'maintenance')
+     ORDER BY h.id DESC
+     LIMIT 1;
+
+    IF v_prev IS NOT NULL THEN
+      v_now := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+      PERFORM app.ingest_state(v_site, v_prev, v_now, NULL);
+    END IF;
+  END IF;
 
   IF jsonb_array_length(p_messages) > MAX_BATCH THEN
     RAISE EXCEPTION 'אצווה גדולה מדי (% > %)', jsonb_array_length(p_messages), MAX_BATCH
