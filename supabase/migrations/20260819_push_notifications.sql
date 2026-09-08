@@ -241,12 +241,32 @@ AS $$
      AND (NOT EXISTS (SELECT 1 FROM push_user_sites f WHERE f.app_user_id = u.id)
           OR EXISTS (SELECT 1 FROM push_user_sites f
                       WHERE f.app_user_id = u.id AND f.site_id = p_site_id))
-     -- סוגים: אין שורות = תקלה בלבד
+     -- ============================================================
+     -- ⚠️ סוגים: אין שורות = תקלה **וניתוק**
+     -- ============================================================
+     -- ברירת המחדל הייתה `p_kind = 'fault'` בלבד, וזה אומר שמי שלא נכנס
+     -- להעדפות ובחר במפורש **אינו מקבל התראת ניתוק כלל**. נמדד:
+     --
+     --     site_id=0  kind='fault'    →  1 יעד
+     --     site_id=0  kind='no_comm'  →  0 יעדים
+     --
+     -- כלומר גם התראת החשכה הקיימת וגם גלאי האתר השקט שולחים לאף אחד.
+     -- זה לא היה נראה כתקלה: הפונקציה מחזירה אפס שורות, השליחה "מצליחה",
+     -- ואין שום דבר להסתכל עליו.
+     --
+     -- ⚠️ **והתיקון המתבקש היה גרוע יותר:** להחליף ב-`send_push` את הסוג
+     -- ל-'fault' כדי לעקוף את זה. זה היה עובד — ומאבד את ההבחנה עצמה,
+     -- כי `TITLES[kind]` ב-notify-fault הופך אותה ל"תקלה" במקום
+     -- "ניתוק תקשורת". כלומר הגלאי שנבנה כדי להבדיל בין השניים היה
+     -- מדווח כמו כולם.
+     --
+     -- אתר שמנותק שעות הוא בדיוק מה שאיש לא ידע עליו במשך 9.2 ימים.
+     -- מי שלא הביע העדפה — מקבל את שניהם.
      AND (CASE
             WHEN EXISTS (SELECT 1 FROM push_user_types t WHERE t.app_user_id = u.id)
               THEN EXISTS (SELECT 1 FROM push_user_types t
                             WHERE t.app_user_id = u.id AND t.kind = p_kind)
-            ELSE p_kind = 'fault'
+            ELSE p_kind IN ('fault', 'no_comm')
           END);
 $$;
 

@@ -95,7 +95,25 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
   const body = await req.json().catch(() => null);
-  if (!body?.site_id || !body?.kind) {
+
+  // ============================================================
+  // ⚠️ site_id === 0 הוא ערך חוקי — והבדיקה הקודמת דחתה אותו
+  // ============================================================
+  // `app.send_push` שולח `site_id: 0` לכל התראה **מערכתית**: השרת שחדל
+  // לדווח, הודעות שנזרקו בקליטה, חשכה כללית, ואתר בודד ששותק. אלה לא
+  // שייכים לאתר מסוים, ואפס הוא הסימון לכך.
+  //
+  // ‏`!body.site_id` הוא בדיקת truthiness, ו-0 הוא falsy ב-JavaScript.
+  // כלומר **כל התראה מערכתית קיבלה 400** — נמדד בייצור:
+  //
+  //     {"error":"חסר site_id או kind"}   status 400
+  //
+  // ⚠️ וזו הייתה השכבה השנייה של אותה תקלה: קודם המפתח חסר והכול קיבל
+  // 401, ואחרי שהוא תוקן הכול קיבל 400. שתי סיבות שונות לגמרי לאותה
+  // תוצאה — אפס התראות — ותיקון הראשונה לבדה לא היה משנה דבר.
+  //
+  // ‏`== null` תופס גם undefined וגם null, ומקבל 0.
+  if (body?.site_id == null || !body?.kind) {
     return new Response(JSON.stringify({ error: "חסר site_id או kind" }), { status: 400 });
   }
   const { site_id, site_code, site_name, kind, fault_text } = body;
