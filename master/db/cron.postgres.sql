@@ -596,6 +596,28 @@ DECLARE
   v_req       bigint;
   v_blk       record;
   v_sil       record;
+  -- ============================================================
+  -- ⚠️ התראות מערכתיות כבויות בברירת מחדל — וזו החלטה
+  -- ============================================================
+  -- נמדד על ההיסטוריה: ארבעת הסעיפים יחד מייצרים 4–6 התראות
+  -- לשבוע. בעלת המוצר בחרה לא לקבל אותן — רק תקלה באתר
+  -- בודד, שעוברת במסלול אחר לגמרי ואינה נוגעת בדגל הזה.
+  --
+  -- ⚠️ **והדגל קיים כדי שההחלטה לא תתבטל בטעות.** תיקון
+  -- ה-`site_id: 0` ב-notify-fault כבר נמצא בריפו; בלי הדגל, הרצת
+  -- `supabase functions deploy notify-fault` מסיבה אחרת לגמרי היתה
+  -- מדליקה את כולן בשקט. הערה בתיעוד לא היתה מונעת את זה.
+  --
+  -- הזיהוי עצמו ממשיך לרוץ ו-RETURN QUERY עדיין מדווח, כך שמי
+  -- שקורא לפונקציה ידעת מה קורה. רק השליחה מושבתת.
+  --
+  -- להדליק:
+  --   INSERT INTO settings (key, value, updated_at)
+  --   VALUES ('system_alerts_enabled','true', now()::text)
+  --   ON CONFLICT (key) DO UPDATE SET value = 'true';
+  v_sys_on    boolean := COALESCE(
+                (SELECT value FROM settings WHERE key = 'system_alerts_enabled'),
+                'false') = 'true';
 BEGIN
   -- ============================================================
   -- 1. השרת חדל לדווח על עצמו
@@ -612,9 +634,10 @@ BEGIN
       -- דקות כל הלילה הוא טלפון שמשתיקים — ואז גם ההתראה הבאה תושתק.
       SELECT value INTO v_last FROM settings WHERE key = 'alert_last_heartbeat';
       IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
-        v_req := app.send_push(
+        -- שליחה רק כשהדגל דלוק — ראה v_sys_on.
+        v_req := CASE WHEN v_sys_on THEN app.send_push(
           'no_comm', 'מערכת הניטור',
-          'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת');
+          'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת') END;
 
         -- ============================================================
         -- ⚠️ הדה-דופ נרשם רק אם באמת נשלח משהו
@@ -673,9 +696,10 @@ BEGIN
   IF v_drops > 0 THEN
     SELECT value INTO v_last FROM settings WHERE key = 'alert_last_drops';
     IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
-      v_req := app.send_push(
+      -- שליחה רק כשהדגל דלוק — ראה v_sys_on.
+      v_req := CASE WHEN v_sys_on THEN app.send_push(
         'fault', 'מערכת הניטור',
-        v_drops || ' הודעות נזרקו בקליטה — ייתכן שמצב אתר אינו מעודכן');
+        v_drops || ' הודעות נזרקו בקליטה — ייתכן שמצב אתר אינו מעודכן') END;
 
       -- ⚠️ אותו נימוק כמו למעלה: אין שליחה, אין השתקה.
       IF v_req IS NOT NULL THEN
@@ -702,7 +726,8 @@ BEGIN
     -- ⚠️ דה-דופ של 6 שעות ולא שעה: נפילה נמשכת, וההתראה עליה חוזרת
     -- בכל הרצה. שעה הייתה מייצרת 60 התראות על נפילה בת יומיים וחצי.
     IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 3600 > 6 THEN
-      v_req := app.send_push('no_comm', 'מערכת הניטור', v_blk.detail);
+      -- שליחה רק כשהדגל דלוק — ראה v_sys_on.
+      v_req := CASE WHEN v_sys_on THEN app.send_push('no_comm', 'מערכת הניטור', v_blk.detail) END;
       IF v_req IS NOT NULL THEN
         INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_blackout', v_now, v_now)
           ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
@@ -743,9 +768,10 @@ BEGIN
     -- ⚠️ והסף לא נוגע במה שחשוב: **מתי מגלים**. זה נשאר 6 שעות
     -- בכל המקרים, והדה-דופ קובע רק כמה פעמים חוזרים על זה.
     IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 3600 > 24 THEN
-      v_req := app.send_push(
+      -- שליחה רק כשהדגל דלוק — ראה v_sys_on.
+      v_req := CASE WHEN v_sys_on THEN app.send_push(
         'no_comm', v_sil.site_name,
-        'מנותק ' || v_sil.quiet_hours || ' שעות ברצף');
+        'מנותק ' || v_sil.quiet_hours || ' שעות ברצף') END;
 
       -- ⚠️ אותו נימוק כמו בסעיפים שמעל: אין שליחה, אין השתקה.
       -- רישום החותם לפני שליחה שנכשלה היה משתיק 12 שעות
