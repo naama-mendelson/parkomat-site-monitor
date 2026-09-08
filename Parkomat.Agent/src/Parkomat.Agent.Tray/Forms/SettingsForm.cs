@@ -329,20 +329,29 @@ public class SettingsForm : Form
             return;
         }
 
-        // בונים אובייקט הגדרות מהשדות.
-        // הכתובות מגיעות מ-_plc (שנערך בחלונית), וה-IP/פורט מהשדות.
+        // ==========================================================
+        // ⚠️ ה-PLC **נערך במקום ונישא שלם** — ולא נבנה מחדש שדה-שדה
+        // ==========================================================
+        // כאן עמד `new PlcConfig { ... }` עם חמישה שדות מתוך שמונה, וזו
+        // לא הייתה השמטה תיאורטית: `FaultTextRegister` ו-`FaultTextMaxChars`
+        // **נמחקו בכל לחיצה על "שמור"** וחזרו לברירת המחדל. מי שכיבה את
+        // טקסט התקלה כי הבקר שלו לא תומך בו — קיבל אותו בחזרה, בשקט.
+        //
+        // ⚠️ וזו אותה מחלקת באג בדיוק כמו `Mqtt.Disabled`, שהתאפס כאן
+        // בכל שמירה ונראה בשטח כאילו המתקין מוחק אותו. הבנייה מחדש היא
+        // רשימה שצריך לזכור להאריך, וזו הפעם השלישית שמישהו לא זכר.
+        //
+        // עריכה במקום מסירה את המחלקה כולה: שדה חדש ב-`PlcConfig` נישא
+        // מעכשיו בלי שאיש יצטרך לגעת כאן. וזה מה שמאפשר ל-`Transport`
+        // (‏TCP/UDP) לשרוד שמירה בלי שורה משלו.
+        _plc.IpAddress = _plcIp.Text.Trim();
+        _plc.Port = (int)_plcPort.Value;
+
         var c = new SiteConfig
         {
             SiteId = siteId,
             PollIntervalMs = (int)_pollInterval.Value,
-            Plc = new PlcConfig
-            {
-                IpAddress = _plcIp.Text.Trim(),
-                Port = (int)_plcPort.Value,
-                ModeRegister = _plc.ModeRegister,
-                CardRegister = _plc.CardRegister,
-                CycleRegister = _plc.CycleRegister
-            },
+            Plc = _plc,
             Mqtt = new MqttConfig
             {
                 // ⚠️ נישא כפי שהוא — אין לו שדה בטופס. ראה _mqttDisabled.

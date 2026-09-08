@@ -8,13 +8,14 @@ Guidance for Claude Code when working in this repository.
 ## Overview
 
 Parkomat.Agent is a **Windows-only .NET 10 / C#** agent that runs on a PC at a parking
-site. It reads a PLC over **Modbus-TCP** and relays the site's state to the cloud
+site. It reads a PLC over **Modbus** — TCP by default, UDP where the controller only
+speaks that (see *Modbus over UDP* below) — and relays the site's state to the cloud
 (**HiveMQ**) over **MQTT**, through a local **Mosquitto** bridge.
 
 End-to-end data flow:
 
 ```
-PLC → (Modbus-TCP) → Agent Service → (MQTT localhost:1883) → Mosquitto → (bridge/TLS) → HiveMQ → server
+PLC → (Modbus TCP/UDP) → Agent Service → (MQTT localhost:1883) → Mosquitto → (bridge/TLS) → HiveMQ → server
 ```
 
 ## Solution layout
@@ -175,6 +176,103 @@ each wrap silently loses up to 65,535 cycles.
 would inflate the counter on every real reset. Instead `Worker` logs a warning on any drop.
 If drops cluster near 65,535 the counter is wider than one register and should be read as
 32 bits across two; if they come from arbitrary values, they are real resets.
+
+## Modbus over UDP — a per-site choice, and the one PLC setting that survives an upgrade
+
+Some controllers expose Modbus over **UDP only**. `PlcConfig.Transport` (`"tcp"` / `"udp"`)
+picks it; NModbus already supports both (`CreateMaster` takes a `TcpClient` **or** a
+`UdpClient`), so this added no dependency.
+
+- **`UseUdp` is derived, never stored** — same pattern as `MqttEnabled` and
+  `SupabaseConfig.Enabled`. It trims and lowercases, so `"UDP "` works.
+- **An unrecognised value falls back to TCP** — today's behaviour, not a crash and not UDP.
+  But `TransportIsKnown` exists alongside it so `Worker` logs a **warning**: a file that says
+  `udp` next to an agent reading TCP is a gap nothing else can reveal. Swallowing it silently
+  is the failure, not the fallback.
+- **The selector lives in `RegistersForm`, not the settings form.** It is an installation fact
+  about the controller, like the register addresses — not a daily setting. It is a closed
+  `DropDownList` precisely so `"Udp "` and `"tcp/udp"` cannot be typed.
+- ⚠️ **Loss and ordering are NModbus's problem, not ours.** UDP guarantees neither, so a late
+  response to an old request could be matched to a new one — pairing the MODE of one moment
+  with the cycle counter of another, exactly what the single three-register read exists to
+  prevent. NModbus validates the MBAP transaction id and retries on a mismatch. **Do not add
+  our own matching**; it would compete with that.
+- ⚠️ **`IsConnected` means less under UDP.** There is no handshake — `Connect` only fixes a
+  default destination and succeeds against an address with nothing behind it. Real failure
+  surfaces as a read **timeout**. `Worker` counts failed reads and never consults the flag,
+  so this is safe today; anyone who later reads it as "is the PLC alive" gets a correct
+  answer over TCP and a wrong one over UDP.
+
+### ⚠️ A failed UDP read is throttled to cost what a failed TCP read costs
+
+NModbus retries on no-answer (`Retries = 3`, so four attempts). With the same 3s timeout that
+makes a **failed** read cost four times as much — measured: **12,830 ms over UDP against
+3,010 ms over TCP**.
+
+That matters because of a relationship this repo has already paid for once. `WriteLiveness()`
+runs at the **top** of every loop iteration, so the gap between two liveness stamps *is* one
+iteration, and a failed PLC read dominates it. The tray declares the agent wedged after 30s
+(`RestartPolicy.WedgedAfterSeconds`, 1s polling). 12.8s still fits — but the margin drops from
+27s to 17s, and this is the exact shape of the bug in *Watchdog* above, where the agent was
+killed 12 seconds before it could publish `state: error` and the kill reset the failure counter,
+so the fault was **never reported at all**.
+
+The fix is not to drop the retries — they are *why* UDP works, since a lost datagram is not
+re-sent by any layer beneath us. Instead the same ceiling is divided across the attempts
+(`UdpAttemptTimeoutMs = IoTimeoutMs / (UdpRetries + 1)` = 750 ms). A failure then costs what
+TCP costs, and along the way there are **four** chances to recover a lost datagram instead of
+one. A controller on the LAN answers in milliseconds.
+
+`Retries` is set explicitly rather than left to the library default, because the division
+depends on it: a future NModbus that ships a different default would move the total silently,
+back toward the watchdog threshold. `AFailedUdpReadCostsNoMoreThanAFailedTcpRead` pins it, and
+reverting the division fails it.
+
+### ⚠️ Transport survives `BuildResetConfig`. The address deliberately does not.
+
+The installer drops `reset-to-defaults.flag` on **every** install — `installer.iss` says so
+in as many words ("אילוץ ברירות מחדל בכל התקנה"), and
+`Reset_ClearsEverythingThatCanBeDerivedAgain` pins it. So IP, port and registers return to
+their defaults on every upgrade, and that is a decision, not a bug.
+
+**Transport is carried through anyway, and the asymmetry is the point:**
+
+- A wrong **address** fails loudly — the log says timeout, the tray icon goes grey — and it
+  can be typed back in.
+- A wrong **transport** fails *identically*, but the reason appears nowhere: address right,
+  registers right, and the controller simply does not answer the protocol being spoken at it.
+  After a reset nothing in `config.json` records that anyone ever chose otherwise.
+- And TCP is not a neutral default here. It is correct for all 21 existing sites and **wrong
+  for exactly the UDP ones** — so a reset would break precisely the sites this feature exists
+  for.
+
+Same reasoning as `Mqtt.Disabled` on the line below it: a **decision for this site** with
+nothing to re-derive it from, as opposed to a preference that can be retyped.
+
+### The forms carry the whole `PlcConfig` — a bug that was written twice
+
+`SettingsForm.OnSave` and `RegistersForm.OnOk` both built `new PlcConfig { … }` listing five
+of eight fields, so **every save silently reset `FaultTextRegister` and `FaultTextMaxChars`**.
+Whoever disabled fault text because their controller lacks it got it back.
+
+That is the same class as `Mqtt.Disabled`, which was reset by the same `OnSave` and looked in
+the field exactly like the installer erasing it. Three occurrences of one failure say the
+*pattern* is the defect: a list you must remember to extend is a list someone will not.
+
+Both now **edit the object in place**, so a new field on `PlcConfig` is carried without anyone
+touching either form. `PlcFormWiringTests` forbids the pattern rather than counting fields.
+
+### Coverage: a real Modbus slave, in-process
+
+`PlcTransportTests` runs NModbus as a **slave** (`CreateSlaveNetwork`, over both a `UdpClient`
+and a `TcpListener`) and has `PlcReader` read from it — no hardware, no site. ⚠️ **The TCP path
+had no behavioural test at all before this**, and it is the path all 21 sites run on.
+
+`TheTransportChoiceIsActuallyHonoured` is the one that proves the branch is live: it serves
+**UDP only** and then asks for TCP on the same port, which must fail. Both read tests would
+pass against a reader that ignored `Transport` entirely; that one would not. All seven
+mutations (ignore the choice, wipe it on reset, rebuild the config in either form, make the
+box typeable, disable the UDP branch, report a bad value as known) fail the suite.
 
 ## MQTT / server contract (non-obvious — easy to break)
 

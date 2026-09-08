@@ -1182,6 +1182,83 @@ in that gate would write to `alive` itself and then confirm its own write did no
 anything — testing the gate, not the `COALESCE`, and passing even if the `COALESCE` were
 deleted.
 
+## A single silent site — what `detect_blackout` cannot see
+
+`app.detect_blackout` reads `MAX(received_at)` across **all** sites, so it answers *"is the
+system dark"*. One site that falls while the other twenty keep reporting passes underneath it,
+and that is not hypothetical:
+
+```
+3452   18/08 07:50 → 27/08 12:00    220.2 hours    nobody knew
+2439                                  88.9
+2438                                  71.0  and  68.2
+1376                                  29.8
+1284                                  24.2
+1348                                   7.5
+```
+
+Six sites, **510 hours of downtime, zero alerts.** `app.detect_silent_sites(p_hours, p_at)`
+plus section 4 of `check_ingestion_health` closes it.
+
+### The signal is a message that arrived, not an absence
+
+⚠️ **Silence was rejected as a signal, by measurement** — the root `CLAUDE.md` records it: the
+agent is edge-triggered, so per-site gaps of 61–68 hours are routine in a quiet car park, and a
+threshold that does not cry wolf over them is *longer than the outages worth catching*.
+
+So the detector reads the opposite thing: the bridge's will opens a `no_comm` segment within 90
+seconds, and the only question is how long that segment stays open. A quiet car park never
+produces one, so "quiet" and "dead" never collide.
+
+### The numbers behind the two thresholds
+
+Both were measured over 48 days of history, not chosen by feel.
+
+**6 hours to first alert.** 270 `no_comm` segments exist; most are seconds of flicker. Seven
+exceed six hours — and all seven are the real outages listed above.
+
+**24 hours between reminders.** A disconnect lasts days and the segment stays open throughout,
+so the question is not *whether* to alert but how often to repeat:
+
+| de-dup | alerts in 48 days | per week |
+|---|---|---|
+| 6h | 81 | 11.7 |
+| 12h | 42 | 6.1 |
+| **24h** | **22** | **3.2** |
+| 48h | 14 | 2.0 |
+
+24 hours gives 3452's nine-day outage nine reminders — one per day it was down — and cuts the
+noise from 11.7 to 3.2 a week. ⚠️ **Neither choice touches detection latency**, which stays at
+six hours; the de-dup only sets how often it repeats.
+
+⚠️ **The silence key is per site** (`alert_last_silent_<code>`), not one global key. A shared
+key would let one site's alert mute every other site for a day — a fleet-wide failure reported
+as a single site, which is precisely the silent gap this section exists to close.
+
+### ⚠️ The first version could not be tested against history, and that disqualified it
+
+It asked `ended_at IS NULL` — *"open right now"* — so running it at any past timestamp returned
+nothing: 3452's segment was open on 20/08 but has long since closed. **There was no way to show
+that the detector catches the case it was written for.**
+
+It now uses the overlap form (`started_at <= p_at AND (ended_at IS NULL OR ended_at > p_at)`),
+the same shape `insightsDirect` already uses. At `p_at = now()` the two are identical — no
+segment ends in the future — so production behaviour did not change; only provability did.
+`check-silent-sites` replays 18/08 at 10:00 (2.2 h — silent), 14:00 (6.2 h — fires), 25/08
+(160 h — still firing) and 27/08 13:00 (recovered — silent again).
+
+### What the gate seeds, and why it must
+
+Three cases have **no example in production**, so a history-only check would pass while blind to
+them — the `site_globals` lesson exactly. They are seeded inside a **rolled-back transaction**
+(the `check-writes` pattern): a plain 30-hour open segment must alert, one marked `excluded_at`
+must not, and one reclassified to `maintenance` must not. The gate then asserts no open
+`no_comm` segment survives — a leftover would show in the dashboard as a disconnected site and
+distort availability, i.e. the gate would manufacture the fault it hunts.
+
+All three mutations fail the gate: dropping `excluded_at`, reading raw `status` instead of
+`COALESCE(reclassified_to, status)`, and reverting to `ended_at IS NULL`.
+
 ## ⚠️ Two gates went red because the *data* moved, not the code
 
 Both were found in the same run, both are the failure mode this file already names —

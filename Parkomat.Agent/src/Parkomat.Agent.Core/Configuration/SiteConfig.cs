@@ -65,14 +65,48 @@ public class SiteConfig
     public int NtpSyncIntervalMinutes { get; set; } = 60;
 }
 
-/// <summary>הגדרות החיבור והכתובות ב-PLC (Modbus-TCP).</summary>
+/// <summary>הגדרות החיבור והכתובות ב-PLC (Modbus, מעל TCP או UDP).</summary>
 public class PlcConfig
 {
     /// <summary>כתובת ה-IP של ה-PLC.</summary>
     public string IpAddress { get; set; } = "192.168.1.3";
 
-    /// <summary>פורט Modbus-TCP. ברירת המחדל התקנית היא 502.</summary>
+    /// <summary>פורט Modbus. ברירת המחדל התקנית היא 502, גם ב-TCP וגם ב-UDP.</summary>
     public int Port { get; set; } = 502;
+
+    // ============================================================
+    // תעבורה: TCP או UDP
+    // ============================================================
+    // יש בקרים שחושפים Modbus מעל UDP בלבד. NModbus תומכת בשניהם
+    // (‏CreateMaster מקבל גם TcpClient וגם UdpClient), אז זו בחירה ולא פורט.
+    //
+    // ⚠️ **מחרוזת ולא bool, ובכוונה.** ‏`UseUdp=false` היה קורא "לא UDP"
+    // ולא אומר מה כן; ‏`Transport="tcp"` הוא מה שכתוב בקובץ וגם מה
+    // שהטכנאי רואה. וכשיתווסף RTU טורי, לא צריך bool שני שסותר את הראשון.
+    /// <summary>‏"tcp" (ברירת מחדל) או "udp".</summary>
+    public string Transport { get; set; } = "tcp";
+
+    /// <summary>
+    /// האם לדבר UDP. <b>נגזר, ולא נקרא ישירות מהקובץ.</b>
+    ///
+    /// ⚠️ ערך לא מוכר (‏"UDP ", "tcp/udp", שגיאת הקלדה) נופל ל-<b>TCP</b>,
+    /// כלומר להתנהגות של היום — ולא לקריסה ולא ל-UDP. אותו עיקרון כמו
+    /// <c>MqttEnabled</c>: מצב שאסור שיתקיים לא צריך להיות ניתן לביטוי,
+    /// ובספק — ההתנהגות הקיימת והעובדת.
+    ///
+    /// אבל <b>שקט זו לא התשובה</b>: <c>TransportIsKnown</c> קיים כדי
+    /// שהסוכן יכתוב שורת אזהרה. ערך שגוי שנבלע היה מייצר אתר שקורא
+    /// ב-TCP בזמן שהקובץ אומר UDP, ואת זה אי אפשר לאבחן מרחוק.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UseUdp => NormalizedTransport == "udp";
+
+    /// <summary>האם הערך שבקובץ הוא אחד מהערכים המוכרים (או ריק).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool TransportIsKnown =>
+        NormalizedTransport is "" or "tcp" or "udp";
+
+    private string NormalizedTransport => (Transport ?? "").Trim().ToLowerInvariant();
 
     /// <summary>כתובת ה-register שממנה נקרא את ה-MODE.</summary>
     public int ModeRegister { get; set; } = 290;

@@ -1,0 +1,444 @@
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs
+index 8912730..a9a9b8a 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/ConfigStore.cs
+@@ -134,6 +134,18 @@ public static class ConfigStore
+             return fresh;
+ 
+         fresh.SiteId = Keep(old.SiteId, fresh.SiteId);
++
++        // התעבורה שורדת את האיפוס שהמתקין עושה בכל התקנה —
++        // אחרת כל שדרוג היה מחזיר אתר UDP ל-TCP, והוא היה מפסיק
++        // לקרוא מהבקר בלי שום סימן שמסביר למה.
++        if (old.Plc is not null && !string.IsNullOrWhiteSpace(old.Plc.Transport))
++            fresh.Plc.Transport = old.Plc.Transport;
++
++        // ומאותו טעם גם פקודת הקריאה: היא עובדה על הבקר
++        // שבאתר הזה, שאין ממה לגזור מחדש, ואיפוס שלה מחזיר
++        // ל-FC 04 בלי ששום שדה בקובץ יעיד שמישהו בחר אחרת.
++        if (old.Plc is not null && old.Plc.FunctionCode > 0)
++            fresh.Plc.FunctionCode = old.Plc.FunctionCode;
+         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
+         fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);
+ 
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/SiteConfig.cs b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/SiteConfig.cs
+index 61ab97b..02c8446 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/SiteConfig.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Core/Configuration/SiteConfig.cs
+@@ -39,9 +39,42 @@ public class PlcConfig
+     /// <summary>כתובת ה-IP של ה-PLC.</summary>
+     public string IpAddress { get; set; } = "192.168.1.3";
+ 
+-    /// <summary>פורט Modbus-TCP. ברירת המחדל התקנית היא 502.</summary>
++    /// <summary>פורט Modbus. ברירת המחדל התקנית היא 502, גם ב-TCP וגם ב-UDP.</summary>
+     public int Port { get; set; } = 502;
+ 
++    // יש בקרים שחושפים Modbus מעל UDP בלבד (Slave/Server על 502).
++    // NModbus תומכת בשניהם, אז זו בחירה ולא תלות חדשה.
++    // ברירת המחדל "tcp" — אתר שלא נוגעים בו ממשיך בדיוק כמו קודם.
++    /// <summary>‏"tcp" (ברירת מחדל) או "udp".</summary>
++    public string Transport { get; set; } = "tcp";
++
++    /// <summary>האם לדבר UDP. נגזר, ולכן לא נשמר בקובץ פעמיים.</summary>
++    [System.Text.Json.Serialization.JsonIgnore]
++    public bool UseUdp => (Transport ?? "").Trim().ToLowerInvariant() == "udp";
++
++    // ============================================================
++    // פקודת הקריאה: 0x04 או 0x03
++    // ============================================================
++    // בקרים שונים חושפים את אותם ערכים במרחבים שונים:
++    // Input Registers (FC 04, טווח 3xxxx) או Holding Registers
++    // (FC 03, טווח 4xxxx). אותה כתובת במרחב הלא-נכון מחזירה
++    // שגיאת Modbus — או גרוע מכך, ערך אחר לגמרי.
++    //
++    // ⚠️ ברירת המחדל 4 — זה מה שכל האתרים עובדים איתו היום,
++    // ואתר שלא נוגעים בו חייב להמשיך בדיוק כמו קודם.
++    /// <summary>‏4 = Input Registers (ברירת מחדל), 3 = Holding Registers.</summary>
++    public int FunctionCode { get; set; } = 4;
++
++    /// <summary>
++    /// האם לקרוא Holding Registers. <b>נגזר.</b>
++    ///
++    /// ⚠️ כל ערך שאינו 3 נחשב 4 — גם 0, גם 99, וגם קובץ ישן שאין
++    /// בו את השדה בכלל. אותו עיקרון כמו <c>UseUdp</c>: בספק —
++    /// ההתנהגות הקיימת והעובדת.
++    /// </summary>
++    [System.Text.Json.Serialization.JsonIgnore]
++    public bool UseHoldingRegisters => FunctionCode == 3;
++
+     /// <summary>כתובת ה-register שממנה נקרא את ה-MODE.</summary>
+     public int ModeRegister { get; set; } = 290;
+ 
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Service/Modbus/PlcReader.cs b/Parkomat.Agent/src/Parkomat.Agent.Service/Modbus/PlcReader.cs
+index 34d6acd..20f473b 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Service/Modbus/PlcReader.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Service/Modbus/PlcReader.cs
+@@ -20,6 +20,7 @@ public class PlcReader : IDisposable
+     private readonly PlcConfig _config;
+ 
+     private TcpClient? _tcpClient;
++    private UdpClient? _udpClient;
+     private IModbusMaster? _master;
+ 
+     public PlcReader(PlcConfig config)
+@@ -27,8 +28,71 @@ public class PlcReader : IDisposable
+         _config = config;
+     }
+ 
++    // ============================================================
++    // ⚠️ שורה אחת שאומרת מה בדיוק ניסינו לעשות
++    // ============================================================
++    // בלעדיה, "PLC read failed: timeout" הוא אותה שורה בדיוק בארבעה
++    // מצבים שונים לגמרי: כתובת שגויה, תעבורה שגויה, פקודה
++    // שגויה, או בקר מכובה. מי שקורא את הלוג מרחוק חייב לראות
++    // את ההגדרה שלידה, אחרת הוא מנחש.
++    /// <summary>מה הסוכן מנסה לעשות, ללוג.</summary>
++    public string Describe =>
++        $"{(_config.UseUdp ? "UDP" : "TCP")} {_config.IpAddress}:{_config.Port} " +
++        $"FC=0x{(_config.UseHoldingRegisters ? 3 : 4):X2} " +
++        $"regs={_config.ModeRegister}/{_config.CardRegister}/{_config.CycleRegister}";
++
++    // ============================================================
++    // ⚠️ מה הבקר ענה — מתורגם למשהו שאפשר לפעול לפיו
++    // ============================================================
++    // שגיאת Modbus אינה "תקלה" סתם — הקוד שבה אומר בדיוק מה
++    // לתקן, ושלושת הקודים הנפוצים ממפים אחד-לאחד לשלושת
++    // הדברים שאפשר להגדיר לא נכון. בלי התרגום הזה כולם נראים
++    // אותו דבר: אתר ששותק.
++    public static string Explain(Exception ex, PlcConfig cfg)
++    {
++        if (ex is NModbus.SlaveException se)
++        {
++            int code = se.SlaveExceptionCode;
++            string hint = code switch
++            {
++                1 => $"הבקר אינו תומך בפקודה 0x{(cfg.UseHoldingRegisters ? 3 : 4):X2} — "
++                   + $"נסי את 0x{(cfg.UseHoldingRegisters ? 4 : 3):X2} בחלונית הכתובות",
++                2 => "הכתובת אינה קיימת במרחב הזה — או פקודה שגויה "
++                   + "(0x03 מול 0x04), או היסט של אחד במספור הרגיסטרים",
++                3 => "כמות הרגיסטרים שבוקשה אינה חוקית לבקר הזה",
++                _ => "קוד שגיאה של הבקר",
++            };
++            return $"הבקר ענה ודחה (Modbus exception {code}): {hint}";
++        }
++
++        // ⚠️ **נמדד: על אי-תשובה מגיע `SocketException(TimedOut)`
++        // ולא `TimeoutException`.** הגרסה הראשונה בדקה רק את השני,
++        // ולכן המצב הנפוץ ביותר — בקר שאינו עונה — קיבל את ההודעה
++        // הגנרית "שגיאת רשת", בדיוק הדבר שהפענוח הזה קיים כדי למנוע.
++        bool timedOut = ex is TimeoutException
++            || (ex is System.Net.Sockets.SocketException t
++                && t.SocketErrorCode == System.Net.Sockets.SocketError.TimedOut);
++
++        if (timedOut)
++            return cfg.UseUdp
++                ? "אין תשובה ב-UDP — או שהבקר אינו מאזין על הפורט הזה, "
++                  + "או שהמסגור אינו MBAP, או שחומת אש חוסמת"
++                : "אין תשובה ב-TCP — הבקר אינו עונה על הכתובת/פורט האלה";
++
++        if (ex is System.Net.Sockets.SocketException sock)
++            return sock.SocketErrorCode == System.Net.Sockets.SocketError.AccessDenied
++                ? "חומת האש חסמה את החיבור (WSAEACCES) — דרוש כלל יוצא לתוכנית"
++                : $"שגיאת רשת ({sock.SocketErrorCode})";
++
++        return ex.GetType().Name;
++    }
++
+     // האם יש כרגע חיבור פתוח ותקין ל-PLC.
+-    public bool IsConnected => _tcpClient?.Connected ?? false;
++    // ב-UDP אין לחיצת יד, אז הדגל אומר רק "הוכן socket";
++    // כשל אמיתי מתגלה כ-timeout בקריאה, והלולאה סופרת אותם.
++    public bool IsConnected => _config.UseUdp
++        ? _udpClient is not null
++        : _tcpClient?.Connected ?? false;
+ 
+     /// <summary>
+     /// מוודא שיש חיבור פתוח ל-PLC. אם אין — פותח אחד חדש.
+@@ -42,6 +106,12 @@ public class PlcReader : IDisposable
+         // סוגרים שאריות של חיבור קודם, אם יש.
+         Dispose();
+ 
++        if (_config.UseUdp)
++        {
++            ConnectUdp();
++            return;
++        }
++
+         _tcpClient = new TcpClient();
+ 
+         // חיבור עם timeout: אם ה-PLC לא זמין, נכשלים תוך שניות ולא נתקעים
+@@ -72,6 +142,40 @@ public class PlcReader : IDisposable
+         _master.Transport.WriteTimeout = IoTimeoutMs;
+     }
+ 
++    /// <summary>
++    /// פותח את צד ה-UDP (Modbus מעל UDP, מסגור MBAP כמו ב-TCP).
++    ///
++    /// ⚠️ אין timeout לחיבור: ב-UDP אין לחיצת יד, ו-Connect רק קובע יעד
++    /// ברירת מחדל (והוא חובה — NModbus דורשת יעד קבוע). מה שמגן
++    /// הוא timeout הקריאה.
++    ///
++    /// ⚠️ על אובדן וסדר — NModbus מטפלת: היא מאמתת את מזהה
++    /// הטרנזקציה שב-MBAP ומנסה שוב. לא לכתוב כאן התאמה משלנו.
++    ///
++    /// ⚠️ וה-timeout מחולק בין הניסיונות: NModbus מנסה 4 פעמים, ועם
++    /// 3 שניות לכל ניסיון קריאה שנכשלת היתה עולה ~12.8 שניות במקום
++    /// ~3 — מתקרב לסף ה-watchdog של ה-Tray (30 שניות) שהורג את הסוכן.
++    /// כך הכשל עולה כמו ב-TCP, ובדרך יש ארבע הזדמנויות להתאושש.
++    /// </summary>
++    private void ConnectUdp()
++    {
++        _udpClient = new UdpClient();
++        _udpClient.Connect(_config.IpAddress, _config.Port);
++
++        _udpClient.Client.ReceiveTimeout = UdpAttemptTimeoutMs;
++        _udpClient.Client.SendTimeout = UdpAttemptTimeoutMs;
++
++        var factory = new ModbusFactory();
++        _master = factory.CreateMaster(_udpClient);
++
++        _master.Transport.ReadTimeout = UdpAttemptTimeoutMs;
++        _master.Transport.WriteTimeout = UdpAttemptTimeoutMs;
++        _master.Transport.Retries = UdpRetries;
++    }
++
++    private const int UdpRetries = 3;
++    private const int UdpAttemptTimeoutMs = IoTimeoutMs / (UdpRetries + 1);
++
+     /// <summary>
+     /// קורא את שלושת ה-registers מה-PLC ומחזיר PlcReading.
+     /// זורק חריגה אם החיבור נכשל — מי שקורא צריך לטפל בזה.
+@@ -104,7 +208,7 @@ public class PlcReader : IDisposable
+             // מספר הכרטיס הוא 16 ביט (עד 65535) — אושר מול האתר שלא חורג.
+             if (cardAddr == modeAddr + 1 && cycleAddr == modeAddr + 2)
+             {
+-                ushort[] r = _master!.ReadInputRegisters(slaveId, (ushort)modeAddr, 3);
++                ushort[] r = ReadBlock(slaveId, modeAddr, 3);
+                 mode = r[0];
+                 card = r[1];
+                 cycle = r[2];
+@@ -174,7 +278,7 @@ public class PlcReader : IDisposable
+             int count = Math.Clamp(_config.FaultTextMaxChars, 1, 125);
+ 
+             EnsureConnected();
+-            ushort[] raw = _master!.ReadInputRegisters(1, (ushort)addr, (ushort)count);
++            ushort[] raw = ReadBlock(1, addr, count);
+             return FaultTextDecoder.Decode(raw);
+         }
+         catch
+@@ -187,13 +291,27 @@ public class PlcReader : IDisposable
+         }
+     }
+ 
++    // ============================================================
++    // ⚠️ כל קריאה מהבקר עוברת כאן — תפר אחד
++    // ============================================================
++    // היו שלושה מקומות שקראו <c>ReadInputRegisters</c> ישירות:
++    // הקריאה המשולשת, הקריאה הבודדת, וטקסט התקלה. עם
++    // בחירת פקודה זה הופך לשלושה מקומות שצריך לזכור לעדכן —
++    // וקריאה שנשכחה היתה קוראת בפקודה השגויה בשקט, ומחזירה
++    // או שגיאה או ערך ממרחב אחר. תפר אחד מונע את זה מבנית.
++    private ushort[] ReadBlock(byte slaveId, int address, int count)
++    {
++        EnsureConnected();
++        return _config.UseHoldingRegisters
++            ? _master!.ReadHoldingRegisters(slaveId, (ushort)address, (ushort)count)   // FC 03
++            : _master!.ReadInputRegisters(slaveId, (ushort)address, (ushort)count);    // FC 04
++    }
++
+     // קורא input register בודד (פקודת Modbus FC 04) ומחזיר את הערך.
+     private ushort ReadRegister(byte slaveId, int address)
+     {
+-        // ReadInputRegisters = FC 04, כפי שה-PLC דורש.
+         // מחזיר מערך; אנחנו קוראים אחד, אז לוקחים את הראשון.
+-        ushort[] values = _master!.ReadInputRegisters(slaveId, (ushort)address, 1);
+-        return values[0];
++        return ReadBlock(slaveId, address, 1)[0];
+     }
+ 
+     /// <summary>סוגר את החיבור ומשחרר משאבים.</summary>
+@@ -205,5 +323,9 @@ public class PlcReader : IDisposable
+         _tcpClient?.Close();
+         _tcpClient?.Dispose();
+         _tcpClient = null;
++
++        _udpClient?.Close();
++        _udpClient?.Dispose();
++        _udpClient = null;
+     }
+ }
+\ No newline at end of file
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Service/Worker.cs b/Parkomat.Agent/src/Parkomat.Agent.Service/Worker.cs
+index 4f66ca2..33a91b1 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Service/Worker.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Service/Worker.cs
+@@ -1,4 +1,4 @@
+-using Parkomat.Agent.Core.Configuration;
++﻿using Parkomat.Agent.Core.Configuration;
+ using Parkomat.Agent.Core.Protocol;
+ using Parkomat.Agent.Core.Time;
+ using Parkomat.Agent.Service.Diagnostics;
+@@ -74,9 +74,14 @@ public class Worker : BackgroundService
+             }
+             return;
+         }
++        // ⚠️ התעבורה והפקודה נרשמות במפורש. בלעדיהן, אתר
++        // שהוגדר ל-UDP/0x03 נראה בלוג זהה לגמרי לאתר ברירת מחדל,
++        // ואי-אפשר לדעת מרחוק מה הוא באמת מנסה לעשות.
+         _logger.LogInformation(
+-            "PLC target: {Ip}:{Port} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
++            "PLC target: {Transport} {Ip}:{Port} | FC=0x{Fc:X2} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
++            config.Plc.UseUdp ? "UDP" : "TCP",
+             config.Plc.IpAddress, config.Plc.Port,
++            config.Plc.UseHoldingRegisters ? 3 : 4,
+             config.Plc.ModeRegister, config.Plc.CardRegister, config.Plc.CycleRegister,
+             config.PollIntervalMs);
+         // כתובת ה-HiveMQ מגיעה לגשר של Mosquitto — נרשמת לאבחון, בלי הסיסמה.
+@@ -269,6 +274,8 @@ public class Worker : BackgroundService
+         // מונה המחזורים מהקריאה הקודמת, לזיהוי ירידה (גלישה/איפוס). מאותחל
+         // ל-int.MinValue כדי שהקריאה הראשונה לעולם לא תיראה כירידה.
+         int previousCycle = int.MinValue;
++        // רמז "הכול אפסים" — פעם אחת לריצה, אחרת הלוג יתמלא.
++        bool allZeroWarned = false;
+ 
+         // מה שכבר נשמר לדיסק, כדי לא לכתוב את אותו מצב שוב בכל דגימה.
+         // מאותחלים ממה שנטען (או null), כך שהשמירה הראשונה תקרה רק על שינוי אמיתי.
+@@ -336,8 +343,13 @@ public class Worker : BackgroundService
+ 
+                 // מדווחים את הכשל הראשון ב-Warning (כדי שיופיע בקובץ), ואת ההמשך
+                 // ב-Debug — כדי שנתק PLC ממושך לא ייצור שורה בכל שנייה.
++                // ⚠️ ההקשר והפענוח, ולא רק הודעת החריגה. "timeout"
++                // לבדו הוא אותה שורה בארבעה מצבים שונים לגמרי, ומי
++                // שיקרא את הלוג מרחוק חייב לדעת באיזה מהם מדובר.
+                 if (firstFailure)
+-                    _logger.LogWarning("PLC read failed: {Message}", ex.Message);
++                    _logger.LogWarning(
++                        "PLC read failed [{What}] — {Reason} | {Message}",
++                        plc.Describe, PlcReader.Explain(ex, config.Plc), ex.Message);
+                 else
+                     _logger.LogDebug(
+                         "PLC read still failing ({Count}/{Max}): {Message}",
+@@ -374,6 +386,33 @@ public class Worker : BackgroundService
+                 continue;
+             }
+ 
++            // ============================================================
++            // ⚠️ הכשל השקט: קריאה מוצלחת שמחזירה אפסים
++            // ============================================================
++            // נמדד: קריאה בפקודה הלא-נכונה (0x03 מול 0x04), או בכתובת
++            // שאינה מאוכלסת, **אינה מחזירה שגיאה** — הבקר עונה
++            // בנימוס ומחזיר אפסים. ו-MODE 0 הוא מצב חוקי לגמרי: תחזוקה.
++            //
++            // כלומר אתר שהוגדר לא נכון ידווח **תחזוקה לנצח**, בלי שום
++            // שגיאה, בלי שום שורת לוג, ועם סמל ירוק ב-Tray. זה הכשל
++            // הכי מסוכן בכל הנתיב הזה.
++            //
++            // ⚠️ **רמז, לא שגיאה, ופעם אחת.** בקר חדש לגמרי יכול באמת
++            // להחזיר 0/0/0, והפיכת זה לשגיאה היתה משביתה אתר תקין.
++            if (!allZeroWarned
++                && reading.Mode == 0 && reading.CycleCounter == 0
++                && string.IsNullOrEmpty(reading.CardNumber))
++            {
++                allZeroWarned = true;
++                _logger.LogWarning(
++                    "PLC returned all zeros (MODE=0, card empty, cycle=0) [{What}]. "
++                  + "A controller reading normally does not usually look like this - "
++                  + "check the function code (0x03 vs 0x04) and the register addresses. "
++                  + "MODE 0 is reported as 'maintenance', so the site looks healthy "
++                  + "while showing nothing.",
++                    plc.Describe);
++            }
++
+             // ===== שלב ב': המוח מחליט מה לשדר =====
+             DetectionResult result = detector.Process(
+                 reading.Mode, reading.CardNumber, reading.CycleCounter);
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/RegistersForm.cs b/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/RegistersForm.cs
+index 80e4617..a3bc55d 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/RegistersForm.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/RegistersForm.cs
+@@ -1,4 +1,4 @@
+-using Parkomat.Agent.Core.Configuration;
++﻿using Parkomat.Agent.Core.Configuration;
+ using System.Windows.Forms;
+ 
+ namespace Parkomat.Agent.Tray.Forms;
+@@ -13,6 +13,8 @@ public class RegistersForm : Form
+     private readonly NumericUpDown _modeReg = new();
+     private readonly NumericUpDown _cardReg = new();
+     private readonly NumericUpDown _cycleReg = new();
++    private readonly ComboBox _transport = new();
++    private readonly ComboBox _funcCode = new();
+ 
+     // ה-PlcConfig שאנחנו עורכים. נחשף למי שקורא אחרי סגירה.
+     public PlcConfig Result { get; private set; }
+@@ -53,9 +55,27 @@ public class RegistersForm : Form
+             n.Width = 120;
+         }
+ 
+-        AddRow(table, 0, "כתובת MODE:", _modeReg);
+-        AddRow(table, 1, "כתובת כרטיס:", _cardReg);
+-        AddRow(table, 2, "כתובת Cycle Counter:", _cycleReg);
++        // רשימה סגורה ולא תיבת טקסט, כדי שלא יהיה אפשר להקליד ערך שגוי.
++        _transport.DropDownStyle = ComboBoxStyle.DropDownList;
++        _transport.Width = 120;
++        _transport.Items.AddRange(new object[] { "TCP", "UDP" });
++
++        _funcCode.DropDownStyle = ComboBoxStyle.DropDownList;
++        _funcCode.Width = 220;
++        // הקוד והשם יחד: "0x04" לבדו אומר מעט למי שלא
++        // מכיר Modbus בעל פה, ו"Input Registers" לבדו אינו מה שכתוב
++        // במסמך של הבקר.
++        _funcCode.Items.AddRange(new object[]
++        {
++            "0x04 — Input Registers",
++            "0x03 — Holding Registers",
++        });
++
++        AddRow(table, 0, "תעבורה:", _transport);
++        AddRow(table, 1, "פקודת קריאה:", _funcCode);
++        AddRow(table, 2, "כתובת MODE:", _modeReg);
++        AddRow(table, 3, "כתובת כרטיס:", _cardReg);
++        AddRow(table, 4, "כתובת Cycle Counter:", _cycleReg);
+         // כשנוסיף registers בעתיד — פשוט נוסיף כאן עוד שורות, והגלילה תטפל.
+ 
+         scroll.Controls.Add(table);
+@@ -83,6 +103,12 @@ public class RegistersForm : Form
+         _modeReg.Value = Math.Clamp(current.ModeRegister, (int)_modeReg.Minimum, (int)_modeReg.Maximum);
+         _cardReg.Value = Math.Clamp(current.CardRegister, (int)_cardReg.Minimum, (int)_cardReg.Maximum);
+         _cycleReg.Value = Math.Clamp(current.CycleRegister, (int)_cycleReg.Minimum, (int)_cycleReg.Maximum);
++
++        // נגזר מ-UseUdp, כדי שהחלונית תראה מה שהסוכן באמת יעשה.
++        _transport.SelectedItem = current.UseUdp ? "UDP" : "TCP";
++        // נגזר מ-UseHoldingRegisters, כמו התעבורה: החלונית מראה
++        // מה שהסוכן **באמת יעשה**, ולא את מה שכתוב בקובץ.
++        _funcCode.SelectedIndex = current.UseHoldingRegisters ? 1 : 0;
+     }
+ 
+     private void OnOk()
+@@ -95,7 +121,9 @@ public class RegistersForm : Form
+             Port = Result.Port,
+             ModeRegister = (int)_modeReg.Value,
+             CardRegister = (int)_cardReg.Value,
+-            CycleRegister = (int)_cycleReg.Value
++            CycleRegister = (int)_cycleReg.Value,
++            Transport = (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp",
++            FunctionCode = _funcCode.SelectedIndex == 1 ? 3 : 4
+         };
+         DialogResult = DialogResult.OK;
+         Close();
+diff --git a/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/SettingsForm.cs b/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/SettingsForm.cs
+index 4d03677..155ef19 100644
+--- a/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/SettingsForm.cs
++++ b/Parkomat.Agent/src/Parkomat.Agent.Tray/Forms/SettingsForm.cs
+@@ -259,7 +259,10 @@ public class SettingsForm : Form
+                 Port = (int)_plcPort.Value,
+                 ModeRegister = _plc.ModeRegister,
+                 CardRegister = _plc.CardRegister,
+-                CycleRegister = _plc.CycleRegister
++                CycleRegister = _plc.CycleRegister,
++                // נישא מ-_plc כמו שאר הכתובות; בלעדיו כל שמירה היתה מאפסת את הבחירה.
++                Transport = _plc.Transport,
++                FunctionCode = _plc.FunctionCode
+             },
+             Mqtt = new MqttConfig
+             {

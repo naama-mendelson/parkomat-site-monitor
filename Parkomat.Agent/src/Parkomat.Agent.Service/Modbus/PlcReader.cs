@@ -20,6 +20,7 @@ public class PlcReader : IDisposable
     private readonly PlcConfig _config;
 
     private TcpClient? _tcpClient;
+    private UdpClient? _udpClient;
     private IModbusMaster? _master;
 
     public PlcReader(PlcConfig config)
@@ -27,8 +28,20 @@ public class PlcReader : IDisposable
         _config = config;
     }
 
-    // האם יש כרגע חיבור פתוח ותקין ל-PLC.
-    public bool IsConnected => _tcpClient?.Connected ?? false;
+    // ============================================================
+    // ⚠️ "מחובר" ב-UDP אינו אותה שאלה כמו ב-TCP
+    // ============================================================
+    // ב-TCP יש לחיצת יד, ולכן `Connected` באמת אומר שהצד השני קיים.
+    // ב-UDP אין חיבור: `UdpClient.Connect` רק קובע יעד ברירת מחדל, והוא
+    // מצליח גם מול כתובת שאין בה דבר. לכן כאן הוא עונה רק על "האם
+    // הכנתי socket", ו**כשל אמיתי מתגלה כ-timeout בקריאה**, לא כאן.
+    //
+    // זה בסדר, כי הלולאה ב-Worker ממילא סופרת קריאות שנכשלו ולא בודקת
+    // את הדגל הזה — אבל מי שיסתמך עליו כדי לענות "האם ה-PLC חי" יקבל
+    // תשובה נכונה ב-TCP ושגויה ב-UDP.
+    public bool IsConnected => _config.UseUdp
+        ? _udpClient is not null
+        : _tcpClient?.Connected ?? false;
 
     /// <summary>
     /// מוודא שיש חיבור פתוח ל-PLC. אם אין — פותח אחד חדש.
@@ -41,6 +54,12 @@ public class PlcReader : IDisposable
 
         // סוגרים שאריות של חיבור קודם, אם יש.
         Dispose();
+
+        if (_config.UseUdp)
+        {
+            ConnectUdp();
+            return;
+        }
 
         _tcpClient = new TcpClient();
 
@@ -71,6 +90,78 @@ public class PlcReader : IDisposable
         _master.Transport.ReadTimeout = IoTimeoutMs;
         _master.Transport.WriteTimeout = IoTimeoutMs;
     }
+
+    /// <summary>
+    /// פותח את צד ה-UDP. בקרים מסוימים חושפים Modbus מעל UDP בלבד.
+    ///
+    /// ============================================================
+    /// ⚠️ אין כאן timeout לחיבור, וזה לא השמטה
+    /// ============================================================
+    /// ב-UDP אין לחיצת יד: <c>Connect</c> רק קובע יעד ברירת מחדל ומצליח
+    /// מיידית גם מול כתובת שאין בה כלום. לכן <c>ConnectTimeoutMs</c> אינו
+    /// רלוונטי כאן, ו**כשל מתגלה רק ב-timeout של הקריאה** —
+    /// <c>IoTimeoutMs</c> הוא מה שמגן, ולכן הוא נקבע על שני המקומות:
+    /// ה-socket עצמו וה-transport של NModbus.
+    ///
+    /// ⚠️ <c>Connect</c> **חובה**, לא נוחות: NModbus דורשת יעד קבוע
+    /// ("UdpClient must be bound to a default remote host").
+    ///
+    /// ⚠️ **ועל אובדן וסדר — הספרייה מטפלת, ולא אנחנו.** ב-UDP אין הבטחת
+    /// הגעה ואין הבטחת סדר, ולכן תשובה מאוחרת לבקשה ישנה עלולה להיות
+    /// מותאמת לבקשה חדשה — כלומר MODE מרגע אחד מזווג עם מונה מרגע אחר,
+    /// בדיוק מה שהקריאה המשולשת למטה קיימת כדי למנוע. NModbus מאמתת את
+    /// מזהה הטרנזקציה שב-MBAP ומנסה שוב על אי-התאמה, אז זה סגור בשכבה
+    /// שמתחתינו. **לא לכתוב כאן התאמה משלנו** — היא תתחרה בזו שלה.
+    /// </summary>
+    private void ConnectUdp()
+    {
+        _udpClient = new UdpClient();
+        _udpClient.Connect(_config.IpAddress, _config.Port);
+
+        _udpClient.Client.ReceiveTimeout = UdpAttemptTimeoutMs;
+        _udpClient.Client.SendTimeout = UdpAttemptTimeoutMs;
+
+        var factory = new ModbusFactory();
+        _master = factory.CreateMaster(_udpClient);
+
+        // ⚠️ **הזמן לכל ניסיון, לא הזמן הכולל** — ראה UdpAttemptTimeoutMs.
+        _master.Transport.ReadTimeout = UdpAttemptTimeoutMs;
+        _master.Transport.WriteTimeout = UdpAttemptTimeoutMs;
+
+        // ⚠️ **נקבע במפורש ולא נסמך על ברירת המחדל של הספרייה.** החישוב של
+        // UdpAttemptTimeoutMs מחלק את התקרה במספר הניסיונות; אם NModbus
+        // תשנה את ברירת המחדל בגרסה עתידית, העלות הכוללת תזוז בשקט
+        // ותתקרב לסף ה-watchdog — כלומר שדרוג חבילה יחזיר באג תזמון
+        // שכבר שילמנו עליו פעם.
+        _master.Transport.Retries = UdpRetries;
+    }
+
+    // ============================================================
+    // ⚠️ כמה זמן עולה קריאה שנכשלה — וזה מספר שכבר כויל פעם אחת בכאב
+    // ============================================================
+    // ה-watchdog של ה-Tray מכריז "תקוע" אחרי 30 שניות בלי סימן חיים
+    // (‏RestartPolicy.WedgedAfterSeconds עם דגימה של שנייה), וסימן החיים
+    // נכתב **בראש כל סבב** — כלומר המרווח בין שני סימני חיים הוא בדיוק
+    // אורך סבב אחד, שנשלט על ידי קריאת PLC שנכשלת.
+    //
+    // ⚠️ וזה בדיוק היחס שכבר עלה לנו פעם: הסוכן נהרג 12 שניות לפני
+    // שהספיק לדווח `state: error`, וההריגה איפסה את מונה הכשלים — כך
+    // ש**התקלה לא דווחה מעולם**. WatchdogVsPlcErrorTests נועל את זה.
+    //
+    // ⚠️ **ו-UDP שובר את הכיול בשקט.** NModbus מנסה שוב על אי-תשובה
+    // (‏Retries=3, כלומר 4 ניסיונות), ולכן קריאה שנכשלה עולה פי ארבעה:
+    // **נמדד — TCP 3,010ms מול UDP 12,830ms** עם אותו IoTimeoutMs.
+    // עדיין מתחת ל-30, אבל המרווח מצטמצם מ-27 שניות ל-17, ומחשב אתר
+    // עמוס יכול לאכול את ההפרש.
+    //
+    // הפתרון אינו לוותר על הניסיונות החוזרים — הם **הסיבה** ש-UDP עובד
+    // בכלל, כי דטגרמה אבודה אינה משודרת מחדש בשכבה שמתחת. במקום זה
+    // מחלקים את אותה תקרה בין הניסיונות: הכישלון עולה כמו ב-TCP,
+    // ובדרך יש **ארבע** הזדמנויות להתאושש מאיבוד במקום אחת.
+    //
+    // בקר ב-LAN עונה במילישניות, אז 750ms לניסיון הוא נדיב.
+    private const int UdpRetries = 3;   // ברירת המחדל של NModbus, מפורשת כאן כדי שהחישוב יהיה קריא
+    private const int UdpAttemptTimeoutMs = IoTimeoutMs / (UdpRetries + 1);
 
     /// <summary>
     /// קורא את שלושת ה-registers מה-PLC ומחזיר PlcReading.
@@ -205,5 +296,13 @@ public class PlcReader : IDisposable
         _tcpClient?.Close();
         _tcpClient?.Dispose();
         _tcpClient = null;
+
+        // ⚠️ **שני הצדדים משוחררים תמיד, בלי לבדוק את ההגדרה.** `Dispose`
+        // נקרא גם מ-`EnsureConnected` לפני פתיחה מחדש, ואם מישהו יערוך את
+        // `Transport` בזמן ריצה, ניקוי לפי ההגדרה **הנוכחית** היה משאיר את
+        // ה-socket של התעבורה הקודמת פתוח לנצח. שדה null זול לשחרר.
+        _udpClient?.Close();
+        _udpClient?.Dispose();
+        _udpClient = null;
     }
 }
