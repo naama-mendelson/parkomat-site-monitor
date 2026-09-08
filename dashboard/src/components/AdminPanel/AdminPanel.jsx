@@ -30,6 +30,10 @@ function AdminPanel({ sites, onClose, onChanged }) {
   // ⚠️ אישור נפרד: הפעולה משנה את משמעות המונה ואינה הפיכה.
   const [confirmController, setConfirmController] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(null);
+  // ⚠️ **מי מנפיק, ולא "מנפיקים".** `busy` הוא סטייט אחד לכל הפאנל, ולכן
+  // לחיצה על אתר אחד החליפה את הכיתוב ל"מנפיק…" **בכל השורות** והשביתה
+  // את כולן — נראה בדיוק כאילו נלחצו כל האתרים בבת אחת.
+  const [issuing, setIssuing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,7 +133,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
   // (1326, 1414, 3510) נתקעו בדיוק שם: זהות שהונפקה ב-06/09, סיסמה
   // שהוצגה פעם אחת ולא נשמרה, ואפס דרכים להמשיך מהמסך.
   async function issueAgent(site, rotate = false) {
-    setBusy(true);
+    setIssuing(site.code);
     setErr(null);
     try {
       const r = await provisionAgent(site.code, { rotate });
@@ -154,11 +158,17 @@ function AdminPanel({ sites, onClose, onChanged }) {
       // ⚠️ אתר ש**פועם** נמצא במסלול הישיר ברגע זה, וסיבוב
       // מפסיק את הדיווח שלו עד שמישהו ייסע לעדכן את ה-config.
       // ו-`null` הוא "לא הצלחתי לברר" — גם הוא דורש אישור.
-      const beat = await agentEverBeat(site.id);
+      // ⚠️ **עטוף, כי הוא רץ בתוך `catch`.** חריגה כאן הייתה בורחת מ-
+      // `issueAgent` כולה — בלי הודעת שגיאה, בלי אישור, בלי כלום. המסך
+      // היה נראה כאילו הכפתור פשוט אינו עושה דבר, וזה הכשל הכי קשה
+      // לאבחון: אין מה לקרוא.
+      let beat = null;
+      try { beat = await agentEverBeat(site.id); } catch { beat = null; }
+
       if (beat === false) { await issueAgent(site, true); return; }
       setConfirmRotate(site.code);
     } finally {
-      setBusy(false);
+      setIssuing(null);
     }
   }
 
@@ -435,9 +445,9 @@ function AdminPanel({ sites, onClose, onChanged }) {
                           הסיסמה הקודמת תתבטל מיד — אתר שמשתמש בה יפסיק לדווח
                           עד שתעדכני אותו
                         </span>
-                        <button className="adm-btn" disabled={busy}
+                        <button className="adm-btn" disabled={issuing === s.code}
                           onClick={() => issueAgent(s, true)}>
-                          {busy ? "מנפיק…" : "כן, הנפק סיסמה חדשה"}
+                          {issuing === s.code ? "מנפיק…" : "כן, הנפק סיסמה חדשה"}
                         </button>
                         <button className="adm-btn-ghost"
                           onClick={() => setConfirmRotate(null)}>ביטול</button>
@@ -474,9 +484,9 @@ function AdminPanel({ sites, onClose, onChanged }) {
                             נכשלה שם, האתר קיים ו**לא יוכל לדווח לעולם**. בלי
                             כפתור, הדרך היחידה חזרה היא פקודה על DELL008, וזה
                             בדיוק מה שהאוטומציה נועדה לבטל. */}
-                        <button className="adm-btn-ghost" disabled={busy}
+                        <button className="adm-btn-ghost" disabled={issuing === s.code}
                           onClick={() => issueAgent(s)}>
-                          {busy ? "מנפיק…" : "זהות סוכן"}
+                          {issuing === s.code ? "מנפיק…" : "זהות סוכן"}
                         </button>
                         {/* ⚠️ נמדד: בקר חדש שמגיע עם 87 מחזורי בדיקות מפעל
                             מוסיף אותם כמחזורים אמיתיים, ו-cycle_total הוא
