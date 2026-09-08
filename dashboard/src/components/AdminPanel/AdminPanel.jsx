@@ -29,6 +29,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
   const [agentIssued, setAgentIssued] = useState(null);
   // ⚠️ אישור נפרד: הפעולה משנה את משמעות המונה ואינה הפיכה.
   const [confirmController, setConfirmController] = useState(null);
+  const [confirmRotate, setConfirmRotate] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -121,17 +122,27 @@ function AdminPanel({ sites, onClose, onChanged }) {
   // ⚠️ **הסיסמה מוצגת פעם אחת ואינה ניתנת לשחזור**, ולכן היא לא נכנסת
   // ל-flash שנעלם מעצמו — היא נשארת על המסך עד שסוגרים אותה ידנית.
   //
-  // ⚠️ ו-409 ("כבר קיימת") אינו כישלון שצריך להסתיר: הוא אומר שהאתר כבר
-  // מוגדר, וזו התשובה הנכונה. החלפה מנתקת אתר עובד, ולכן היא אינה קורית
-  // בלחיצה אחת — צריך לבקש אותה במפורש.
-  async function issueAgent(site) {
+  // ⚠️ **ו-409 ("כבר קיימת") אינו מסך סופי אלא שאלה.** הוא אומר שהאתר כבר
+  // מוגדר, וזו תשובה נכונה — אבל עד כה הוא הוצג כשגיאה, ואז
+  // הדרך היחידה להנפיק סיסמה חדשה הייתה פקודה ידנית על מחשב עם `.env` —
+  // כלומר פעולה שאי אפשר לעשות מהדשבורד, לאתר שכבר מוגדר. שלושה אתרים
+  // (1326, 1414, 3510) נתקעו בדיוק שם: זהות שהונפקה ב-06/09, סיסמה
+  // שהוצגה פעם אחת ולא נשמרה, ואפס דרכים להמשיך מהמסך.
+  async function issueAgent(site, rotate = false) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await provisionAgent(site.code);
-      setAgentIssued({ code: site.code, email: r.email, password: r.password });
+      const r = await provisionAgent(site.code, { rotate });
+      setConfirmRotate(null);
+      setAgentIssued({
+        code: site.code, email: r.email, password: r.password,
+        rotated: Boolean(r.rotated),
+      });
     } catch (e) {
-      setErr(e.message);
+      // ⚠️ הסיבוב **אינו** קורה בלחיצה אחת: הוא מבטל את הסיסמה הקודמת
+      // מיד, ואתר שכבר משתמש בה מפסיק לדווח עד שמעדכנים אותו בשטח.
+      if (e.alreadyExists && !rotate) setConfirmRotate(site.code);
+      else setErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -283,7 +294,9 @@ function AdminPanel({ sites, onClose, onChanged }) {
             אתר שאי אפשר לחבר. הסגירה חייבת להיות פעולה של אדם. */}
         {agentIssued && (
           <div className="adm-msg" style={{ textAlign: "start" }}>
-            <b>{`נוצרה זהות לאתר ${agentIssued.code}`}</b>
+            <b>{agentIssued.rotated
+              ? `הונפקה סיסמה חדשה לאתר ${agentIssued.code}`
+              : `נוצרה זהות לאתר ${agentIssued.code}`}</b>
             <div style={{ marginTop: 8, fontFamily: "monospace", direction: "ltr" }}>
               {agentIssued.email}
             </div>
@@ -399,6 +412,21 @@ function AdminPanel({ sites, onClose, onChanged }) {
                           onClick={() => saveEdit(s.code)}>שמור</button>
                         <button className="adm-btn-ghost"
                           onClick={() => { setEditing(null); setErr(null); }}>ביטול</button>
+                      </>
+                    ) : confirmRotate === s.code ? (
+                      <>
+                        {/* ⚠️ אומרים מה **יקרה**, לא "האם את בטוחה" —
+                            אותו כלל כמו בהחלפת בקר ובמחיקה. */}
+                        <span className="adm-confirm-text">
+                          הסיסמה הקודמת תתבטל מיד — אתר שמשתמש בה יפסיק לדווח
+                          עד שתעדכני אותו
+                        </span>
+                        <button className="adm-btn" disabled={busy}
+                          onClick={() => issueAgent(s, true)}>
+                          {busy ? "מנפיק…" : "כן, הנפק סיסמה חדשה"}
+                        </button>
+                        <button className="adm-btn-ghost"
+                          onClick={() => setConfirmRotate(null)}>ביטול</button>
                       </>
                     ) : confirmController === s.code ? (
                       <>

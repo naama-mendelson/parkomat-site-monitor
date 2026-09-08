@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "check:colors": "node scripts/check-colors.mjs",
     "check:cards": "node scripts/check-cards.mjs",
-    "check:name": "node scripts/check-name-fit.mjs"
+    "check:name": "node scripts/check-name-fit.mjs",
+    "check:agent-ui": "node scripts/check-agent-identity-ui.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",

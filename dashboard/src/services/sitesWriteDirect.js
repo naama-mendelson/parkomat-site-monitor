@@ -152,7 +152,16 @@ export async function provisionAgentDirect(code, { rotate = false } = {}) {
     });
 
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || "יצירת זהות הסוכן נכשלה");
+  if (!res.ok) {
+    // ⚠️ **`alreadyExists` חייב לשרוד את ההמרה ל-Error.** בלעדיו המסך
+    // מקבל מחרוזת ומציג "נכשל", והמנהלת נשארת בלי דרך להנפיק סיסמה —
+    // בדיוק המצב שבו שלושה אתרים היו תקועים עד שהריצו פקודה ידנית.
+    // 409 כאן אינו כישלון: הוא "האתר כבר מוגדר", וזו שאלה ולא שגיאה.
+    const err = new Error(body.error || "יצירת זהות הסוכן נכשלה");
+    err.alreadyExists = Boolean(body.alreadyExists) || res.status === 409;
+    err.status = res.status;
+    throw err;
+  }
   return body;
 }
 
