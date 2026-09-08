@@ -779,6 +779,13 @@ COMMENT ON FUNCTION app.classify_timestamp(bigint, bigint, bigint, boolean) IS
 --     מחזירות את הסיבה ב-`outcome`, אבל **אינן כותבות** אותה. מי שיקרא
 --     להן חייב לרשום — אחרת הודעה שנדחתה נעלמת בלי עקבות, וזה בדיוק מה
 --     שהיה לפני ש-ingest_drops נוצרה.
+--
+--     ⚠️ **וזה בדיוק מה שקרה, במשך כל הזמן שהאזהרה הזו עמדה כאן.** הקורא
+--     הוא `public.ingest_batch` שלמטה, והוא רשם רק `unknown_kind`. נמדד
+--     ב-08/09/2026: מכל 1,055 השורות ב-ingest_drops, **אפס** הגיעו
+--     מהמסלול הישיר. תוקן — ראה את שני בלוקי ה-`record_ingest_drop`
+--     בענפי state ו-operation. האזהרה נשארת כאן כי היא עדיין נכונה לגבי
+--     **כל** קורא עתידי של הפונקציות האלה.
 
 -- ============================================================
 -- public.ingest_batch — הדלת היחידה שהסוכן דופק בה
@@ -898,6 +905,40 @@ BEGIN
         v_msg ->> 'status',
         v_msg ->> 'occurred_at',
         NULLIF(v_msg ->> 'fault_text', ''));
+
+      -- ============================================================
+      -- ⚠️ הודעה שלא הוחלה **נרשמת**, ולא רק מוחזרת לקורא
+      -- ============================================================
+      -- ההערה בשולי הקובץ הזה הזהירה על זה במפורש: הפונקציות מחזירות
+      -- את הסיבה ב-`outcome` ומשאירות לקורא לרשום. הקורא הוא כאן, והוא
+      -- לא רשם — כך שרק `unknown_kind` הגיע אי פעם ל-`ingest_drops`.
+      --
+      -- ⚠️ **נמדד ב-08/09/2026, ולא הוסק מקריאת קוד:** מכל 1,055 השורות
+      -- בטבלה, **אפס** נשאו topic שמתחיל ב-`direct/` — למרות שאתר 2438
+      -- על המסלול הישיר בלבד מאז 06/09, ובאותו יום התקבלה שם הודעת
+      -- מצב-ללא-שינוי שבמסלול MQTT הייתה מייצרת שורת `state_no_change`.
+      --
+      -- המשמעות אינה תיאורטית: ככל שאתרים יעברו, `ingest_drops` תתרוקן —
+      -- לא מפני שפחות נזרק, אלא מפני שהזריקות מפסיקות להירשם. זו הטבלה
+      -- היחידה שעונה על *"למה ההודעה הזו לא הגיעה"*.
+      --
+      -- ⚠️ **התנאי הוא `applied` ולא רשימת outcomes.** הפונקציה עצמה
+      -- מצהירה אם הוחל; רשימה כאן הייתה צריכה להתעדכן בכל outcome חדש,
+      -- וה-outcome שיישכח הוא בדיוק זה שאיש לא יידע עליו.
+      --
+      -- הסיבה נשמרת בשם `state_<outcome>` כדי ש-`state_no_change` ייצא
+      -- **זהה** לשם שהמסלול הקיים כותב — אחרת אותה תופעה תיספר פעמיים
+      -- תחת שני שמות, וכל שאילתה היסטורית תפספס את החצי החדש.
+      IF NOT v_res.applied THEN
+        PERFORM app.record_ingest_drop(v_site, 'state',
+          'state_' || v_res.outcome,
+          format('outcome=%s · status=%s · occurredAt=%s',
+                 v_res.outcome,
+                 COALESCE(v_msg ->> 'status', '(חסר)'),
+                 COALESCE(v_msg ->> 'occurred_at', '(חסר)')),
+          v_msg);
+      END IF;
+
       RETURN QUERY SELECT v_i, 'state'::text, v_res.outcome, NULL::text;
 
     ELSIF v_kind = 'operation' THEN
@@ -910,6 +951,22 @@ BEGIN
         v_msg ->> 'occurred_at',
         COALESCE(v_msg ->> 'reported_at', v_msg ->> 'occurred_at'),
         NULLIF(v_msg ->> 'cycle', '')::integer);
+
+      -- ⚠️ **וכאן זה שווה יותר מאשר במצב.** תפעול הוא חד-פעמי: הגלאי
+      -- מקדם את עצמו מיד, ולכן מעבר שלא נקלט אינו ניתן לזיהוי חוזר.
+      -- כפילות פירושה שהסוכן שידר שוב אחרי שלא קיבל אישור — כלומר
+      -- עדות לגמגום רשת, שאין לה שום ביטוי אחר בשום מקום.
+      IF NOT v_res.inserted THEN
+        PERFORM app.record_ingest_drop(v_site, 'operation',
+          'operation_duplicate',
+          format('%s/%s · card=%s · occurredAt=%s',
+                 COALESCE(v_msg ->> 'start_end', '?'),
+                 COALESCE(v_msg ->> 'entry_exit', '?'),
+                 COALESCE(NULLIF(v_msg ->> 'card', ''), '(ריק)'),
+                 COALESCE(v_msg ->> 'occurred_at', '(חסר)')),
+          v_msg);
+      END IF;
+
       RETURN QUERY SELECT v_i, 'operation'::text,
         CASE WHEN v_res.inserted THEN 'applied' ELSE 'duplicate' END,
         v_res.cycle_mode;

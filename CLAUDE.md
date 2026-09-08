@@ -121,10 +121,32 @@ creation needs the Secret key, so it would go through an Edge Function, for whic
 is the precedent. Until that exists, adding a site means remembering one command, and forgetting
 it produces a site that looks installed and silently never reports.
 | Ingestion in SQL | **Live, unused.** Five functions, 1,098 comparisons against the existing path. |
-| The public door | **Live, unused.** `public.ingest_batch` takes **no site id** — it derives it from the identity, so an agent cannot write to another site by changing a number. |
+| The public door | **Live, and in use at one site.** `public.ingest_batch` takes **no site id** — it derives it from the identity, so an agent cannot write to another site by changing a number. |
 | Durable queue in the agent | **Shipped in 1.0.22.** |
 | The agent speaks HTTPS | **Shipped in 1.0.22, disabled.** ⚠️ And **only** HTTPS since — `SupabaseConfig.Enabled` requires an absolute `https` URL, because the first request carries the site's **password in the body** and every batch after it carries the token in a header. There was no validation before: a technician who typed `http://` got a working agent, which is exactly what makes that failure invisible. |
 | Heartbeat + silence scan | **Built.** See below. |
+
+⚠️ **And for its whole life it swallowed every rejection.** `db/ingest.postgres.sql`
+warns in its own footnote that the ingestion functions return the reason in `outcome` and
+leave the caller to record it. The caller is `ingest_batch`, and it recorded only
+`unknown_kind` — a case the agent never produces.
+
+**Measured on 08/09/2026, not inferred from reading:** of all 1,055 rows in `ingest_drops`,
+**zero** carried a `direct/` topic. Site 2438 had been direct-only since 06/09, and that day
+a no-change state message was accepted there — the same message that writes a
+`state_no_change` row when it arrives over MQTT.
+
+The consequence is not theoretical: as sites migrate, `ingest_drops` empties — not because
+less is rejected, but because rejections stop being recorded. It is the only table that
+answers *"why did that message not arrive"*.
+
+Fixed by recording on `NOT applied` / `NOT inserted` rather than a list of outcomes — a list
+would need extending for every new outcome, and the one forgotten is exactly the one nobody
+would learn about. The reason is written as `state_<outcome>` so `state_no_change` comes out
+**identical** to the name the MQTT path writes; otherwise one phenomenon would be counted
+under two names and every historical query would miss the newer half. `check-direct-drops`
+proves it end to end — impersonating the agent through the `app.user_id` GUC, inside a
+transaction that rolls back — and four mutations fail it.
 
 ### Disconnect detection — decided, and it is a heartbeat
 
