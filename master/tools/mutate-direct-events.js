@@ -36,10 +36,16 @@ const OP = "CREATE OR REPLACE FUNCTION app.ingest_operation(";
 const MUTATIONS = [
   ["אירוע המצב לא נכתב", STATE,
     (s) => s.replace(/  INSERT INTO events[\s\S]*?FROM sites s WHERE s\.id = p_site_id;\n/, "")],
+  // ⚠️ העוגנים כאן **חייבים להיות ייחודיים**: ל-ingest_operation יש שתי
+  // כתיבות ל-events — אחת בסנכרון הסטטוס ואחת בסוף — ורג'קס על
+  // "INSERT INTO events" היה תופס את הראשונה בשני המקרים, כלומר מוטציה
+  // אחת הייתה מורצת פעמיים ואחת לא נבדקת כלל.
   ["אירוע התפעול לא נכתב", OP,
-    (s) => s.replace(/  INSERT INTO events[\s\S]*?FROM sites s WHERE s\.id = p_site_id;\n/, "")],
+    (s) => s.replace(/  INSERT INTO events \(site_id, site_code, type, payload, created_at\)\n  SELECT p_site_id, s\.code, 'operation'[\s\S]*?FROM sites s WHERE s\.id = p_site_id;\n/, "")],
   ["שדה faultText הושמט מהמצב", STATE,
     (s) => s.replace("           'faultText',  p_fault_text)", "           'faultText2', p_fault_text)")],
+  ["הסנכרון אינו כותב אירוע מצב", OP,
+    (s) => s.replace(/      INSERT INTO events[\s\S]*?FROM sites s WHERE s\.id = p_site_id;\n/, "")],
   ["שם השדה cardNumber שונה", OP,
     (s) => s.replace("'cardNumber',   v_card,", "'card',         v_card,")],
 ];

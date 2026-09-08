@@ -52,6 +52,8 @@ async function main() {
     check("נמצא אירוע ייחוס שנכתב על ידי master", !!refState && !!refOp);
     if (!refState || !refOp) return;
 
+    const statusOf = async () =>
+      (await c.query("SELECT status FROM sites WHERE id = $1", [agent.id])).rows[0].status;
     const countEvents = async () => Number((await c.query(
       "SELECT count(*)::int AS n FROM events WHERE site_code = $1", [SITE])).rows[0].n);
     const before = await countEvents();
@@ -67,7 +69,10 @@ async function main() {
     await c.query("BEGIN");
     await c.query("SELECT set_config('app.user_id', $1, true)", [agent.uid]);
 
-    const other = agent.status === "ready" ? "operating" : "ready";
+    // ⚠️ **לא `operating`**: התפעול שבהמשך מסנכרן ל-`operating` רק אם
+    // הסטטוס **שונה** ממנו. הגרסה הקודמת העבירה ל-`operating`
+    // מראש, ואז לא היה מה לסנכרן — כלומר התרחיש לא נוצר.
+    const other = agent.status === "error" ? "ready" : "error";
     await c.query("SELECT app.ingest_state($1, $2, $3, NULL)", [agent.id, other, iso()]);
 
     const { rows: [gotState] } = await c.query(
@@ -75,12 +80,35 @@ async function main() {
          AND id > $2 ORDER BY id DESC LIMIT 1`, [SITE, maxId]);
     check("שינוי מצב במסלול הישיר יוצר אירוע", !!gotState);
 
+    // ⚠️ **גבול שני, והוא נולד ממוטציה שעברה בשקט.** בדיקת
+    // המצב שלמעלה כבר יצרה אירוע עם `newStatus=operating`, והבדיקה
+    // של הזוג מצאה **אותו** — כך שהסרת הכתיבה מהסנכרון
+    // לא שינתה דבר בתוצאה. שלוש פעמים היום, אותה מלכודת היעדר.
+    // משאירים את האתר ב-`ready`, כדי שהתפעול יהיה שינוי אמיתי.
+    await c.query("SELECT app.ingest_state($1, 'ready', $2, NULL)", [agent.id, iso()]);
+
+    const maxId2 = Number((await c.query(
+      "SELECT COALESCE(MAX(id),0)::bigint AS n FROM events")).rows[0].n);
+
     await c.query(`SELECT app.ingest_operation($1,'start','entry','gate-ev','operating',$2,$2,$3)`,
       [agent.id, iso(), 999]);
     const { rows: [gotOp] } = await c.query(
       `SELECT payload FROM events WHERE site_code = $1 AND type = 'operation'
          AND id > $2 ORDER BY id DESC LIMIT 1`, [SITE, maxId]);
     check("תפעול במסלול הישיר יוצר אירוע", !!gotOp);
+
+    // ============================================================
+    // ⚠️ ותפעול שמזיז את הסטטוס חייב לכתוב **גם** אירוע מצב
+    // ============================================================
+    // נמדד על התפעול הראשון שעבר במסלול הישיר: נוצרה שורת
+    // `operation` אבל לא שורת `state`, בעוד שבאתר על MQTT כל תפעול
+    // מלווה בזוג. הכרטיס עבר ל"בפעולה" רק ברענון.
+    const { rows: [pairState] } = await c.query(
+      `SELECT payload FROM events WHERE site_code = $1 AND type = 'state'
+         AND id > $2 ORDER BY id DESC LIMIT 1`, [SITE, maxId2]);
+    check("⚠️ תפעול שמזיז את הסטטוס כותב גם אירוע מצב",
+      !!pairState && pairState.payload.newStatus === "operating",
+      pairState ? `newStatus=${pairState.payload.newStatus}` : "אין אירוע מצב");
 
     // ⚠️ השוואת **קבוצת השדות**, לא הערכים: הערכים שונים בין אתרים, המבנה
     // חייב להיות זהה. חסר או עודף — שניהם נכשלים.
@@ -99,8 +127,11 @@ async function main() {
     // ⚠️ בלי זה השער עובר גם על פונקציה שכותבת אירוע בכל קריאה, כולל
     // כשלא השתנה דבר — כלומר 1,440 שורות ביום לכל אתר בטבלה שנקראת
     // ב-Realtime, ורעש על המסך במקום מידע.
+    // ⚠️ שולחים את המצב **הנוכחי**, ולא קבוע מראש: התפעול
+    // שלמעלה הזיז את הסטטוס, וערך שנקבע לפניו הופך לשינוי אמיתי.
+    const cur = await statusOf();
     const n1 = await countEvents();
-    await c.query("SELECT app.ingest_state($1, $2, $3, NULL)", [agent.id, other, iso()]);
+    await c.query("SELECT app.ingest_state($1, $2, $3, NULL)", [agent.id, cur, iso()]);
     const n2 = await countEvents();
     check("מצב שלא השתנה אינו יוצר אירוע", n1 === n2, `${n1} → ${n2}`);
 

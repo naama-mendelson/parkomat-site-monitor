@@ -311,6 +311,33 @@ BEGIN
       VALUES (p_site_id, p_state, p_occurred_at);
       UPDATE sites SET status = p_state WHERE id = p_site_id;
       v_synced := true;
+
+      -- ============================================================
+      -- ⚠️ האירוע נכתב **כאן**, כי כאן המצב באמת השתנה
+      -- ============================================================
+      -- נמדד ב-08/09/2026 על התפעול הראשון שעבר במסלול הישיר: נוצרה שורת
+      -- `operation` ב-`events` אבל **לא שורת `state`** — בעוד שבאתר על
+      -- MQTT כל תפעול מלווה בזוג. הכרטיס במסך עבר ל"בפעולה" רק ברענון.
+      --
+      -- ⚠️ **וההבדל אינו באגי אלא מבני:** ב-MQTT ההודעות מגיעות אחת-אחת
+      -- והמצב מקדים את התפעול, אז `ingest_state` כותב את האירוע. במסלול
+      -- הישיר שתיהן באות ב**אצווה אחת**, התפעול מעובד ראשון, הסנכרון כאן
+      -- כבר קובע `operating` — ואז הודעת המצב שאחריו היא `no_change`
+      -- ואינה כותבת דבר. הרגע היחיד שבו הסטטוס זז הוא השורות שמעל.
+      --
+      -- אותו מבנה בדיוק כמו ב-`ingest_state`, ומאותה סיבה: הדשבורד קורא
+      -- את אותם שדות משני המקורות.
+      INSERT INTO events (site_id, site_code, type, payload, created_at)
+      SELECT p_site_id, s.code, 'state',
+             jsonb_build_object(
+               'type',       'state',
+               'code',       s.code,
+               'oldStatus',  v_site_status,
+               'newStatus',  p_state,
+               'occurredAt', p_occurred_at,
+               'faultText',  NULL),
+             v_now
+        FROM sites s WHERE s.id = p_site_id;
     END IF;
   END IF;
 
