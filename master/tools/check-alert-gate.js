@@ -139,7 +139,37 @@ async function run(client) {
       `${dedupWrites} מקומות`);
 
     // ------------------------------------------------------------
-    // 6. המצב עכשיו
+    // 6. ⚠️ הזיהוי עצמו עדיין רץ
+    // ------------------------------------------------------------
+    // ההחלטה הייתה **"הזיהוי ממשיך לדווח, רק השליחה מושבתת"**. שער
+    // שבודק רק את הדגל היה ירוק גם כשהפונקציה אינה מורצת בכלל —
+    // וזה בדיוק מה שקרה: החלה ידנית של פרוסה מהקובץ סחפה איתה את
+    // ה-`DO` שמבצע `cron.unschedule('parkomat-ingestion-health')`,
+    // בלי ה-`cron.schedule` שאחריו. המשימה נעלמה מהלוח ל-22 דקות,
+    // והשומר על "התראות כבויות" לא הרגיש דבר.
+    const JOBS = ["parkomat-ingestion-health", "parkomat-agent-silence",
+                  "parkomat-prune-events", "parkomat-cleanup-old",
+                  "parkomat-prune-ingest-drops"];
+    const jobs = (await client.query(
+      "SELECT jobname, active FROM cron.job")).rows;
+    for (const j of JOBS) {
+      const row = jobs.find((r) => r.jobname === j);
+      check(`משימת cron קיימת ופעילה: ${j}`, !!row && row.active === true,
+        row ? "" : "לא מתוזמנת");
+    }
+
+    // ⚠️ "מתוזמנת" אינה "רצה". משימה יכולה להיות בלוח ולהיכשל בכל הרצה.
+    const { rows: [hr] } = await client.query(`
+      SELECT max(end_time) AS last, count(*) FILTER (WHERE status <> 'succeeded') AS bad
+        FROM cron.job_run_details d JOIN cron.job j USING (jobid)
+       WHERE j.jobname = 'parkomat-ingestion-health'
+         AND d.start_time > now() - interval '2 hours'`);
+    check("...והיא באמת רצה בשעתיים האחרונות", !!hr.last,
+      hr.last ? `אחרונה ${new Date(hr.last).toISOString()}` : "אף הרצה");
+    check("...בלי כשלים", Number(hr.bad) === 0, `${hr.bad} כשלים`);
+
+    // ------------------------------------------------------------
+    // 7. המצב עכשיו
     // ------------------------------------------------------------
     const now = (await client.query("SELECT value FROM settings WHERE key = $1", [KEY])).rows[0];
     console.log("");

@@ -41,6 +41,22 @@ async function main() {
       if (failures === 0) bad++;
     }
 
+    // ------------------------------------------------------------
+    // ⚠️ מוטציה רביעית: המשימה עצמה נעלמת מהלוח
+    // ------------------------------------------------------------
+    // זו לא מוטציה תיאורטית — היא **קרתה**. החלה ידנית של פרוסה מהקובץ
+    // סחפה איתה את ה-`DO` שמבצע `cron.unschedule`, בלי ה-`cron.schedule`
+    // שאחריו, והמשימה נעלמה מהלוח. `cron.job` היא טבלה רגילה, ולכן
+    // גם המוטציה הזו מתגלגלת חזרה.
+    await client.query("BEGIN");
+    await client.query("SELECT cron.unschedule('parkomat-ingestion-health')");
+    const f4 = await gate.run(client);
+    await client.query("ROLLBACK");
+    console.log(f4 > 0
+      ? `\n✅ מוטציה נתפסה: המשימה הוסרה מהלוח  (${f4} כשלים)\n`
+      : "\n❌ מוטציה עברה בשקט: המשימה הוסרה מהלוח — השער עיוור\n");
+    if (f4 === 0) bad++;
+
     // המקור חזר לקדמותו?
     const { rows: [{ ok }] } = await client.query(
       "SELECT position('v_sys_on' in pg_get_functiondef('app.check_ingestion_health'::regproc)) > 0 AS ok");
