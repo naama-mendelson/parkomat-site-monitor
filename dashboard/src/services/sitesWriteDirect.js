@@ -134,6 +134,26 @@ export async function markControllerReplacedDirect(code) {
  * ⚠️ הכלל "מנהלים בלבד" אינו כאן אלא בפונקציה, שבודקת `my_role()` מול
  * המסד. בדיקה בקוד הזה הייתה נעקפת בפתיחת DevTools.
  */
+/**
+ * האם הסוכן של האתר הזה פעם אי פעם?
+ *
+ * ⚠️ **זה מה שמבדיל בין סיבוב חינם לסיבוב הרסני.** אתר שמעולם לא פעם —
+ * הסיסמה שלו אינה בשימוש בשום מקום, וסיבוב אינו שובר כלום. אתר שפועם
+ * נמצא במסלול הישיר **ברגע זה**, וסיבוב מפסיק את הדיווח שלו עד שמישהו
+ * ייסע לעדכן את ה-config במחשב שבאתר.
+ *
+ * ⚠️ **וכשלון מוחזר כ-`null`, לא כ-`false`.** "לא הצלחתי לברר" חייב
+ * להוביל לאישור מפורש: `false` היה מסובב אתר חי בלחיצה אחת בגלל תקלת
+ * רשת. נכשל-סגור, כמו כל שאר ההגנות כאן.
+ */
+export async function agentEverBeatDirect(siteId) {
+  assertConfigured();
+  const { data, error } = await supabase
+    .from("alive").select("seen_at").eq("site_id", siteId).maybeSingle();
+  if (error) return null;
+  return Boolean(data?.seen_at);
+}
+
 export async function provisionAgentDirect(code, { rotate = false } = {}) {
   assertConfigured();
 

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
-import { updateSite, deleteSite, provisionAgent, markControllerReplaced } from "../../services/dataSource";
+import { updateSite, deleteSite, provisionAgent, agentEverBeat, markControllerReplaced } from "../../services/dataSource";
 import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
@@ -141,8 +141,22 @@ function AdminPanel({ sites, onClose, onChanged }) {
     } catch (e) {
       // ⚠️ הסיבוב **אינו** קורה בלחיצה אחת: הוא מבטל את הסיסמה הקודמת
       // מיד, ואתר שכבר משתמש בה מפסיק לדווח עד שמעדכנים אותו בשטח.
-      if (e.alreadyExists && !rotate) setConfirmRotate(site.code);
-      else setErr(e.message);
+      if (!e.alreadyExists || rotate) { setErr(e.message); return; }
+
+      // ============================================================
+      // ⚠️ לחיצה אחת כשזה בטוח, אישור כשלא
+      // ============================================================
+      // אתר ש**מעולם לא פעם** — הסיסמה שלו אינה בשימוש
+      // בשום מקום, וסיבוב אינו שובר כלום. לדרוש שם אישור
+      // הוא להפוך את ההגנה למכשול: שלושה אתרים היו תקועים
+      // שבוע בדיוק משום שפעולה ללא סיכון נראתה כמו שגיאה.
+      //
+      // ⚠️ אתר ש**פועם** נמצא במסלול הישיר ברגע זה, וסיבוב
+      // מפסיק את הדיווח שלו עד שמישהו ייסע לעדכן את ה-config.
+      // ו-`null` הוא "לא הצלחתי לברר" — גם הוא דורש אישור.
+      const beat = await agentEverBeat(site.id);
+      if (beat === false) { await issueAgent(site, true); return; }
+      setConfirmRotate(site.code);
     } finally {
       setBusy(false);
     }

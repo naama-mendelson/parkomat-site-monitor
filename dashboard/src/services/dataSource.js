@@ -72,7 +72,7 @@ import {
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
-import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, markControllerReplacedDirect } from "./sitesWriteDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
@@ -470,6 +470,10 @@ export async function markControllerReplaced(code) {
   if (!useDirect) throw new Error("סימון החלפת בקר זמין רק במצב הישיר");
   return markControllerReplacedDirect(code);
 }
+export async function agentEverBeat(siteId) {
+  return agentEverBeatDirect(siteId);
+}
+
 export async function provisionAgent(code, opts) {
   if (!useDirect) throw new Error("הנפקת זהות סוכן זמינה רק במצב הישיר");
   return provisionAgentDirect(code, opts);
