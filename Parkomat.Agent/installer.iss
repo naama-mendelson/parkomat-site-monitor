@@ -268,12 +268,34 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\tray\{#TrayExe}"; \
 ; ומופע שני יוצא בשקט. בלי המאפיין הזה המשימה הייתה מייצרת עשרות
 ; טריים ביום.
 ;
+; ⚠️ **אלא אם הראשון תקוע — ואז המופע השני משתלט.** יציאה בשקט לבדה
+; הפכה טריי תקוע לאתר מת לצמיתות: הוא מחזיק את ה-Mutex, והמשימה
+; מגיעה כל חמש דקות ונחסמת. `TakeoverPolicy` מחליטה מתי להשתלט.
+;
 ; ⚠️ **בלי הרשאות מנהל**: משימה למשתמש הנוכחי, "רק כשהמשתמש מחובר" —
 ; אין סיסמה שמורה ואין UAC, בדיוק כמו שאר ההתקנה.
 ; `/F` — דורס משימה קודמת, כדי שהתקנה חוזרת לא תיכשל.
 Filename: "{sys}\schtasks.exe"; \
   Parameters: "/Create /TN ""ParkomatAgentKeepAlive"" /TR ""\""{app}\tray\{#TrayExe}\"""" /SC MINUTE /MO 5 /F"; \
   Flags: runhidden; StatusMsg: "מגדיר הפעלה אוטומטית..."
+
+; ⚠️ **ומשימה שנייה, בכניסה — ולא במקום הראשונה.**
+; המשימה שלמעלה מתחילה להסתובב רק כשקיים סשן, ובאתחול של עדכון
+; Windows החזירה את המשתמש אבל דילגה על `Run`. משימת ONLOGON מופעלת
+; ע"י Task Scheduler ולא ע"י רצף העלייה של המעטפת, ולכן היא תופסת
+; בדיוק את המצב הזה — **מיד**, במקום להמתין עד חמש דקות.
+;
+; ⚠️ ואי אפשר לתת שני מפעילים למשימה אחת דרך `schtasks /Create`, ולכן
+; זו משימה נפרדת ולא דגל נוסף. שתיהן מריצות את אותו קובץ, ושתיהן
+; בטוחות בזכות אותו Mutex — ובזכות ההשתלטות, מופע שני מיותר אינו
+; רק לא-מזיק אלא לפעמים בדיוק מה שמציל את האתר.
+;
+; ⚠️ **`/SC ONSTART` היה טוב יותר — והוא דורש מנהל.** הוא רץ לפני שיש
+; סשן בכלל, כלומר גם אחרי אתחול שאיש לא נכנס אחריו. ההתקנה כאן היא
+; ללא UAC בכוונה, ולכן המענה למקרה הזה הוא `AutoAdminLogon` במכונה.
+Filename: "{sys}\schtasks.exe"; \
+  Parameters: "/Create /TN ""ParkomatAgentAtLogon"" /TR ""\""{app}\tray\{#TrayExe}\"""" /SC ONLOGON /F"; \
+  Flags: runhidden; StatusMsg: "מגדיר הפעלה בכניסה..."
 
 ; מפעילים את ה-Tray מיד בסוף ההתקנה — הוא ידאג להפעיל את השאר.
 Filename: "{app}\tray\{#TrayExe}"; \
@@ -288,6 +310,7 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im mosquitto.exe"; Flags: runhi
 ; ⚠️ והמשימה המתוזמנת נמחקת גם היא. בלעדיה הסרה משאירה משימה שמנסה
 ; להריץ קובץ שנמחק, כל חמש דקות, לנצח.
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentKeepAlive"" /F"; Flags: runhidden; RunOnceId: "DelKeepAlive"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentAtLogon"" /F"; Flags: runhidden; RunOnceId: "DelAtLogon"
 
 [UninstallDelete]
 ; מוחקים את כל תיקיית ההתקנה (service, tray, mosquitto) ואת נתוני הריצה,

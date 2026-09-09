@@ -63,6 +63,41 @@ public class AutoStartTests
         Assert.Matches(new Regex(@"/SC\s+MINUTE\s+/MO\s+5"), Code());
     }
 
+    // ============================================================
+    // ⚠️ ושלושה מנגנונים, לא שניים — כי לכל אחד יש בדיוק מצב שהוא מפספס
+    // ============================================================
+    // `Run` מרים מיד בכניסה רגילה, ונדלג עליו באתחול של עדכון Windows.
+    // משימת ה-MINUTE תופסת את זה — אבל היא מתחילה להסתובב רק כשקיים
+    // סשן, ובמקרה הגרוע ממתינים לה חמש דקות. משימת ONLOGON מופעלת ע"י
+    // Task Scheduler, לא ע"י רצף העלייה של המעטפת, ולכן היא תופסת את
+    // אותו מצב **מיד**.
+    [Fact]
+    public void ASecondTaskStartsItAtLogon()
+    {
+        string code = Code();
+        Assert.Matches(new Regex(@"/Create\s+/TN\s+""""ParkomatAgentAtLogon"""""), code);
+        Assert.Matches(new Regex(@"/SC\s+ONLOGON"), code);
+    }
+
+    // ⚠️ **והיא אינה מחליפה את המשימה החוזרת.** משימה שרצה רק בכניסה
+    // הייתה מפספסת קריסה באמצע היום, וטריי תקוע היה נשאר תקוע עד
+    // ההתחברות הבאה — כלומר עד שמישהו מגיע פיזית לאתר.
+    [Fact]
+    public void TheRepeatingTaskSurvivesAlongsideIt()
+    {
+        string code = Code();
+        Assert.Matches(new Regex(@"/SC\s+MINUTE\s+/MO\s+5"), code);
+        Assert.Matches(new Regex(@"/Create\s+/TN\s+""""ParkomatAgentKeepAlive"""""), code);
+    }
+
+    // ⚠️ שתי משימות, שתי מחיקות. הראשונה כבר מכוסה; בלי השנייה הסרה
+    // משאירה משימה שמנסה להריץ קובץ שנמחק, בכל כניסה, לנצח.
+    [Fact]
+    public void TheLogonTaskIsRemovedToo()
+    {
+        Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentAtLogon"""""), Code());
+    }
+
     [Fact]
     public void TheTaskIsRemovedOnUninstall()
     {
