@@ -15,6 +15,11 @@ const MUTATIONS = [
     (s) => s.replace(/v_sys_on\s+boolean\s*:=[\s\S]*?;\s*\n/, "v_sys_on boolean := true;\n")],
   ["גידור אחד מארבעה הוסר",
     (s) => s.replace(/CASE WHEN v_sys_on THEN (app\.send_push\([\s\S]*?\)) END/, "$1")],
+  ["האתר השקט חוזר לדגל המערכת",
+    (s) => s.replace("CASE WHEN v_silent_on THEN", "CASE WHEN v_sys_on THEN")],
+  ["הדגל השני הוסר",
+    (s) => s.replace(/  v_silent_on boolean := COALESCE\([\s\S]*?= 'true';\n/,
+                     "  v_silent_on boolean := true;\n")],
   ["הדגל הפך לתמיד-דלוק",
     (s) => s.replace(/=\s*'true';\s*\n\s*BEGIN/, "= 'true' OR true;\nBEGIN")],
 ];

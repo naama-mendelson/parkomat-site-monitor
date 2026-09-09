@@ -36,6 +36,7 @@ function check(label, ok, detail) {
 }
 
 const KEY = "system_alerts_enabled";
+const SILENT_KEY = "silent_site_alerts_enabled";
 
 // ⚠️ הבדיקות מקבלות `client` ומיוצאות, כדי ש-`mutate-alert-gate` יוכל
 // להריץ **בדיוק אותן** מול גרסה מקולקלת. העתקה שלהן לתסריט המוטציה
@@ -54,11 +55,27 @@ async function run(client) {
     const code = src.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
 
     const calls  = (code.match(/app\.send_push\s*\(/g) || []).length;
-    const gated  = (code.match(/CASE\s+WHEN\s+v_sys_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
+    const bySys  = (code.match(/CASE\s+WHEN\s+v_sys_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
+    const bySite = (code.match(/CASE\s+WHEN\s+v_silent_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
 
-    check("ארבע ההתראות המערכתיות קיימות בייצור", calls === 4, `נמצאו ${calls}`);
-    check("⚠️ כל אחת מהן עוברת דרך הדגל", calls > 0 && gated === calls,
-      `${gated}/${calls} מגודרות`);
+    check("ארבע ההתראות קיימות בייצור", calls === 4, `נמצאו ${calls}`);
+    check("⚠️ כל אחת מהן עוברת דרך דגל כלשהו", calls > 0 && bySys + bySite === calls,
+      `${bySys} מערכת + ${bySite} אתר = ${bySys + bySite} מתוך ${calls}`);
+
+    // ============================================================
+    // ⚠️ שני דגלים ולא אחד — וזו הטענה החשובה כאן
+    // ============================================================
+    // שלוש ההתראות הראשונות הן על **המערכת שלנו** (השרת חדל לדווח,
+    // הודעות נזרקות, חשכה כללית), נמדדו כ-4–6 בשבוע, והוחלט לא לקבל
+    // אותן. הרביעית שואלת שאלה אחרת לגמרי: **אתר של לקוח מנותק שעות.**
+    //
+    // ⚠️ **נמדד ב-09/09/2026, והמחיר היה קונקרטי:** שישה אתרים היו
+    // מנותקים 9–15.5 שעות אחרי אתחול של עדכון Windows, ומה שגילה את זה
+    // היה מבט מקרי במסך. חמישה מהם היו חוצים את סף שש השעות ומייצרים
+    // התראה שעתיים קודם. דגל אחד לשתי השאלות פירושו שכיבוי הרעש מכבה
+    // גם את זה.
+    check("⚠️ שלוש המערכתיות מגודרות בדגל המערכת", bySys === 3, `${bySys}`);
+    check("⚠️ והאתר השקט בדגל **נפרד**", bySite === 1, `${bySite}`);
 
     // ------------------------------------------------------------
     // 2. הקובץ והייצור מסכימים
@@ -67,42 +84,49 @@ async function run(client) {
     const path = require("path");
     const file = fs.readFileSync(path.join(__dirname, "..", "db", "cron.postgres.sql"), "utf8")
       .split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
-    const fileGated = (file.match(/CASE\s+WHEN\s+v_sys_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
-    check("הקובץ ב-git זהה לייצור — עלייה הבאה של master לא תבטל את הדגל",
-      fileGated === gated, `קובץ ${fileGated} · ייצור ${gated}`);
+    const fileSys  = (file.match(/CASE\s+WHEN\s+v_sys_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
+    const fileSite = (file.match(/CASE\s+WHEN\s+v_silent_on\s+THEN\s+app\.send_push\s*\(/g) || []).length;
+    check("הקובץ ב-git זהה לייצור — עלייה הבאה של master לא תבטל את הדגלים",
+      fileSys === bySys && fileSite === bySite,
+      `קובץ ${fileSys}/${fileSite} · ייצור ${bySys}/${bySite}`);
 
     // ------------------------------------------------------------
     // 3. הביטוי עצמו — נלקח מהייצור ומורץ, לא משוכתב
     // ------------------------------------------------------------
     // ⚠️ העתקת הביטוי לכאן הייתה בודקת את מה שכתבתי, לא את מה שרץ.
-    const m = code.match(/v_sys_on\s+boolean\s*:=\s*([\s\S]*?);\s*\n/);
-    check("הגדרת v_sys_on נמצאה בייצור", !!m);
-    if (!m) return failures;
-    const expr = m[1];
+    // ⚠️ **שני הדגלים נבדקים, ולא רק הראשון.** דגל שני שנוסף ואינו
+    // נבדק הוא בדיוק המצב שבו מישהו כותב שם 'True' או 'yes' ומגלה
+    // חודשיים אחר כך שההתראה מעולם לא יצאה.
+    for (const [name, key] of [["v_sys_on", KEY], ["v_silent_on", SILENT_KEY]]) {
+      const m = code.match(new RegExp(`${name}\\s+boolean\\s*:=\\s*([\\s\\S]*?);\\s*\\n`));
+      check(`הגדרת ${name} נמצאה בייצור`, !!m);
+      if (!m) { failures++; continue; }
+      const expr = m[1];
 
-    const had = (await client.query("SELECT value FROM settings WHERE key = $1", [KEY])).rows[0];
+      const had = (await client.query(
+        "SELECT value FROM settings WHERE key = $1", [key])).rows[0];
 
-    async function evalFlag() {
-      const { rows: [r] } = await client.query(`SELECT (${expr}) AS on`);
-      return r.on;
-    }
+      const evalFlag = async () =>
+        (await client.query(`SELECT (${expr}) AS on`)).rows[0].on;
 
-    await client.query("DELETE FROM settings WHERE key = $1", [KEY]);
-    check("בלי שורה בכלל — כבוי", (await evalFlag()) === false);
+      await client.query("DELETE FROM settings WHERE key = $1", [key]);
+      check(`  ${key}: בלי שורה בכלל — כבוי`, (await evalFlag()) === false);
 
-    await client.query(
-      `INSERT INTO settings (key, value, updated_at) VALUES ($1,'true', now()::text)
-         ON CONFLICT (key) DO UPDATE SET value = 'true'`, [KEY]);
-    check("⚠️ 'true' — דלוק (אחרת הדגל היה חוסם לנצח)", (await evalFlag()) === true);
-
-    await client.query("UPDATE settings SET value = 'false' WHERE key = $1", [KEY]);
-    check("'false' — כבוי", (await evalFlag()) === false);
-
-    // החזרה למצב שהיה.
-    await client.query("DELETE FROM settings WHERE key = $1", [KEY]);
-    if (had) {
       await client.query(
-        "INSERT INTO settings (key, value, updated_at) VALUES ($1,$2, now()::text)", [KEY, had.value]);
+        `INSERT INTO settings (key, value, updated_at) VALUES ($1,'true', now()::text)
+           ON CONFLICT (key) DO UPDATE SET value = 'true'`, [key]);
+      check(`  ⚠️ ${key}: 'true' — דלוק (אחרת הדגל חוסם לנצח)`, (await evalFlag()) === true);
+
+      await client.query("UPDATE settings SET value = 'false' WHERE key = $1", [key]);
+      check(`  ${key}: 'false' — כבוי`, (await evalFlag()) === false);
+
+      // החזרה למצב שהיה.
+      await client.query("DELETE FROM settings WHERE key = $1", [key]);
+      if (had) {
+        await client.query(
+          "INSERT INTO settings (key, value, updated_at) VALUES ($1,$2, now()::text)",
+          [key, had.value]);
+      }
     }
 
     // ------------------------------------------------------------
@@ -171,10 +195,15 @@ async function run(client) {
     // ------------------------------------------------------------
     // 7. המצב עכשיו
     // ------------------------------------------------------------
-    const now = (await client.query("SELECT value FROM settings WHERE key = $1", [KEY])).rows[0];
+    const state = async (k) =>
+      (await client.query("SELECT value FROM settings WHERE key = $1", [k])).rows[0];
+    const sys = await state(KEY);
+    const sil = await state(SILENT_KEY);
+    const say = (r) => (r && r.value === "true" ? "דלוקות ⚠️" : "כבויות");
+
     console.log("");
-    console.log(`   ${KEY} = ${now ? now.value : "לא מוגדר"}  →  התראות מערכתיות ${
-      now && now.value === "true" ? "דלוקות ⚠️" : "כבויות"}`);
+    console.log(`   ${KEY} = ${sys ? sys.value : "לא מוגדר"}  →  התראות מערכת ${say(sys)}`);
+    console.log(`   ${SILENT_KEY} = ${sil ? sil.value : "לא מוגדר"}  →  אתר מנותק שעות ${say(sil)}`);
     console.log("   תקלת אתר בודד עוברת במסלול אחר (ingestion → notify-fault) ואינה מושפעת.");
   }
   return failures;
