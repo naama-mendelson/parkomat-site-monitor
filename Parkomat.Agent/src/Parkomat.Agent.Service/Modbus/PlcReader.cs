@@ -195,7 +195,7 @@ public class PlcReader : IDisposable
             // מספר הכרטיס הוא 16 ביט (עד 65535) — אושר מול האתר שלא חורג.
             if (cardAddr == modeAddr + 1 && cycleAddr == modeAddr + 2)
             {
-                ushort[] r = _master!.ReadInputRegisters(slaveId, (ushort)modeAddr, 3);
+                ushort[] r = ReadBlock(slaveId, modeAddr, 3);
                 mode = r[0];
                 card = r[1];
                 cycle = r[2];
@@ -265,7 +265,7 @@ public class PlcReader : IDisposable
             int count = Math.Clamp(_config.FaultTextMaxChars, 1, 125);
 
             EnsureConnected();
-            ushort[] raw = _master!.ReadInputRegisters(1, (ushort)addr, (ushort)count);
+            ushort[] raw = ReadBlock(1, addr, count);
             return FaultTextDecoder.Decode(raw);
         }
         catch
@@ -278,12 +278,29 @@ public class PlcReader : IDisposable
         }
     }
 
-    // קורא input register בודד (פקודת Modbus FC 04) ומחזיר את הערך.
+    // ============================================================
+    // ⚠️ **שער אחד לכל קריאה — וזו הנקודה**
+    // ============================================================
+    // קודם היו כאן **שלוש** קריאות נפרדות ל-`ReadInputRegisters`:
+    // הבלוק הרצוף, טקסט התקלה, ורגיסטר בודד. בקר שחושף רק
+    // Holding Registers דורש ש**כולן** ישתנו, ושלוש נקודות נפרדות
+    // הן שלוש הזדמנויות לשכוח אחת — והנשכחת תהיה טקסט התקלה,
+    // שנקרא רק כשיש תקלה ולכן הכשל שלו מתגלה באיחור רב.
+    //
+    // אותו נימוק בדיוק כמו "הטפסים עורכים במקום": רשימה שצריך
+    // לזכור לעדכן היא רשימה שמישהו לא יעדכן.
+    private ushort[] ReadBlock(byte slaveId, int address, int count)
+    {
+        return _config.UseHoldingRegisters
+            ? _master!.ReadHoldingRegisters(slaveId, (ushort)address, (ushort)count)   // FC 03
+            : _master!.ReadInputRegisters(slaveId, (ushort)address, (ushort)count);    // FC 04
+    }
+
+    // קורא רגיסטר בודד ומחזיר את הערך.
     private ushort ReadRegister(byte slaveId, int address)
     {
-        // ReadInputRegisters = FC 04, כפי שה-PLC דורש.
         // מחזיר מערך; אנחנו קוראים אחד, אז לוקחים את הראשון.
-        ushort[] values = _master!.ReadInputRegisters(slaveId, (ushort)address, 1);
+        ushort[] values = ReadBlock(slaveId, address, 1);
         return values[0];
     }
 

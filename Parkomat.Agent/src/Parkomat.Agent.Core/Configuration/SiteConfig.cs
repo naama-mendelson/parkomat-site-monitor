@@ -108,6 +108,37 @@ public class PlcConfig
 
     private string NormalizedTransport => (Transport ?? "").Trim().ToLowerInvariant();
 
+    /// <summary>
+    /// פקודת ה-Modbus לקריאה: <b>4</b> = Input Registers (ברירת מחדל),
+    /// <b>3</b> = Holding Registers.
+    ///
+    /// <para>⚠️ <b>מספר ולא מחרוזת</b>, בניגוד ל-<c>Transport</c>. שם היו
+    /// שני ערכים שקולים ("tcp"/"udp") שאין ביניהם סדר, וכתיב שגוי הוא
+    /// תקלה שקטה; כאן הערך הוא <b>מספר הפקודה עצמו</b> כפי שהוא מופיע
+    /// בתקן ובתיעוד של יצרן הבקר, וכל ערך אחר הוא פשוט לא-פקודה.</para>
+    ///
+    /// <para>⚠️ <b>4 היא ברירת המחדל מפני שהיא נכונה לכל 21 האתרים
+    /// הקיימים</b> — לא מפני שהיא "הרגילה". שינוי ברירת המחדל היה משנה
+    /// את התנהגות כל הצי בהתקנה הבאה.</para>
+    /// </summary>
+    public int FunctionCode { get; set; } = 4;
+
+    /// <summary>
+    /// ⚠️ <b>נגזר, ולא נשמר.</b> אותו עיקרון כמו <c>UseUdp</c>: שדה שני
+    /// שאפשר לסתור את הראשון הוא מצב שאסור שיהיה ניתן לביטוי.
+    ///
+    /// <para>⚠️ וכל ערך שאינו 3 נופל ל-FC 04 — <b>ההתנהגות הקיימת</b>.
+    /// קובץ עם ערך שגוי לא יהפוך אתר עובד לאתר שקורא בפקודה אחרת.
+    /// <c>FunctionCodeIsKnown</c> קיים כדי שהסוכן יכתוב אזהרה במקום
+    /// לבלוע בשקט, בדיוק כמו <c>TransportIsKnown</c>.</para>
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UseHoldingRegisters => FunctionCode == 3;
+
+    /// <summary>האם הערך שבקובץ הוא פקודת קריאה מוכרת.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool FunctionCodeIsKnown => FunctionCode is 3 or 4;
+
     /// <summary>כתובת ה-register שממנה נקרא את ה-MODE.</summary>
     public int ModeRegister { get; set; } = 290;
 

@@ -130,7 +130,7 @@
 ;          הבקר פשוט אינו עונה — ואין בקובץ עקב לכך שמישהו בחר אחרת.
 ;          + תיקון נלווה: שני הטפסים בנו PlcConfig מחדש עם 5 שדות מתוך 8,
 ;          ולכן **כל שמירה מחקה את FaultTextRegister**. עכשיו נערך במקום.
-#define MyAppVersion "1.0.37"
+#define MyAppVersion "1.0.38"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -239,6 +239,42 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\tray\{#TrayExe}"; \
   IconFilename: "{app}\tray\Assets\logo-color.ico"
 
 [Run]
+; ============================================================
+; ⚠️ משימה מתוזמנת — כי `Run` לבדו אינו מספיק
+; ============================================================
+; נמדד באתר 1089, 09/09/2026, מיומני האירועים של Windows:
+;
+;     02:59  1074  הפעלה מחדש יזומה
+;     03:02  6005  עלייה
+;     03:04  1074  ועוד אחת, שלוש דקות אחרי   ← חתימת עדכון Windows
+;     03:04  6005  עלייה
+;
+; המשתמש היה מחובר (`query user` → Active מ-03:04), הערך ב-`Run` היה קיים
+; ותקין — **והטריי לא עלה חמש שעות.** באתחול של עדכון, Windows מחזירה את
+; המשתמש לסשן כדי לסיים את העדכון, אבל רצף העלייה של אפליקציות המשתמש
+; לא מתבצע כרגיל.
+;
+; ⚠️ **המשמעות: אתר מת לגמרי אחרי כל עדכון, עד שמישהו מגיע פיזית.**
+; פעם בחודש, ב-21 אתרים, בשעות הלילה — ובזמנים מפוזרים, כי העדכונים
+; מתגלגלים לכל מכונה בנפרד. זה מה שנראה כמו "הרבה אתרים בלי קליטה".
+;
+; ⚠️ **משימה מתוזמנת מופעלת ע"י שירות Task Scheduler**, שאינו תלוי ברצף
+; העלייה של המעטפת — וזו בדיוק התכונה שחסרה ל-`Run`.
+;
+; וכל חמש דקות ולא רק בכניסה: כך נתפסת גם קריסה באמצע היום, ומשך
+; ההשבתה חסום בחמש דקות במקום בשעות.
+;
+; ⚠️ **והפעלה כפולה אינה מזיקה**: `Program.cs` של הטריי מחזיק Mutex,
+; ומופע שני יוצא בשקט. בלי המאפיין הזה המשימה הייתה מייצרת עשרות
+; טריים ביום.
+;
+; ⚠️ **בלי הרשאות מנהל**: משימה למשתמש הנוכחי, "רק כשהמשתמש מחובר" —
+; אין סיסמה שמורה ואין UAC, בדיוק כמו שאר ההתקנה.
+; `/F` — דורס משימה קודמת, כדי שהתקנה חוזרת לא תיכשל.
+Filename: "{sys}\schtasks.exe"; \
+  Parameters: "/Create /TN ""ParkomatAgentKeepAlive"" /TR ""\""{app}\tray\{#TrayExe}\"""" /SC MINUTE /MO 5 /F"; \
+  Flags: runhidden; StatusMsg: "מגדיר הפעלה אוטומטית..."
+
 ; מפעילים את ה-Tray מיד בסוף ההתקנה — הוא ידאג להפעיל את השאר.
 Filename: "{app}\tray\{#TrayExe}"; \
   Description: "הפעל את Parkomat Agent"; \
@@ -249,6 +285,9 @@ Filename: "{app}\tray\{#TrayExe}"; \
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#TrayExe}"; Flags: runhidden; RunOnceId: "KillTray"
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#ServiceExe}"; Flags: runhidden; RunOnceId: "KillAgent"
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im mosquitto.exe"; Flags: runhidden; RunOnceId: "KillMosq"
+; ⚠️ והמשימה המתוזמנת נמחקת גם היא. בלעדיה הסרה משאירה משימה שמנסה
+; להריץ קובץ שנמחק, כל חמש דקות, לנצח.
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentKeepAlive"" /F"; Flags: runhidden; RunOnceId: "DelKeepAlive"
 
 [UninstallDelete]
 ; מוחקים את כל תיקיית ההתקנה (service, tray, mosquitto) ואת נתוני הריצה,

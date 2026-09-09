@@ -98,8 +98,9 @@ public class Worker : BackgroundService
         // ל-TCP נראה בלוג בדיוק כמו אתר TCP תקין — ובלי השדה הזה השאלה
         // "למה האתר לא קורא מהבקר" נענית רק בנסיעה לשם.
         _logger.LogInformation(
-            "PLC target: {Transport} {Ip}:{Port} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
+            "PLC target: {Transport} {Ip}:{Port} | FC=0x{Fc} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
             config.Plc.UseUdp ? "UDP" : "TCP",
+            config.Plc.UseHoldingRegisters ? "03" : "04",
             config.Plc.IpAddress, config.Plc.Port,
             config.Plc.ModeRegister, config.Plc.CardRegister, config.Plc.CycleRegister,
             config.PollIntervalMs);
@@ -114,6 +115,18 @@ public class Worker : BackgroundService
               + "Valid values are 'tcp' and 'udp'.",
                 config.Plc.Transport);
         }
+
+        // ⚠️ ואותו דבר לפקודת הקריאה. בקר שחושף רק Holding
+        // Registers אינו עונה ל-FC 04, והכשל נראה **זהה** לכתובת
+        // שגויה: timeout, בלי שום רמז שהפקודה היא הבעיה.
+        if (!config.Plc.FunctionCodeIsKnown)
+        {
+            _logger.LogWarning(
+                "PLC function code {Value} is not recognised — falling back to FC 0x04. "
+              + "Valid values are 4 (Input Registers) and 3 (Holding Registers).",
+                config.Plc.FunctionCode);
+        }
+
         // כתובת ה-HiveMQ מגיעה לגשר של Mosquitto — נרשמת לאבחון, בלי הסיסמה.
         // TLS אינו מוצג כערך: הוא תמיד פעיל ואין דרך לכבותו.
         _logger.LogInformation(

@@ -143,6 +143,49 @@ public class PlcFormWiringTests
             Source("RegistersForm.cs"));
     }
 
+    // ============================================================
+    // בורר פקודת הקריאה — אותם שלושה כללים בדיוק
+    // ============================================================
+
+    [Fact]
+    public void TheRegistersDialogOffersTheFunctionCodeChoice()
+    {
+        string form = Source("RegistersForm.cs");
+        Assert.Matches(new Regex(@"_funcCode\.Items\.AddRange"), form);
+        // ⚠️ המספרים כפי שהם בתקן ובתיעוד של יצרן הבקר. "Input"/
+        // "Holding" לבדם היו תרגום שלנו, ומי שמקבל הוראה בטלפון
+        // מהחשמלאי שומע "0x03", לא "החזקה".
+        Assert.Matches(new Regex(@"0x04"), form);
+        Assert.Matches(new Regex(@"0x03"), form);
+    }
+
+    [Fact]
+    public void TheFunctionCodeCannotBeTypedByHand()
+    {
+        Assert.Matches(
+            new Regex(@"_funcCode\.DropDownStyle\s*=\s*ComboBoxStyle\.DropDownList"),
+            Source("RegistersForm.cs"));
+    }
+
+    [Fact]
+    public void TheFunctionCodeIsWrittenBackAsANumber()
+    {
+        // הקובץ מחזיק 3/4; הפקד מציג מחרוזת עם הסבר.
+        Assert.Matches(
+            new Regex(@"Result\.FunctionCode\s*=.*\?\s*3\s*:\s*4"),
+            Source("RegistersForm.cs"));
+    }
+
+    [Fact]
+    public void TheDialogShowsTheFunctionCodeTheAgentWillActuallyUse()
+    {
+        // ⚠️ נגזר מ-`UseHoldingRegisters` ולא מהמספר הגולמי: קובץ עם
+        // FunctionCode=7 היה מוצג כ-7 בזמן שהסוכן קורא ב-0x04.
+        Assert.Matches(
+            new Regex(@"_funcCode\.SelectedItem\s*=\s*current\.UseHoldingRegisters"),
+            Source("RegistersForm.cs"));
+    }
+
     [Fact]
     public void TheDialogShowsWhatTheAgentWillActuallyDo()
     {

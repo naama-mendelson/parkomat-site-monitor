@@ -25,6 +25,11 @@ public class RegistersForm : Form
     // אבל **כן בממשק ולא רק בקובץ**, בניגוד להם: זו הגדרת חומרה שטכנאי
     // חייב להזין באתר, ולא החלטת מדיניות שמקבלים פעם אחת מהמשרד.
     private readonly ComboBox _transport = new();
+    private readonly ComboBox _funcCode = new();
+
+    // הכיתוב בדיוק כפי שהוא בתקן ובתיעוד של יצרן הבקר.
+    private const string FC04 = "0x04 — Input Registers";
+    private const string FC03 = "0x03 — Holding Registers";
 
     // ה-PlcConfig שאנחנו עורכים. נחשף למי שקורא אחרי סגירה.
     public PlcConfig Result { get; private set; }
@@ -41,7 +46,9 @@ public class RegistersForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(360, 320);
+        // ⚠️ רחב מספיק לכיתוב המלא של פקודת הקריאה. רשימה שחותכת
+        // את הטקסט מאלצת לנחש מה נבחר, וזו הטעות שהרשימה הסגורה באה למנוע.
+        ClientSize = new Size(430, 340);
 
         // אזור גלילה — כאן ייכנסו כל הכתובות. כשנוסיף עוד, הגלילה תופיע לבד.
         var scroll = new Panel
@@ -72,10 +79,23 @@ public class RegistersForm : Form
         _transport.Width = 120;
         _transport.Items.AddRange(new object[] { "TCP", "UDP" });
 
+        // ⚠️ **פקודת הקריאה, ולא "סוג רגיסטר".** מה שכתוב כאן חייב להיות
+        // מה שכתוב בתיעוד של יצרן הבקר ובתקן — 0x04 / 0x03 — כי זה מה
+        // שמישהו יקרא בטלפון מהחשמלאי. "Input"/"Holding" הוא תרגום שלנו,
+        // והוא מוסיף שלב שבו אפשר לטעות.
+        //
+        // ורשימה סגורה, מאותה סיבה כמו התעבורה: ערך חופשי היה נופל בשקט
+        // ל-FC 04 (ראה PlcConfig.UseHoldingRegisters), כלומר אתר שנראה
+        // מוגדר ל-0x03 וקורא ב-0x04.
+        _funcCode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _funcCode.Width = 190;
+        _funcCode.Items.AddRange(new object[] { FC04, FC03 });
+
         AddRow(table, 0, "תעבורה:", _transport);
-        AddRow(table, 1, "כתובת MODE:", _modeReg);
-        AddRow(table, 2, "כתובת כרטיס:", _cardReg);
-        AddRow(table, 3, "כתובת Cycle Counter:", _cycleReg);
+        AddRow(table, 1, "פקודת קריאה:", _funcCode);
+        AddRow(table, 2, "כתובת MODE:", _modeReg);
+        AddRow(table, 3, "כתובת כרטיס:", _cardReg);
+        AddRow(table, 4, "כתובת Cycle Counter:", _cycleReg);
         // כשנוסיף registers בעתיד — פשוט נוסיף כאן עוד שורות, והגלילה תטפל.
 
         scroll.Controls.Add(table);
@@ -108,6 +128,10 @@ public class RegistersForm : Form
         // שהסוכן **באמת יעשה**. קובץ עם "UDP " היה מציג UDP בזמן שהסוכן
         // קורא TCP — כלומר הממשק היה מאשר את הטעות במקום לחשוף אותה.
         _transport.SelectedItem = current.UseUdp ? "UDP" : "TCP";
+
+        // ⚠️ נגזר מ-UseHoldingRegisters ולא מהמספר הגולמי, מאותה סיבה:
+        // קובץ עם FunctionCode=7 היה מציג 7 בזמן שהסוכן קורא ב-0x04.
+        _funcCode.SelectedItem = current.UseHoldingRegisters ? FC03 : FC04;
     }
 
     private void OnOk()
@@ -124,6 +148,7 @@ public class RegistersForm : Form
         Result.CardRegister = (int)_cardReg.Value;
         Result.CycleRegister = (int)_cycleReg.Value;
         Result.Transport = (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp";
+        Result.FunctionCode = (_funcCode.SelectedItem as string) == FC03 ? 3 : 4;
 
         DialogResult = DialogResult.OK;
         Close();

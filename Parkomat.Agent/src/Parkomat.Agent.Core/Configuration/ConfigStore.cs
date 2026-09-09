@@ -232,6 +232,19 @@ public static class ConfigStore
         if (old.Plc is not null && !string.IsNullOrWhiteSpace(old.Plc.Transport))
             fresh.Plc.Transport = old.Plc.Transport;
 
+        // ⚠️ **ופקודת הקריאה, מאותו נימוק בדיוק.** בקר שחושף רק Holding
+        // Registers אינו עונה ל-FC 04, והכשל נראה **זהה** לכתובת שגויה:
+        // timeout, בלי שום רמז שמישהו בחר פקודה אחרת ושהאיפוס מחק אותה.
+        //
+        // ו-4 אינה ברירת מחדל ניטרלית — היא נכונה ל-21 האתרים הקיימים
+        // ושגויה בדיוק לאלה שבשבילם התכונה נבנתה, כמו TCP למעלה.
+        //
+        // ⚠️ התנאי הוא `> 0` ולא "מוכר": קובץ ישן שאין בו את השדה כלל
+        // מגיע כ-0 (מאתחל-המאפיין רץ רק כשהמאפיין **נעדר** מה-JSON), ואז
+        // צריך ליפול לברירת המחדל 4 ולא לשמר אפס.
+        if (old.Plc is not null && old.Plc.FunctionCode > 0)
+            fresh.Plc.FunctionCode = old.Plc.FunctionCode;
+
         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
         fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);
 
