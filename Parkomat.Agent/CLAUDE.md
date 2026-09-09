@@ -146,6 +146,53 @@ and nobody could tell "PLC dead" from "PC off".
 - `WatchdogVsPlcErrorTests` pins the timing relationship so the thresholds cannot drift back
   into overlapping.
 
+## ⚠️ The scheduled task the installer created would never have run — measured, not read
+
+Everything above depends on one scheduled task restarting the Tray. It was created with
+`schtasks /Create` from `installer.iss`, with `Flags: runhidden` and no exit-code check. It was
+probed against a real Task Scheduler on 09/09/2026, before a single site was touched, and
+**four separate defects turned up — three of them silent.**
+
+**1. `/SC ONLOGON` returns `Access is denied` to a non-administrator.** All four variants were
+tried (`/RU %USERNAME%`, `/RU DOMAIN\user`, `/IT`, and none). This install is
+`PrivilegesRequired=lowest` deliberately, so **the logon task would not have been created at a
+single site** — while the installer reported success. A hidden command whose exit code nobody
+reads is indistinguishable from a mechanism that works.
+
+**2–4. Three `schtasks` defaults disable the task quietly**, all read back from the XML it
+generated itself:
+
+| Default | What it means at a site |
+|---|---|
+| `DisallowStartIfOnBatteries=true` | a PC on a **UPS** reports "battery" — the task does not run **at all**, at exactly the sites this exists for, during exactly the power event that started this work |
+| `MultipleInstancesPolicy=IgnoreNew` | the task counts as *running* for as long as the Tray it launched is alive. A **wedged** Tray keeps it running forever, so every later firing is swallowed — **the takeover never gets a chance.** This default silently cancels the entire mechanism built above it |
+| no `ExecutionTimeLimit` ⇒ `PT72H` | Task Scheduler kills the Tray after three days |
+
+**The fix is one task defined in XML, and it moved out of the installer into
+`KeepAliveTask.cs`.** `schtasks` cannot give one task two triggers, which is why the previous
+attempt was two tasks — and the second is the one that was refused. XML gives both, fixes all
+three defaults, and **was verified to register without administrator rights** when the
+`LogonTrigger` is scoped to the current user's SID.
+
+- **`BuildXml` is pure**, so every claim in it is a unit test rather than a comment — the same
+  split as `TakeoverPolicy`. ⚠️ And the gate reads the **XML body only**, not the file: a
+  comment mentioning `Parallel` above it would otherwise paint the gate green with the value
+  absent, which is the mistake this repo has already made three times.
+- **It is written on every Tray start, not only at install.** A task deleted by hand, or one
+  created by an older version with the broken defaults, repairs itself at the next start
+  without a reinstall.
+- **Uninstall still deletes it from `installer.iss`** — deleting your own task needs no
+  elevation, and without it an uninstall leaves a task launching a file that is gone.
+- ⚠️ **`Environment.ProcessPath`, not a path passed in.** The Tray registers *itself*, so the
+  task cannot point at an install location that no longer exists.
+
+⚠️ **And the one hole that remains is not closable without administrator rights:** a reboot
+after which **nobody signs in**. `/SC ONSTART` covers it and needs elevation. Two workarounds
+were considered and rejected on measurement, not taste — a Tray running as SYSTEM lands in
+session 0 and leaves the technician with no icon at all, and an agent running as SYSTEM creates
+files under `ProgramData` the user then cannot overwrite, which breaks saving settings. The
+answer is `AutoAdminLogon` on the machine, checked per site.
+
 ## Nobody watched the watchman — a wedged Tray killed the site permanently
 
 The Tray restarts the agent and Mosquitto; a scheduled task (`ParkomatAgentKeepAlive`, every

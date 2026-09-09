@@ -46,64 +46,113 @@ public class AutoStartTests
         Assert.Matches(new Regex(@"ValueName:\s*""ParkomatAgentTray"""), Code());
     }
 
-    [Fact]
-    public void AScheduledTaskAlsoStartsIt()
-    {
-        string code = Code();
-        Assert.Matches(new Regex(@"schtasks\.exe"), code);
-        Assert.Matches(new Regex(@"/Create\s+/TN\s+""""ParkomatAgentKeepAlive"""""), code);
-    }
-
-    [Fact]
-    public void ItRepeatsRatherThanRunningOnceAtLogon()
-    {
-        // ⚠️ **זו כל הנקודה.** משימה שרצה רק בכניסה הייתה נכשלת בדיוק
-        // באותו מצב שבו `Run` נכשל. הריצה החוזרת היא מה שמחזיר אתר
-        // שהתאתחל בלי שאיש נכנס אליו, וגם תופסת קריסה באמצע היום.
-        Assert.Matches(new Regex(@"/SC\s+MINUTE\s+/MO\s+5"), Code());
-    }
-
     // ============================================================
-    // ⚠️ ושלושה מנגנונים, לא שניים — כי לכל אחד יש בדיוק מצב שהוא מפספס
+    // ⚠️ המשימה מוגדרת בקוד, אחרי שהמתקין יצר אותה שבורה בשקט
     // ============================================================
-    // `Run` מרים מיד בכניסה רגילה, ונדלג עליו באתחול של עדכון Windows.
-    // משימת ה-MINUTE תופסת את זה — אבל היא מתחילה להסתובב רק כשקיים
-    // סשן, ובמקרה הגרוע ממתינים לה חמש דקות. משימת ONLOGON מופעלת ע"י
-    // Task Scheduler, לא ע"י רצף העלייה של המעטפת, ולכן היא תופסת את
-    // אותו מצב **מיד**.
+    // נמדד ב-09/09/2026 מול Task Scheduler אמיתי, ולא הוסק מקריאה:
+    // `schtasks /Create /SC ONLOGON` מחזיר **Access is denied** למשתמש
+    // שאינו מנהל — בכל ארבע הווריאציות שנוסו (`/RU user`, `/RU domain\\user`,
+    // `/IT`, וללא). ההתקנה הזו היא PrivilegesRequired=lowest בכוונה,
+    // והפקודה רצה `runhidden` בלי בדיקת שגיאה: ההתקנה הייתה מדווחת
+    // הצלחה, והמשימה לא הייתה נוצרת **באף אתר**.
     [Fact]
-    public void ASecondTaskStartsItAtLogon()
+    public void TheInstallerNoLongerCreatesTheTask()
     {
-        string code = Code();
-        Assert.Matches(new Regex(@"/Create\s+/TN\s+""""ParkomatAgentAtLogon"""""), code);
-        Assert.Matches(new Regex(@"/SC\s+ONLOGON"), code);
+        Assert.DoesNotMatch(new Regex(@"schtasks\.exe""[^\n]*/Create"), Code());
     }
 
-    // ⚠️ **והיא אינה מחליפה את המשימה החוזרת.** משימה שרצה רק בכניסה
-    // הייתה מפספסת קריסה באמצע היום, וטריי תקוע היה נשאר תקוע עד
-    // ההתחברות הבאה — כלומר עד שמישהו מגיע פיזית לאתר.
-    [Fact]
-    public void TheRepeatingTaskSurvivesAlongsideIt()
-    {
-        string code = Code();
-        Assert.Matches(new Regex(@"/SC\s+MINUTE\s+/MO\s+5"), code);
-        Assert.Matches(new Regex(@"/Create\s+/TN\s+""""ParkomatAgentKeepAlive"""""), code);
-    }
-
-    // ⚠️ שתי משימות, שתי מחיקות. הראשונה כבר מכוסה; בלי השנייה הסרה
-    // משאירה משימה שמנסה להריץ קובץ שנמחק, בכל כניסה, לנצח.
-    [Fact]
-    public void TheLogonTaskIsRemovedToo()
-    {
-        Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentAtLogon"""""), Code());
-    }
-
+    // ⚠️ אבל המחיקה בהסרה נשארת: היא עובדת בלי מנהל (מוחקים משימה של
+    // עצמך), ובלעדיה הסרה משאירה משימה שמריצה קובץ שנמחק, לנצח.
     [Fact]
     public void TheTaskIsRemovedOnUninstall()
     {
-        // ⚠️ בלי זה הסרה משאירה משימה שמנסה להריץ קובץ שנמחק, כל חמש
-        // דקות, לנצח — ומייצרת שגיאה שאיש לא ידע לקשר לכלום.
         Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentKeepAlive"""""), Code());
+    }
+
+    // ⚠️ **ומשימה אחת עם שני מפעילים, לא שתי משימות.** `schtasks` אינו
+    // יודע לתת שני מפעילים למשימה אחת, ולכן הניסיון הקודם היה שתי
+    // משימות — והשנייה היא זו שנדחתה בהרשאות.
+    [Fact]
+    public void OneTaskCarriesBothTriggers()
+    {
+        string xml = Xml();
+        Assert.Contains("<LogonTrigger>", xml);
+        Assert.Contains("<TimeTrigger>", xml);
+        Assert.Contains("<Interval>PT5M</Interval>", xml);
+    }
+
+    // ============================================================
+    // ⚠️ שלוש ברירות מחדל של schtasks שמשביתות את המשימה בשקט
+    // ============================================================
+    // כולן נקראו מה-XML ש-schtasks עצמו ייצר, לא שוערו.
+
+    // מחשב אתר על UPS מדווח "סוללה". עם ברירת המחדל המשימה **אינה רצה
+    // כלל** — בדיוק באוכלוסיית האתרים שהמנגנון נבנה בשבילה, ובדיוק
+    // בזמן הפסקת חשמל, שהיא האירוע שהתחיל את כל העבודה הזו.
+    [Fact]
+    public void BatteriesDoNotStopIt()
+    {
+        string xml = Xml();
+        Assert.Contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", xml);
+        Assert.Contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>", xml);
+    }
+
+    // ⚠️ **זו החמורה מכולן.** המשימה נחשבת "רצה" כל עוד הטריי שהיא
+    // הפעילה חי. עם `IgnoreNew`, טריי **תקוע** משאיר אותה רצה לנצח, כל
+    // הפעלה הבאה נבלעת, ו-`TakeoverPolicy` לעולם אינו מקבל הזדמנות —
+    // כלומר ברירת המחדל הזו מבטלת בשקט את כל המנגנון שנבנה מעליה.
+    [Fact]
+    public void EveryFiveMinutesActuallyRunsAgain()
+    {
+        Assert.Contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>", Xml());
+    }
+
+    // בלי זה הטריי נהרג אחרי 72 שעות ע"י Task Scheduler עצמו.
+    [Fact]
+    public void TheTrayIsNotKilledAfterThreeDays()
+    {
+        Assert.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", Xml());
+    }
+
+    // ⚠️ **וההגדרה חייבת להיכתב, לא רק להתקיים.** מדיניות טהורה שאיש
+    // אינו קורא לה נראית בדיוק כמו מדיניות שעובדת — אותה מוטציה שעברה
+    // בשקט ב-`ReportAutoStartHealth` וב-`WaitForSingleInstance`.
+    [Fact]
+    public void TheTaskIsWrittenOnEveryTrayStart()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string prog = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Tray", "Program.cs"));
+        string code = string.Join("\n",
+            prog.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+        Assert.Matches(new Regex(@"^\s*KeepAliveTask\.Ensure\(\);", RegexOptions.Multiline), code);
+    }
+
+    // ה-XML נבנה מהמקור עצמו, כדי שהשערים למעלה יבדקו את מה שנשלח
+    // ל-Task Scheduler ולא ניסוח שנכתב בבדיקה.
+    private static string Xml()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Tray", "Services", "KeepAliveTask.cs"));
+
+        // ⚠️ רק גוף ה-XML, לא ההערות מעליו: הערה שמזכירה `Parallel` הייתה
+        // צובעת את השער ירוק בלי שהערך קיים ב-XML. אותה טעות בדיוק כבר
+        // נעשתה בשערים אחרים בפרויקט הזה.
+        int i = src.IndexOf("<?xml", StringComparison.Ordinal);
+        Assert.True(i >= 0, "לא נמצא ה-XML");
+        int j = src.IndexOf("</Task>", i, StringComparison.Ordinal);
+        Assert.True(j > i, "ה-XML אינו שלם");
+        return src[i..j];
     }
 
     // ============================================================

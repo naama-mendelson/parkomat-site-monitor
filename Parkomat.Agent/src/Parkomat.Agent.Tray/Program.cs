@@ -77,6 +77,12 @@ internal static class Program
 
         using var owned = single;
 
+        // ⚠️ **המשימה המתוזמנת מוגדרת מכאן, לא מהמתקין** — נמדד שהמתקין
+        // יצר אותה שבורה בשקט (הרשאות, סוללות, IgnoreNew, 72 שעות).
+        // ההסבר המלא ב-`KeepAliveTask`. נכתבת בכל עלייה כדי שמשימה
+        // שנמחקה או שנוצרה בגרסה ישנה תתוקן בלי התקנה מחדש.
+        KeepAliveTask.Ensure();
+
         ApplicationConfiguration.Initialize();
 
         // מטפל-חריגות גלובלי: בלעדיו, חריגה על thread ה-UI (טעינת אייקון שנכשלה,

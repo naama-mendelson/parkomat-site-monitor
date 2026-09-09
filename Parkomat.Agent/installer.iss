@@ -272,30 +272,21 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\tray\{#TrayExe}"; \
 ; הפכה טריי תקוע לאתר מת לצמיתות: הוא מחזיק את ה-Mutex, והמשימה
 ; מגיעה כל חמש דקות ונחסמת. `TakeoverPolicy` מחליטה מתי להשתלט.
 ;
-; ⚠️ **בלי הרשאות מנהל**: משימה למשתמש הנוכחי, "רק כשהמשתמש מחובר" —
-; אין סיסמה שמורה ואין UAC, בדיוק כמו שאר ההתקנה.
-; `/F` — דורס משימה קודמת, כדי שהתקנה חוזרת לא תיכשל.
-Filename: "{sys}\schtasks.exe"; \
-  Parameters: "/Create /TN ""ParkomatAgentKeepAlive"" /TR ""\""{app}\tray\{#TrayExe}\"""" /SC MINUTE /MO 5 /F"; \
-  Flags: runhidden; StatusMsg: "מגדיר הפעלה אוטומטית..."
+; ⚠️ **והמשימה עצמה כבר אינה נוצרת כאן — היא נוצרת ע"י הטריי.**
+; נמדד ב-09/09/2026 מול Task Scheduler אמיתי: `schtasks /Create /SC ONLOGON`
+; מחזיר `Access is denied` למשתמש שאינו מנהל, וההתקנה הזו היא
+; PrivilegesRequired=lowest בכוונה. הפקודה רצה `runhidden` בלי בדיקת
+; שגיאה, ולכן ההתקנה הייתה מדווחת הצלחה והמשימה לא הייתה נוצרת באף אתר.
+;
+; ⚠️ ושלוש ברירות המחדל של `schtasks` משביתות אותה בשקט גם כשהיא כן
+; נוצרת: `DisallowStartIfOnBatteries` (מחשב על UPS אינו מריץ אותה כלל),
+; `MultipleInstancesPolicy=IgnoreNew` (טריי תקוע משאיר את המשימה "רצה",
+; ולכן ההשתלטות לעולם אינה מקבלת הזדמנות), ותקרת ריצה של 72 שעות.
+;
+; XML פותר את שלושתן ונותן גם שני מפעילים במשימה אחת — ונבדק שהוא נוצר
+; **בלי הרשאות מנהל**. ההגדרה חיה ב-`KeepAliveTask.cs`, שם היא ניתנת
+; לבדיקה, והיא נכתבת מחדש בכל עליית טריי ולכן מתקנת את עצמה.
 
-; ⚠️ **ומשימה שנייה, בכניסה — ולא במקום הראשונה.**
-; המשימה שלמעלה מתחילה להסתובב רק כשקיים סשן, ובאתחול של עדכון
-; Windows החזירה את המשתמש אבל דילגה על `Run`. משימת ONLOGON מופעלת
-; ע"י Task Scheduler ולא ע"י רצף העלייה של המעטפת, ולכן היא תופסת
-; בדיוק את המצב הזה — **מיד**, במקום להמתין עד חמש דקות.
-;
-; ⚠️ ואי אפשר לתת שני מפעילים למשימה אחת דרך `schtasks /Create`, ולכן
-; זו משימה נפרדת ולא דגל נוסף. שתיהן מריצות את אותו קובץ, ושתיהן
-; בטוחות בזכות אותו Mutex — ובזכות ההשתלטות, מופע שני מיותר אינו
-; רק לא-מזיק אלא לפעמים בדיוק מה שמציל את האתר.
-;
-; ⚠️ **`/SC ONSTART` היה טוב יותר — והוא דורש מנהל.** הוא רץ לפני שיש
-; סשן בכלל, כלומר גם אחרי אתחול שאיש לא נכנס אחריו. ההתקנה כאן היא
-; ללא UAC בכוונה, ולכן המענה למקרה הזה הוא `AutoAdminLogon` במכונה.
-Filename: "{sys}\schtasks.exe"; \
-  Parameters: "/Create /TN ""ParkomatAgentAtLogon"" /TR ""\""{app}\tray\{#TrayExe}\"""" /SC ONLOGON /F"; \
-  Flags: runhidden; StatusMsg: "מגדיר הפעלה בכניסה..."
 
 ; מפעילים את ה-Tray מיד בסוף ההתקנה — הוא ידאג להפעיל את השאר.
 Filename: "{app}\tray\{#TrayExe}"; \
@@ -310,7 +301,6 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im mosquitto.exe"; Flags: runhi
 ; ⚠️ והמשימה המתוזמנת נמחקת גם היא. בלעדיה הסרה משאירה משימה שמנסה
 ; להריץ קובץ שנמחק, כל חמש דקות, לנצח.
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentKeepAlive"" /F"; Flags: runhidden; RunOnceId: "DelKeepAlive"
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentAtLogon"" /F"; Flags: runhidden; RunOnceId: "DelAtLogon"
 
 [UninstallDelete]
 ; מוחקים את כל תיקיית ההתקנה (service, tray, mosquitto) ואת נתוני הריצה,
