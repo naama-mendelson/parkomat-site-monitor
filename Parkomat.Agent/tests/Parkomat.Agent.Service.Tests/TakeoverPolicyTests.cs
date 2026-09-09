@@ -128,6 +128,71 @@ public class TakeoverPolicyTests
         Assert.DoesNotMatch(new Regex(@"if \(!isNew\)\s*\n?\s*return;"), code);
     }
 
+    // ============================================================
+    // ⚠️ וגם ההשתלטות עצמה אסור לה להיכשל בשקט
+    // ============================================================
+    // ההריגה עלולה לא להצליח — תהליך תקוע בדרייבר, חוסר הרשאה. אם אז
+    // יוצאים בשקט, האתר חוזר **בדיוק** למוות השקט שהקוד הזה נועד למנוע:
+    // המשימה מגיעה כל חמש דקות, נחסמת, ויוצאת. לנצח, בלי סימן בשום מקום.
+    [Fact]
+    public void AFailedTakeoverIsRecorded()
+    {
+        // ⚠️ **הקטע נחתך בשני קצוות, ולא רק בהתחלה.** הגרסה הראשונה של
+        // השער הזה חיפשה `LogFatal` מנקודת ההמתנה ועד סוף הקובץ — ומצאה
+        // אותו במטפל החריגות הגלובלי שמתחת. מוטציה שהסירה את הרישום
+        // **עברה ירוקה**. זו בדיוק אותה טעות שכבר תועדה כאן פעמיים:
+        // עוגן שתופס משהו אחר שנראה נכון.
+        string block = TakeoverBlock();
+        Assert.Contains("LogFatal", block);
+    }
+
+    // ⚠️ **וההמתנה חייבת להיקרא, לא רק להתקיים.** מוטציה שהחליפה את
+    // הקריאה ב-`new Mutex` ישיר השאירה את הפונקציה על מקומה — ועברה
+    // ירוקה. קוד מת שנראה בדיוק כמו קוד עובד; אותו כשל בדיוק שתועד
+    // ב-`ReportAutoStartHealth`.
+    [Fact]
+    public void TheMutexIsWaitedForRatherThanCheckedOnce()
+    {
+        Assert.Contains("WaitForSingleInstance(out isNew)", TakeoverBlock());
+
+        string code = TrayProgram();
+        int fn = code.IndexOf("static Mutex WaitForSingleInstance", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "אין פונקציית המתנה");
+
+        // הלולאה וההשהיה הן ההמתנה עצמה. בלעדיהן זו בדיקה יחידה בשם אחר.
+        string body = code[fn..Math.Min(code.Length, fn + 500)];
+        Assert.Contains("for (", body);
+        Assert.Contains("Thread.Sleep", body);
+    }
+
+    // ⚠️ הקטע שבין ההמתנה ל-Mutex לבין המשך העלייה הרגילה — כלומר בדיוק
+    // הענף של "ההשתלטות נכשלה". `using var owned` הוא הגבול העליון, וכל
+    // מה שמעבר לו שייך לעלייה תקינה ואינו רלוונטי לשער הזה.
+    private static string TakeoverBlock()
+    {
+        string code = TrayProgram();
+        int from = code.IndexOf("single = WaitForSingleInstance", StringComparison.Ordinal);
+        Assert.True(from >= 0, "הקריאה להמתנה איננה — ההשתלטות אינה ממתינה ל-Mutex");
+        int to = code.IndexOf("using var owned", from, StringComparison.Ordinal);
+        Assert.True(to > from, "לא נמצא סוף הענף");
+        return code[from..to];
+    }
+
+    // קורא את `Program.cs` בלי שורות הערה — הערה שמסבירה מנגנון הייתה
+    // צובעת את השערים שלמעלה ירוקים בלי שהמנגנון קיים.
+    private static string TrayProgram()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string prog = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Tray", "Program.cs"));
+        return string.Join("\n",
+            prog.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+    }
+
     // ⚠️ הריגת הסוכן ו-Mosquitto יחד עם הטריי הייתה מייצרת נתק מיותר
     // באתר שאולי דיווח כל הזמן. המופע החדש ימצא אותם וישגיח עליהם.
     [Fact]

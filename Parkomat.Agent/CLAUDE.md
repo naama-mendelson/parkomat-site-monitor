@@ -191,6 +191,29 @@ is the same answer, one layer up.
   and it consumes the installer's reset flag. A path that runs on every task firing, every five
   minutes, must not touch the settings. Same reasoning as `ParkomatProbe`.
 
+⚠️ **Three failures of the takeover itself were found by mutating it, and two were gates
+that were blind, not code that was wrong.**
+
+- **A failed kill exited silently** — an unkillable Tray (stuck in a driver, no permission)
+  put the site straight back into the silent death this code exists to prevent: the task
+  arrives every five minutes, is blocked, exits, forever, with no trace anywhere. It now
+  writes to `tray-fatal.log`. ⚠️ The first gate for it searched from the wait onwards and
+  found `LogFatal` **in the global exception handler below**, so removing the record passed
+  green. The gate now cuts the block at both ends.
+- **The Mutex was checked once instead of waited for.** It is released when the kernel tears
+  the killed process down, not at `Kill`, so a single immediate attempt reports *"still
+  taken"* about a Tray that is already dead — the takeover fails precisely when it worked,
+  and writes a false failure line as well. ⚠️ And the first gate for *that* asserted the
+  waiting method **exists**; a mutation replacing the call with a direct `new Mutex` left the
+  method sitting there unused and passed green. Same failure as `ReportAutoStartHealth`, one
+  file over.
+
+⚠️ **And one price is paid knowingly: "Stop" from the menu became temporary.** The new
+instance starts without the manual-stop flag, so a deliberate stop holds for minutes rather
+than forever. That is the trade: a site dark for two weeks because somebody pressed Stop and
+forgot is exactly the failure this work exists to remove, while *"the technician was surprised
+the agent came back"* costs a minute. Anyone who needs a site genuinely off uninstalls it.
+
 ⚠️ **And one guard was written, mutated, and then deleted — deliberately.** `if (age < 0)
 return Action.Exit;` (clock jumped backwards, file looks like it is from the future) survived
 its mutation *green*: a negative age is never greater than the threshold, so the comparison
