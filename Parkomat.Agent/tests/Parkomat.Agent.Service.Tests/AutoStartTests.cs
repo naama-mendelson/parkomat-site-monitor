@@ -71,6 +71,31 @@ public class AutoStartTests
         Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentKeepAlive"""""), Code());
     }
 
+    // ============================================================
+    // ⚠️ והבדיקה חייבת להיקרא, לא רק להתקיים
+    // ============================================================
+    // מוטציה שהסירה את `ReportAutoStartHealth()` מעליית ה-Worker **עברה
+    // בשקט**: כל בדיקות ההערכה נשארו ירוקות, כי הן בודקות פונקציה טהורה
+    // שאיש כבר לא קורא לה. קוד מת שנראה בדיוק כמו קוד עובד.
+    [Fact]
+    public void TheHealthCheckIsActuallyCalledAtStartup()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string worker = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Service", "Worker.cs"));
+        // ⚠️ שורות הערה מוסרות: הערה שמסבירה את הקריאה הייתה צובעת את
+        // הבדיקה ירוקה בלי שהקריאה קיימת — טעות שנעשתה כבר שלוש פעמים
+        // בשערים אחרים בפרויקט הזה.
+        string code = string.Join("\n",
+            worker.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+        Assert.Matches(new Regex(@"^\s*ReportAutoStartHealth\(\);", RegexOptions.Multiline), code);
+    }
+
     [Fact]
     public void RepeatedStartsAreHarmless()
     {

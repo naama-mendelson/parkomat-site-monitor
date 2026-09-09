@@ -127,6 +127,22 @@ public class Worker : BackgroundService
                 config.Plc.FunctionCode);
         }
 
+        // ============================================================
+        // ⚠️ האם האתר הזה יחזור מעצמו אחרי אתחול
+        // ============================================================
+        // נמדד ב-09/09/2026 באתר 1089: עדכון Windows אתחל את המחשב
+        // פעמיים בלילה, המשתמש הוחזר לסשן, הערך ב-`Run` היה קיים ותקין
+        // — **והטריי לא עלה חמש שעות.** האתר היה מת עד שמישהו הגיע.
+        //
+        // ⚠️ **ולא הייתה שום דרך לדעת באיזה אתר ההגנה קיימת** בלי לנסוע
+        // ל-21 מחשבים. השורות כאן הופכות תכונה של המכונה — שקיימת רק
+        // ברישום ובלוח המשימות — למשהו שקוראים בלוג מרחוק.
+        //
+        // ⚠️ **בעלייה בלבד, ולא מחזורית.** אלה קריאות רישום ותהליך חיצוני;
+        // הרצתן בלולאה הייתה מוסיפה I/O קבוע במחשב שגם מריץ את המחסום,
+        // בשביל ערך שמשתנה רק בהתקנה.
+        ReportAutoStartHealth();
+
         // כתובת ה-HiveMQ מגיעה לגשר של Mosquitto — נרשמת לאבחון, בלי הסיסמה.
         // TLS אינו מוצג כערך: הוא תמיד פעיל ואין דרך לכבותו.
         _logger.LogInformation(
@@ -1242,6 +1258,54 @@ public class Worker : BackgroundService
         }
 
         _logger.LogInformation("Worker stopped.");
+    }
+
+    // ============================================================
+    // דיווח בריאות ההפעלה האוטומטית
+    // ============================================================
+    // ⚠️ **עטוף כולו ב-try.** זו שורת אבחון; קריאת רישום שנכשלת אסור לה
+    // למנוע מהסוכן לעלות ולדווח על האתר. אותו כלל כמו במרכוז ל-Supabase.
+    private void ReportAutoStartHealth()
+    {
+        try
+        {
+            // הטריי יושב לצד השירות: ...\service\ ו-...\tray\.
+            string trayPath = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "tray", "Parkomat.Agent.Tray.exe"));
+
+            AutoStartHealth.Probe probe = Diagnostics.AutoStartProbe.Read(trayPath);
+            IReadOnlyList<AutoStartHealth.Finding> findings = AutoStartHealth.Evaluate(probe);
+
+            if (findings.Count == 0 && !AutoStartHealth.AnythingUnknown(probe))
+            {
+                _logger.LogInformation(
+                    "Auto-start: protected (Run + scheduled task + auto-logon).");
+                return;
+            }
+
+            // ⚠️ **קריטי ב-Error ולא ב-Warning.** אזהרות כאן הן שגרה
+            // (NTP כל שעה), וממצא שאומר "האתר לא יחזור אחרי הפסקת חשמל"
+            // חייב להיות מובחן מהן בסינון של `findstr /I "[ERR]"`.
+            foreach (AutoStartHealth.Finding f in findings)
+            {
+                if (f.Critical) _logger.LogError("Auto-start: {Message}", f.Message);
+                else _logger.LogWarning("Auto-start: {Message}", f.Message);
+            }
+
+            // ⚠️ "לא הצלחתי לברר" נרשם במפורש ואינו נבלע. שקט היה נקרא
+            // כ"תקין", וזה בדיוק הכשל שהמנגנון הזה קיים כדי לחשוף.
+            if (AutoStartHealth.AnythingUnknown(probe))
+            {
+                _logger.LogWarning(
+                    "Auto-start: could not determine {What} — treat as unknown, not as healthy.",
+                    probe.TaskExists is null && probe.AutoLogon is null ? "task and auto-logon"
+                    : probe.TaskExists is null ? "the scheduled task" : "auto-logon");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Auto-start health check failed: {Message}", ex.Message);
+        }
     }
 
     // מנסה לפרסם הודעה תוך הבטחת חיבור, ומחזיר האם הצליח (בלי לזרוק).
