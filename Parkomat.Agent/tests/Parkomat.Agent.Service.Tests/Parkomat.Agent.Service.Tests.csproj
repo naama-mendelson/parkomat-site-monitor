@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -20,6 +20,22 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Parkomat.Agent.Service\Parkomat.Agent.Service.csproj" />
+  </ItemGroup>
+
+  <!-- ============================================================
+       קובץ אחד מה-Tray, מקושר ולא מועתק
+       ============================================================
+       ⚠️ פרויקט ה-Tray הוא net10.0-windows ו-WinForms, ולכן הפניה אליו
+       מכאן אינה אפשרית. אבל `KeepAliveTask` הוא הקוד שרושם את המשימה
+       שמחזירה אתר לחיים, והדרך היחידה האחרת לבדוק אותו היא להתקין
+       באתר — כלומר לגלות תקלה על 21 מכונות.
+
+       ⚠️ **מקושר ולא מועתק**: עותק היה נשאר ירוק בזמן שהמקור השתנה,
+       וזו בדיוק הבדיקה שגרועה מכלום. אם הקובץ יזוז — הבנייה נשברת,
+       וזה הכיוון הנכון. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\Parkomat.Agent.Tray\Services\KeepAliveTask.cs"
+             Link="Linked\KeepAliveTask.cs" />
   </ItemGroup>
 
 </Project>

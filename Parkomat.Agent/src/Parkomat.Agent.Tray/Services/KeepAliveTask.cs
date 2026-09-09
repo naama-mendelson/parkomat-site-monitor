@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using System.Security.Principal;
 using System.Text;
 
@@ -42,24 +43,48 @@ internal static class KeepAliveTask
     internal const string TaskName = "ParkomatAgentKeepAlive";
 
     /// <summary>
-    /// כותב/מעדכן את המשימה. כל כשל נבלע — כישלון כאן אסור לו למנוע
-    /// מהטריי לעלות, שכן הטריי עצמו הוא ההגנה העיקרית.
+    /// רושם את המשימה <b>ברקע</b>, ומחזיר מיד.
+    ///
+    /// <para>⚠️ <b>ולא באופן חוסם, וזה לא ניקיון.</b> הרישום יושב על מסלול
+    /// העלייה של הטריי, ו-<c>schtasks</c> שנתקע היה מונע מהאייקון להופיע —
+    /// כלומר מנגנון שנועד להחזיר אתר לחיים היה יכול למנוע ממנו לעלות.
+    /// רשת ביטחון אסור לה להיות תנאי.</para>
     /// </summary>
-    internal static void Ensure()
+    internal static void Ensure(string? taskName = null)
+    {
+        try
+        {
+            var t = new Thread(() => Register(taskName)) { IsBackground = true };
+            t.Start();
+        }
+        catch { /* גם כשל בפתיחת ה-thread אינו עוצר את הטריי */ }
+    }
+
+    /// <summary>
+    /// הרישום עצמו — סינכרוני, ומחזיר האם <c>schtasks</c> הצליח.
+    ///
+    /// <para>⚠️ <b><paramref name="taskName"/> קיים כדי שאפשר יהיה להריץ את
+    /// המסלול הזה באמת בבדיקה</b>, על שם משימה זמני. בלעדיו הדרך היחידה
+    /// לבדוק אותו היא להתקין באתר — כלומר לגלות תקלה על 21 מכונות.</para>
+    /// </summary>
+    internal static bool Register(string? taskName = null)
     {
         try
         {
             string? exe = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exe)) return;
+            if (string.IsNullOrWhiteSpace(exe)) return false;
 
             string sid = WindowsIdentity.GetCurrent().User?.Value ?? "";
-            if (sid.Length == 0) return;
+            if (sid.Length == 0) return false;
 
             string xml = BuildXml(exe, sid, DateTime.Now);
 
-            // ⚠️ **UTF-16 עם BOM.** schtasks דורש Unicode; קובץ UTF-8 נדחה
-            // בשגיאת פענוח, וגם זה היה נבלע.
-            string path = Path.Combine(Path.GetTempPath(), "parkomat-keepalive.xml");
+            // ⚠️ **UTF-16 עם BOM, כי ה-XML מכריז `encoding="UTF-16"`.**
+            // נמדד: schtasks כן בולע קובץ UTF-8 ויוצר את המשימה — כלומר
+            // הכשל אינו שגיאה אלא **תיאור בעברית משובש**, וזה הדבר היחיד
+            // בקובץ שאפשר להבחין בו. `TheHebrewDescriptionSurvives` מקבע.
+            string path = Path.Combine(Path.GetTempPath(),
+                "parkomat-keepalive-" + Environment.ProcessId + ".xml");
             File.WriteAllText(path, xml, new UnicodeEncoding(false, true));
 
             try
@@ -72,20 +97,22 @@ internal static class KeepAliveTask
                 };
                 psi.ArgumentList.Add("/Create");
                 psi.ArgumentList.Add("/TN");
-                psi.ArgumentList.Add(TaskName);
+                psi.ArgumentList.Add(taskName ?? TaskName);
                 psi.ArgumentList.Add("/XML");
                 psi.ArgumentList.Add(path);
                 psi.ArgumentList.Add("/F");
 
                 using Process? p = Process.Start(psi);
-                p?.WaitForExit(15000);
+                if (p is null) return false;
+                if (!p.WaitForExit(30000)) return false;
+                return p.ExitCode == 0;
             }
             finally
             {
                 try { File.Delete(path); } catch { /* קובץ זמני */ }
             }
         }
-        catch { /* המשימה היא רשת ביטחון, לא תנאי לעלייה */ }
+        catch { return false; }
     }
 
     /// <summary>
