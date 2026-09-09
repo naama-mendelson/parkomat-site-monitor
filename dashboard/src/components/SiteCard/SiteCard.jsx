@@ -9,11 +9,29 @@ import FaultTimer from "./FaultTimer";
 import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
 
-// צבע אחוז הכשל: 0% = ירוק, עד 5% = צהוב, מעל 5% = אדום
-function failureRateColor(rate) {
-  if (rate > 5) return STATUS_COLORS.error.dot;         // אדום
-  if (rate > 0) return STATUS_COLORS.maintenance.dot;   // ענבר
-  return STATUS_COLORS.ready.dot;                       // ירוק
+// ==========================================================
+// צבע הזמינות — והספים **נמדדו**, לא הומצאו
+// ==========================================================
+// ⚠️ הכיוון הפוך מזה של אחוז הכשל, וזו הנקודה שהכי קל להפוך כאן: בכשל
+// **נמוך** הוא טוב, בזמינות **גבוה** הוא טוב.
+//
+// ⚠️ **הספים נלקחו מהצי האמיתי** (21 אתרים, שבוע): המינימום הוא 94.84%,
+// החציון 99.72% והמקסימום 100. סף שרירותי כמו 95% היה צובע 20 מתוך 21
+// בירוק — כלומר צבע שאינו מבחין בין כלום, על הכרטיס שכל תפקידו לסרוק.
+// החלוקה כאן מפצלת את הצי ל-7/9/5 בערך, ולכן היא אומרת משהו.
+//
+//   99.9% ומעלה  — פחות מ-10 דקות השבתה בשבוע
+//   99%–99.9%    — עד ~1.7 שעות בשבוע
+//   מתחת ל-99%   — יותר מכך
+//
+// ⚠️ **null אינו אפס.** אתר בלי שעות נמדדות מקבל צבע ניטרלי ולא אדום:
+// "איננו יודעים" ו"מושבת לגמרי" הם שני דברים שונים — אותה הבחנה בדיוק
+// שבגללה `sitesDirect` מחזיר null ולא 0.
+function availabilityColor(pct) {
+  if (pct == null) return "var(--text-muted)";
+  if (pct >= 99.9) return STATUS_COLORS.ready.dot;        // ירוק
+  if (pct >= 99)   return STATUS_COLORS.maintenance.dot;  // ענבר
+  return STATUS_COLORS.error.dot;                         // אדום
 }
 
 // תג דרגת האתר (VIP / מורחב / בסיסי) — מוצג ליד שם האתר.
@@ -89,7 +107,22 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // שם ארוך קיבל פונט קטן גם כשהיה אפשר פשוט לוותר על "ת״א".
   const name = useFitName(site.site_name);
 
-  const failureRate = site.failureRate ?? 0;
+  // ==========================================================
+  // ⚠️ הכרטיס מציג **זמינות**, וממוין עדיין לפי אחוז כשל
+  // ==========================================================
+  // שני המדדים אינם אותו דבר, וזה נמדד: אתר 1376 עומד על 16.13% כשל
+  // אבל 96.98% זמינות, בעוד 3452 עומד על 6.25% כשל ו-99.36% זמינות.
+  // כלומר "כמה מהפעולות נכשלו" ו"כמה מהזמן האתר היה זמין" מדרגים את
+  // הצי אחרת.
+  //
+  // הסדר נשאר לפי אחוז הכשל (`compareSitesByPriority`) — הוא מה שקובע
+  // מי צף למעלה — והמספר שמוצג הוא הזמינות, כי זו השאלה שנשאלת מול
+  // הכרטיס. שינוי הסדר כאן היה משנה גם את טבלת מנהל הבקרה, שחולקת את
+  // אותו קומפרטור.
+  //
+  // ⚠️ **null ולא 0**: `measured_hours = 0` פירושו "אין נתון". "0%"
+  // נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
+  const availability = site.uptime ?? null;
   // null = אין מספיק מדגם להשוואה (ולא "אין שינוי") — ראה siteTrend.
   const trend = site.trend ?? null;
 
@@ -216,11 +249,19 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // שהסתירה את 'יציב' גרמה לשאלה "למה הם לא מסומנים?": היעדר סימן אמר גם
   // "נמדד ולא זז" וגם "לא היה מספיק כדי למדוד", ואי אפשר היה להבחין.
   //
-  // ⚠️ הכיוון הפוך לסימן: אחוז כשל **יורד** = האתר משתפר, ולכן ▼ הוא ירוק.
-  // זו הנקודה היחידה שקל להפוך כאן.
+  // ⚠️ **הסימן התהפך יחד עם המספר שהוא יושב עליו.** המגמה מחושבת על
+  // אחוז הכשל, אבל היא מתארת את **כיוון האתר**: "משתפר" = פחות כשלים =
+  // זמינות גבוהה יותר. ▼ ליד 99.8% זמינות היה נקרא "הזמינות ירדה" —
+  // ההפך הגמור ממה שקרה, וזו הטעות הקלה ביותר לעשות כאן.
+  //
+  // הצבעים אינם נוגעים לסימן אלא ל-`trend.direction` (ראה SiteCard.css),
+  // ולכן "משתפר" נשאר ירוק בשני המקרים.
+  //
+  // ⚠️ ולשון ה-title נשארת של אחוז הכשל, כי זה מה שנמדד — מי שמרחף
+  // מקבל את הבסיס המדויק ולא ניסוח שמתאר מדד שלא חושב.
   const TREND_MARK = {
-    improving: { glyph: "▼", verb: "ירד" },
-    worsening: { glyph: "▲", verb: "עלה" },
+    improving: { glyph: "▲", verb: "ירד" },
+    worsening: { glyph: "▼", verb: "עלה" },
     stable:    { glyph: "–", verb: "כמעט לא זז" },
   };
   const mark = trend ? TREND_MARK[trend.direction] : null;
@@ -246,12 +287,18 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         <span className="detail-value">{(site.operations ?? 0).toLocaleString()}</span>
       </div>
       <div className="card-detail">
-        <span className="detail-label">אחוז כשל (שבועי)</span>
-        <span className="detail-value" style={{ color: failureRateColor(failureRate) }}>
+        <span className="detail-label">זמינות (שבועית)</span>
+        <span
+          className="detail-value"
+          style={{ color: availabilityColor(availability) }}
+          title={availability == null
+            ? "אין שעות נמדדות בטווח — לא ניתן לחשב זמינות"
+            : `זמינות ${availability}% בשבוע האחרון · הסדר ברשת נקבע לפי אחוז הכשל`}
+        >
           <span className={`card-trend card-trend--${trendMark.key}`} title={trendMark.title}>
             {trendMark.glyph}
           </span>
-          {failureRate}%
+          {availability == null ? "—" : `${availability}%`}
         </span>
       </div>
       {/* ⚠️ **הכותרת אומרת "ממוצע" ולא "זמן טיפול".** נמדד: 10% התקלות
@@ -352,15 +399,20 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
 
           <div className="exp-metric">
-            <span className="exp-value" style={{ color: failureRateColor(failureRate) }}>
+            <span className="exp-value" style={{ color: availabilityColor(availability) }}>
               {/* אותו סימן בדיוק כמו בכרטיס המכווץ — אחרת הרחבת הכרטיס
                   הייתה מעלימה מידע שהיה בו רגע קודם. */}
               <span className={`card-trend card-trend--${trendMark.key}`} title={trendMark.title}>
                 {trendMark.glyph}
               </span>
-              {failureRate}%
+              {availability == null ? "—" : `${availability}%`}
             </span>
-            <span className="exp-label">אחוז כשל</span>
+            <span className="exp-label">זמינות</span>
+            {/* ⚠️ **הרמז נשאר על התקלות, ובכוונה.** הזמינות עונה על "כמה
+                מהזמן האתר עבד", ומספר התקלות עונה על "כמה פעמים הוא
+                נפל" — שתי שאלות שונות שהמספר האחד אינו מכיל.
+                ואתר עם זמינות 99.9% ושבע תקלות קצרות אינו אותו אתר
+                כמו זה עם תקלה אחת ארוכה. */}
             <span className="exp-hint">
               {(site.errors ?? 0) === 0 ? "לא נרשמו תקלות" : `${site.errors} תקלות`}
             </span>
