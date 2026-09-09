@@ -146,6 +146,60 @@ and nobody could tell "PLC dead" from "PC off".
 - `WatchdogVsPlcErrorTests` pins the timing relationship so the thresholds cannot drift back
   into overlapping.
 
+## Nobody watched the watchman — a wedged Tray killed the site permanently
+
+The Tray restarts the agent and Mosquitto; a scheduled task (`ParkomatAgentKeepAlive`, every
+5 minutes) restarts the Tray. **That chain had no top.** `Program.Main` ended a second
+instance *silently* the moment the Mutex was taken:
+
+```csharp
+var single = new Mutex(true, @"Local\...SingleInstance", out bool isNew);
+if (!isNew) return;          // <- the hole
+```
+
+So a **wedged** Tray — process alive, loop stopped — held the Mutex, and the task arrived
+every five minutes, was blocked, and exited. Forever. The site was dead and Task Manager
+showed a Tray running.
+
+⚠️ **This is the same failure already documented one layer down**, where the agent was killed
+12 seconds before it could report a PLC fault. There the answer was `WatchdogPolicy`; here it
+is the same answer, one layer up.
+
+**`TakeoverPolicy.Decide` is pure**, `TrayTakeover` does the I/O — same split as
+`WatchdogPolicy` / `RestartPolicy`.
+
+- ⚠️ **The question asked is about the *agent*, not the Tray.** There is no external way to
+  know whether the Tray's loop is turning, and no need: what matters is **whether the site
+  reports**. `alive` is written on every agent iteration, so *"the agent is dead or wedged and
+  stayed that way"* is exactly the state a functioning Tray would already have fixed. If it did
+  not, it is not functioning.
+- **The threshold is 3 × the wedged threshold, and the multiplier is load-bearing.** The Tray
+  itself restarts the agent the moment it is wedged; an equal threshold would make a second
+  instance take over **mid-recovery** — killing a Tray doing precisely its job, and repeating
+  every five minutes. ⚠️ Worst-case downtime is therefore that threshold plus up to 5 minutes,
+  no more.
+- **Two doubt cases both exit.** No `alive` file (fresh install that has not completed an
+  iteration, or an older agent that never wrote it) and any read failure in `ShouldTakeOver`
+  return `false`. Taking over there would turn every run of the task into a Tray kill — a kill
+  loop every five minutes, the exact opposite of the goal. Fail closed.
+- **Only the Tray is killed**, never the agent and Mosquitto: the new instance will find them
+  and supervise them. Killing them would produce a needless outage — and a needless `no_comm` —
+  at a site that may have been reporting the whole time.
+- **The Mutex is re-acquired, not assumed free.** The dead process releases it only when it is
+  really gone; a race here would create the two fighting watchdogs the Mutex exists to prevent.
+- ⚠️ **`ReadPollIntervalMs` uses `ConfigStore.FromJson`, never `Load()`.** `Load` may *write*,
+  and it consumes the installer's reset flag. A path that runs on every task firing, every five
+  minutes, must not touch the settings. Same reasoning as `ParkomatProbe`.
+
+⚠️ **And one guard was written, mutated, and then deleted — deliberately.** `if (age < 0)
+return Action.Exit;` (clock jumped backwards, file looks like it is from the future) survived
+its mutation *green*: a negative age is never greater than the threshold, so the comparison
+already handles it. It was not a blind gate — it was an unreachable branch, which looks like
+protection while protecting nothing. The branch is gone, the mutation was replaced with one
+that does distinguish (`age` → `Math.Abs(age)`), and
+`AClockThatWentBackwardsDoesNotKillAnything` pins the behaviour. 8 of 8 mutations now fail the
+suite.
+
 ## A restart must not invent an operation
 
 `OperationDetector` is edge-triggered, so with no previous MODE a first reading inside MODE
