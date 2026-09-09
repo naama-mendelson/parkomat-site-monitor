@@ -33,9 +33,39 @@ internal static class TrayTakeover
             // שהוגדר לדגימה איטית היה נשפט לפי סף של אתר אחר.
             int poll = ReadPollIntervalMs();
 
-            return TakeoverPolicy.Decide(agentAlive, age, poll) == TakeoverPolicy.Action.TakeOver;
+            // ⚠️ גיל הטריי הקיים — בלעדיו כל אתחול מסתיים בהשתלטות. ראה
+            // `TakeoverPolicy`: קובץ החיוּת שורד הפסקת חשמל עם חותם ישן.
+            long? trayAge = OldestOtherTrayAgeSeconds();
+
+            return TakeoverPolicy.Decide(agentAlive, age, poll, trayAge)
+                   == TakeoverPolicy.Action.TakeOver;
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// גיל הטריי הוותיק ביותר <b>שאינו אנחנו</b>.
+    ///
+    /// <para>הוותיק ולא הצעיר: השאלה היא האם <b>מישהו</b> כבר היה כאן
+    /// מספיק זמן כדי לתקן. <c>null</c> אם אין כזה או אם אי אפשר לקרוא —
+    /// ואז לא משתלטים.</para>
+    /// </summary>
+    private static long? OldestOtherTrayAgeSeconds()
+    {
+        // ⚠️ **איסוף בלבד — הבחירה עצמה טהורה ויושבת ב-TakeoverPolicy.**
+        // כשההיגיון ישב כאן, שלוש מוטציות עליו עברו ירוקות: אין לשכבת
+        // ה-I/O הזו שום בדיקה התנהגותית, ולא יכולה להיות לה.
+        var found = new List<(int Id, DateTime StartedAt)>();
+
+        foreach (Process p in Process.GetProcessesByName(TrayProcessName))
+        {
+            try { found.Add((p.Id, p.StartTime)); }
+            catch { /* נעלם, או אין הרשאה לקרוא זמן התחלה */ }
+            finally { p.Dispose(); }
+        }
+
+        return TakeoverPolicy.OldestOtherAgeSeconds(
+            found, Environment.ProcessId, DateTime.Now);
     }
 
     private static long? LivenessAgeSeconds()

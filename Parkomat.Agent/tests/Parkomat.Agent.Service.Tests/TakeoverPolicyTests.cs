@@ -23,6 +23,9 @@ public class TakeoverPolicyTests
     private static int Wedged => RestartPolicy.WedgedAfterSeconds(Poll);
     private static int Threshold => TakeoverPolicy.TakeoverAfterSeconds(Poll);
 
+    // טריי שרץ מזמן — כלומר היה לו זמן לתקן ולא תיקן.
+    private static long Mature => Threshold + 60;
+
     // ------------------------------------------------------------
     // המצב התקין — ולא נוגעים בו
     // ------------------------------------------------------------
@@ -30,7 +33,7 @@ public class TakeoverPolicyTests
     public void AHealthyTrayIsLeftAlone()
     {
         Assert.Equal(TakeoverPolicy.Action.Exit,
-            TakeoverPolicy.Decide(agentProcessAlive: true, livenessAgeSeconds: 2, Poll));
+            TakeoverPolicy.Decide(agentProcessAlive: true, livenessAgeSeconds: 2, Poll, Mature));
     }
 
     // ============================================================
@@ -43,7 +46,7 @@ public class TakeoverPolicyTests
     public void ATrayInTheMiddleOfARestartIsNotKilled()
     {
         Assert.Equal(TakeoverPolicy.Action.Exit,
-            TakeoverPolicy.Decide(false, Wedged + 1, Poll));
+            TakeoverPolicy.Decide(false, Wedged + 1, Poll, Mature));
     }
 
     [Fact]
@@ -61,7 +64,7 @@ public class TakeoverPolicyTests
     public void ADeadAgentThatWasNotRestartedMeansTheTrayIsNotWorking()
     {
         Assert.Equal(TakeoverPolicy.Action.TakeOver,
-            TakeoverPolicy.Decide(agentProcessAlive: false, Threshold + 1, Poll));
+            TakeoverPolicy.Decide(agentProcessAlive: false, Threshold + 1, Poll, Mature));
     }
 
     // ⚠️ והסוכן חי אבל הלולאה עומדת, והטריי לא הרג אותו — אותה מסקנה.
@@ -71,7 +74,7 @@ public class TakeoverPolicyTests
     public void AWedgedAgentThatWasNotKilledMeansTheSame()
     {
         Assert.Equal(TakeoverPolicy.Action.TakeOver,
-            TakeoverPolicy.Decide(agentProcessAlive: true, Threshold + 1, Poll));
+            TakeoverPolicy.Decide(agentProcessAlive: true, Threshold + 1, Poll, Mature));
     }
 
     // ------------------------------------------------------------
@@ -84,9 +87,9 @@ public class TakeoverPolicyTests
     public void NoLivenessFileMeansNoTakeover()
     {
         Assert.Equal(TakeoverPolicy.Action.Exit,
-            TakeoverPolicy.Decide(false, null, Poll));
+            TakeoverPolicy.Decide(false, null, Poll, Mature));
         Assert.Equal(TakeoverPolicy.Action.Exit,
-            TakeoverPolicy.Decide(true, null, Poll));
+            TakeoverPolicy.Decide(true, null, Poll, Mature));
     }
 
     // ⚠️ גיל שלילי = שעון שקפץ אחורה (NTP, אזור זמן) והקובץ נראה מהעתיד.
@@ -96,8 +99,132 @@ public class TakeoverPolicyTests
     [InlineData(-100000)]
     public void AClockThatWentBackwardsDoesNotKillAnything(long age)
     {
-        Assert.Equal(TakeoverPolicy.Action.Exit, TakeoverPolicy.Decide(false, age, Poll));
-        Assert.Equal(TakeoverPolicy.Action.Exit, TakeoverPolicy.Decide(true, age, Poll));
+        Assert.Equal(TakeoverPolicy.Action.Exit, TakeoverPolicy.Decide(false, age, Poll, Mature));
+        Assert.Equal(TakeoverPolicy.Action.Exit, TakeoverPolicy.Decide(true, age, Poll, Mature));
+    }
+
+    // ============================================================
+    // ⚠️ מרוץ האתחול — הבאג שהיה קורה בכל עלייה של כל אתר
+    // ============================================================
+    // קובץ החיוּת נמחק **רק בכיבוי יזום** מהתפריט. הפסקת חשמל ואתחול
+    // Windows משאירים אותו עם חותם ישן, ולכן מיד אחרי עלייה גילו הוא
+    // משך ההשבתה — שעות. ובאותו רגע עולים שני טריי: מפתח `Run` מרים
+    // אחד, והמפעיל בכניסה של המשימה מרים שני.
+    //
+    // בלי השומר, השני היה רואה "הסוכן אינו רץ וקובץ החיוּת בן שעות"
+    // ומשתלט — כלומר הורג את הטריי שברגע זה מפעיל את הסוכן. בכל אתחול.
+    [Fact]
+    public void TheBootRaceDoesNotKillTheTrayThatIsStartingTheAgent()
+    {
+        const long outageHours = 4 * 60 * 60;   // המכונה הייתה כבויה ארבע שעות
+
+        Assert.Equal(TakeoverPolicy.Action.Exit,
+            TakeoverPolicy.Decide(agentProcessAlive: false, outageHours, Poll,
+                                  existingTrayAgeSeconds: 2));
+    }
+
+    // ואותו דבר גם כשהסוכן כבר עלה אבל טרם כתב את הסבב הראשון.
+    [Fact]
+    public void ATrayThatJustStartedIsGivenTheSameTimeWeJudgeTheAgentBy()
+    {
+        Assert.Equal(TakeoverPolicy.Action.Exit,
+            TakeoverPolicy.Decide(true, Threshold + 1, Poll, Threshold - 1));
+
+        // ורגע אחרי הסף — כן משתלטים, אחרת השומר היה חוסם לנצח.
+        Assert.Equal(TakeoverPolicy.Action.TakeOver,
+            TakeoverPolicy.Decide(true, Threshold + 1, Poll, Threshold + 1));
+    }
+
+    // ⚠️ וגיל לא ידוע ⇒ לא משתלטים. אותו נכשל-סגור כמו בהיעדר קובץ
+    // חיוּת: החלטה להרוג טריי חייבת להישען על ידיעה.
+    [Fact]
+    public void AnUnknownTrayAgeMeansNoTakeover()
+    {
+        Assert.Equal(TakeoverPolicy.Action.Exit,
+            TakeoverPolicy.Decide(false, Threshold + 1, Poll, existingTrayAgeSeconds: null));
+    }
+
+    // ============================================================
+    // ⚠️ בחירת הטריי הקיים — שלוש מוטציות עברו כאן ירוקות
+    // ============================================================
+    // ההיגיון ישב בשכבת ה-I/O, שאין לה ולא יכולה להיות לה בדיקה
+    // התנהגותית. הוצא החוצה כפונקציה טהורה, וכל טענה בו נבדקת.
+    private static readonly DateTime Now = new(2026, 9, 9, 12, 0, 0, DateTimeKind.Local);
+
+    // ⚠️ הוותיק ולא הצעיר: השאלה היא האם **מישהו** כבר היה כאן מספיק
+    // זמן כדי לתקן. בחירת הצעיר הייתה חוסמת השתלטות לנצח בכל פעם
+    // שמופע חדש עולה לידו.
+    [Fact]
+    public void TheOldestProcessWinsNotTheYoungest()
+    {
+        var procs = new[]
+        {
+            (Id: 100, StartedAt: Now.AddSeconds(-5)),
+            (Id: 200, StartedAt: Now.AddSeconds(-3600)),
+            (Id: 300, StartedAt: Now.AddSeconds(-60)),
+        };
+
+        Assert.Equal(3600, TakeoverPolicy.OldestOtherAgeSeconds(procs, selfId: 999, Now));
+    }
+
+    // ⚠️ התהליך הקורא נושא את אותו שם וגילו אפס. בלי ההחרגה כל בדיקה
+    // הייתה מסתיימת ב"טריי צעיר", וההשתלטות לא הייתה קורית לעולם.
+    [Fact]
+    public void WeAreNeverOurOwnExistingTray()
+    {
+        var procs = new[] { (Id: 42, StartedAt: Now.AddSeconds(-7200)) };
+
+        Assert.Null(TakeoverPolicy.OldestOtherAgeSeconds(procs, selfId: 42, Now));
+    }
+
+    [Fact]
+    public void NoOtherProcessMeansUnknown()
+    {
+        Assert.Null(TakeoverPolicy.OldestOtherAgeSeconds([], selfId: 1, Now));
+    }
+
+    // ⚠️ ותהליך "מהעתיד" (שעון שקפץ) נותן גיל שלילי — קטן מהסף, ולכן
+    // מוביל ליציאה. נכשל-סגור, בלי ענף נפרד.
+    [Fact]
+    public void AProcessFromTheFutureDoesNotTriggerATakeover()
+    {
+        var procs = new[] { (Id: 7, StartedAt: Now.AddSeconds(3600)) };
+        long? age = TakeoverPolicy.OldestOtherAgeSeconds(procs, selfId: 1, Now);
+
+        Assert.NotNull(age);
+        Assert.True(age < 0);
+        Assert.Equal(TakeoverPolicy.Action.Exit,
+            TakeoverPolicy.Decide(false, Threshold + 1, Poll, age));
+    }
+
+    // ⚠️ **והגיל חייב להגיע להחלטה.** מוטציה שהחליפה את הקריאה בקבוע
+    // עברה ירוקה — פונקציה טהורה שאיש אינו מזין לה את הערך האמיתי
+    // נראית בדיוק כמו כזו שעובדת.
+    [Fact]
+    public void TheRealTrayAgeIsWhatReachesTheDecision()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "src",
+            "Parkomat.Agent.Tray", "Services", "TrayTakeover.cs"));
+        string code = string.Join("\n",
+            src.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+        // ⚠️ **אתר הקריאה, לא ההגדרה.** הגרסה הראשונה של השער חיפשה את
+        // השם `OldestOtherTrayAgeSeconds()` — והוא מופיע בהגדרת הפונקציה
+        // עצמה, ולכן מוטציה שהחליפה את הקריאה בקבוע עברה ירוקה. זו הפעם
+        // השלישית היום שעוגן תופס הגדרה במקום שימוש.
+        Assert.Contains("trayAge = OldestOtherTrayAgeSeconds()", code);
+        Assert.Contains("TakeoverPolicy.Decide(agentAlive, age, poll, trayAge)", code);
+
+        // ואיסוף התהליכים חייב באמת לאסוף: לולאה עם גוף ריק משאירה את
+        // הקריאה ל-GetProcessesByName במקומה ואינה עושה דבר.
+        Assert.Contains("Process.GetProcessesByName(TrayProcessName)", code);
+        Assert.Contains("found.Add((p.Id, p.StartTime))", code);
+        Assert.Contains("TakeoverPolicy.OldestOtherAgeSeconds(", code);
     }
 
     // ------------------------------------------------------------

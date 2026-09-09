@@ -56,10 +56,38 @@ public static class TakeoverPolicy
     /// <c>null</c> = אין קובץ.
     /// </param>
     /// <param name="pollIntervalMs">קצב הדגימה, שממנו נגזר הסף.</param>
+    /// <param name="existingTrayAgeSeconds">
+    /// כמה זמן רץ הטריי הקיים. <c>null</c> = לא ידוע.
+    /// </param>
     public static Action Decide(
-        bool agentProcessAlive, long? livenessAgeSeconds, int pollIntervalMs)
+        bool agentProcessAlive, long? livenessAgeSeconds, int pollIntervalMs,
+        long? existingTrayAgeSeconds)
     {
         int wedged = RestartPolicy.WedgedAfterSeconds(pollIntervalMs) * WedgedMultiplier;
+
+        // ============================================================
+        // ⚠️ טריי שרק עלה לא קיבל עדיין הזדמנות — וזה מרוץ האתחול
+        // ============================================================
+        // קובץ החיוּת נמחק **רק בכיבוי יזום** מהתפריט. הפסקת חשמל ואתחול
+        // Windows משאירים אותו על הדיסק עם חותם ישן, ולכן מיד אחרי כל
+        // עלייה גילו הוא **משך ההשבתה** — שעות.
+        //
+        // ובאותו רגע עולים שני טריי: מפתח `Run` מרים אחד, והמפעיל בכניסה
+        // של המשימה מרים שני. השני מפסיד את ה-Mutex, רואה "הסוכן אינו רץ
+        // וקובץ החיוּת בן שעות", ומסיק **השתלטות** — כלומר הורג את הטריי
+        // שברגע זה מפעיל את הסוכן.
+        //
+        // ⚠️ וזה קורה **בכל אתחול**, לא במקרה קצה. בלי השומר הזה המנגנון
+        // שנועד להחזיר אתר לחיים היה הורג את עצמו בדיוק ברגע שהאתר עולה.
+        //
+        // הסף הוא אותו סף: אם שופטים את הסוכן על פי כך שלא תוקן במשך
+        // `wedged`, יש לתת לטריי את אותו זמן עצמו כדי לתקן.
+        //
+        // ⚠️ **וגיל לא ידוע ⇒ לא משתלטים.** אם אי אפשר לקרוא את זמן
+        // ההתחלה של התהליך (הרשאות, תהליך שנעלם), ספק מוביל ליציאה —
+        // אותו נכשל-סגור כמו בהיעדר קובץ חיוּת.
+        if (existingTrayAgeSeconds is not long trayAge) return Action.Exit;
+        if (trayAge < wedged) return Action.Exit;
 
         // ⚠️ **אין קובץ חיוּת ⇒ לא משתלטים.** זה המצב של התקנה טרייה
         // שטרם השלימה סיבוב, ושל גרסה ישנה שאינה כותבת את הקובץ כלל.
@@ -84,6 +112,36 @@ public static class TakeoverPolicy
         if (agentProcessAlive && age > wedged) return Action.TakeOver;
 
         return Action.Exit;
+    }
+
+    /// <summary>
+    /// גיל הוותיק ביותר מבין תהליכים <b>שאינם אנחנו</b>.
+    ///
+    /// <para>⚠️ <b>הוותיק ולא הצעיר, וזו לא קוסמטיקה.</b> השאלה היא האם
+    /// <b>מישהו</b> כבר היה כאן מספיק זמן כדי לתקן. בחירת הצעיר הייתה
+    /// חוסמת השתלטות לנצח בכל פעם שמופע חדש עולה לידו — כלומר מבטלת את
+    /// המנגנון בדיוק במצב שהוא נבנה בשבילו.</para>
+    ///
+    /// <para>⚠️ <b>ואנחנו עצמנו מוחרגים.</b> התהליך הקורא נושא את אותו שם,
+    /// וגילו הוא תמיד אפס — כלומר בלי ההחרגה כל בדיקה הייתה מסתיימת
+    /// ב"טריי צעיר", וההשתלטות לא הייתה קורית אף פעם.</para>
+    ///
+    /// <para><c>null</c> = אין אף תהליך אחר. פונקציה טהורה: ה-I/O
+    /// (רשימת התהליכים) נאסף אצל הקורא, בדיוק כמו בשאר המדיניות כאן.</para>
+    /// </summary>
+    public static long? OldestOtherAgeSeconds(
+        IEnumerable<(int Id, DateTime StartedAt)> processes, int selfId, DateTime now)
+    {
+        long? oldest = null;
+
+        foreach ((int id, DateTime startedAt) in processes)
+        {
+            if (id == selfId) continue;
+            long age = (long)(now - startedAt).TotalSeconds;
+            if (oldest is null || age > oldest) oldest = age;
+        }
+
+        return oldest;
     }
 
     /// <summary>הסף בפועל, לשימוש בהודעות ובבדיקות.</summary>

@@ -261,6 +261,25 @@ than forever. That is the trade: a site dark for two weeks because somebody pres
 forgot is exactly the failure this work exists to remove, while *"the technician was surprised
 the agent came back"* costs a minute. Anyone who needs a site genuinely off uninstalls it.
 
+⚠️ **The takeover would have fired on every single boot, and the reason is one file that
+survives a power cut.** `alive` is deleted only on a *deliberate* Stop from the menu. A power
+loss or a Windows restart leaves it on disk, so immediately after any boot its age is **the
+length of the outage** — hours. And at that same moment two Trays start: the `Run` key launches
+one and the task's logon trigger launches the other. The second loses the Mutex, sees *"the
+agent is not running and the liveness file is hours old"*, and concludes **take over** — killing
+the Tray that is at that instant starting the agent. Every boot, not an edge case.
+
+The fix is a fourth input: **how long the existing Tray has been running.** If it is younger
+than the threshold it has not had the chance we are judging the agent by, so we exit. Unknown
+age exits too — the same fail-closed rule as a missing liveness file.
+
+⚠️ **And the choice of *which* Tray is the pure part, because three mutations on it passed
+green while it lived in the I/O layer.** `TakeoverPolicy.OldestOtherAgeSeconds` now decides;
+`TrayTakeover` only collects. Oldest, not youngest — the question is whether *anyone* has been
+here long enough to fix things, and picking the youngest would block a takeover forever every
+time a new instance starts beside the wedged one. And the calling process is excluded, or every
+check would find a "young tray" (itself, age zero) and never take over at all.
+
 ⚠️ **And one guard was written, mutated, and then deleted — deliberately.** `if (age < 0)
 return Action.Exit;` (clock jumped backwards, file looks like it is from the future) survived
 its mutation *green*: a negative age is never greater than the threshold, so the comparison
