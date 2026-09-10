@@ -156,7 +156,12 @@
 /* ⚠️ `width: max-content` ולא `100%`: עם `100%` העמודות נדחסות לרוחב
    המסך ואף אחת לא מקבלת את הרוחב שהוגדר לה, ועם מעט עמודות הן
    נמתחות מכוער. כאן כל עמודה מקבלת את רוחבה והטבלה גוללת. */
+/* ⚠️ **`table-layout: fixed` — וזה מה שהיה חסר.** בלעדיו הדפדפן מודד
+   את התוכן וקובע רוחבים בעצמו: תא עם 60 תווים ייצר עמודה של 600px
+   ודחק את כל השאר לקצה. עם `fixed`, הרוחב שנקבע לעמודה הוא הרוחב
+   בפועל, והתוכן נחתך בשלוש נקודות — בדיוק כמו ב-Monday. */
 .tl-table {
+  table-layout: fixed;
   width: max-content;
   min-width: 100%;
   border-collapse: separate;
@@ -194,7 +199,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
+  padding: 10px 14px;
+  overflow: hidden;
   border: none;
   background: transparent;
   color: inherit;
@@ -220,8 +226,11 @@
   inset-inline-start: 0;
   left: 0;
   z-index: 3;
-  width: 46px;
-  min-width: 46px;
+  /* ⚠️ 46px הספיקו לספרה אחת ולא לשתיים — מספרי השורות מ-10 ומעלה
+     נחתכו בקצה, וזה בדיוק מה שנראה על המסך. */
+  width: 58px;
+  min-width: 58px;
+  max-width: 58px;
   text-align: center;
   background: var(--surface, #fff);
   color: var(--text-muted, #9ca3af);
@@ -233,7 +242,7 @@
 .tl-table th:nth-child(2),
 .tl-table td:nth-child(2) {
   position: sticky;
-  left: 46px;
+  left: 58px;
   z-index: 3;
   background: var(--surface, #fff);
   box-shadow: 1px 0 0 var(--border, #e5e7eb);
@@ -251,13 +260,18 @@
 
 .tl-table tbody tr:hover td { background: var(--surface-2, #fafbfc); }
 
+/* ⚠️ **מרווח אמיתי.** 10px היו מספיקים לתא ריק ולא לתא מלא — הטקסט
+   נגע בגבול והמספרים נראו כאילו הם לא נכנסים. */
 .tl-input {
+  display: block;
   width: 100%;
   border: none;
   background: transparent;
   color: inherit;
   font: inherit;
-  padding: 8px 10px;
+  padding: 10px 14px;
+  /* חיתוך ולא מתיחה — הערך המלא ב-title ובמצב עריכה */
+  text-overflow: ellipsis;
 }
 .tl-input:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -2px; background: var(--surface, #fff); }
 
@@ -390,8 +404,11 @@
    תקלה, וטקסט נראה כמו מידע. */
 .tl-ro {
   display: block;
-  padding: 8px 10px;
+  padding: 10px 14px;
   min-height: 1.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tl-ro--dim { color: var(--text-muted, #9ca3af); }
 .tl-ro--link { color: var(--brand, #3d78d8); text-decoration: underline; }
@@ -592,3 +609,17 @@
   background: none;
   cursor: pointer;
 }
+
+
+/* ⚠️ כותרת שנחתכת מקבלת שלוש נקודות ולא נשברת לשתי שורות — שורת
+   כותרת בגובה משתנה מזיזה את כל הטבלה. */
+.tl-th-btn > *:first-child,
+.tl-th-kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ⚠️ תא סטטוס — מרווח זהה לשאר, אחרת הצבע נראה בגובה אחר */
+.tl-status, .tl-status--ro { padding: 10px 14px; }

@@ -145,7 +145,9 @@ function Cell({ column, value, onSave, readOnly }) {
     if (column.kind === "link" && value) {
       return <a className="tl-ro tl-ro--link" href={String(value)} target="_blank" rel="noreferrer">{String(value)}</a>;
     }
-    return <span className="tl-ro">{value ?? ""}</span>;
+    // ⚠️ הערך המלא ב-title: מרגע שהתא נחתך, זו הדרך היחידה לראות
+    // ערך ארוך בלי להיכנס למצב עריכה.
+    return <span className="tl-ro" title={value ? String(value) : undefined}>{value ?? ""}</span>;
   }
 
   if (column.kind === "status") {
@@ -181,6 +183,7 @@ function Cell({ column, value, onSave, readOnly }) {
     <input
       className="tl-input"
       type={type}
+      title={draft ? String(draft) : undefined}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
@@ -529,7 +532,11 @@ export default function TrafficLight({ onClose }) {
                 <tr>
                   <th className="tl-th-num">#</th>
                   {columns.map((c) => (
-                    <th key={c.id} style={{ minWidth: c.width }}>
+                    // ⚠️ `width` ולא `minWidth`: עם `table-layout: fixed`
+                    // זה הרוחב **בפועל**, והתוכן נחתך במקום למתוח את
+                    // העמודה. `minWidth` נתן לתא של 60 תווים לייצר עמודה
+                    // של 600px ולדחוק את כל השאר — וזה מה שנראה על המסך.
+                    <th key={c.id} style={{ width: c.width, maxWidth: c.width }}>
                       {canEdit ? (
                         <button
                           type="button"
