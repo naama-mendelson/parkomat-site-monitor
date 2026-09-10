@@ -130,7 +130,7 @@
 ;          הבקר פשוט אינו עונה — ואין בקובץ עקב לכך שמישהו בחר אחרת.
 ;          + תיקון נלווה: שני הטפסים בנו PlcConfig מחדש עם 5 שדות מתוך 8,
 ;          ולכן **כל שמירה מחקה את FaultTextRegister**. עכשיו נערך במקום.
-#define MyAppVersion "1.0.41"
+#define MyAppVersion "1.0.42"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

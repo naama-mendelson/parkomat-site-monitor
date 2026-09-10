@@ -329,6 +329,17 @@ public class Worker : BackgroundService
         // שהוא אינו יכול לסטות (התקרה של PendingQueue מוחקת את הישן ביותר,
         // ומונה שרק גדל היה מייצר ניסיון שליחה בכל סבב, לנצח).
         int supaWaiting = supaQueue.Count;
+
+        // ============================================================
+        // ⚠️ ריסון השליחה — בלעדיו כשל מתמשך הוא לולאה חמה
+        // ============================================================
+        // שער השליחה נפתח בכל סבב שבו התור אינו ריק, כלומר כל שנייה.
+        // הודעה שנכשלת חוזרת לתור, התור נשאר לא ריק, והלולאה סוגרת את
+        // עצמה. נמדד באתר 1326: ~78,000 בקשות ביום, ו-Supabase החזירה
+        // 429 — כלומר השרת הגן על עצמו מפני הסוכן שלנו.
+        // ההחלטה עצמה ב-SupabaseRetryPolicy, וכאן רק המצב.
+        int supaFailures = 0;
+        var supaNextAttempt = DateTimeOffset.MinValue;
         if (supaWaiting > 0)
             _logger.LogInformation(
                 "Supabase retry queue restored from disk: {Count} message(s) survived the restart.",
@@ -1174,7 +1185,12 @@ public class Worker : BackgroundService
                 //
                 // ⚠️ והמשמעות: תור שהתמלא מתרוקן תוך **דקה לכל היותר**, כי
                 // הפעימה מבטיחה סבב שליחה כל 60 שניות גם באתר שקט לגמרי.
-                if (supabase is not null && (mirrored.Count > 0 || supaWaiting > 0 || beatDue))
+                // ⚠️ **הריסון נבדק כאן, לפני הגישה לדיסק.** `LoadAll` סורק
+                // תיקייה, ובלולאה החמה הוא נסרק פעם בשנייה על אתר שממילא
+                // אינו יכול לשלוח — עשרות אלפי סריקות ביום על מחשב שמריץ
+                // גם את המחסום.
+                if (supabase is not null && DateTimeOffset.UtcNow >= supaNextAttempt
+                    && (mirrored.Count > 0 || supaWaiting > 0 || beatDue))
                 {
                     var retry = supaQueue.LoadAll<BatchItem>()
                         // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה
@@ -1203,6 +1219,13 @@ public class Worker : BackgroundService
 
                         if (res.Ok)
                         {
+                            // ⚠️ **איפוס מלא, ולא הפחתה.** הפחתה הייתה משאירה
+                            // אתר שהתאושש עם המתנה מורשת מהתקלה הקודמת, ותקלה
+                            // חדשה הייתה מתחילה כבר בסף גבוה. אותו נימוק כמו
+                            // `NoteHealthy` ב-RestartThrottle.
+                            supaFailures = 0;
+                            supaNextAttempt = DateTimeOffset.MinValue;
+
                             // ⚠️ **המחיקה רק אחרי אישור.** מחיקה לפני השליחה,
                             // או בלי לבדוק את התוצאה, מחזירה בדיוק את האובדן
                             // שהתור נבנה למנוע. אותו כלל כמו ב-PendingQueue.
@@ -1226,10 +1249,19 @@ public class Worker : BackgroundService
                             // בכל כישלון, והתור היה מתפוצץ דווקא בנתק ארוך.
                             foreach (var m in mirrored) supaQueue.Enqueue(m);
 
+                            // ⚠️ כשל הזדהות קופץ ישר לתקרה: סיסמה שגויה
+                            // תישאר שגויה גם בעוד שנייה, ומאות הניסיונות
+                            // הראשונים אין להם שום סיכוי.
+                            supaFailures = SupabaseRetryPolicy.NextFailureCount(
+                                supaFailures, res.Status, res.Error);
+                            int wait = SupabaseRetryPolicy.DelaySeconds(supaFailures);
+                            supaNextAttempt = DateTimeOffset.UtcNow.AddSeconds(wait);
+
                             _logger.LogWarning(
                                 "Supabase write failed ({Status}): {Error}. " +
-                                "{Queued} message(s) queued for retry ({Total} waiting).",
-                                res.Status, res.Error, mirrored.Count, supaQueue.Count);
+                                "{Queued} message(s) queued for retry ({Total} waiting). " +
+                                "Next attempt in {Wait}s.",
+                                res.Status, res.Error, mirrored.Count, supaQueue.Count, wait);
                         }
                     }
 

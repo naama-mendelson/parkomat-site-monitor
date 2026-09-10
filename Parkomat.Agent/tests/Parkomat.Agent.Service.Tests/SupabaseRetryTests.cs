@@ -134,9 +134,16 @@ public class SupabaseRetryTests
         // ⚠️ מחיקה לפני השליחה, או בלי לבדוק את התוצאה, מחזירה בדיוק את
         // האובדן שהתור נבנה למנוע.
         string src = Worker();
+        // ⚠️ **שורות ההערה מוסרות, וזה מחזק ולא מרפה.** החלון של 400 תווים
+        // נשבר כשנוספו לענף ההצלחה שורות איפוס הריסון והערה שמסבירה אותן —
+        // כלומר שינוי נכון לגמרי הפיל שער נכון לגמרי. הסרת ההערות מודדת את
+        // ה**קוד** בלבד, ומונעת בדרך גם שער שהערה מספקת לו את ההתאמה.
+        string code = string.Join("\n",
+            src.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
         Assert.Matches(new Regex(
             @"if\s*\(res\.Ok\)[\s\S]{0,400}?foreach\s*\(var \(path, _\) in retry\)\s*supaQueue\.Remove\(path\)"),
-            src);
+            code);
     }
 
     [Fact]

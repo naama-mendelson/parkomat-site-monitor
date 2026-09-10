@@ -80,12 +80,18 @@ public class HeartbeatWiringTests
         // היה `mirrored.Count > 0 || beatDue` בלבד, כלומר תור שהתמלא המתין
         // עד הפעימה הבאה — עד 60 שניות. `supaWaiting` הוא מונה **בזיכרון**,
         // ולכן הוא נותן את אותה תשובה בלי סריקה ובלי ההמתנה.
+        // ⚠️ **הביטוי אינו נדרש להיות רצוף.** לשער נוסף מאז תנאי הריסון
+        // (`DateTimeOffset.UtcNow >= supaNextAttempt`), וביטוי שדרש את שני
+        // החלקים צמודים נפל על שינוי נכון לגמרי. מה שהטענה באמת אומרת הוא
+        // ששלושת הגורמים נמצאים בתנאי הכניסה — לא באיזה סדר הם כתובים.
         Assert.Matches(new Regex(
-            @"supabase is not null && \(mirrored\.Count\s*>\s*0\s*\|\|\s*supaWaiting\s*>\s*0\s*\|\|\s*beatDue\)"), src);
+            @"supabase is not null &&[\s\S]{0,300}?\(mirrored\.Count\s*>\s*0\s*\|\|\s*supaWaiting\s*>\s*0\s*\|\|\s*beatDue\)"), src);
         // ⚠️ ואסור שתחזור לכאן קריאה לדיסק. `Count` הוא סריקת תיקייה.
-        int gate = src.IndexOf("if (supabase is not null && (mirrored.Count > 0",
-                               StringComparison.Ordinal);
-        Assert.DoesNotContain("supaQueue.Count", src[gate..(gate + 200)]);
+        int gate = src.IndexOf("if (supabase is not null &&", StringComparison.Ordinal);
+        Assert.True(gate >= 0, "שער השליחה לא נמצא");
+        // חלון רחב יותר, כי התנאי עצמו גדל — הטענה ("אין נגיעה בדיסק
+        // בתנאי הכניסה") נשארה זהה.
+        Assert.DoesNotContain("supaQueue.Count", src[gate..(gate + 320)]);
     }
 
     [Fact]
