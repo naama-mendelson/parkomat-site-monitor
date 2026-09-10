@@ -15,6 +15,7 @@ public class StatusForm : Form
     private readonly Label _siteResult = new();
     private readonly Label _plcResult = new();
     private readonly Label _hiveResult = new();
+    private readonly Label _supaResult = new();
     private readonly Button _checkAgain = new();
 
     public StatusForm()
@@ -54,7 +55,7 @@ public class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
             Padding = new Padding(12)
         };
         // ⚠️ **זהות האתר ראשונה, ובכוונה.** היא התנאי המקדים לשתי האחרות:
@@ -63,6 +64,7 @@ public class StatusForm : Form
         content.Controls.Add(BuildCheckGroup("זהות האתר", _siteResult), 0, 0);
         content.Controls.Add(BuildCheckGroup("בדיקת PLC (בקר)", _plcResult), 0, 1);
         content.Controls.Add(BuildCheckGroup("בדיקת HiveMQ (ענן)", _hiveResult), 0, 2);
+        content.Controls.Add(BuildCheckGroup("בדיקת מסלול ישיר (Supabase)", _supaResult), 0, 3);
 
         Controls.Add(content);
         Controls.Add(buttons);
@@ -100,6 +102,7 @@ public class StatusForm : Form
         SetPending(_siteResult);
         SetPending(_plcResult);
         SetPending(_hiveResult);
+        SetPending(_supaResult);
 
         SiteConfig config;
         try
@@ -111,6 +114,7 @@ public class StatusForm : Form
             SetResult(_siteResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_plcResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_hiveResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
+            SetResult(_supaResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             _checkAgain.Enabled = true;
             return;
         }
@@ -124,12 +128,36 @@ public class StatusForm : Form
 
         // כל בדיקה מעדכנת את התווית שלה ברגע שהיא מסתיימת — עצמאית מהשנייה.
         Task plc = ShowWhenDone(ConnectionTester.TestPlcAsync(config.Plc), _plcResult);
-        Task hive = ShowWhenDone(ConnectionTester.TestHiveMqAsync(config.Mqtt), _hiveResult);
 
-        try { await Task.WhenAll(plc, hive); }
+        // ============================================================
+        // ⚠️ HiveMQ נבדק רק אם הוא בכלל בשימוש באתר הזה
+        // ============================================================
+        // הבדיקה רצה תמיד, ולכן אתר שכובה ממנו בכוונה הציג לנצח
+        // "החיבור ל-HiveMQ נכשל". **אזהרה שקרית גרועה מאזהרה חסרה** —
+        // היא שולחת מישהו לתקן ברוקר שתקין, וזה בדיוק הנימוק שבגללו
+        // שלב הברוקר ב-Worker מדולג במקום לזרוק.
+        //
+        // `MqttEnabled` נגזר (`!(Disabled && Supabase.Enabled)`), ולכן
+        // אתר בלי סיסמת Supabase נשאר על MQTT ויבדק — גם אם מישהו כתב
+        // `Disabled: true` בקובץ.
+        Task hive = config.MqttEnabled
+            ? ShowWhenDone(ConnectionTester.TestHiveMqAsync(config.Mqtt), _hiveResult)
+            : SetSkipped(_hiveResult, "MQTT כבוי באתר הזה — האתר מדווח ישירות ל-Supabase.");
+
+        Task supa = ShowWhenDone(ConnectionTester.TestSupabaseAsync(config), _supaResult);
+
+        try { await Task.WhenAll(plc, hive, supa); }
         catch { /* כל בדיקה כבר טופלה בנפרד ב-ShowWhenDone */ }
 
         _checkAgain.Enabled = true;
+    }
+
+    // ⚠️ **"מדולג" אינו "נכשל" ואינו "הצליח".** תווית ירוקה על בדיקה
+    // שלא רצה היא שקר, ואדומה שולחת לתקן משהו תקין. הטקסט אומר למה.
+    private static Task SetSkipped(Label target, string why)
+    {
+        SetNeutral(target, why);
+        return Task.CompletedTask;
     }
 
     // ממתין לתוצאת בדיקה ומעדכן את התווית — לעולם לא זורק אל ה-UI.
@@ -156,5 +184,14 @@ public class StatusForm : Form
     {
         label.ForeColor = success ? Color.Green : Color.Firebrick;
         label.Text = (success ? "✓ " : "✗ ") + message;
+    }
+
+    // ⚠️ **צבע שלישי, ולא ירוק ולא אדום.** בדיקה שדולגה אינה הצלחה
+    // ואינה כישלון; שני הצבעים הקיימים היו משקרים — ירוק על משהו שלא
+    // נבדק, או אדום ששולח לתקן דבר תקין.
+    private static void SetNeutral(Label label, string message)
+    {
+        label.ForeColor = Color.DimGray;
+        label.Text = "– " + message;
     }
 }

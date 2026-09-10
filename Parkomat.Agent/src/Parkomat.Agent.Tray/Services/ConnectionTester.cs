@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text;
+using System.Net.Http;
 using System.Net.Sockets;
 using MQTTnet;
 using NModbus;
@@ -97,6 +100,74 @@ public static class ConnectionTester
                 return new TestResult { Success = false, Message = $"החיבור ל-PLC נכשל: {Describe(ex)}" };
             }
         });
+    }
+
+    // ============================================================
+    // ⚠️ המסלול הישיר — הבדיקה שלא הייתה קיימת
+    // ============================================================
+    // חלון "בדוק חיבור" בדק PLC ו-HiveMQ בלבד. באתר שהמסלול הישיר הוא
+    // דרך הדיווח היחידה שלו, פירוש הדבר שהבדיקה בודקת את מה שאינו
+    // רלוונטי **ואינה בודקת את מה שכן** — טכנאי מקבל מסך ירוק על ברוקר
+    // שהאתר לא משתמש בו, ואפס מידע על הדבר שקובע.
+    //
+    // ⚠️ **התחברות בלבד, בלי לכתוב.** הבדיקה חייבת להיות בטוחה ללחיצה
+    // חוזרת: כתיבת שורה אמיתית מהטריי הייתה מזהמת נתוני לקוח בכל
+    // "בדוק שוב". הזדהות מוצלחת מוכיחה את כל השרשרת שמעניינת — רשת,
+    // חומת אש, TLS, כתובת, אימייל וסיסמה.
+    /// <summary>בודק את המסלול הישיר: הזדהות מול Supabase, בלי לכתוב דבר.</summary>
+    public static async Task<TestResult> TestSupabaseAsync(SiteConfig config)
+    {
+        SupabaseConfig sb = config.Supabase;
+
+        if (!sb.Enabled)
+            return new TestResult
+            {
+                Success = false,
+                Message = "המסלול הישיר כבוי — לא הוזנה סיסמת Supabase בהגדרות."
+            };
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                $"{sb.EffectiveUrl.TrimEnd('/')}/auth/v1/token?grant_type=password");
+            req.Headers.Add("apikey", sb.EffectiveAnonKey);
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(new { email = sb.EffectiveEmail, password = sb.Password }),
+                Encoding.UTF8, "application/json");
+
+            using HttpResponseMessage res = await http.SendAsync(req).ConfigureAwait(false);
+            string body = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            if (res.IsSuccessStatusCode)
+                return new TestResult
+                {
+                    Success = true,
+                    Message = $"המסלול הישיר תקין — הזדהות כ-{sb.EffectiveEmail} הצליחה."
+                };
+
+            // ⚠️ הודעה שמפרידה בין הסיבות. "נכשל" סתם שולח לחפש בכל
+            // מקום; קוד האתר השגוי הוא הטעות הנפוצה, כי האימייל נגזר
+            // ממנו — וזה בדיוק מה שקרה באתר 1326.
+            string hint = body.Contains("invalid_credentials", StringComparison.OrdinalIgnoreCase)
+                       || body.Contains("Invalid login", StringComparison.OrdinalIgnoreCase)
+                ? $" — הסיסמה שגויה, או שקוד האתר בהגדרות אינו {config.SiteId}."
+                : "";
+
+            return new TestResult
+            {
+                Success = false,
+                Message = $"Supabase דחה את ההזדהות ({(int)res.StatusCode}){hint}"
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new TestResult { Success = false, Message = "פסק זמן: אין תגובה מ-Supabase תוך 15 שניות." };
+        }
+        catch (Exception ex)
+        {
+            return new TestResult { Success = false, Message = $"החיבור ל-Supabase נכשל: {Describe(ex)}" };
+        }
     }
 
     /// <summary>בודק חיבור *ישיר* ל-HiveMQ עם TLS ופרטי ההתחברות מההגדרות, timeout ~10 שניות.</summary>
