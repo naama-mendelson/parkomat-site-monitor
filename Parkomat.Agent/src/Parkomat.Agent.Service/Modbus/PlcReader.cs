@@ -1,5 +1,6 @@
 ﻿using NModbus;
 using Parkomat.Agent.Core.Configuration;
+using Parkomat.Agent.Core.Modbus;
 using System.Net.Sockets;
 
 namespace Parkomat.Agent.Service.Modbus;
@@ -20,7 +21,7 @@ public class PlcReader : IDisposable
     private readonly PlcConfig _config;
 
     private TcpClient? _tcpClient;
-    private UdpClient? _udpClient;
+    private ModbusUdpChannel? _udpChannel;
     private IModbusMaster? _master;
 
     public PlcReader(PlcConfig config)
@@ -40,7 +41,7 @@ public class PlcReader : IDisposable
     // את הדגל הזה — אבל מי שיסתמך עליו כדי לענות "האם ה-PLC חי" יקבל
     // תשובה נכונה ב-TCP ושגויה ב-UDP.
     public bool IsConnected => _config.UseUdp
-        ? _udpClient is not null
+        ? _udpChannel is not null
         : _tcpClient?.Connected ?? false;
 
     /// <summary>
@@ -106,34 +107,19 @@ public class PlcReader : IDisposable
     /// ⚠️ <c>Connect</c> **חובה**, לא נוחות: NModbus דורשת יעד קבוע
     /// ("UdpClient must be bound to a default remote host").
     ///
-    /// ⚠️ **ועל אובדן וסדר — הספרייה מטפלת, ולא אנחנו.** ב-UDP אין הבטחת
-    /// הגעה ואין הבטחת סדר, ולכן תשובה מאוחרת לבקשה ישנה עלולה להיות
-    /// מותאמת לבקשה חדשה — כלומר MODE מרגע אחד מזווג עם מונה מרגע אחר,
-    /// בדיוק מה שהקריאה המשולשת למטה קיימת כדי למנוע. NModbus מאמתת את
-    /// מזהה הטרנזקציה שב-MBAP ומנסה שוב על אי-התאמה, אז זה סגור בשכבה
-    /// שמתחתינו. **לא לכתוב כאן התאמה משלנו** — היא תתחרה בזו שלה.
+    /// ⚠️ <b>וכאן ישבה הנחה שגויה, שעלתה יום שלם בשטח.</b> נכתב כאן
+    /// ש-NModbus מאמתת את מזהה הטרנזקציה ולכן "לא לכתוב כאן התאמה
+    /// משלנו". הבקר באתר 2222 מחזיר <b>אפס</b> במזהה הטרנזקציה
+    /// <b>וגם אפס בשדה האורך</b> — כלומר הכלי שסמכנו עליו אינו קיים,
+    /// ו-NModbus נשברת על הדטגרם לגמרי (ראה <c>ModbusUdpChannel</c>).
+    ///
+    /// ⚠️ לכן ה-UDP אינו עובר יותר דרך NModbus כלל. ההגנה על זיווג
+    /// תשובות היא <b>ריקון שאריות לפני כל שליחה</b>, שאינו תלוי בשדה
+    /// שהבקר ממלא נכון.
     /// </summary>
     private void ConnectUdp()
     {
-        _udpClient = new UdpClient();
-        _udpClient.Connect(_config.IpAddress, _config.Port);
-
-        _udpClient.Client.ReceiveTimeout = UdpAttemptTimeoutMs;
-        _udpClient.Client.SendTimeout = UdpAttemptTimeoutMs;
-
-        var factory = new ModbusFactory();
-        _master = factory.CreateMaster(_udpClient);
-
-        // ⚠️ **הזמן לכל ניסיון, לא הזמן הכולל** — ראה UdpAttemptTimeoutMs.
-        _master.Transport.ReadTimeout = UdpAttemptTimeoutMs;
-        _master.Transport.WriteTimeout = UdpAttemptTimeoutMs;
-
-        // ⚠️ **נקבע במפורש ולא נסמך על ברירת המחדל של הספרייה.** החישוב של
-        // UdpAttemptTimeoutMs מחלק את התקרה במספר הניסיונות; אם NModbus
-        // תשנה את ברירת המחדל בגרסה עתידית, העלות הכוללת תזוז בשקט
-        // ותתקרב לסף ה-watchdog — כלומר שדרוג חבילה יחזיר באג תזמון
-        // שכבר שילמנו עליו פעם.
-        _master.Transport.Retries = UdpRetries;
+        _udpChannel = new ModbusUdpChannel(_config.IpAddress, _config.Port, IoTimeoutMs);
     }
 
     // ============================================================
@@ -348,6 +334,12 @@ public class PlcReader : IDisposable
     // לזכור לעדכן היא רשימה שמישהו לא יעדכן.
     private ushort[] ReadBlock(byte slaveId, int address, int count)
     {
+        // ⚠️ UDP אינו עובר דרך NModbus — הבקר באתר 2222 שולח כותרת MBAP
+        // עם אורך אפס, והספרייה נשברת עליה. הפיצול הוא בדיוק בגבול
+        // הבעיה: TCP עובד ב-20 האתרים האחרים ונשאר כפי שהוא.
+        if (_udpChannel is not null)
+            return _udpChannel.ReadRegisters(slaveId, _config.UseHoldingRegisters, address, count);
+
         return _config.UseHoldingRegisters
             ? _master!.ReadHoldingRegisters(slaveId, (ushort)address, (ushort)count)   // FC 03
             : _master!.ReadInputRegisters(slaveId, (ushort)address, (ushort)count);    // FC 04
@@ -385,8 +377,7 @@ public class PlcReader : IDisposable
         // נקרא גם מ-`EnsureConnected` לפני פתיחה מחדש, ואם מישהו יערוך את
         // `Transport` בזמן ריצה, ניקוי לפי ההגדרה **הנוכחית** היה משאיר את
         // ה-socket של התעבורה הקודמת פתוח לנצח. שדה null זול לשחרר.
-        _udpClient?.Close();
-        _udpClient?.Dispose();
-        _udpClient = null;
+        _udpChannel?.Dispose();
+        _udpChannel = null;
     }
 }

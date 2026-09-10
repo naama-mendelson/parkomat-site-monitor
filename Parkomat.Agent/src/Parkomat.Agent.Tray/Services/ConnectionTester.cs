@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using MQTTnet;
 using NModbus;
+using Parkomat.Agent.Core.Modbus;
 using Parkomat.Agent.Core.Configuration;
 
 namespace Parkomat.Agent.Tray.Services;
@@ -91,17 +92,25 @@ public static class ConnectionTester
 
                 if (plc.UseUdp)
                 {
-                    // ⚠️ ל-UDP אין לחיצת יד: `Connect` רק קובע יעד ברירת מחדל
-                    // ומצליח גם מול כתובת שאין מאחוריה דבר. הכישלון האמיתי
-                    // מתגלה בקריאה עצמה, כ-timeout — ולכן ההודעה למטה מפרידה
-                    // בין השניים.
-                    udp = new UdpClient();
-                    udp.Connect(plc.IpAddress, plc.Port);
-                    udp.Client.ReceiveTimeout = PlcTimeoutSeconds * 1000;
-                    udp.Client.SendTimeout = PlcTimeoutSeconds * 1000;
-                    master = factory.CreateMaster(udp);
+                    // ============================================================
+                    // ⚠️ אותו ערוץ שהסוכן משתמש בו — ולא NModbus
+                    // ============================================================
+                    // באתר 2222 הבקר שולח כותרת MBAP עם אורך אפס, ו-NModbus
+                    // נשברת עליה. בדיקה שמדברת NModbus הייתה מדווחת כישלון על
+                    // חיבור תקין לחלוטין — כלומר בדיוק אותה אזהרה שקרית שכבר
+                    // שלחה טכנאי לחפש תקלה שאינה קיימת, רק בשכבה אחרת.
+                    //
+                    // ⚠️ **הבדיקה חייבת לדבר את מה שהסוכן מדבר.** זו כל תכליתה.
+                    using var channel = new ModbusUdpChannel(plc.IpAddress, plc.Port, PlcTimeoutSeconds * 1000);
+                    channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.ModeRegister, 1);
+
+                    return new TestResult
+                    {
+                        Success = true,
+                        Message = $"מחובר ל-PLC — {how}. הקריאה הצליחה."
+                    };
                 }
-                else
+
                 {
                     tcp = new TcpClient();
                     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(PlcTimeoutSeconds));
