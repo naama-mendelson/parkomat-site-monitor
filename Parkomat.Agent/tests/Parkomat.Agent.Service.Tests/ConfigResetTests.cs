@@ -61,8 +61,8 @@ public class ConfigResetTests
         var configuredInTheField = new SiteConfig { SiteId = "2438" };
         configuredInTheField.Mqtt.Username = "site-2438";
         configuredInTheField.Mqtt.Password = "pw-typed-by-technician";
-        configuredInTheField.Plc.IpAddress = "10.0.0.99";     // סחף הגדרות
-        configuredInTheField.PollIntervalMs = 7777;
+        configuredInTheField.Plc.IpAddress = "10.0.0.99";     // זהות האתר
+        configuredInTheField.PollIntervalMs = 7777;           // סחף הגדרות
 
         SiteConfig afterUpgrade = ConfigStore.BuildResetConfig(configuredInTheField);
 
@@ -71,8 +71,14 @@ public class ConfigResetTests
         Assert.Equal("site-2438", afterUpgrade.Mqtt.Username);
         Assert.Equal("pw-typed-by-technician", afterUpgrade.Mqtt.Password);
 
-        // סחף — נוקה, וזו כל מטרת האיפוס.
-        Assert.Equal(new SiteConfig().Plc.IpAddress, afterUpgrade.Plc.IpAddress);
+        // ⚠️ **כתובת ה-PLC עברה צד מ-1.0.48.** היא נבדקה כאן כ"סחף",
+        // כלומר כערך שהאיפוס נועד לנקות — וזה היה שגוי: אין ממה לגזור
+        // אותה מחדש, וניקוי שלה מפנה אתר עובד לכתובת שאין בה דבר. נמדד
+        // באתר 2222 שלוש פעמים ביום אחד.
+        Assert.Equal("10.0.0.99", afterUpgrade.Plc.IpAddress);
+
+        // סחף אמיתי — נוקה, וזו כל מטרת האיפוס. קצב הדגימה כן ניתן
+        // לגזירה מחדש: יש לו ברירת מחדל נכונה לכל האתרים.
         Assert.Equal(new SiteConfig().PollIntervalMs, afterUpgrade.PollIntervalMs);
     }
 
@@ -89,9 +95,6 @@ public class ConfigResetTests
             NtpServer = "ntp.old.example",
             NtpSyncIntervalMinutes = 999,
         };
-        old.Plc.IpAddress = "1.2.3.4";
-        old.Plc.Port = 9999;
-        old.Plc.ModeRegister = 1;
         old.Mqtt.Host = "old.broker.example";
         old.Mqtt.Port = 1234;
 
@@ -102,9 +105,9 @@ public class ConfigResetTests
         Assert.Equal(defaults.PollIntervalMs, fresh.PollIntervalMs);
         Assert.Equal(defaults.NtpServer, fresh.NtpServer);
         Assert.Equal(defaults.NtpSyncIntervalMinutes, fresh.NtpSyncIntervalMinutes);
-        Assert.Equal(defaults.Plc.IpAddress, fresh.Plc.IpAddress);
-        Assert.Equal(defaults.Plc.Port, fresh.Plc.Port);
-        Assert.Equal(defaults.Plc.ModeRegister, fresh.Plc.ModeRegister);
+        // ⚠️ בלוק ה-PLC **אינו** נבדק כאן יותר — הוא שורד מ-1.0.48.
+        // ראה TheSitePlcIdentitySurvivesAnUpgrade למטה.
+        Assert.Equal(defaults.Plc.FaultTextMaxChars, fresh.Plc.FaultTextMaxChars);
 
         // גם ה-Host והפורט של HiveMQ מתאפסים — הם ברירת מחדל, לא זהות.
         Assert.Equal(defaults.Mqtt.Host, fresh.Mqtt.Host);
@@ -408,5 +411,87 @@ public class ConfigResetTests
         Assert.False(after.Supabase.Enabled,
             "המסלול הישיר נדלק באתר שמעולם לא הוגדר");
         Assert.True(string.IsNullOrWhiteSpace(after.Supabase.Password));
+    }
+
+    // ============================================================
+    // ⚠️ זהות ה-PLC של האתר שורדת שדרוג
+    // ============================================================
+    // עד 1.0.48 היא לא שרדה, ובאתר 2222 זה קרה **שלוש פעמים ביום אחד**:
+    // שדרוג החזיר את הכתובת ל-192.168.1.3 ואת הרגיסטרים ל-290/291/292,
+    // כלומר האתר פנה לכתובת שאין בה דבר. הסמל עלה, ההתקנה נראתה תקינה,
+    // ושום מסך לא אמר שמה שהוקלד נמחק.
+    [Fact]
+    public void TheSitePlcIdentitySurvivesAnUpgrade()
+    {
+        var old = new SiteConfig { SiteId = "2222" };
+        old.Plc.IpAddress = "192.168.0.250";
+        old.Plc.Port = 502;
+        old.Plc.Transport = "udp";
+        old.Plc.FunctionCode = 3;
+        old.Plc.ModeRegister = 106;
+        old.Plc.CardRegister = 107;
+        old.Plc.CycleRegister = 105;
+        old.Plc.FaultTextRegister = 7;
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+
+        Assert.Equal("192.168.0.250", fresh.Plc.IpAddress);
+
+        // ⚠️ **הפורט אינו נבדק כאן**, ובכוונה: 502 הוא ברירת המחדל,
+        // ולכן הטענה הייתה עוברת גם אם השמירה שלו תוסר לגמרי. מוטציה
+        // הראתה בדיוק את זה. הבדיקה האמיתית היא עם ערך לא-ברירתי, למטה.
+        Assert.Equal(502, fresh.Plc.Port);
+        Assert.Equal("udp", fresh.Plc.Transport);
+        Assert.Equal(3, fresh.Plc.FunctionCode);
+        Assert.Equal(106, fresh.Plc.ModeRegister);
+        Assert.Equal(107, fresh.Plc.CardRegister);
+        Assert.Equal(105, fresh.Plc.CycleRegister);
+        Assert.Equal(7, fresh.Plc.FaultTextRegister);
+    }
+
+    // ⚠️ **פורט לא-ברירתי** — זו הטענה שבאמת בודקת את שמירת הפורט.
+    // עם 502 (ברירת המחדל) היא הייתה ירוקה גם בלי השמירה בכלל.
+    [Fact]
+    public void ANonDefaultPortSurvivesTheUpgrade()
+    {
+        var old = new SiteConfig { SiteId = "2222" };
+        old.Plc.Port = 5502;
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+
+        Assert.Equal(5502, fresh.Plc.Port);
+    }
+
+    // ⚠️ ריק ואפס **אינם** נשמרים. קובץ פגום או שדה שלא מולא חוזר
+    // לברירת המחדל — אחרת שדרוג היה מקבע מחרוזת ריקה ככתובת PLC, וזה
+    // כשל שקט חמור יותר מזה שהתיקון בא למנוע.
+    [Fact]
+    public void AnEmptyAddressFallsBackToTheDefaultRatherThanBeingKept()
+    {
+        var old = new SiteConfig { SiteId = "2222" };
+        old.Plc.IpAddress = "   ";
+        old.Plc.Port = 0;
+        old.Plc.ModeRegister = 0;
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+        var defaults = new SiteConfig();
+
+        Assert.Equal(defaults.Plc.IpAddress, fresh.Plc.IpAddress);
+        Assert.Equal(defaults.Plc.Port, fresh.Plc.Port);
+        Assert.Equal(defaults.Plc.ModeRegister, fresh.Plc.ModeRegister);
+    }
+
+    // ⚠️ אפס ברגיסטר טקסט התקלה פירושו "כבוי" ולא "לא הוגדר" — ראה
+    // PlcReader.ReadFaultText. איפוס שלו ל-2 היה מדליק מחדש תכונה
+    // שמישהו כיבה במכוון.
+    [Fact]
+    public void TurningTheFaultTextOffSurvivesToo()
+    {
+        var old = new SiteConfig { SiteId = "2222" };
+        old.Plc.FaultTextRegister = 0;
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+
+        Assert.Equal(0, fresh.Plc.FaultTextRegister);
     }
 }

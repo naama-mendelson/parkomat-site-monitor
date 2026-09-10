@@ -209,12 +209,27 @@ public static class ConfigStore
         fresh.SiteId = Keep(old.SiteId, fresh.SiteId);
 
         // ==========================================================
-        // ⚠️ התעבורה (TCP/UDP) שורדת — ושאר בלוק ה-PLC **לא**, בכוונה
+        // ⚠️ **בלוק ה-PLC שורד את ההתקנה** — וזה היפוך של החלטה קודמת
         // ==========================================================
-        // כתובת ה-IP, הפורט והרגיסטרים כן מתאפסים, וזו החלטה מתועדת:
-        // `installer.iss` אומר "אילוץ ברירות מחדל בכל התקנה", ו-
-        // `Reset_ClearsEverythingThatCanBeDerivedAgain` מקבעת אותה. הם
-        // ניתנים להקלדה מחדש בטופס, ורובם ממילא ברירת המחדל.
+        // עד 1.0.48 רק התעבורה ופקודת הקריאה שרדו; הכתובת, הפורט
+        // ושלושת הרגיסטרים חזרו לברירת המחדל בכל התקנה. הנימוק היה
+        // ש"הם ניתנים להקלדה מחדש בטופס".
+        //
+        // ⚠️ **נמדד ב-10/09/2026, ובגללו זה השתנה.** באתר 2222 שדרוג
+        // אחד החזיר את הכתובת ל-192.168.1.3 ואת הרגיסטרים ל-290/291/292
+        // — ברירות המחדל הצרובות — והאתר שידר לכתובת שאין בה דבר. באותו
+        // יום זה קרה **שלוש פעמים**, וכל פעם עלתה בהקלדה מחדש של ארבעה
+        // שדות שאיש אינו זוכר בעל פה.
+        //
+        // ⚠️ **והנימוק הישן היה שגוי בנקודה אחת.** נטען שכתובת שגויה
+        // "נכשלת בקול" ולכן ניתנת לתיקון. היא אכן נכשלת בקול **בלוג**,
+        // אבל בשום מסך: האתר נראה מותקן, הסמל עולה, ואין שום דבר שאומר
+        // "הכתובת שהוקלדה נמחקה בשדרוג". זהו בדיוק הכשל השקט שהמערכת
+        // הזו קיימת כדי למנוע — והוא **נגרם** על ידי השדרוג.
+        //
+        // כל אלה הן החלטות **לאתר הזה** שאין ממה לגזור מחדש, בדיוק כמו
+        // התעבורה. `FaultTextMaxChars` ממשיך להתאפס: הוא מספר כוונון עם
+        // ברירת מחדל סבירה, ולא זהות של אתר.
         //
         // ⚠️ **אבל התעבורה שונה מהם במהות, ולכן היא לא "עוד שדה PLC".**
         // כתובת שגויה נכשלת בקול — הלוג אומר timeout, והסמל אפור. תעבורה
@@ -244,6 +259,23 @@ public static class ConfigStore
         // צריך ליפול לברירת המחדל 4 ולא לשמר אפס.
         if (old.Plc is not null && old.Plc.FunctionCode > 0)
             fresh.Plc.FunctionCode = old.Plc.FunctionCode;
+
+        // ⚠️ ריק/אפס **אינו** נשמר: קובץ פגום או שדה שלא מולא חוזר
+        // לברירת המחדל, אחרת שדרוג היה מקבע מחרוזת ריקה ככתובת PLC.
+        if (old.Plc is not null)
+        {
+            fresh.Plc.IpAddress = Keep(old.Plc.IpAddress, fresh.Plc.IpAddress);
+
+            if (old.Plc.Port > 0) fresh.Plc.Port = old.Plc.Port;
+            if (old.Plc.ModeRegister > 0) fresh.Plc.ModeRegister = old.Plc.ModeRegister;
+            if (old.Plc.CardRegister > 0) fresh.Plc.CardRegister = old.Plc.CardRegister;
+            if (old.Plc.CycleRegister > 0) fresh.Plc.CycleRegister = old.Plc.CycleRegister;
+
+            // ⚠️ אפס כאן פירושו "התכונה כבויה" ולא "לא הוגדר" (ראה
+            // PlcReader.ReadFaultText), ולכן הוא נשמר כמו כל ערך אחר.
+            if (old.Plc.FaultTextRegister >= 0)
+                fresh.Plc.FaultTextRegister = old.Plc.FaultTextRegister;
+        }
 
         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);
         fresh.Mqtt.Password = Keep(old.Mqtt?.Password, fresh.Mqtt.Password);

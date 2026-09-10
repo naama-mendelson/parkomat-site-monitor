@@ -299,21 +299,35 @@ public class PlcTransportTests
     }
 
     /// <summary>
-    /// והצד השני: שאר הגדרות ה-PLC כן מתאפסות, וזו החלטה
-    /// מתועדת (<c>installer.iss</c>: "אילוץ ברירות מחדל בכל התקנה").
-    /// נבדק כאן כדי שהשינוי לא יורחב בשקט לכל הבלוק.
+    /// ⚠️ <b>הבדיקה הזו נקראה פעם <c>ButTheAddressStillResets</c>, והפוכה.</b>
+    /// היא קיבעה שרק התעבורה שורדת, "כדי שהשינוי לא יורחב בשקט לכל
+    /// הבלוק" — וההרחבה אכן לא נעשתה בשקט: היא נמדדה, ואז התבקשה.
+    ///
+    /// <para>באתר 2222 ב-10/09/2026 שדרוג החזיר את הכתובת ל-192.168.1.3
+    /// ואת הרגיסטרים ל-290/291/292 <b>שלוש פעמים ביום אחד</b>. האתר
+    /// שידר לכתובת שאין בה דבר, הסמל עלה, וההתקנה נראתה תקינה.</para>
+    ///
+    /// <para>⚠️ <b>אבל השמירה מפני הרחבה־לכל־דבר נשארת</b>, כי היא עדיין
+    /// נכונה: ערך שיש לו ברירת מחדל נכונה לכל האתרים <b>חייב</b> לחזור
+    /// אליה, אחרת סחף כוונון מכל אתר יישמר לנצח.</para>
     /// </summary>
     [Fact]
-    public void ButTheAddressStillResets()
+    public void TheAddressSurvivesButTuningStillResets()
     {
-        var old = new SiteConfig { SiteId = "3513" };
+        var old = new SiteConfig { SiteId = "3513", PollIntervalMs = 7777 };
         old.Plc.IpAddress = "10.0.0.9";
         old.Plc.Transport = "udp";
+        old.Plc.FaultTextMaxChars = 12;
 
         SiteConfig afterUpgrade = ConfigStore.BuildResetConfig(old);
 
-        Assert.Equal(new PlcConfig().IpAddress, afterUpgrade.Plc.IpAddress);
+        // זהות האתר — שורדת.
+        Assert.Equal("10.0.0.9", afterUpgrade.Plc.IpAddress);
         Assert.True(afterUpgrade.Plc.UseUdp);
+
+        // כוונון — חוזר לברירת המחדל.
+        Assert.Equal(new PlcConfig().FaultTextMaxChars, afterUpgrade.Plc.FaultTextMaxChars);
+        Assert.Equal(new SiteConfig().PollIntervalMs, afterUpgrade.PollIntervalMs);
     }
 
     /// <summary>
