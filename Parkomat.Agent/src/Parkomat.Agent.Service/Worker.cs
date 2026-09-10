@@ -624,8 +624,20 @@ public class Worker : BackgroundService
 
                 // מדווחים את הכשל הראשון ב-Warning (כדי שיופיע בקובץ), ואת ההמשך
                 // ב-Debug — כדי שנתק PLC ממושך לא ייצור שורה בכל שנייה.
+                // ============================================================
+                // ⚠️ החריגה עצמה נרשמת, לא רק ההודעה שלה
+                // ============================================================
+                // באתר 2222 חזרה `Index was outside the bounds of the array`
+                // מאות פעמים. בקוד שלנו אין שום אינדוקס לא-מוגן במסלול הזה
+                // (הגישה היחידה היא לפי היסט, אחרי בדיקת אורך), כלומר החריגה
+                // נזרקת **בתוך NModbus** — ובלי stack trace אין דרך לדעת
+                // באיזו שכבה: פענוח כותרת MBAP, בניית התשובה, או המתאם של
+                // UDP. ניחשתי פעמיים וטעיתי פעמיים.
+                //
+                // ⚠️ **רק על הכשל הראשון בכל רצף**, כמו ההודעה עצמה: נתק
+                // ממושך היה מייצר stack trace בכל שנייה וממלא את הדיסק.
                 if (firstFailure)
-                    _logger.LogWarning("PLC read failed: {Message}", ex.Message);
+                    _logger.LogWarning(ex, "PLC read failed: {Message}", ex.Message);
                 else
                     _logger.LogDebug(
                         "PLC read still failing ({Count}/{Max}): {Message}",
