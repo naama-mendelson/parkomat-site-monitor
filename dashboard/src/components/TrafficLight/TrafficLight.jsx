@@ -7,12 +7,19 @@
 // מהדפדפן; כאן עמודה היא שורה בטבלת הגדרות והתאים ב-JSONB. ההסבר
 // המלא ב-`db/traffic-light.postgres.sql`.
 //
-// ⚠️ **וההרשאה אינה כאן.** `app.require_manager()` בתוך כל פונקציה קורא
-// את התפקיד מהטבלה; קוד המנהל שהמסך מבקש הוא צעד אישור לפני פעולה
-// בלתי-הפיכה, לא ההגנה. אותו דפוס כמו ניהול האתרים.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// ============================================================
+// ⚠️ הצפייה פתוחה לכולם. **רק העריכה** מאחורי קוד.
+// ============================================================
+// הגרסה הראשונה חסמה את הכניסה עצמה, וזה היה הפוך: הלוח הזה הוא מידע
+// תפעולי שכל בקר צריך לראות — מי לקוח VIP, מי איש הקשר, מה סוג ההסכם.
+// חסימת הצפייה הופכת אותו לגיליון שרק מנהל רואה, כלומר לגיליון שאיש
+// לא משתמש בו.
+//
+// ⚠️ **וההגנה אינה הקוד.** `app.require_manager()` בתוך כל פונקציה קורא
+// את התפקיד **מהטבלה**; בקר שינסה לשמור יקבל 403 מהמסד גם אם הקוד
+// בידיו. הקוד הוא צעד אישור לפני עריכה, בדיוק כמו בניהול האתרים.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
-import Logo from "../Logo/Logo";
 import {
   fetchBoard, addColumn, updateColumn, deleteColumn,
   addRow, deleteRow, setCell, pasteRows,
@@ -39,21 +46,39 @@ const KINDS = [
 // תא — הפקד משתנה לפי סוג העמודה
 // ============================================================
 // ⚠️ **השמירה ב-blur ולא בכל הקשה.** שמירה על כל תו הייתה מייצרת בקשה
-// לכל אות, ובלוח של 40 שורות זה מאות בקשות בזמן הקלדה אחת. אותו נימוק
-// בדיוק שבגללו ריסנו את הסוכן היום.
+// לכל אות, ובלוח של 40 שורות זה מאות בקשות בהקלדה אחת. אותו נימוק
+// בדיוק שבגללו רוסן הסוכן.
+//
+// ⚠️ ובמצב צפייה הערך מוצג כטקסט ולא כשדה מנוטרל: שדה אפור נראה כמו
+// תקלה, וטקסט נראה כמו מידע.
 function Cell({ column, value, onSave, readOnly }) {
   const [draft, setDraft] = useState(value ?? "");
   useEffect(() => { setDraft(value ?? ""); }, [value]);
 
+  const opts = Array.isArray(column.options) ? column.options : [];
+  const hit = opts.find((o) => o.value === value);
+
+  if (readOnly) {
+    if (column.kind === "status") {
+      return hit
+        ? <span className="tl-status tl-status--ro" style={{ background: hit.color }}>{hit.label}</span>
+        : <span className="tl-ro tl-ro--dim">—</span>;
+    }
+    if (column.kind === "checkbox") {
+      return <span className="tl-ro">{value === true ? "✓" : ""}</span>;
+    }
+    if (column.kind === "link" && value) {
+      return <a className="tl-ro tl-ro--link" href={String(value)} target="_blank" rel="noreferrer">{String(value)}</a>;
+    }
+    return <span className="tl-ro">{value ?? ""}</span>;
+  }
+
   if (column.kind === "status") {
-    const opts = Array.isArray(column.options) ? column.options : [];
-    const hit = opts.find((o) => o.value === value);
     return (
       <select
         className="tl-status"
         style={hit ? { background: hit.color, color: "#fff" } : undefined}
         value={value ?? ""}
-        disabled={readOnly}
         onChange={(e) => onSave(e.target.value || null)}
       >
         <option value="">—</option>
@@ -68,7 +93,6 @@ function Cell({ column, value, onSave, readOnly }) {
         type="checkbox"
         className="tl-check"
         checked={value === true}
-        disabled={readOnly}
         onChange={(e) => onSave(e.target.checked ? true : null)}
       />
     );
@@ -83,7 +107,6 @@ function Cell({ column, value, onSave, readOnly }) {
       className="tl-input"
       type={type}
       value={draft}
-      readOnly={readOnly}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
         if (String(draft) === String(value ?? "")) return;
@@ -186,16 +209,95 @@ function ColumnEditor({ column, onSave, onDelete, onClose }) {
   );
 }
 
+// ============================================================
+// חלונית הקוד — עם עין
+// ============================================================
+// ⚠️ **העין קיימת כי קוד שמוקלד עיוור נכשל ואיש לא יודע למה.** שדה
+// סיסמה שמראה נקודות בלבד הופך שגיאת הקלדה אחת ל"הקוד לא נכון", וזו
+// תשובה שאי אפשר לעשות איתה כלום. כאן אפשר פשוט להסתכל.
+//
+// ⚠️ ומתחיל **מוסתר**, לא גלוי: הלוח נפתח לעיתים מול מסך משותף.
+function CodePrompt({ onUnlock, onClose, checking, error }) {
+  const [code, setCode] = useState("");
+  const [shown, setShown] = useState(false);
+
+  return (
+    <div className="tl-code-back" onClick={onClose}>
+      <form
+        className="tl-code"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => { e.preventDefault(); onUnlock(code); }}
+      >
+        <h3>מצב עריכה</h3>
+        <p>הזיני את קוד המנהל כדי לערוך את הלוח.</p>
+
+        <div className="tl-code-field">
+          <input
+            type={shown ? "text" : "password"}
+            placeholder="קוד מנהל"
+            autoComplete="current-password"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="tl-eye"
+            onClick={() => setShown((v) => !v)}
+            aria-label={shown ? "הסתר את הקוד" : "הצג את הקוד"}
+            title={shown ? "הסתר" : "הצג"}
+          >
+            {shown ? (
+              // עין חצויה — מוצג כרגע, לחיצה תסתיר
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"
+                      fill="none" stroke="currentColor" strokeWidth="1.7" />
+                <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                <path d="M4 20L20 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"
+                      fill="none" stroke="currentColor" strokeWidth="1.7" />
+                <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.7" />
+              </svg>
+            )}
+          </button>
+        </div>
+
+        {error && <p className="tl-err">{error}</p>}
+
+        <div className="tl-lock-actions">
+          <button type="button" className="tl-btn-ghost" onClick={onClose}>ביטול</button>
+          <button type="submit" className="tl-btn" disabled={checking || !code}>
+            {checking ? "בודק…" : "פתח עריכה"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function TrafficLight({ onClose }) {
   const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();
-  const [code, setCode] = useState("");
+
+  // ⚠️ **דגל מקומי ולא `lock()` מה-hook.** בזרוע הישירה `lock` היא
+  // פונקציה ריקה בכוונה — שם אין מה לנעול, כי הפאנל מתפרק בכל סגירה.
+  // כאן הלוח **נשאר פתוח** אחרי היציאה ממצב עריכה, ולכן צריך מתג משלו;
+  // בלעדיו כפתור "נעל" היה נראה כאילו הוא עובד ולא משנה דבר.
+  const [editMode, setEditMode] = useState(false);
 
   const [board, setBoard] = useState({ columns: [], rows: [] });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [editCol, setEditCol] = useState(null);
+  const [askCode, setAskCode] = useState(false);
   const pasteRef = useRef(null);
+
+  // ⚠️ מצב עריכה דורש **גם** קוד וגם תפקיד. `roleGated` אומר שהמסד לא
+  // יקבל כתיבה מהמשתמש הזה בשום מקרה, ואז הקוד חסר משמעות.
+  const canEdit = unlocked && editMode;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -206,9 +308,9 @@ export default function TrafficLight({ onClose }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // ⚠️ כל פעולה עוברת דרך העטיפה הזו: היא נועלת את המסך, מרעננת, ומציגה
-  // שגיאה. בלעדיה כל אחת מעשר הפעולות הייתה חוזרת על אותן ארבע שורות —
-  // וזו בדיוק הרשימה שמישהו ישכח להרחיב.
+  // ⚠️ כל פעולה עוברת דרך העטיפה הזו: נועלת, מרעננת, ומציגה שגיאה.
+  // בלעדיה כל אחת מעשר הפעולות הייתה חוזרת על אותן ארבע שורות — וזו
+  // בדיוק הרשימה שמישהו ישכח להרחיב.
   const run = useCallback(async (fn) => {
     setBusy(true);
     try { await fn(); await load(); setErr(null); }
@@ -231,7 +333,7 @@ export default function TrafficLight({ onClose }) {
       const cells = {};
       columns.forEach((c, i) => {
         const v = (parts[i] ?? "").trim();
-        if (v !== "") cells[c.key] = c.kind === "number" ? Number(v) || v : v;
+        if (v !== "") cells[c.key] = c.kind === "number" ? (Number(v) || v) : v;
       });
       return cells;
     });
@@ -239,115 +341,98 @@ export default function TrafficLight({ onClose }) {
     await run(() => pasteRows(payload));
   }, [columns, run]);
 
-  // ===== שער התפקיד =====
-  if (!unlocked && roleGated) {
-    return (
-      <div className="tl-overlay" onClick={onClose}>
-        <div className="tl-lock" onClick={(e) => e.stopPropagation()}>
-          <div className="tl-lock-icon"><Logo size={40} /></div>
-          <h2>רמזור</h2>
-          {checking ? <p>בודק הרשאות…</p> : (
-            <>
-              <p>עריכת הלוח מותרת למנהלים בלבד.</p>
-              <p className="tl-lock-role">התפקיד שלך: {role === "manager" ? "מנהל" : "בקר"}</p>
-            </>
-          )}
-          <div className="tl-lock-actions">
-            <button type="button" className="tl-btn" onClick={onClose}>סגור</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ===== שער הקוד =====
-  if (!unlocked) {
-    return (
-      <div className="tl-overlay" onClick={onClose}>
-        <div className="tl-lock" onClick={(e) => e.stopPropagation()}>
-          <div className="tl-lock-icon"><Logo size={40} /></div>
-          <h2>רמזור</h2>
-          <p>הזיני את קוד המנהל כדי לערוך את הלוח.</p>
-          <form onSubmit={(e) => { e.preventDefault(); unlock(code); }}>
-            <input
-              type="password"
-              placeholder="קוד מנהל"
-              autoComplete="current-password"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              autoFocus
-            />
-            {unlockError && <p className="tl-err">{unlockError}</p>}
-            <div className="tl-lock-actions">
-              <button type="button" className="tl-btn-ghost" onClick={onClose}>ביטול</button>
-              <button type="submit" className="tl-btn" disabled={checking || !code}>
-                {checking ? "בודק…" : "כניסה"}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // ===== הלוח =====
   return (
     <div className="tl-overlay" onClick={onClose}>
-      <div className="tl-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="tl-panel" onClick={(e) => { setEditCol(null); e.stopPropagation(); }}>
         <header className="tl-head">
           <h2>רמזור</h2>
+
+          {/* ⚠️ המצב נאמר במפורש. לוח שנראה ניתן לעריכה ואינו כזה מייצר
+              הקלדה שנעלמת בלי הסבר — וזו התלונה הכי שקטה שיש. */}
+          <span className={`tl-mode ${canEdit ? "tl-mode--edit" : ""}`}>
+            {canEdit ? "מצב עריכה" : "צפייה בלבד"}
+          </span>
+
           <div className="tl-head-actions">
-            <button
-              type="button"
-              className="tl-btn-ghost"
-              disabled={busy}
-              onClick={() => run(async () => {
-                const label = prompt("שם העמודה החדשה:");
-                if (!label) throw new Error("בוטל");
-                await addColumn(label, "text", []);
-              })}
-            >+ עמודה</button>
-            <button
-              type="button"
-              className="tl-btn"
-              disabled={busy}
-              onClick={() => run(() => addRow(null))}
-            >+ שורה</button>
+            {canEdit ? (
+              <>
+                <button
+                  type="button"
+                  className="tl-btn-ghost"
+                  disabled={busy}
+                  onClick={() => run(async () => {
+                    const label = prompt("שם העמודה החדשה:");
+                    if (!label) throw new Error("בוטל");
+                    await addColumn(label, "text", []);
+                  })}
+                >+ עמודה</button>
+                <button
+                  type="button"
+                  className="tl-btn"
+                  disabled={busy}
+                  onClick={() => run(() => addRow(null))}
+                >+ שורה</button>
+                <button
+                  type="button"
+                  className="tl-btn-ghost"
+                  onClick={() => { setEditMode(false); setEditCol(null); }}
+                  title="חזרה לצפייה בלבד"
+                >נעל</button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="tl-btn"
+                onClick={() => setAskCode(true)}
+                title={roleGated ? "עריכה מותרת למנהלים בלבד" : "פתיחת מצב עריכה"}
+              >עריכה</button>
+            )}
             <button type="button" className="tl-close" onClick={onClose} aria-label="סגור">✕</button>
           </div>
         </header>
 
-        {/* ⚠️ שורת השגיאה דביקה בראש הגלילה. הגרסה של פאנל הניהול לימדה
-            שהודעה שדורשת לגלול אליה נקראת כמו "לא קרה כלום". */}
+        {/* ⚠️ שורת השגיאה דביקה בראש הגלילה. הודעה שדורשת לגלול אליה
+            נקראת כמו "לא קרה כלום" — זה כבר נמדד בפאנל הניהול. */}
         {err && <div className="tl-err-bar">{err}</div>}
 
-        <div className="tl-paste">
-          <label htmlFor="tl-paste-box">הדבקה מ-Excel או מ-Monday (טאבים בין עמודות):</label>
-          <textarea
-            id="tl-paste-box"
-            ref={pasteRef}
-            rows={2}
-            placeholder="הדביקי כאן ולחצי 'הוסף שורות'"
-            disabled={busy || columns.length === 0}
-          />
-          <button
-            type="button"
-            className="tl-btn-ghost"
-            disabled={busy || columns.length === 0}
-            onClick={() => {
-              const t = pasteRef.current?.value ?? "";
-              if (t.trim()) { handlePaste(t); pasteRef.current.value = ""; }
-            }}
-          >הוסף שורות</button>
-        </div>
+        {/* ⚠️ נאמר לפני שמקלידים קוד, לא אחרי: המסד ידחה כתיבה מבקר גם
+            עם הקוד הנכון, ובלי המשפט הזה זה נראה כמו "הקוד לא עובד". */}
+        {roleGated && askCode === false && (
+          <div className="tl-note">
+            התפקיד שלך: {role === "manager" ? "מנהל" : "בקר"} — עריכה מותרת למנהלים בלבד.
+          </div>
+        )}
+
+        {canEdit && (
+          <div className="tl-paste">
+            <label htmlFor="tl-paste-box">הדבקה מ-Excel או מ-Monday (טאבים בין עמודות):</label>
+            <textarea
+              id="tl-paste-box"
+              ref={pasteRef}
+              rows={2}
+              placeholder="הדביקי כאן ולחצי 'הוסף שורות'"
+              disabled={busy || columns.length === 0}
+            />
+            <button
+              type="button"
+              className="tl-btn-ghost"
+              disabled={busy || columns.length === 0}
+              onClick={() => {
+                const t = pasteRef.current?.value ?? "";
+                if (t.trim()) { handlePaste(t); pasteRef.current.value = ""; }
+              }}
+            >הוסף שורות</button>
+          </div>
+        )}
 
         <div className="tl-scroll">
           {loading ? (
             <p className="tl-empty">טוען…</p>
           ) : columns.length === 0 ? (
             <p className="tl-empty">
-              הלוח ריק. התחילי ב־<strong>+ עמודה</strong>, ואז <strong>+ שורה</strong>
-              — או הדביקי ישירות אחרי שהגדרת עמודות.
+              {canEdit
+                ? <>הלוח ריק. התחילי ב־<strong>+ עמודה</strong>, ואז <strong>+ שורה</strong> — או הדביקי ישירות אחרי שהגדרת עמודות.</>
+                : <>הלוח ריק עדיין.</>}
             </p>
           ) : (
             <table className="tl-table">
@@ -356,16 +441,20 @@ export default function TrafficLight({ onClose }) {
                   <th className="tl-th-num">#</th>
                   {columns.map((c) => (
                     <th key={c.id} style={{ minWidth: c.width }}>
-                      <button
-                        type="button"
-                        className="tl-th-btn"
-                        onClick={() => setEditCol(editCol === c.id ? null : c.id)}
-                        title="לחצי לעריכת העמודה"
-                      >
-                        {c.label}
-                        <span className="tl-th-kind">{KINDS.find((k) => k.key === c.kind)?.label}</span>
-                      </button>
-                      {editCol === c.id && (
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          className="tl-th-btn"
+                          onClick={(e) => { e.stopPropagation(); setEditCol(editCol === c.id ? null : c.id); }}
+                          title="לחצי לעריכת העמודה"
+                        >
+                          {c.label}
+                          <span className="tl-th-kind">{KINDS.find((k) => k.key === c.kind)?.label}</span>
+                        </button>
+                      ) : (
+                        <span className="tl-th-btn tl-th-btn--ro">{c.label}</span>
+                      )}
+                      {canEdit && editCol === c.id && (
                         <ColumnEditor
                           column={c}
                           onClose={() => setEditCol(null)}
@@ -375,7 +464,7 @@ export default function TrafficLight({ onClose }) {
                       )}
                     </th>
                   ))}
-                  <th className="tl-th-act" />
+                  {canEdit && <th className="tl-th-act" />}
                 </tr>
               </thead>
               <tbody>
@@ -387,20 +476,22 @@ export default function TrafficLight({ onClose }) {
                         <Cell
                           column={c}
                           value={r.cells?.[c.key]}
-                          readOnly={busy}
+                          readOnly={!canEdit || busy}
                           onSave={(v) => run(() => setCell(r.id, c.key, v))}
                         />
                       </td>
                     ))}
-                    <td className="tl-td-act">
-                      <button
-                        type="button"
-                        className="tl-mini tl-mini--danger"
-                        disabled={busy}
-                        title="מחק שורה"
-                        onClick={() => { if (confirm("למחוק את השורה?")) run(() => deleteRow(r.id)); }}
-                      >✕</button>
-                    </td>
+                    {canEdit && (
+                      <td className="tl-td-act">
+                        <button
+                          type="button"
+                          className="tl-mini tl-mini--danger"
+                          disabled={busy}
+                          title="מחק שורה"
+                          onClick={() => { if (confirm("למחוק את השורה?")) run(() => deleteRow(r.id)); }}
+                        >✕</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {rows.length === 0 && (
@@ -415,6 +506,20 @@ export default function TrafficLight({ onClose }) {
           <span>{rows.length} שורות · {columns.length} עמודות</span>
           {busy && <span className="tl-busy">שומר…</span>}
         </footer>
+
+        {askCode && (
+          <CodePrompt
+            checking={checking}
+            error={unlockError}
+            onClose={() => setAskCode(false)}
+            onUnlock={async (code) => {
+              const ok = await unlock(code);
+              // ⚠️ נסגר רק בהצלחה. סגירה בכל מקרה הייתה מחזירה את
+              // המשתמשת ללוח בלי לומר שהקוד נדחה.
+              if (ok !== false) { setEditMode(true); setAskCode(false); }
+            }}
+          />
+        )}
       </div>
     </div>
   );

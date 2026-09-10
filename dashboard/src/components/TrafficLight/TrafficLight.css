@@ -302,3 +302,111 @@
   .tl-panel { height: 100%; border-radius: 0; }
   .tl-paste { flex-direction: column; align-items: stretch; }
 }
+
+/* ==========================================================
+   מצב צפייה מול מצב עריכה
+   ========================================================== */
+/* ⚠️ **המצב נאמר במפורש בכותרת.** לוח שנראה ניתן לעריכה ואינו כזה
+   מייצר הקלדה שנעלמת בלי הסבר — התלונה הכי שקטה שיש. */
+.tl-mode {
+  margin-inline-end: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--surface-2, #f0f1f4);
+  color: var(--text-muted, #6b7280);
+}
+.tl-mode--edit { background: #e6f7ef; color: #0a7a4a; }
+
+/* ⚠️ במצב צפייה הערך הוא **טקסט ולא שדה מנוטרל**: שדה אפור נראה כמו
+   תקלה, וטקסט נראה כמו מידע. */
+.tl-ro {
+  display: block;
+  padding: 8px 10px;
+  min-height: 1.2em;
+}
+.tl-ro--dim { color: var(--text-muted, #9ca3af); }
+.tl-ro--link { color: var(--brand, #3d78d8); text-decoration: underline; }
+
+.tl-status--ro {
+  display: block;
+  color: #fff;
+  text-align: center;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+.tl-th-btn--ro { cursor: default; }
+.tl-th-btn--ro:hover { background: transparent; }
+
+.tl-note {
+  padding: 8px 18px;
+  background: #fff8e6;
+  color: #8a6100;
+  font-size: 0.85rem;
+  border-block-end: 1px solid var(--border, #e5e7eb);
+}
+
+/* ==========================================================
+   חלונית הקוד — עם עין
+   ========================================================== */
+.tl-code-back {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.tl-code {
+  width: min(360px, calc(100% - 40px));
+  padding: 22px;
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--text, #1a1a1a);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+.tl-code h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.tl-code p { margin: 0 0 14px; font-size: 0.87rem; color: var(--text-muted, #6b7280); }
+
+/* ⚠️ העין יושבת **בתוך** השדה ולא לצדו: כפתור נפרד ליד שדה סיסמה
+   נקרא כמו פעולה אחרת לגמרי, ולא כמו "הצג את מה שהקלדתי". */
+.tl-code-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-block-end: 12px;
+}
+.tl-code-field input {
+  width: 100%;
+  font: inherit;
+  padding: 10px 44px 10px 12px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: inherit;
+  text-align: start;
+}
+.tl-code-field input:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -1px; }
+
+.tl-eye {
+  position: absolute;
+  inset-inline-end: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #6b7280);
+  cursor: pointer;
+}
+.tl-eye:hover { background: var(--surface-2, #f3f4f6); color: inherit; }
+.tl-eye:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 1px; }
