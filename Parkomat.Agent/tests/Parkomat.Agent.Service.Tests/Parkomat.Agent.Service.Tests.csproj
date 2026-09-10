@@ -36,6 +36,13 @@
   <ItemGroup>
     <Compile Include="..\..\src\Parkomat.Agent.Tray\Services\KeepAliveTask.cs"
              Link="Linked\KeepAliveTask.cs" />
+
+    <!-- ⚠️ ו-`ConnectionTester` מאותה סיבה בדיוק. הוא בדק TCP ו-FC04
+         תמיד, גם באתר שמוגדר UDP או 0x03 — כלומר שיקר דווקא באתרים
+         שבשבילם התכונות נבנו. בלי קישור, הדרך היחידה לבדוק אותו היא
+         לפתוח את המסך בעיניים באתר. -->
+    <Compile Include="..\..\src\Parkomat.Agent.Tray\Services\ConnectionTester.cs"
+             Link="Linked\ConnectionTester.cs" />
   </ItemGroup>
 
 </Project>

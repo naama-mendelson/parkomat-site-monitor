@@ -52,7 +52,24 @@ public static class ConnectionTester
         return new TestResult { Success = check.IsValid, Message = check.Message };
     }
 
-    /// <summary>בודק חיבור ל-PLC: חיבור TCP + קריאת Modbus אחת, עם timeout של ~5 שניות.</summary>
+    // ============================================================
+    // ⚠️ הבדיקה מדברת את מה שהאתר מדבר — ולא TCP/FC04 תמיד
+    // ============================================================
+    // היא פתחה `TcpClient` וקראה `ReadInputRegisters` בקשיחות, בלי
+    // להסתכל על `Transport` ועל `FunctionCode`. כלומר היא **מובטחת
+    // לשקר בדיוק באתרים שבשבילם שתי התכונות האלה נבנו**:
+    //
+    //   • בקר UDP-בלבד מחזיר לניסיון חיבור TCP את
+    //     "No connection could be made because the target machine
+    //     actively refused it" — Windows 10061. נצפה באתר 2222.
+    //   • בקר שחושף רק Holding Registers דוחה FC 04, גם כשהחיבור תקין.
+    //
+    // ⚠️ ובשני המקרים **הסוכן עצמו עובד** — `PlcReader` כן מכבד את שתי
+    // ההגדרות. רק המסך שאמור לאמת אותו שיקר, וזו בדיוק אזהרה שקרית
+    // ששולחת טכנאי לחפש תקלה שאינה קיימת.
+    /// <summary>
+    /// בודק חיבור ל-PLC בתעבורה ובפקודה שהאתר מוגדר להן, עם timeout ~5 שניות.
+    /// </summary>
     public static Task<TestResult> TestPlcAsync(PlcConfig plc)
     {
         // NModbus סינכרוני — מריצים על thread רקע כדי לא לתקוע את ה-UI.
@@ -61,59 +78,90 @@ public static class ConnectionTester
             if (string.IsNullOrWhiteSpace(plc.IpAddress))
                 return new TestResult { Success = false, Message = "לא הוגדרה כתובת IP ל-PLC בהגדרות." };
 
+            string how = $"{(plc.UseUdp ? "UDP" : "TCP")} {plc.IpAddress}:{plc.Port}, "
+                       + $"FC=0x{(plc.UseHoldingRegisters ? "03" : "04")}, register {plc.ModeRegister}";
+
+            TcpClient? tcp = null;
+            UdpClient? udp = null;
+
             try
             {
-                using var tcp = new TcpClient();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(PlcTimeoutSeconds));
+                IModbusMaster master;
+                var factory = new ModbusFactory();
 
-                try
+                if (plc.UseUdp)
                 {
-                    tcp.ConnectAsync(plc.IpAddress, plc.Port, cts.Token).AsTask().GetAwaiter().GetResult();
+                    // ⚠️ ל-UDP אין לחיצת יד: `Connect` רק קובע יעד ברירת מחדל
+                    // ומצליח גם מול כתובת שאין מאחוריה דבר. הכישלון האמיתי
+                    // מתגלה בקריאה עצמה, כ-timeout — ולכן ההודעה למטה מפרידה
+                    // בין השניים.
+                    udp = new UdpClient();
+                    udp.Connect(plc.IpAddress, plc.Port);
+                    udp.Client.ReceiveTimeout = PlcTimeoutSeconds * 1000;
+                    udp.Client.SendTimeout = PlcTimeoutSeconds * 1000;
+                    master = factory.CreateMaster(udp);
                 }
-                catch (OperationCanceledException)
+                else
                 {
-                    return new TestResult
+                    tcp = new TcpClient();
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(PlcTimeoutSeconds));
+                    try
                     {
-                        Success = false,
-                        Message = $"פסק זמן: אין תגובה מ-{plc.IpAddress}:{plc.Port} תוך {PlcTimeoutSeconds} שניות."
-                    };
+                        tcp.ConnectAsync(plc.IpAddress, plc.Port, cts.Token).AsTask().GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return new TestResult
+                        {
+                            Success = false,
+                            Message = $"פסק זמן: אין תגובה מ-{plc.IpAddress}:{plc.Port} תוך {PlcTimeoutSeconds} שניות."
+                        };
+                    }
+
+                    tcp.ReceiveTimeout = PlcTimeoutSeconds * 1000;
+                    tcp.SendTimeout = PlcTimeoutSeconds * 1000;
+                    master = factory.CreateMaster(tcp);
                 }
 
-                tcp.ReceiveTimeout = PlcTimeoutSeconds * 1000;
-                tcp.SendTimeout = PlcTimeoutSeconds * 1000;
-
-                var master = new ModbusFactory().CreateMaster(tcp);
                 master.Transport.ReadTimeout = PlcTimeoutSeconds * 1000;
                 master.Transport.WriteTimeout = PlcTimeoutSeconds * 1000;
 
-                // קריאת register אחד (FC04) — מאמת שזה באמת PLC שמדבר Modbus.
-                master.ReadInputRegisters(1, (ushort)plc.ModeRegister, 1);
+                // ⚠️ **אותה פקודה שהסוכן ישתמש בה.** בדיקה שקוראת FC 04
+                // באתר שמוגדר ל-FC 03 נכשלת על חיבור תקין לחלוטין.
+                if (plc.UseHoldingRegisters)
+                    master.ReadHoldingRegisters(1, (ushort)plc.ModeRegister, 1);
+                else
+                    master.ReadInputRegisters(1, (ushort)plc.ModeRegister, 1);
 
                 return new TestResult
                 {
                     Success = true,
-                    Message = $"מחובר ל-PLC בכתובת {plc.IpAddress}:{plc.Port}, וקריאת Modbus (register {plc.ModeRegister}) הצליחה."
+                    Message = $"מחובר ל-PLC — {how}. הקריאה הצליחה."
                 };
             }
             catch (Exception ex)
             {
-                return new TestResult { Success = false, Message = $"החיבור ל-PLC נכשל: {Describe(ex)}" };
+                // ⚠️ ההודעה נושאת את **מה שנוסה**, לא רק את הכישלון. "החיבור
+                // נכשל" לבדו שולח לבדוק כתובת, בזמן שהסיבה הנפוצה היא
+                // שהבקר מדבר UDP או FC אחר — ואת זה אי אפשר לנחש מהטקסט.
+                string hint = plc.UseUdp
+                    ? ""
+                    : " — אם הבקר מדבר UDP בלבד, יש לשנות זאת בהגדרות → רגיסטרים.";
+
+                return new TestResult
+                {
+                    Success = false,
+                    Message = $"החיבור ל-PLC נכשל ({how}): {Describe(ex)}{hint}"
+                };
+            }
+            finally
+            {
+                tcp?.Dispose();
+                udp?.Dispose();
             }
         });
     }
 
-    // ============================================================
-    // ⚠️ המסלול הישיר — הבדיקה שלא הייתה קיימת
-    // ============================================================
-    // חלון "בדוק חיבור" בדק PLC ו-HiveMQ בלבד. באתר שהמסלול הישיר הוא
-    // דרך הדיווח היחידה שלו, פירוש הדבר שהבדיקה בודקת את מה שאינו
-    // רלוונטי **ואינה בודקת את מה שכן** — טכנאי מקבל מסך ירוק על ברוקר
-    // שהאתר לא משתמש בו, ואפס מידע על הדבר שקובע.
-    //
-    // ⚠️ **התחברות בלבד, בלי לכתוב.** הבדיקה חייבת להיות בטוחה ללחיצה
-    // חוזרת: כתיבת שורה אמיתית מהטריי הייתה מזהמת נתוני לקוח בכל
-    // "בדוק שוב". הזדהות מוצלחת מוכיחה את כל השרשרת שמעניינת — רשת,
-    // חומת אש, TLS, כתובת, אימייל וסיסמה.
     /// <summary>בודק את המסלול הישיר: הזדהות מול Supabase, בלי לכתוב דבר.</summary>
     public static async Task<TestResult> TestSupabaseAsync(SiteConfig config)
     {
