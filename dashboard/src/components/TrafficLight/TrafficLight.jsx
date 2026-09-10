@@ -480,13 +480,36 @@ export default function TrafficLight({ onClose }) {
                       )}
                     </th>
                   ))}
-                  {canEdit && <th className="tl-th-act" />}
+
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={r.id}>
-                    <td className="tl-td-num">{i + 1}</td>
+                    {/* ============================================================
+                        ⚠️ המחיקה יושבת כאן ולא בסוף השורה
+                        ============================================================
+                        היא הייתה בעמודה האחרונה, ועם עשר עמודות זה אומר
+                        לגלול עד הסוף כדי למחוק שורה — כלומר כפתור שקיים
+                        ואי אפשר להגיע אליו. תא מספר השורה **קפוא משמאל**
+                        ולכן הוא תמיד גלוי, בדיוק כמו ב-Monday.
+
+                        ⚠️ והמספר מתחלף ב-✕ רק בריחוף: ✕ קבוע על כל שורה
+                        הופך מחיקה ללחיצה מקרית, ומספר שנעלם תמיד מקשה
+                        לספור. */}
+                    <td className="tl-td-num">
+                      <span className="tl-rownum">{i + 1}</span>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="tl-rowdel"
+                          disabled={busy}
+                          title="מחק שורה"
+                          aria-label={`מחק שורה ${i + 1}`}
+                          onClick={() => { if (confirm("למחוק את השורה?")) run(() => deleteRow(r.id)); }}
+                        >✕</button>
+                      )}
+                    </td>
                     {columns.map((c) => (
                       <td key={c.key}>
                         <Cell
@@ -497,21 +520,11 @@ export default function TrafficLight({ onClose }) {
                         />
                       </td>
                     ))}
-                    {canEdit && (
-                      <td className="tl-td-act">
-                        <button
-                          type="button"
-                          className="tl-mini tl-mini--danger"
-                          disabled={busy}
-                          title="מחק שורה"
-                          onClick={() => { if (confirm("למחוק את השורה?")) run(() => deleteRow(r.id)); }}
-                        >✕</button>
-                      </td>
-                    )}
+
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td className="tl-empty" colSpan={columns.length + 2}>אין שורות עדיין.</td></tr>
+                  <tr><td className="tl-empty" colSpan={columns.length + 1}>אין שורות עדיין.</td></tr>
                 )}
               </tbody>
             </table>

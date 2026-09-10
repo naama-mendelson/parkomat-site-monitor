@@ -477,3 +477,42 @@
 }
 .tl-eye:hover { background: var(--surface-2, #f3f4f6); color: inherit; }
 .tl-eye:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 1px; }
+
+
+/* ==========================================================
+   ⚠️ מחיקת שורה — באזור הקפוא, לא בסוף השורה
+   ==========================================================
+   הכפתור היה בעמודה האחרונה, ועם עשר עמודות זה אומר לגלול עד הסוף
+   כדי למחוק — כפתור שקיים ואי אפשר להגיע אליו. תא מספר השורה קפוא
+   משמאל, ולכן הוא המקום היחיד שתמיד גלוי. */
+.tl-td-num { position: relative; }
+
+.tl-rownum, .tl-rowdel {
+  display: block;
+  width: 100%;
+  padding: 8px 0;
+  line-height: 1.2;
+}
+
+.tl-rowdel {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: transparent;
+  color: #c02b3f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  /* ⚠️ מוסתר עד ריחוף: ✕ קבוע על כל שורה הופך מחיקה ללחיצה מקרית.
+     `opacity` ולא `display` — כדי שהמיקוד במקלדת ימצא אותו. */
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.tl-table tbody tr:hover .tl-rowdel,
+.tl-rowdel:focus-visible { opacity: 1; }
+.tl-table tbody tr:hover .tl-rowdel + .tl-rownum,
+.tl-table tbody tr:hover .tl-rownum { opacity: 0; }
+
+.tl-rowdel:hover { background: #fdecef; }
+.tl-rowdel:focus-visible { outline: 2px solid #c02b3f; outline-offset: -2px; }
