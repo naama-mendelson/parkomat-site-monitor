@@ -308,6 +308,22 @@ export default function TrafficLight({ onClose }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // ⚠️ **Escape סוגר — וזה נחוץ דווקא עכשיו.** הלוח תופס את כל המסך,
+  // ולכן אין עוד "מחוץ לחלון" ללחוץ עליו. בלי מקש מילוט הדרך היחידה
+  // לצאת היא ה-✕ בפינה.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      // חלונית הקוד ועורך העמודה נסגרים ראשונים — Escape שסוגר את
+      // הכול בבת אחת מאבד למשתמשת את מה שהיא באמצע.
+      if (askCode) { setAskCode(false); return; }
+      if (editCol) { setEditCol(null); return; }
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [askCode, editCol, onClose]);
+
   // ⚠️ כל פעולה עוברת דרך העטיפה הזו: נועלת, מרעננת, ומציגה שגיאה.
   // בלעדיה כל אחת מעשר הפעולות הייתה חוזרת על אותן ארבע שורות — וזו
   // בדיוק הרשימה שמישהו ישכח להרחיב.

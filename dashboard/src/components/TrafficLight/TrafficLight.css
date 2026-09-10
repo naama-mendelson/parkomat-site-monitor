@@ -48,32 +48,34 @@
 /* ==========================================================
    שכבת-על ולוח
    ========================================================== */
+/* ⚠️ **מסך מלא, ולא חלון ממורכז.** לוח עם עשר עמודות בחלון של 1400px
+   נחתך בדיוק במקום שבו מתחיל המידע — וזה מה שקרה. כלי עבודה מקבל את
+   כל המסך; מודאל ממורכז מתאים לשאלה, לא לטבלה. */
 .tl-overlay {
   position: fixed;
   inset: 0;
   z-index: 1300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
   background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(2px);
 }
 
 .tl-panel {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  width: min(1400px, 100%);
-  height: min(900px, 100%);
+  /* ⚠️ `min-height: 0` על ילד של flex — בלעדיו אזור הגלילה מסרב
+     להתכווץ, גולש מתחת לתחתית המסך, והשורות התחתונות נחתכות. זו
+     הסיבה השנייה לכך ש"הכל היה חתוך". */
+  min-height: 0;
   overflow: hidden;
 
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--surface, #fff);
   color: var(--text, #1a1a1a);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
 }
 
 .tl-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -109,6 +111,7 @@
 }
 
 .tl-paste {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   gap: 10px;
@@ -129,21 +132,52 @@
   color: inherit;
 }
 
-.tl-scroll { flex: 1; overflow: auto; }
+/* ============================================================
+   ⚠️ הטבלה משמאל לימין — כמו ב-Monday, ובכוונה
+   ============================================================
+   שאר הדשבורד הוא RTL, ולכן הטבלה ירשה RTL והעמודה הראשונה נחתה
+   מימין. אבל הלוח הזה נועד להחליף לוח Monday קיים, ושם `Item`
+   יושב **בשמאל** והעמודות נמשכות ימינה. מי שמסתכל על שניהם צריך
+   לראות את אותו דבר.
+
+   ⚠️ **והטקסט עצמו נשאר לפי תוכנו** — `unicode-bidi: plaintext`
+   על התאים. עברית נקראת ימין-לשמאל, מספרי טלפון ואנגלית
+   שמאל-לימין, בלי שאיש יבחר ידנית לכל תא. */
+.tl-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  direction: ltr;
+}
 
 /* ==========================================================
    הטבלה
    ========================================================== */
-.tl-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+/* ⚠️ `width: max-content` ולא `100%`: עם `100%` העמודות נדחסות לרוחב
+   המסך ואף אחת לא מקבלת את הרוחב שהוגדר לה, ועם מעט עמודות הן
+   נמתחות מכוער. כאן כל עמודה מקבלת את רוחבה והטבלה גוללת. */
+.tl-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
 
 .tl-table th,
 .tl-table td {
-  border-block-end: 1px solid var(--border, #eceef1);
-  border-inline-end: 1px solid var(--border, #eceef1);
+  border-bottom: 1px solid var(--border, #eceef1);
+  border-right: 1px solid var(--border, #eceef1);
   padding: 0;
   text-align: start;
   vertical-align: middle;
+  /* ⚠️ בלי שבירת שורות — אחרת עמודה צרה מותחת את השורה לגובה כפול
+     והטבלה מפסיקה להיות סריקה. גלילה אופקית היא התשובה הנכונה. */
+  white-space: nowrap;
 }
+
+/* ⚠️ הכיוון נקבע לפי התוכן ולא לפי הטבלה: עברית ימין-לשמאל, טלפון
+   ואנגלית שמאל-לימין, אוטומטית. */
+.tl-input, .tl-ro, .tl-status, .tl-th-btn { unicode-bidi: plaintext; }
 
 /* ⚠️ הכותרת דביקה — לוח של 40 שורות בלי כותרת קבועה הופך כל גלילה
    לניחוש איזו עמודה זו. */
@@ -172,14 +206,48 @@
 .tl-th-btn:hover { background: var(--surface-3, #eef0f4); }
 .tl-th-kind { font-weight: 400; font-size: 0.72rem; color: var(--text-muted, #6b7280); }
 
+/* ============================================================
+   ⚠️ שתי העמודות הראשונות קפואות — הן מה שמזהה את השורה
+   ============================================================
+   בלוח של עשר עמודות, גלילה ימינה מנתקת את הערך מהשורה שלו: רואים
+   "VIP" בלי לדעת של איזה אתר. מספר השורה ועמודת הזיהוי נשארים
+   במקומם, וכל השאר גולל תחתיהם — בדיוק כמו ב-Monday.
+
+   ⚠️ ורוחב קבוע ולא `auto`: העמודה השנייה נדבקת ל-46px, וערך שאינו
+   קבוע היה מזיז אותה בכל טעינה. */
 .tl-th-num, .tl-td-num {
+  position: sticky;
+  inset-inline-start: 0;
+  left: 0;
+  z-index: 3;
   width: 46px;
+  min-width: 46px;
   text-align: center;
+  background: var(--surface, #fff);
   color: var(--text-muted, #9ca3af);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
-.tl-th-act, .tl-td-act { width: 44px; text-align: center; }
+
+/* עמודת הזיהוי — הראשונה שהמשתמשת הגדירה */
+.tl-table th:nth-child(2),
+.tl-table td:nth-child(2) {
+  position: sticky;
+  left: 46px;
+  z-index: 3;
+  background: var(--surface, #fff);
+  box-shadow: 1px 0 0 var(--border, #e5e7eb);
+}
+
+/* ⚠️ הכותרת קפואה בשני הצירים בבת אחת, ולכן z-index גבוה יותר —
+   אחרת התא הראשון בגלילה עולה מעליה. */
+.tl-table thead th.tl-th-num,
+.tl-table thead th:nth-child(2) {
+  z-index: 6;
+  background: var(--surface-2, #f7f8fa);
+}
+
+.tl-th-act, .tl-td-act { width: 44px; min-width: 44px; text-align: center; }
 
 .tl-table tbody tr:hover td { background: var(--surface-2, #fafbfc); }
 
@@ -266,6 +334,7 @@
 .tl-err { color: #c02b3f; font-size: 0.85rem; }
 
 .tl-foot {
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 18px; border-block-start: 1px solid var(--border, #e5e7eb);
   font-size: 0.8rem; color: var(--text-muted, #6b7280);
@@ -298,8 +367,6 @@
 /* ⚠️ הלוח הוא כלי ולא מסמך — במסך צר הוא נשאר גליל אופקית במקום
    להתקפל לעמודה אחת, שבה טבלה אינה קריאה ממילא. */
 @media (max-width: 720px) {
-  .tl-overlay { padding: 0; }
-  .tl-panel { height: 100%; border-radius: 0; }
   .tl-paste { flex-direction: column; align-items: stretch; }
 }
 
