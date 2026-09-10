@@ -516,3 +516,79 @@
 
 .tl-rowdel:hover { background: #fdecef; }
 .tl-rowdel:focus-visible { outline: 2px solid #c02b3f; outline-offset: -2px; }
+
+
+/* ==========================================================
+   בורר הצבע — לוח משבצות, כמו ב-Monday
+   ==========================================================
+   ⚠️ בורר RGB חופשי נותן 16 מיליון גוונים ואף אחד מהם אינו "הירוק
+   של Monday". רשימה סגורה מבטיחה שהצבעים **זהים** בשני הלוחות;
+   הבורר החופשי נשאר בפינה, כי לוח שאין בו את הגוון שצריך מכריח פשרה. */
+.tl-cp { position: relative; display: inline-flex; }
+
+.tl-cp-btn {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tl-cp-btn:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 2px; }
+
+.tl-cp-back { position: fixed; inset: 0; z-index: 40; }
+
+.tl-cp-pop {
+  position: absolute;
+  z-index: 41;
+  inset-block-start: calc(100% + 6px);
+  inset-inline-start: 0;
+  display: block;
+  padding: 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+}
+
+.tl-cp-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 22px);
+  gap: 5px;
+}
+
+.tl-cp-sw {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.tl-cp-sw:hover { transform: scale(1.15); }
+/* ⚠️ הנבחר מסומן במסגרת ולא בווי: וי לבן נעלם על צהוב ושחור על
+   כחול כהה, ומסגרת נראית על כל גוון. */
+.tl-cp-sw.is-on { outline: 2px solid var(--text, #111); outline-offset: 2px; }
+.tl-cp-sw:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 2px; }
+
+.tl-cp-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-block-start: 9px;
+  padding-block-start: 8px;
+  border-block-start: 1px dashed var(--border, #e5e7eb);
+  font-size: 0.78rem;
+  color: var(--text-muted, #6b7280);
+}
+.tl-cp-custom input {
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}

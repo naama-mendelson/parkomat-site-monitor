@@ -26,12 +26,87 @@ import {
 } from "../../services/trafficLightDirect";
 import "./TrafficLight.css";
 
-// ⚠️ הצבעים לקוחים מלוח Monday המקורי בכוונה — הלוח הזה נועד להחליף
-// גיליון שכבר קיים שם, ומי שיסתכל על שניהם צריך לזהות את אותו ערך.
-const STATUS_COLORS = [
-  "#00c875", "#fdab3d", "#e2445c", "#0086c0", "#a25ddc",
-  "#579bfc", "#ff642e", "#9cd326", "#787d80", "#333333",
+// ============================================================
+// ⚠️ הפלטה של Monday, במלואה — ולא בורר צבעים חופשי
+// ============================================================
+// הלוח הזה נועד להחליף לוח Monday קיים, ומי שיסתכל על שניהם צריך
+// לזהות את אותו ערך לפי הצבע. בורר RGB חופשי נותן 16 מיליון גוונים
+// ואף אחד מהם אינו "הירוק של Monday" — כלומר הוא הופך התאמה מדויקת
+// לניחוש. רשימה סגורה מבטיחה שהצבעים **זהים**.
+//
+// ⚠️ ובורר חופשי נשאר בכל זאת, בפינה: לוח שאין בו את הגוון שצריך הוא
+// לוח שמכריח פשרה. הרשימה היא ברירת המחדל, לא כלא.
+const MONDAY_PALETTE = [
+  // ירוקים
+  "#00c875", "#037f4c", "#9cd326", "#cab641",
+  // צהוב־כתום
+  "#ffcb00", "#fdab3d", "#ff642e", "#7f5347",
+  // אדומים־ורודים
+  "#e2445c", "#bb3354", "#ff158a", "#ff5ac4",
+  "#ff7575", "#ffadad", "#ff7ab2", "#faa1f1",
+  // סגולים
+  "#a25ddc", "#784bd1", "#401694", "#7e3b8a",
+  "#bda8f9", "#c4c4c4", "#9aadbd", "#68a1bd",
+  // כחולים
+  "#0086c0", "#579bfc", "#225091", "#175a63",
+  "#66ccff", "#4eccc6", "#a1e3f6", "#5559df",
+  // ניטרליים
+  "#808080", "#787d80", "#333333", "#7e7e7e",
 ];
+
+// ברירת המחדל לערך חדש — רצה על הפלטה לפי הסדר, כדי ששני ערכים
+// עוקבים לא יקבלו את אותו צבע.
+const STATUS_COLORS = MONDAY_PALETTE;
+
+// ============================================================
+// בורר צבע — לוח משבצות, כמו ב-Monday
+// ============================================================
+function ColorPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <span className="tl-cp">
+      <button
+        type="button"
+        className="tl-cp-btn"
+        style={{ background: value }}
+        onClick={() => setOpen((v) => !v)}
+        aria-label="בחירת צבע"
+        title="בחירת צבע"
+      />
+      {open && (
+        <>
+          {/* ⚠️ שכבה שקופה שסוגרת בלחיצה בחוץ. בלעדיה הלוח נשאר פתוח
+              ומכסה את השורות שמתחתיו. */}
+          <span className="tl-cp-back" onClick={() => setOpen(false)} />
+          <span className="tl-cp-pop" onClick={(e) => e.stopPropagation()}>
+            <span className="tl-cp-grid">
+              {MONDAY_PALETTE.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`tl-cp-sw${c === value ? " is-on" : ""}`}
+                  style={{ background: c }}
+                  title={c}
+                  aria-label={c}
+                  onClick={() => { onChange(c); setOpen(false); }}
+                />
+              ))}
+            </span>
+            <label className="tl-cp-custom">
+              <span>מותאם</span>
+              <input
+                type="color"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+              />
+            </label>
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
 
 const KINDS = [
   { key: "text",     label: "טקסט" },
@@ -164,12 +239,10 @@ function ColumnEditor({ column, onSave, onDelete, onClose }) {
           </div>
           {options.map((o, i) => (
             <div key={o.value} className="tl-opt">
-              <input
-                className="tl-opt-color"
-                type="color"
+              <ColorPicker
                 value={o.color}
-                onChange={(e) => setOptions((all) =>
-                  all.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
+                onChange={(col) => setOptions((all) =>
+                  all.map((x, j) => j === i ? { ...x, color: col } : x))}
               />
               <input
                 className="tl-opt-label"
