@@ -60,12 +60,21 @@ public sealed class SupabaseWriter
     /// ⚠️ אצווה ריקה אינה נשלחת: בקשת רשת שאין בה מה לכתוב היא עלות בלי
     /// תמורה, ובאתר שקט זה כל 30 שניות, כל היום.
     /// </summary>
-    public Task<WriteResult> SendAsync(IReadOnlyList<BatchItem> items, CancellationToken ct)
+    /// <remarks>
+    /// ⚠️ <b><c>systems</c> נוסע גם כאן, ולא רק על הפעימה.</b> הוא נכתב
+    /// ל-<c>alive.systems</c> בכל קריאה, ואם אצווה אמיתית הייתה שולחת
+    /// null היא הייתה **מוחקת את התצלום** — כלומר הכרטיס היה מתרוקן בדיוק
+    /// כשקורה משהו באתר. הכתיבה בשרת היא השמה ישירה ולא COALESCE, בכוונה:
+    /// כך אתר שהוגדר בחזרה לחד-מערכתי מנקה את עצמו, במקום לשאת תצלום ישן
+    /// לנצח.
+    /// </remarks>
+    public Task<WriteResult> SendAsync(
+        IReadOnlyList<BatchItem> items, object? systems, CancellationToken ct)
     {
         // ⚠️ אצווה ריקה **מכאן** אינה נשלחת, ובכוונה: זו קריאה שאין בה מה
         // לכתוב. הפעימה עוברת ב-BeatAsync, שהיא הדרך היחידה לשלוח ריק.
         if (items.Count == 0) return Task.FromResult(WriteResult.Success(0));
-        return SendCoreAsync(items, null, ct);
+        return SendCoreAsync(items, null, systems, ct);
     }
 
     /// <summary>
@@ -81,11 +90,12 @@ public sealed class SupabaseWriter
     /// לטבלה ישירות ובודק את הסריקה. רק בדיקה שסופרת בקשות HTTP תופסת
     /// פעימה שלא נשלחה.
     /// </summary>
-    public Task<WriteResult> BeatAsync(string? version, CancellationToken ct) =>
-        SendCoreAsync(Array.Empty<BatchItem>(), version, ct);
+    public Task<WriteResult> BeatAsync(
+        string? version, object? systems, CancellationToken ct) =>
+        SendCoreAsync(Array.Empty<BatchItem>(), version, systems, ct);
 
     private async Task<WriteResult> SendCoreAsync(
-        IReadOnlyList<BatchItem> items, string? version, CancellationToken ct)
+        IReadOnlyList<BatchItem> items, string? version, object? systems, CancellationToken ct)
     {
         if (!_cfg.Enabled) return WriteResult.Failure(0, "הכתיבה הישירה כבויה");
 
@@ -95,7 +105,7 @@ public sealed class SupabaseWriter
             if (!auth.Ok) return auth;
         }
 
-        WriteResult sent = await PostBatchAsync(items, version, ct).ConfigureAwait(false);
+        WriteResult sent = await PostBatchAsync(items, version, systems, ct).ConfigureAwait(false);
 
         // ⚠️ 401 אחד ⇒ מתחברים מחדש ומנסים **פעם אחת**. זה אינו "ניסיון
         // חוזר" אלא טיפול בסיבה ידועה: אסימון שפג מוקדם מהצפוי (שעון סוטה,
@@ -106,7 +116,7 @@ public sealed class SupabaseWriter
             _expiresAt = null;
             WriteResult auth = await SignInAsync(ct).ConfigureAwait(false);
             if (!auth.Ok) return auth;
-            sent = await PostBatchAsync(items, version, ct).ConfigureAwait(false);
+            sent = await PostBatchAsync(items, version, systems, ct).ConfigureAwait(false);
         }
 
         return sent;
@@ -152,7 +162,8 @@ public sealed class SupabaseWriter
         }
     }
 
-    private async Task<WriteResult> PostBatchAsync(IReadOnlyList<BatchItem> items, string? version, CancellationToken ct)
+    private async Task<WriteResult> PostBatchAsync(
+        IReadOnlyList<BatchItem> items, string? version, object? systems, CancellationToken ct)
     {
         try
         {
@@ -160,7 +171,7 @@ public sealed class SupabaseWriter
                 $"{_cfg.EffectiveUrl.TrimEnd('/')}/rest/v1/rpc/ingest_batch");
             req.Headers.TryAddWithoutValidation("apikey", _cfg.EffectiveAnonKey);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-            req.Content = new StringContent(BatchPayload.Serialize(items, version), Encoding.UTF8, "application/json");
+            req.Content = new StringContent(BatchPayload.Serialize(items, version, systems), Encoding.UTF8, "application/json");
 
             using HttpResponseMessage res = await _http.SendAsync(req, ct).ConfigureAwait(false);
             string body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

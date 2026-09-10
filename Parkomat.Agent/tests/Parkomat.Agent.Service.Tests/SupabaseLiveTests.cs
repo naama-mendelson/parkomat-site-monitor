@@ -77,7 +77,7 @@ public class SupabaseLiveTests
             }),
         };
 
-        WriteResult res = await writer.SendAsync(batch, CancellationToken.None);
+        WriteResult res = await writer.SendAsync(batch, null, CancellationToken.None);
 
         Assert.True(res.Ok, $"סטטוס {res.Status}: {res.Error}");
         Assert.True(writer.HasValidToken, "הכותב לא שמר אסימון תקף אחרי הצלחה");

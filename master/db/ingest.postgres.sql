@@ -903,11 +903,28 @@ COMMENT ON FUNCTION app.classify_timestamp(bigint, bigint, bigint, boolean) IS
 -- לצד זו. PostgREST בוחר לפי שמות השדות בגוף, כך שקריאה ישנה הייתה
 -- ממשיכה לעבוד ולכתוב לגרסה הישנה של הקוד — ההתנהגות הכי קשה לאבחון
 -- שיש: שתי גרסאות של אותה פונקציה, שתיהן חיות, ואיש אינו יודע.
+-- ⚠️ **שתי ההפלות נדרשות, וזו לא זהירות יתר.** פרמטר עם DEFAULT אינו
+-- מחליף חתימה קיימת — הוא יוצר **עומס נוסף**, ואז קריאה עם שני ארגומנטים
+-- הופכת לדו-משמעית ונכשלת. כלומר כל 22 האתרים היו מפסיקים לדווח ברגע
+-- שהקובץ הזה מוחל, בשקט, עד שמישהו יבדוק את alive.
 DROP FUNCTION IF EXISTS public.ingest_batch(jsonb);
+DROP FUNCTION IF EXISTS public.ingest_batch(jsonb, text);
 
 CREATE OR REPLACE FUNCTION public.ingest_batch(
   p_messages jsonb,
-  p_version  text DEFAULT NULL
+  p_version  text DEFAULT NULL,
+  -- ============================================================
+  -- ⚠️ תצלום המערכות — NULL בכל אתר חד-מערכתי
+  -- ============================================================
+  -- באתר פלורנטין יש שתי מערכות בבקר אחד. מצב האתר נשאר **אחד**
+  -- (הטוב מבין השתיים, מאוחד בסוכן), ולכן `ingest_state` על כל כלליה
+  -- — מקטעים, זמינות, אחוז כשל — אינה משתנה כאן **בכלל**.
+  --
+  -- ⚠️ **וזה מצב חי, לא היסטוריה.** לפי כלל הזמינות שנקבע, מערכת שנופלת
+  -- לתקלה בזמן שהשנייה עובדת **אינה משנה את מצב האתר** — כלומר אין
+  -- הודעת מצב לשאת עליה את הפירוט. לכן הוא נוסע על כל קריאה, והפעימה
+  -- שיוצאת כל 60 שניות היא הנשא שמבטיח שהמסך לא ישקר.
+  p_systems  jsonb DEFAULT NULL
 )
 RETURNS TABLE (
   idx     integer,
@@ -962,13 +979,20 @@ BEGIN
   -- ⚠️ **`COALESCE` על הגרסה, ולא דריסה.** סוכן ישן שאינו שולח גרסה
   -- היה מוחק את מה שדווח קודם, והשדה היה מתרוקן בדיוק כשמשדרגים —
   -- כלומר ברגע היחיד שבו שואלים אותו.
-  INSERT INTO alive (site_id, seen_at, beats, agent_version)
-  VALUES (v_site, now(), 1, NULLIF(p_version, ''))
+  --
+  -- ⚠️ **ו-`systems` נכתב בהשמה ישירה, בלי COALESCE — בניגוד לגרסה.**
+  -- ההבדל מכוון: גרסה שלא נשלחה פירושה "סוכן ישן", ומחיקה שלה מרוקנת
+  -- את השדה בדיוק כשמשדרגים. תצלום שלא נשלח פירושו **"לאתר הזה יש
+  -- מערכת אחת"** — ואם נשמור אותו, אתר שהוגדר בחזרה לחד-מערכתי היה
+  -- נושא תצלום ישן לנצח, כלומר מסך שמראה מערכת שאינה קיימת.
+  INSERT INTO alive (site_id, seen_at, beats, agent_version, systems)
+  VALUES (v_site, now(), 1, NULLIF(p_version, ''), p_systems)
   ON CONFLICT (site_id) DO UPDATE
      SET seen_at       = now(),
          beats         = alive.beats + 1,
          agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''),
-                                  alive.agent_version);
+                                  alive.agent_version),
+         systems       = EXCLUDED.systems;
 
   -- ============================================================
   -- ⚠️ והפעימה **מבטלת** נתק — אחרת אין דרך חזרה
@@ -1112,8 +1136,8 @@ $fn$;
 -- ⚠️ REVOKE מפורש לפני GRANT, כמו כל פונקציה ב-writes.postgres.sql:
 -- ברירת המחדל של Postgres היא EXECUTE ל-PUBLIC, כלומר גם ל-anon. פונקציה
 -- שכותבת קליטה ופתוחה ל-anon היא הדלת שהמפתח הפומבי פותח.
-REVOKE ALL ON FUNCTION public.ingest_batch(jsonb, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.ingest_batch(jsonb, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.ingest_batch(jsonb, text, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ingest_batch(jsonb, text, jsonb) TO authenticated;
 
-COMMENT ON FUNCTION public.ingest_batch(jsonb, text) IS
+COMMENT ON FUNCTION public.ingest_batch(jsonb, text, jsonb) IS
   'הדלת היחידה של הסוכן. האתר נגזר מהזהות ולא מהמטען — סוכן אינו יכול לכתוב לאתר אחר.';

@@ -758,7 +758,19 @@ RETURNS TABLE (
   maintenance_reason          text,
   maintenance_started_at      text,
   maintenance_duration_hours  double precision,
-  maintenance_expires_at      text
+  maintenance_expires_at      text,
+  -- ============================================================
+  -- ⚠️ פירוט המערכות — NULL בכל אתר חוץ מפלורנטין
+  -- ============================================================
+  -- אתר עם שני ParkManager על בקר אחד. מצב האתר נשאר **אחד** (הטוב
+  -- מבין השתיים, מאוחד כבר בסוכן), ולכן כל מה שסביבו — מקטעים, זמינות,
+  -- אחוז כשל — אינו משתנה. זה **תצוגה בלבד**: איזו מערכת במצב מה.
+  --
+  -- ⚠️ **וזה מגיע מ-`alive`, כלומר ממצב חי ולא מהיסטוריה.** לפי כלל
+  -- הזמינות שנקבע, מערכת שנופלת לתקלה בזמן שהשנייה עובדת אינה משנה את
+  -- מצב האתר — כלומר אין מקטע חדש, ואין ממה לגזור את הפירוט בדיעבד.
+  -- הפעימה שיוצאת כל 60 שניות היא מה שמחזיק את זה עדכני.
+  systems                     jsonb
 )
 LANGUAGE sql
 STABLE
@@ -871,13 +883,17 @@ SELECT
   m.reason,
   m.started_at,
   m.duration_hours,
-  m.expires_at
+  m.expires_at,
+  al.systems
 FROM ids
 LEFT JOIN faults      f  ON f.site_id  = ids.site_id
 LEFT JOIN open_seg    s  ON s.site_id  = ids.site_id
 LEFT JOIN last_op     lo ON lo.site_id = ids.site_id
 LEFT JOIN since_error se ON se.site_id = ids.site_id
-LEFT JOIN maint       m  ON m.site_id  = ids.site_id;
+LEFT JOIN maint       m  ON m.site_id  = ids.site_id
+-- ⚠️ LEFT ולא INNER: אתר בלי שורת `alive` (כלומר אתר שהמסלול הישיר כבוי
+-- בו) חייב להמשיך להופיע ברשימה. INNER היה מעלים אותו מהדשבורד לגמרי.
+LEFT JOIN alive       al ON al.site_id = ids.site_id;
 $$;
 
 COMMENT ON FUNCTION public.site_globals(integer[]) IS

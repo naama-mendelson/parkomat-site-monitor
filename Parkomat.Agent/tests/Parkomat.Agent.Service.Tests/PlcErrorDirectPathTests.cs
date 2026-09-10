@@ -77,7 +77,7 @@ public class PlcErrorDirectPathTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.SendAsync([BatchPayload.From(PlcUnreachable())], CancellationToken.None);
+        var r = await w.SendAsync([BatchPayload.From(PlcUnreachable())], null, CancellationToken.None);
 
         Assert.True(r.Ok, r.Error);
         Assert.Equal(2, h.Paths.Count);                       // התחברות + כתיבה
@@ -99,7 +99,7 @@ public class PlcErrorDirectPathTests
         var h = new FakeHandler(_ => (HttpStatusCode.OK, TokenBody));
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
 
-        await w.SendAsync([], CancellationToken.None);
+        await w.SendAsync([], null, CancellationToken.None);
 
         Assert.Empty(h.Paths);
     }

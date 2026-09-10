@@ -35,6 +35,35 @@ public class StateMessage
     [JsonPropertyName("faultText")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? FaultText { get; set; }
+
+    // ============================================================
+    // ⚠️ פירוט המערכות — null בכל אתר חד-מערכתי
+    // ============================================================
+    // באתר פלורנטין יש שתי מערכות בבקר אחד. ‏`State` נשאר **מצב אחד
+    // לאתר** (הטוב מבין השתיים — ראה SiteStateAggregator), ולכן
+    // ‏`ingest_state` בשרת אינה משתנה בכלל: מקטעים, זמינות ואחוז כשל
+    // ממשיכים לעבוד על בדיוק אותו נתון.
+    //
+    // ⚠️ **וזה לצד המצב, לא במקומו.** מערך ריק ו-null אינם אותו דבר:
+    // null = "לאתר יש מערכת אחת", מערך = "יש שתיים, והנה הן". אתר
+    // חד-מערכתי לא ישלח את השדה כלל.
+    public SystemState[]? Systems { get; set; }
+}
+
+/// <summary>
+/// מצבה של **מערכת אחת** מתוך אתר דו-מערכתי. לתצוגה בלבד — הזמינות
+/// ואחוז הכשל מחושבים מ-<c>StateMessage.State</c> המאוחד.
+/// </summary>
+public class SystemState
+{
+    /// <summary>מספר המערכת: 1 או 2.</summary>
+    public int Unit { get; set; }
+
+    /// <summary>מצב המערכת הזו.</summary>
+    public SiteState State { get; set; }
+
+    /// <summary>מספר הרכב במערכת הזו כרגע. ריק אם אין.</summary>
+    public string Car { get; set; } = "";
 }
 
 /// <summary>

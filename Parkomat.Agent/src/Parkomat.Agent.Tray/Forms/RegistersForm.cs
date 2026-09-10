@@ -15,6 +15,14 @@ public class RegistersForm : Form
     private readonly NumericUpDown _cycleReg = new();
 
     // ============================================================
+    // ⚠️ מערכת שנייה — 0 בכל אתר חוץ מפלורנטין
+    // ============================================================
+    // באתר פלורנטין יש שני ParkManager בבקר אחד. מונה המחזורים נשאר
+    // אחד — הוא של האתר — ולכן אין לו זוג.
+    private readonly NumericUpDown _modeReg2 = new();
+    private readonly NumericUpDown _cardReg2 = new();
+
+    // ============================================================
     // ⚠️ הבורר יושב כאן ולא בטופס הראשי, וזו החלטה
     // ============================================================
     // TCP/UDP נקבע פעם אחת בהתקנה לפי הבקר שבאתר, בדיוק כמו כתובות
@@ -48,7 +56,7 @@ public class RegistersForm : Form
         AutoScaleMode = AutoScaleMode.Font;
         // ⚠️ רחב מספיק לכיתוב המלא של פקודת הקריאה. רשימה שחותכת
         // את הטקסט מאלצת לנחש מה נבחר, וזו הטעות שהרשימה הסגורה באה למנוע.
-        ClientSize = new Size(430, 340);
+        ClientSize = new Size(430, 430);
 
         // אזור גלילה — כאן ייכנסו כל הכתובות. כשנוסיף עוד, הגלילה תופיע לבד.
         var scroll = new Panel
@@ -65,7 +73,7 @@ public class RegistersForm : Form
             Dock = DockStyle.Top
         };
 
-        foreach (var n in new[] { _modeReg, _cardReg, _cycleReg })
+        foreach (var n in new[] { _modeReg, _cardReg, _cycleReg, _modeReg2, _cardReg2 })
         {
             n.Minimum = 0;
             n.Maximum = 65535;
@@ -96,6 +104,12 @@ public class RegistersForm : Form
         AddRow(table, 2, "כתובת MODE:", _modeReg);
         AddRow(table, 3, "כתובת כרטיס:", _cardReg);
         AddRow(table, 4, "כתובת Cycle Counter:", _cycleReg);
+
+        // ⚠️ **הכיתוב אומר במפורש ש-0 מכבה.** שדה מספרי בלי הסבר היה
+        // מזמין להקליד בו משהו "ליתר ביטחון", ואתר חד-מערכתי שמדווח
+        // מערכת שנייה מדומה הוא בדיוק סוג הכשל השקט שאין לו מסך.
+        AddRow(table, 5, "כתובת MODE 2 (0 = אין):", _modeReg2);
+        AddRow(table, 6, "כתובת כרטיס 2 (0 = אין):", _cardReg2);
         // כשנוסיף registers בעתיד — פשוט נוסיף כאן עוד שורות, והגלילה תטפל.
 
         scroll.Controls.Add(table);
@@ -123,6 +137,8 @@ public class RegistersForm : Form
         _modeReg.Value = Math.Clamp(current.ModeRegister, (int)_modeReg.Minimum, (int)_modeReg.Maximum);
         _cardReg.Value = Math.Clamp(current.CardRegister, (int)_cardReg.Minimum, (int)_cardReg.Maximum);
         _cycleReg.Value = Math.Clamp(current.CycleRegister, (int)_cycleReg.Minimum, (int)_cycleReg.Maximum);
+        _modeReg2.Value = Math.Clamp(current.ModeRegister2, (int)_modeReg2.Minimum, (int)_modeReg2.Maximum);
+        _cardReg2.Value = Math.Clamp(current.CardRegister2, (int)_cardReg2.Minimum, (int)_cardReg2.Maximum);
 
         // ⚠️ נגזר מ-UseUdp ולא מהמחרוזת הגולמית, כדי שהחלונית תראה את מה
         // שהסוכן **באמת יעשה**. קובץ עם "UDP " היה מציג UDP בזמן שהסוכן
@@ -147,6 +163,16 @@ public class RegistersForm : Form
         Result.ModeRegister = (int)_modeReg.Value;
         Result.CardRegister = (int)_cardReg.Value;
         Result.CycleRegister = (int)_cycleReg.Value;
+
+        // ⚠️ **חצי הגדרה נזרקת, ולא נשמרת חצי.** מצב בלי רכב אינו
+        // חצי-תכונה אלא הגדרה שבורה: `HasSecondSystem` היה false בכל
+        // מקרה, אבל הקובץ היה נושא מספר שנראה כאילו הוא עושה משהו.
+        int m2 = (int)_modeReg2.Value;
+        int c2 = (int)_cardReg2.Value;
+        bool bothGiven = m2 > 0 && c2 > 0;
+
+        Result.ModeRegister2 = bothGiven ? m2 : 0;
+        Result.CardRegister2 = bothGiven ? c2 : 0;
         Result.Transport = (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp";
         Result.FunctionCode = (_funcCode.SelectedItem as string) == FC03 ? 3 : 4;
 

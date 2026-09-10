@@ -133,8 +133,43 @@ public static class BatchPayload
     /// גרסה אמיתי — כלומר <c>IngestContractTests</c> נשבר בכל שחרור, ושער
     /// אדום שמופיע בכל שחרור הוא שער שלומדים להתעלם ממנו.
     /// </summary>
-    public static string Serialize(IEnumerable<BatchItem> items, string? version = null) =>
-        JsonSerializer.Serialize(new { p_messages = items, p_version = version }, Json);
+    // ============================================================
+    // ⚠️ תצלום המערכות נשלח בשמות, לא במספרי enum
+    // ============================================================
+    // ‏`SiteState` הוא enum, וסריאליזציה שלו כמו שהוא הייתה שולחת
+    // **מספרים**. אז הדשבורד היה ממפה 0→ready, 1→operating וכן הלאה —
+    // כלומר מי שיוסיף ערך באמצע ה-enum בסוכן היה משנה את משמעות כל
+    // הכרטיסים באתר, בלי שום שגיאה בשום מקום.
+    //
+    // ‏`SiteStateJson.Name` היא כבר החוזה מול השרת לכל מצב אחר. אותו
+    // חוזה בדיוק, ולא שני ייצוגים לאותו נתון.
+    /// <summary>ממיר תצלום מערכות למטען. <b>טהור</b>.</summary>
+    public static object[] Systems(IEnumerable<SystemState> systems) =>
+        systems.Select(u => (object)new
+        {
+            unit  = u.Unit,
+            state = SiteStateJson.Name(u.State),
+            car   = u.Car ?? "",
+        }).ToArray();
+
+    /// <remarks>
+    /// ⚠️ <b><c>p_systems</c> נוסע על הפעימה, ולא על הודעת המצב — וזה נובע
+    /// מכלל הזמינות שנקבע.</b> באתר דו-מערכתי מצב האתר הוא "הטוב מבין
+    /// השתיים", ולכן מערכת שנופלת לתקלה בזמן שהשנייה עובדת <b>אינה משנה
+    /// את מצב האתר</b> — ואין הודעת מצב לשאת עליה את הפירוט. באתר שקט
+    /// הכרטיס היה מציג מערכת תקינה שעות אחרי שהיא נפלה.
+    ///
+    /// הפעימה יוצאת כל 60 שניות בכל מקרה, ולכן היא הנשא הנכון: פירוט
+    /// המערכות הוא <b>מצב חי</b>, לא היסטוריה. אותו שיקול בדיוק כמו
+    /// <c>p_version</c>.
+    ///
+    /// ⚠️ ו-null נשמט מהגוף בזכות <c>WhenWritingNull</c>, כך שאתר
+    /// חד-מערכתי שולח בדיוק את מה ששלח תמיד — <b>בית-בבית</b>.
+    /// </remarks>
+    public static string Serialize(
+        IEnumerable<BatchItem> items, string? version = null, object? systems = null) =>
+        JsonSerializer.Serialize(
+            new { p_messages = items, p_version = version, p_systems = systems }, Json);
 }
 
 /// <summary>

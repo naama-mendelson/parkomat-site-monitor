@@ -670,3 +670,53 @@
 .type-badge + .tier-badge {
   margin-inline-start: 4px;
 }
+
+/* ============================================================
+   אתר עם שתי מערכות בבקר אחד (פלורנטין)
+   ============================================================
+   ⚠️ מצב האתר הוא "הטוב מבין השתיים", ולכן מערכת שמתה אינה מורידה את
+   הכרטיס מירוק ואינה מעלה אותו במיון. השבבים והתג הם הדבר היחיד על
+   המסך שמעיד על כך — ולכן הם צריכים להיקרא במבט, לא בבהייה. */
+.card-detail--systems .detail-value {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.system-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* ⚠️ ענבר ולא אדום: אדום הוא הצבע של "האתר מושבת", וזה בדיוק מה
+   שהמצב הזה **אינו**. תג אדום על כרטיס ירוק קורא כסתירה, ואז לומדים
+   להתעלם ממנו. */
+.card-degraded {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--amber, #d97706);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber, #d97706) 12%, transparent);
+  color: var(--amber, #d97706);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.card-degraded::before {
+  content: "▲";
+  font-size: 9px;
+}

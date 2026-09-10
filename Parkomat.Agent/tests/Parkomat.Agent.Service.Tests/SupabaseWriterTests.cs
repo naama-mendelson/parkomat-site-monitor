@@ -63,7 +63,7 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.True(r.Ok, r.Error);
         Assert.Equal(2, h.Paths.Count);
@@ -82,9 +82,9 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        await w.SendAsync(OneItem(), CancellationToken.None);
-        await w.SendAsync(OneItem(), CancellationToken.None);
-        await w.SendAsync(OneItem(), CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.Equal(1, h.Paths.Count(p => p.Contains("token")));
         Assert.Equal(3, h.Paths.Count(p => p.Contains("ingest_batch")));
@@ -102,9 +102,9 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h), () => now);
-        await w.SendAsync(OneItem(), CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
         now = now.AddMinutes(58);
-        await w.SendAsync(OneItem(), CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.Equal(2, h.Paths.Count(p => p.Contains("token")));
     }
@@ -127,7 +127,7 @@ public class SupabaseWriterTests
         });
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.True(r.Ok, r.Error);
         Assert.Equal(2, batchCalls);
@@ -149,7 +149,7 @@ public class SupabaseWriterTests
         });
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.False(r.Ok);
         Assert.Equal(2, batchCalls);   // המקורי + ניסיון אחד. לא יותר.
@@ -164,7 +164,7 @@ public class SupabaseWriterTests
         var h = new ThrowingHandler();
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
 
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.False(r.Ok);
         Assert.Equal(0, r.Status);
@@ -186,7 +186,7 @@ public class SupabaseWriterTests
         var h = new FakeHandler(_ => (HttpStatusCode.OK, "[]"));
         var w = new SupabaseWriter(new SupabaseConfig(), new HttpClient(h));
 
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.False(r.Ok);
         Assert.Empty(h.Paths);
@@ -204,7 +204,7 @@ public class SupabaseWriterTests
         var h = new FakeHandler(_ => (HttpStatusCode.OK, "[]"));
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
 
-        var r = await w.SendAsync([], CancellationToken.None);
+        var r = await w.SendAsync([], null, CancellationToken.None);
 
         Assert.True(r.Ok);
         Assert.Empty(h.Paths);
@@ -219,7 +219,7 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        await w.SendAsync(OneItem(), CancellationToken.None);
+        await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         string body = h.Bodies[1];
         Assert.Contains("\"p_messages\"", body);
@@ -240,7 +240,7 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.SendAsync(OneItem(), CancellationToken.None);
+        var r = await w.SendAsync(OneItem(), null, CancellationToken.None);
 
         Assert.False(r.Ok);
         Assert.Contains("access_token", r.Error);
@@ -267,7 +267,7 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        var r = await w.BeatAsync("1.0.22", CancellationToken.None);
+        var r = await w.BeatAsync("1.0.22", null, CancellationToken.None);
 
         Assert.True(r.Ok);
         Assert.Contains("/rest/v1/rpc/ingest_batch", h.Paths);
@@ -290,7 +290,7 @@ public class SupabaseWriterTests
         var h = new FakeHandler(_ => (HttpStatusCode.OK, "[]"));
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
 
-        var r = await w.SendAsync([], CancellationToken.None);
+        var r = await w.SendAsync([], null, CancellationToken.None);
 
         Assert.True(r.Ok);
         Assert.Empty(h.Paths);
@@ -312,7 +312,7 @@ public class SupabaseWriterTests
                 : (HttpStatusCode.OK, "[]"));
 
         var w = new SupabaseWriter(Cfg(), new HttpClient(h));
-        await w.BeatAsync(null, CancellationToken.None);
+        await w.BeatAsync(null, null, CancellationToken.None);
 
         Assert.DoesNotContain("p_version", h.Bodies[^1]);
     }

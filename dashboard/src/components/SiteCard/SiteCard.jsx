@@ -27,6 +27,18 @@ import "./SiteCard.css";
 // ⚠️ **null אינו אפס.** אתר בלי שעות נמדדות מקבל צבע ניטרלי ולא אדום:
 // "איננו יודעים" ו"מושבת לגמרי" הם שני דברים שונים — אותה הבחנה בדיוק
 // שבגללה `sitesDirect` מחזיר null ולא 0.
+// ⚠️ **השמות זהים לאלה שכל שאר המצבים נוסעים בהם** ("ready"/"error"/…),
+// ולא מספרי enum. הגרסה הראשונה מיפתה מספרים — ואז תוספת ערך באמצע
+// `SiteState` בסוכן הייתה משנה את משמעות כל הכרטיסים במסך, בלי שגיאה
+// בשום מקום. הסוכן ממיר בעצמו ב-`BatchPayload.Systems`.
+const SYSTEM_LABELS = {
+  ready: "המתנה",
+  operating: "בפעולה",
+  maintenance: "תחזוקה",
+  error: "תקלה",
+  no_comm: "אין תקשורת",
+};
+
 function availabilityColor(pct) {
   if (pct == null) return "var(--text-muted)";
   if (pct >= 99.9) return STATUS_COLORS.ready.dot;        // ירוק
@@ -123,6 +135,26 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ⚠️ **null ולא 0**: `measured_hours = 0` פירושו "אין נתון". "0%"
   // נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
   const availability = site.uptime ?? null;
+
+  // ============================================================
+  // ⚠️ שתי מערכות בבקר אחד — ולמה השבבים אינם קישוט
+  // ============================================================
+  // מצב האתר הוא "הטוב מבין השתיים" (כלל שנקבע במפורש), ולכן מערכת
+  // שנפלה לתקלה בזמן שהשנייה עובדת **אינה מורידה את הכרטיס מירוק** ואינה
+  // מעלה אותו במיון לפי אחוז כשל. השבבים והתג הם הדבר היחיד על המסך
+  // שמעיד שמערכת שלמה מושבתת.
+  //
+  // ⚠️ **ובכוונה תצוגה בלבד.** המדד הוא הגדרה שנקבעה; פיצוי עליו בחישוב
+  // היה משנה מספר שמוצג לבעלת המוצר, ולא זה מה שהתבקש.
+  const systems = Array.isArray(site.systems) && site.systems.length > 0
+    ? site.systems
+    : null;
+
+  // ⚠️ מערכת אחת בתקלה בעוד השנייה עובדת — זה **בדיוק** המצב שהכלל
+  // מסתיר, ולכן הוא זה שמקבל תג.
+  const degraded = systems
+    ? systems.some((u) => u.state === "error") && systems.some((u) => u.state !== "error")
+    : false;
   // null = אין מספיק מדגם להשוואה (ולא "אין שינוי") — ראה siteTrend.
   const trend = site.trend ?? null;
 
@@ -181,6 +213,22 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       <span className="status-dot" style={{ background: colors.dot }} />
       {label}
       {showTimer && <FaultTimer since={site.statusSince} tone={status} />}
+    </span>
+  );
+
+  // ============================================================
+  // ⚠️ התג שמפצה על כלל הזמינות — תצוגה בלבד
+  // ============================================================
+  // מצב האתר הוא "הטוב מבין שתי המערכות", ולכן מערכת שמתה חודש שלם
+  // מציגה כרטיס ירוק ו-100% זמינות, והמיון לפי אחוז כשל לעולם לא יעלה
+  // אותה. זה **הכלל שנקבע**, לא תקלה — ולכן הפיצוי הוא כאן ולא בחשבון:
+  // חישוב שסוטה מההגדרה משנה מספר שמוצג לבעלת המוצר.
+  const degradedTag = degraded && (
+    <span
+      className="card-degraded"
+      title="אחת משתי המערכות באתר בתקלה. מצב האתר והזמינות מחושבים לפי המערכת התקינה — ראה שבבי המערכות."
+    >
+      מערכת מושבתת
     </span>
   );
 
@@ -282,6 +330,27 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
   const details = (
     <div className="card-details">
+      {systems && (
+        <div className="card-detail card-detail--systems">
+          <span className="detail-label">מערכות</span>
+          <span className="detail-value">
+            {systems.map((u) => {
+              const c = STATUS_COLORS[u.state] || STATUS_COLORS.no_comm;
+              return (
+                <span
+                  key={u.unit}
+                  className="system-chip"
+                  style={{ background: c.bg, color: c.dot, borderColor: c.dot }}
+                  title={`מערכת ${u.unit}: ${SYSTEM_LABELS[u.state] || "לא ידוע"}` +
+                         (u.car ? ` · רכב ${u.car}` : "")}
+                >
+                  {u.unit}
+                </span>
+              );
+            })}
+          </span>
+        </div>
+      )}
       <div className="card-detail">
         <span className="detail-label">פעולות</span>
         <span className="detail-value">{(site.operations ?? 0).toLocaleString()}</span>
@@ -527,6 +596,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         statusTag
       )}
 
+      {!isMini && degradedTag}
       {!isMini && stuckBadge}
       {!isMini && faultLine}
 
@@ -537,6 +607,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       ) : (
         <div className="card-hover-panel">
           {isMini && statusTag}
+          {isMini && degradedTag}
           {isMini && stuckBadge}
           {isMini && faultLine}
           {details}

@@ -178,7 +178,26 @@ public class PlcReader : IDisposable
             ValidateRegister(cardAddr, nameof(_config.CardRegister));
             ValidateRegister(cycleAddr, nameof(_config.CycleRegister));
 
+            // ============================================================
+            // ⚠️ מערכת שנייה — נכנסת לאותו טווח, ולכן לאותה בקשה
+            // ============================================================
+            // באתר פלורנטין הרגיסטרים הם 290..294 — טווח של חמישה, מתחת
+            // לתקרת השמונה. כלומר שתי המערכות נדגמות **באותו רגע בדיוק**,
+            // בלי בקשה נוספת ובלי סיכון שמצב של מערכת 1 יזווג עם רכב של
+            // מערכת 2. זה לא במקרה: אותו שיקול שבגללו שלושת הרגיסטרים
+            // של מערכת אחת נקראים יחד.
+            bool two = _config.HasSecondSystem;
+            int mode2Addr = _config.ModeRegister2;
+            int card2Addr = _config.CardRegister2;
+
+            if (two)
+            {
+                ValidateRegister(mode2Addr, nameof(_config.ModeRegister2));
+                ValidateRegister(card2Addr, nameof(_config.CardRegister2));
+            }
+
             ushort mode, card, cycle;
+            ushort? mode2 = null, card2 = null;
 
             // ============================================================
             // ⚠️ בלוק אחד לכל טווח קצר — לא רק לסדר עולה מדויק
@@ -210,6 +229,13 @@ public class PlcReader : IDisposable
             // אחת ובוחרים לפי היסט — תצלום אטומי, גם כשהסדר אינו עולה.
             int lo = Math.Min(modeAddr, Math.Min(cardAddr, cycleAddr));
             int hi = Math.Max(modeAddr, Math.Max(cardAddr, cycleAddr));
+
+            if (two)
+            {
+                lo = Math.Min(lo, Math.Min(mode2Addr, card2Addr));
+                hi = Math.Max(hi, Math.Max(mode2Addr, card2Addr));
+            }
+
             int span = hi - lo + 1;
 
             // ⚠️ **תקרה, כי טווח אינו מספר.** `MODE=100 Cycle=300` הם 201
@@ -233,19 +259,35 @@ public class PlcReader : IDisposable
                 mode = r[modeAddr - lo];
                 card = r[cardAddr - lo];
                 cycle = r[cycleAddr - lo];
+
+                if (two)
+                {
+                    mode2 = r[mode2Addr - lo];
+                    card2 = r[card2Addr - lo];
+                }
             }
             else
             {
                 mode = ReadRegister(slaveId, modeAddr);
                 card = ReadRegister(slaveId, cardAddr);
                 cycle = ReadRegister(slaveId, cycleAddr);
+
+                if (two)
+                {
+                    mode2 = ReadRegister(slaveId, mode2Addr);
+                    card2 = ReadRegister(slaveId, card2Addr);
+                }
             }
 
             return new PlcReading
             {
                 Mode = mode,
                 CardNumber = card == 0 ? "" : card.ToString(),
-                CycleCounter = cycle
+                CycleCounter = cycle,
+
+                // ⚠️ null ולא 0 — אפס הוא MODE חוקי (תחזוקה).
+                Mode2 = mode2,
+                CardNumber2 = card2 is null ? null : (card2 == 0 ? "" : card2.Value.ToString()),
             };
         }
         catch (Exception ex)

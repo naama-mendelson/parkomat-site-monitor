@@ -19,6 +19,12 @@ namespace Parkomat.Agent.Service;
 /// </summary>
 public class Worker : BackgroundService
 {
+    // ⚠️ **קובץ נפרד לזיכרון של המערכת השנייה.** קובץ אחד לשתיהן היה
+    // משחזר את מצב מערכת 1 לתוך מערכת 2 — פעולה פיקטיבית בכל עלייה,
+    // בדיוק התקלה ששחזור המצב קיים כדי למנוע.
+    private static string SecondDetectorFile =>
+        AgentPaths.DetectorStateFile.Replace(".json", "-2.json");
+
     private readonly ILogger<Worker> _logger;
 
     // כמה קריאות כושלות רצופות עד שמכריזים על תקלת PLC.
@@ -218,6 +224,24 @@ public class Worker : BackgroundService
         // --- יצירת שלושת הרכיבים ---
         var detector = new OperationDetector(clock.UnixNow);
 
+        // ============================================================
+        // ⚠️ אתר עם שתי מערכות בבקר אחד (פלורנטין)
+        // ============================================================
+        // ‏`TwoSystemDetector` מחזיק **שני** גלאים ומייצר **מצב אחד** לאתר.
+        // הפיצול חייב להיות לפני הזיהוי: תפעולים מזוהים ממעברי MODE, ומיזוג
+        // של שתי המערכות למצב אחד היה מייצר מעברים שלא קרו.
+        //
+        // ⚠️ null באתר חד-מערכתי — 21 האתרים האחרים אינם עוברים כאן כלל.
+        TwoSystemDetector? twoSystems = config.Plc.HasSecondSystem
+            ? new TwoSystemDetector(clock.UnixNow)
+            : null;
+
+        // ⚠️ תצלום המערכות נוסע על **פעימת הלב**, לא על הודעת המצב: מצב
+        // האתר הוא "הטוב מבין השתיים", ולכן מערכת שנופלת לתקלה בזמן
+        // שהשנייה עובדת אינה משנה אותו — ואין הודעת מצב לשאת עליה את
+        // הפירוט. באתר שקט הכרטיס היה משקר שעות.
+        object? latestSystems = null;
+
         // ==========================================================
         // ממשיכים מאיפה שהפסקנו, במקום לפתוח פעולה חדשה
         // ==========================================================
@@ -229,6 +253,15 @@ public class Worker : BackgroundService
         if (saved is not null)
         {
             detector.Restore(saved.PreviousMode, saved.OperationCard);
+
+            // ⚠️ **המערכת השנייה זקוקה לזיכרון משלה.** קובץ אחד לשתיהן היה
+            // משחזר את מערכת 1 לתוך מערכת 2, כלומר פעולה פיקטיבית בכל
+            // עלייה — בדיוק התקלה שהשחזור הזה קיים כדי למנוע.
+            DetectorState? saved2 = twoSystems is null ? null : DetectorState.TryLoad(SecondDetectorFile);
+            if (saved2 is not null)
+                twoSystems!.Second.Restore(saved2.PreviousMode, saved2.OperationCard);
+
+            twoSystems?.First.Restore(saved.PreviousMode, saved.OperationCard);
             _logger.LogInformation(
                 "Resuming detector state from previous run (MODE={Mode}, card='{Card}') — no phantom operation will be opened.",
                 saved.PreviousMode, saved.OperationCard);
@@ -712,7 +745,7 @@ public class Worker : BackgroundService
                         var item = BatchPayload.From(errorState);
                         try
                         {
-                            WriteResult res = await supabase.SendAsync(new[] { item }, stoppingToken);
+                            WriteResult res = await supabase.SendAsync(new[] { item }, latestSystems, stoppingToken);
                             if (res.Ok)
                             {
                                 errorReported = true;
@@ -750,8 +783,24 @@ public class Worker : BackgroundService
             }
 
             // ===== שלב ב': המוח מחליט מה לשדר =====
-            DetectionResult result = detector.Process(
-                reading.Mode, reading.CardNumber, reading.CycleCounter);
+            // ⚠️ MODE 4 כברירת מחדל ולא 0: אפס הוא "תחזוקה", כלומר מערכת
+            // חסרה הייתה מדווחת כמצב חוקי. ארבע אינו מתורגם למצב כלל.
+            DetectionResult result = twoSystems is not null
+                ? twoSystems.Process(
+                    reading.Mode, reading.CardNumber,
+                    reading.Mode2 ?? 4, reading.CardNumber2 ?? "",
+                    reading.CycleCounter)
+                : detector.Process(
+                    reading.Mode, reading.CardNumber, reading.CycleCounter);
+
+            // התצלום מתעדכן **בכל דגימה**, לא רק כשהמצב זז — הפעימה
+            // הבאה נושאת את מה שנכון באותו רגע.
+            if (twoSystems is not null)
+            {
+                latestSystems = BatchPayload.Systems(TwoSystemDetector.Snapshot(
+                    ModeTranslator.FromMode(reading.Mode), reading.CardNumber,
+                    ModeTranslator.FromMode(reading.Mode2 ?? 4), reading.CardNumber2 ?? ""));
+            }
 
             // שומרים את מצב ה-detector כדי שהפעלה מחדש תמשיך ולא תפתח פעולה
             // חדשה. **רק כשמשהו זז** — כתיבה בכל דגימה הייתה עוד I/O לשנייה
@@ -761,6 +810,13 @@ public class Worker : BackgroundService
                 savedMode = detector.PreviousMode;
                 savedCard = detector.OperationCard;
                 new DetectorState(reading.Mode, detector.OperationCard).Save();
+            }
+
+            if (twoSystems is not null)
+            {
+                new DetectorState(reading.Mode, twoSystems.First.OperationCard).Save();
+                new DetectorState(reading.Mode2 ?? 4, twoSystems.Second.OperationCard)
+                    .Save(SecondDetectorFile);
             }
 
             // המצב הנוכחי המתורגם — לשימוש בשידור-מחדש אחרי חיבור-מחדש.
@@ -1221,8 +1277,8 @@ public class Worker : BackgroundService
                         // `BeatAsync` היא הדרך היחידה לשלוח ריק, והיא גם זו
                         // שנושאת את מספר הגרסה.
                         WriteResult res = outgoing.Count > 0
-                            ? await supabase.SendAsync(outgoing, stoppingToken)
-                            : await supabase.BeatAsync(agentVersion, stoppingToken);
+                            ? await supabase.SendAsync(outgoing, latestSystems, stoppingToken)
+                            : await supabase.BeatAsync(agentVersion, latestSystems, stoppingToken);
 
                         // ⚠️ החותם מתעדכן רק על הצלחה. פעימה שנכשלה ברשת אינה
                         // סימן חיים שהגיע ליעדו, ורישומה כאילו הצליחה היה דוחה
