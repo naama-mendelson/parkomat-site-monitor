@@ -24,15 +24,36 @@ public static class PlcTargetLine
     /// <summary>מנסח את שורת היעד. טהורה — בלי לוגר ובלי דיסק.</summary>
     public static string Format(SiteConfig config)
     {
-        PlcConfig plc = config.Plc;
-
-        string transport = plc.UseUdp ? "UDP" : "TCP";
         // ⚠️ שתי ספרות תמיד: "FC=0x3" אינו הניסוח שמופיע בתיעוד של יצרני
         // הבקרים ובתקן, ומי שמשווה מול modpoll מחפש בדיוק "FC3"/"0x03".
+        return $"PLC target: {Describe(config.Plc)} | poll={config.PollIntervalMs}ms";
+    }
+
+    // ============================================================
+    // ⚠️ אותו תיאור, גם בהודעת השגיאה — ולא רק בשורת הפתיחה
+    // ============================================================
+    // באתר 2222 הלוג אמר בדיוק זאת, שוב ושוב:
+    //
+    //     [WRN] Worker: PLC read failed: Index was outside the bounds of the array.
+    //
+    // ההודעה אינה מזכירה בקר, כתובת, תעבורה, פקודת קריאה או רגיסטר. שורת
+    // ‏"PLC target" אמנם נכתבת — **פעם אחת, בעליית הסוכן**, ולכן בקובץ
+    // שהתגלגל היא כבר אינה שם. כלומר בדיוק כשצריך לדעת מה נוסה, אין תשובה.
+    //
+    // ⚠️ **וזה לא נסגר בניחוש המנגנון.** ניסיתי לייחס את החריגה למערך ריק
+    // שחוזר מ-NModbus; במעבדה זה **הופרך** — סלייב שמחזיר פחות רגיסטרים
+    // ממה שהתבקש מפיל את NModbus בהודעה משלה
+    // (`Unexpected byte count. Expected 6, received 2`), לא במערך ריק.
+    // מקור החריגה בשטח עדיין אינו ידוע. לכן ההודעה נושאת מעכשיו את היעד
+    // המלא: אם היא תחזור, היא תזהה את עצמה.
+    /// <summary>מתאר את יעד הקריאה — תעבורה, כתובת, פקודה ושלושת הרגיסטרים.</summary>
+    public static string Describe(PlcConfig plc)
+    {
+        string transport = plc.UseUdp ? "UDP" : "TCP";
         string fc = plc.UseHoldingRegisters ? "03" : "04";
 
-        return $"PLC target: {transport} {plc.IpAddress}:{plc.Port} | FC=0x{fc} | "
+        return $"{transport} {plc.IpAddress}:{plc.Port} | FC=0x{fc} | "
              + $"registers MODE={plc.ModeRegister} Card={plc.CardRegister} "
-             + $"Cycle={plc.CycleRegister} | poll={config.PollIntervalMs}ms";
+             + $"Cycle={plc.CycleRegister}";
     }
 }

@@ -167,6 +167,11 @@ public class PlcReader : IDisposable
     /// קורא את שלושת ה-registers מה-PLC ומחזיר PlcReading.
     /// זורק חריגה אם החיבור נכשל — מי שקורא צריך לטפל בזה.
     /// </summary>
+    // ⚠️ שמונה ולא 125 (תקרת Modbus): שלושת הרגיסטרים שאנחנו קוראים
+    // יושבים בפועל צמודים זה לזה בכל האתרים, וטווח רחב יותר פירושו
+    // קריאת כתובות שאיש לא ביקש — ובבקר שחלקן אינן ממופות בו, כשל.
+    private const int MaxBlockSpan = 8;
+
     public PlcReading Read()
     {
         EnsureConnected();
@@ -189,16 +194,59 @@ public class PlcReader : IDisposable
 
             ushort mode, card, cycle;
 
-            // אם שלוש הכתובות רצופות (ברירת המחדל 290/291/292) — קוראים ב-round-trip
-            // *אחד* ⇒ תצלום אטומי. אחרת ה-PLC עלול להתקדם בין קריאות נפרדות ולזווג
-            // MODE של רגע אחד עם card/cycle של רגע אחר (רשומת כניסה/יציאה שגויה).
-            // מספר הכרטיס הוא 16 ביט (עד 65535) — אושר מול האתר שלא חורג.
-            if (cardAddr == modeAddr + 1 && cycleAddr == modeAddr + 2)
+            // ============================================================
+            // ⚠️ בלוק אחד לכל טווח קצר — לא רק לסדר עולה מדויק
+            // ============================================================
+            // התנאי כאן היה `cardAddr == modeAddr + 1 && cycleAddr == modeAddr + 2`,
+            // כלומר **רק** הסידור העולה המדויק. אתר 2222 מוגדר
+            // `MODE=106 Card=107 Cycle=105` — **אותם שלושה רגיסטרים בדיוק**,
+            // בסדר אחר — ולכן הוא נפל למסלול של שלוש קריאות נפרדות.
+            //
+            // ⚠️ **ומה שהמסלול הזה עושה ברשת אמיתית הוא הבעיה:** שלוש
+            // בקשות/תשובות נפרדות מעל UDP, בלי הבטחת סדר, כשתשובה מאוחרת
+            // לבקשה קודמת מגיעה כשהבאה כבר בדרך.
+            //
+            // ⚠️ **מה שלא הוכח, ולא ייטען כאן:** ייחסתי את
+            // `Index was outside the bounds of the array` למערך ריק שחוזר
+            // מ-NModbus. במעבדה זה **הופרך** — סלייב שמחזיר פחות רגיסטרים
+            // ממה שהתבקש מפיל את NModbus בהודעה משלה
+            // (`Unexpected byte count. Expected 6, received 2`). המנגנון
+            // המדויק של הכשל בשטח עדיין אינו ידוע, ולכן הוא **אינו** ההצדקה
+            // לשינוי כאן; ההצדקה היא זו שלמטה, והיא עומדת בפני עצמה.
+            //
+            // ⚠️ **וגם מעל loopback אי אפשר לשחזר את הכשל** — שלוש קריאות
+            // מצליחות שם תמיד. לכן הבדיקות אינן משוות ערכים אלא **סופרות
+            // בקשות**: `TheThreeRegistersCostOneRequestNotThree`. מוטציה
+            // שהחזירה את התנאי המקורי עברה ירוקה עד שהספירה נוספה.
+            //
+            // הטווח, ולא הסדר, הוא מה שקובע: 105..107 הם שלושה רגיסטרים
+            // ואין שום סיבה לשלוש בקשות. כאן קוראים את הטווח כולו פעם
+            // אחת ובוחרים לפי היסט — תצלום אטומי, גם כשהסדר אינו עולה.
+            int lo = Math.Min(modeAddr, Math.Min(cardAddr, cycleAddr));
+            int hi = Math.Max(modeAddr, Math.Max(cardAddr, cycleAddr));
+            int span = hi - lo + 1;
+
+            // ⚠️ **תקרה, כי טווח אינו מספר.** `MODE=100 Cycle=300` הם 201
+            // רגיסטרים — מעל תקרת ה-125 של Modbus, וגם קריאה של מאתיים
+            // כתובות שאיש לא ביקש, שחלקן עלולות לא להיות ממופות בבקר.
+            // מעבר לתקרה חוזרים לקריאות נפרדות, על כל חסרונן.
+            if (span <= MaxBlockSpan)
             {
-                ushort[] r = ReadBlock(slaveId, modeAddr, 3);
-                mode = r[0];
-                card = r[1];
-                cycle = r[2];
+                ushort[] r = ReadBlock(slaveId, lo, span);
+
+                // ⚠️ **הגנה, ולא תיקון של תקלה שנצפתה.** דרך NModbus התנאי
+                // הזה אינו ניתן להגעה — היא בודקת את אורך המסגרת בעצמה
+                // וזורקת קודם. הוא נשאר כי הגישה למטה היא לפי היסט, ומערך
+                // קצר היה חוזר לחריגה חסרת הפשר שהתחלנו ממנה. **אין בדיקה
+                // שמכסה אותו**, וזה נאמר במפורש כדי שאיש לא יחשוב שיש.
+                if (r.Length < span)
+                    throw new InvalidOperationException(
+                        $"הבקר החזיר {r.Length} רגיסטרים במקום {span} "
+                        + $"עבור טווח {lo}..{hi}");
+
+                mode = r[modeAddr - lo];
+                card = r[cardAddr - lo];
+                cycle = r[cycleAddr - lo];
             }
             else
             {
@@ -214,14 +262,23 @@ public class PlcReader : IDisposable
                 CycleCounter = cycle
             };
         }
-        catch
+        catch (Exception ex)
         {
+            // ⚠️ **החריגה נעטפת בתיאור היעד.** ‏`Worker` רושם `ex.Message`
+            // בלבד, ולכן בשטח נראתה שורה שאינה מזכירה בקר, כתובת, תעבורה,
+            // פקודה או רגיסטר: *"PLC read failed: Index was outside the
+            // bounds of the array"*. שורת "PLC target" נכתבת פעם אחת בעלייה
+            // ובקובץ שהתגלגל היא כבר איננה. מעכשיו כל כשל קריאה נושא את
+            // היעד המלא איתו.
+            //
             // קריאה נכשלה (timeout / socket half-open — ה-PLC מקבל TCP אך הפסיק
             // לענות). במצב הזה _tcpClient.Connected עלול להישאר true, כך ש-
             // EnsureConnected לא היה בונה את החיבור מחדש והכשל היה נמשך ללא סוף.
             // סוגרים מפורשות כדי שהדגימה הבאה תפתח socket חדש ותוכל להתאושש.
             Dispose();
-            throw;
+
+            throw new InvalidOperationException(
+                $"קריאה מהבקר נכשלה [{PlcTargetLine.Describe(_config)}]: {ex.Message}", ex);
         }
     }
 
@@ -297,10 +354,20 @@ public class PlcReader : IDisposable
     }
 
     // קורא רגיסטר בודד ומחזיר את הערך.
+    //
+    // ⚠️ **אורך התשובה נבדק.** `values[0]` על מערך ריק זרק
+    // `Index was outside the bounds of the array` — הודעה שאינה מזכירה
+    // בקר, רגיסטר או רשת, ושעלתה בשטח באתר 2222. טכנאי שקורא אותה אינו
+    // יודע אפילו באיזו שכבה להתחיל לחפש.
     private ushort ReadRegister(byte slaveId, int address)
     {
-        // מחזיר מערך; אנחנו קוראים אחד, אז לוקחים את הראשון.
         ushort[] values = ReadBlock(slaveId, address, 1);
+
+        if (values.Length == 0)
+            throw new InvalidOperationException(
+                $"הבקר לא החזיר ערך לרגיסטר {address} "
+                + $"(FC=0x{(_config.UseHoldingRegisters ? "03" : "04")})");
+
         return values[0];
     }
 
