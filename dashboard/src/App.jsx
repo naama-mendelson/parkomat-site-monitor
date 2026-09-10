@@ -11,6 +11,8 @@ import Header from "./components/Header/Header";
 // לאותו אתר, ורוב התוכן משוכפל ביניהם.
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
+import TrafficLight from "./components/TrafficLight/TrafficLight";
+import "./components/TrafficLight/TrafficLight.css";
 import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
@@ -38,6 +40,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
+  const [trafficOpen, setTrafficOpen] = useState(false);        // לוח הרמזור
 
   // ערכת נושא: בהירה כברירת מחדל, והבחירה נזכרת בין ביקורים (ראה useTheme)
   const { darkMode, toggle: toggleTheme } = useTheme();
@@ -282,6 +285,32 @@ function App() {
           onChanged={handleAdminChanged}
         />
       )}
+
+      {/* ==========================================================
+          רמזור — לוח חופשי שהמנהל עורך
+          ==========================================================
+          ⚠️ **כפתור צף בצד הנגדי לעוזר ה-AI.** שניהם כלים שזמינים מכל
+          תצוגה ואינם שייכים לאף אחת מהן; הצבתם באותה פינה הייתה מכריחה
+          את אחד מהם להיות מוסתר מאחורי תפריט.
+
+          ⚠️ ומוצג תמיד, גם לבקר — שער התפקיד יושב **בתוך** הפאנל ואומר
+          במפורש מה התפקיד שלך. כפתור שנעלם משאיר את מי שחושבת שהיא
+          מנהלת בלי שום דרך לדעת שהתפקיד שלה במסד שונה. */}
+      <button
+        type="button"
+        className="tl-fab"
+        onClick={() => setTrafficOpen(true)}
+        title="רמזור — לוח לקוחות"
+      >
+        <span className="tl-lamps" aria-hidden="true">
+          <span className="tl-lamp tl-lamp--r" />
+          <span className="tl-lamp tl-lamp--y" />
+          <span className="tl-lamp tl-lamp--g" />
+        </span>
+        רמזור
+      </button>
+
+      {trafficOpen && <TrafficLight onClose={() => setTrafficOpen(false)} />}
 
       {/* עוזר ה-AI — קריאה בלבד, זמין מכל תצוגה */}
       <ChatAssistant />

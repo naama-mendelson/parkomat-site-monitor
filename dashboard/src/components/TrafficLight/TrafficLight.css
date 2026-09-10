@@ -1,0 +1,304 @@
+/* ==========================================================
+   רמזור — הכפתור הצף והלוח
+   ========================================================== */
+
+/* ⚠️ הכפתור נראה כמו רמזור אמיתי ולא כמו אייקון גנרי: שלוש נורות
+   על גוף כהה. זה מה שהופך אותו למזוהה במבט אחד ליד הכפתור הצף של
+   העוזר, שכבר יושב בפינה השנייה. */
+.tl-fab {
+  position: fixed;
+  inset-block-end: 24px;
+  inset-inline-end: 24px;
+  z-index: 1200;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px 8px 8px;
+
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-2, #1f2430);
+  color: var(--text, #fff);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+
+  box-shadow: 0 8px 24px var(--shadow, rgba(0, 0, 0, 0.3));
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tl-fab:hover { transform: translateY(-2px); box-shadow: 0 12px 30px var(--shadow, rgba(0,0,0,0.35)); }
+.tl-fab:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 3px; }
+
+.tl-lamps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 4px;
+  border-radius: 8px;
+  background: #11141b;
+}
+
+.tl-lamp { width: 9px; height: 9px; border-radius: 50%; }
+.tl-lamp--r { background: #e2445c; box-shadow: 0 0 6px #e2445c; }
+.tl-lamp--y { background: #fdab3d; box-shadow: 0 0 6px #fdab3d; }
+.tl-lamp--g { background: #00c875; box-shadow: 0 0 6px #00c875; }
+
+/* ==========================================================
+   שכבת-על ולוח
+   ========================================================== */
+.tl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.tl-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1400px, 100%);
+  height: min(900px, 100%);
+  overflow: hidden;
+
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--text, #1a1a1a);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+.tl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-block-end: 1px solid var(--border, #e5e7eb);
+}
+
+.tl-head h2 { margin: 0; font-size: 1.15rem; }
+.tl-head-actions { display: flex; align-items: center; gap: 8px; }
+
+.tl-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.tl-close:hover { background: var(--surface-2, #f3f4f6); }
+
+/* ⚠️ דביקה בראש הגלילה. הודעת שגיאה שדורשת לגלול אליה נקראת כמו
+   "לא קרה כלום" — זה כבר נמדד בפאנל הניהול. */
+.tl-err-bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 5;
+  padding: 8px 18px;
+  background: #fdecef;
+  color: #a01829;
+  font-size: 0.9rem;
+}
+
+.tl-paste {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px 18px;
+  border-block-end: 1px solid var(--border, #e5e7eb);
+  font-size: 0.85rem;
+}
+.tl-paste label { color: var(--text-muted, #6b7280); }
+.tl-paste textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.tl-scroll { flex: 1; overflow: auto; }
+
+/* ==========================================================
+   הטבלה
+   ========================================================== */
+.tl-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+
+.tl-table th,
+.tl-table td {
+  border-block-end: 1px solid var(--border, #eceef1);
+  border-inline-end: 1px solid var(--border, #eceef1);
+  padding: 0;
+  text-align: start;
+  vertical-align: middle;
+}
+
+/* ⚠️ הכותרת דביקה — לוח של 40 שורות בלי כותרת קבועה הופך כל גלילה
+   לניחוש איזו עמודה זו. */
+.tl-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 4;
+  background: var(--surface-2, #f7f8fa);
+  padding: 0;
+}
+
+.tl-th-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+}
+.tl-th-btn:hover { background: var(--surface-3, #eef0f4); }
+.tl-th-kind { font-weight: 400; font-size: 0.72rem; color: var(--text-muted, #6b7280); }
+
+.tl-th-num, .tl-td-num {
+  width: 46px;
+  text-align: center;
+  color: var(--text-muted, #9ca3af);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.tl-th-act, .tl-td-act { width: 44px; text-align: center; }
+
+.tl-table tbody tr:hover td { background: var(--surface-2, #fafbfc); }
+
+.tl-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 8px 10px;
+}
+.tl-input:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -2px; background: var(--surface, #fff); }
+
+/* ⚠️ תא סטטוס צבוע במלואו, כמו ב-Monday — הצבע הוא הדבר שסורקים,
+   לא הטקסט. */
+.tl-status {
+  width: 100%;
+  border: none;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+.tl-status:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -2px; }
+
+.tl-check { width: 16px; height: 16px; margin: 10px auto; display: block; cursor: pointer; }
+
+/* ==========================================================
+   עורך העמודה
+   ========================================================== */
+.tl-pop {
+  position: absolute;
+  z-index: 20;
+  inset-inline-start: 0;
+  inset-block-start: 100%;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  font-weight: 400;
+}
+
+.tl-pop-row { display: flex; align-items: center; gap: 8px; margin-block-end: 8px; font-size: 0.85rem; }
+.tl-pop-row span { width: 40px; color: var(--text-muted, #6b7280); }
+.tl-pop-row input, .tl-pop-row select {
+  flex: 1; min-width: 0; font: inherit; padding: 5px 7px;
+  border: 1px solid var(--border, #d1d5db); border-radius: 6px;
+  background: var(--surface, #fff); color: inherit;
+}
+
+.tl-opts { margin-block: 8px; padding-block-start: 8px; border-block-start: 1px dashed var(--border, #e5e7eb); }
+.tl-opts-head { display: flex; align-items: center; justify-content: space-between; margin-block-end: 6px; font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+.tl-opt { display: flex; align-items: center; gap: 6px; margin-block-end: 5px; }
+.tl-opt-color { width: 28px; height: 26px; padding: 0; border: 1px solid var(--border, #d1d5db); border-radius: 5px; background: none; cursor: pointer; }
+.tl-opt-label { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; background: var(--surface, #fff); color: inherit; }
+
+.tl-pop-actions { display: flex; align-items: center; gap: 6px; margin-block-start: 10px; }
+.tl-spacer { flex: 1; }
+
+/* ==========================================================
+   כפתורים
+   ========================================================== */
+.tl-btn, .tl-btn-ghost, .tl-mini {
+  font: inherit; cursor: pointer; border-radius: 7px;
+  padding: 7px 12px; border: 1px solid transparent;
+}
+.tl-btn { background: var(--brand, #3d78d8); color: #fff; font-weight: 600; }
+.tl-btn:disabled, .tl-btn-ghost:disabled, .tl-mini:disabled { opacity: 0.5; cursor: not-allowed; }
+.tl-btn-ghost { background: transparent; border-color: var(--border, #d1d5db); color: inherit; }
+.tl-btn-ghost:hover:not(:disabled) { background: var(--surface-2, #f3f4f6); }
+.tl-btn--danger { color: #c02b3f; border-color: #f0bcc4; }
+
+.tl-mini { padding: 3px 7px; font-size: 0.78rem; background: var(--surface-2, #f3f4f6); }
+.tl-mini--danger { color: #c02b3f; }
+
+.tl-empty { padding: 28px; text-align: center; color: var(--text-muted, #6b7280); }
+.tl-hint { font-size: 0.78rem; color: var(--text-muted, #9ca3af); margin: 4px 0 0; }
+.tl-err { color: #c02b3f; font-size: 0.85rem; }
+
+.tl-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 18px; border-block-start: 1px solid var(--border, #e5e7eb);
+  font-size: 0.8rem; color: var(--text-muted, #6b7280);
+}
+.tl-busy { color: var(--brand, #3d78d8); font-weight: 600; }
+
+/* ==========================================================
+   מסך הנעילה
+   ========================================================== */
+.tl-lock {
+  width: min(420px, 100%);
+  padding: 26px;
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--text, #1a1a1a);
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+.tl-lock-icon { display: flex; justify-content: center; margin-block-end: 10px; }
+.tl-lock h2 { margin: 0 0 8px; }
+.tl-lock p { margin: 0 0 10px; color: var(--text-muted, #6b7280); font-size: 0.9rem; }
+.tl-lock-role { font-weight: 600; color: inherit; }
+.tl-lock input {
+  width: 100%; font: inherit; padding: 9px 11px; margin-block-end: 10px;
+  border: 1px solid var(--border, #d1d5db); border-radius: 8px;
+  background: var(--surface, #fff); color: inherit;
+}
+.tl-lock-actions { display: flex; justify-content: center; gap: 8px; }
+
+/* ⚠️ הלוח הוא כלי ולא מסמך — במסך צר הוא נשאר גליל אופקית במקום
+   להתקפל לעמודה אחת, שבה טבלה אינה קריאה ממילא. */
+@media (max-width: 720px) {
+  .tl-overlay { padding: 0; }
+  .tl-panel { height: 100%; border-radius: 0; }
+  .tl-paste { flex-direction: column; align-items: stretch; }
+}
