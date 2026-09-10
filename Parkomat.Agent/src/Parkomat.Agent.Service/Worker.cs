@@ -97,13 +97,13 @@ public class Worker : BackgroundService
         // ⚠️ **התעבורה נרשמת, ולא רק ה-IP.** אתר UDP שאיפוס הגדרות החזיר
         // ל-TCP נראה בלוג בדיוק כמו אתר TCP תקין — ובלי השדה הזה השאלה
         // "למה האתר לא קורא מהבקר" נענית רק בנסיעה לשם.
-        _logger.LogInformation(
-            "PLC target: {Transport} {Ip}:{Port} | FC=0x{Fc} | registers MODE={Mode} Card={Card} Cycle={Cycle} | poll={Poll}ms",
-            config.Plc.UseUdp ? "UDP" : "TCP",
-            config.Plc.UseHoldingRegisters ? "03" : "04",
-            config.Plc.IpAddress, config.Plc.Port,
-            config.Plc.ModeRegister, config.Plc.CardRegister, config.Plc.CycleRegister,
-            config.PollIntervalMs);
+        //
+        // ⚠️ **הניסוח עבר ל-`PlcTargetLine.Format` אחרי שהוא שיקר בשטח.**
+        // שמונה ארגומנטים בלוגר, ושניים מהם ישבו במקום הלא נכון: קוד
+        // הפונקציה נחת במקום הכתובת והפורט נחת במקום קוד הפונקציה, והשורה
+        // הודפסה `UDP 03:192.168.0.250 | FC=0x502`. הקומפיילר אינו בודק
+        // התאמה בין מצייני מקום לארגומנטים, ולכן זה עבר בשקט.
+        _logger.LogInformation("{Line}", PlcTargetLine.Format(config));
 
         // ⚠️ ערך לא מוכר נבלע ל-TCP (ראה PlcConfig.UseUdp) — אבל **בקול**.
         // בליעה שקטה הייתה יוצרת אתר שהקובץ שלו אומר UDP והסוכן קורא TCP,
