@@ -308,6 +308,29 @@ unchanged MODE produces nothing and a changed one produces a real end/start pair
   state and synthesise a transition.
 - State is written only when MODE or the card changes, not every poll.
 
+## ⚠️ `modpoll` counts from 1, the protocol counts from 0 — and the log looks wrong
+
+Comparing the agent's configured registers against a `modpoll` spot check makes the two look
+like they disagree when they agree perfectly. Measured at site 1367 on 10/09/2026:
+
+```
+agent log      registers MODE=106 Card=107 Cycle=105
+modpoll -r 107 -c 3      [107]: 1   [108]: 7   [109]: 0
+```
+
+**`modpoll`'s `-r` is a 1-based *reference*, not a protocol address.** `-r 107` reads protocol
+address **106**. So `[107]` is the agent's `MODE=106`, and its value `1` is `ready` — exactly
+what the site was reporting. There was never a discrepancy.
+
+`PlcReader` passes the configured number straight to NModbus, which takes **protocol addresses**
+(0-based), so the values in `config.json` are protocol addresses. To make `modpoll` agree, add
+`-0` (0-based) — or read its output as "one more than the address".
+
+⚠️ **This costs time precisely because both sides look authoritative:** the controller answers
+happily at a wrong register too, returning a plausible number instead of an error. Nothing
+fails; the state is simply wrong. So "the registers disagree" is a conclusion that must be
+reached by arithmetic, never by eye.
+
 ## Known limit: the cycle counter is 16 bits
 
 `CycleRegister` is a single Modbus register, so the counter caps at 65,535 and wraps. The
