@@ -421,14 +421,21 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           <span className="detail-label">מסלול</span>
           <span className="detail-value">
             <span className={`card-agreement card-agreement--${AGREEMENT_NAMES[plan.k] ? plan.k : "unknown"}`}
-                  title="ההסכם שנחתם. הזמינות מחושבת לפי השירות, לא לפיו.">
+                  title={svc && plan.k === svc.k
+                    ? `ההסכם שנחתם, וכך גם מטופל בפועל. הזמינות נמדדת רק בשעות השירות שלו.`
+                    : "ההסכם שנחתם. הזמינות מחושבת לפי השירות, לא לפיו."}>
               {plan.label}
             </span>
           </span>
         </div>
       )}
 
-      {svc && (
+      {/* ⚠️ **שורת השירות מוצגת רק כשהיא אומרת משהו חדש.** מסלול
+          ושירות זהים הם שתי שורות שאומרות בדיוק אותו דבר — רעש שגורם
+          לעין לדלג על שתיהן, ובכרטיס צפוף זה מייקר את כל השאר.
+          כשהם נבדלים, וזה קורה ב-8 מתוך 28 האתרים, ההבדל הוא בדיוק
+          המידע. */}
+      {svc && (!plan || plan.k !== svc.k) && (
         <div className="card-detail">
           <span className="detail-label">שירות</span>
           <span className="detail-value">
