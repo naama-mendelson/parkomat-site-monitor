@@ -50,7 +50,8 @@ const MONDAY_PALETTE = [
   "#bda8f9", "#c4c4c4", "#9aadbd", "#68a1bd",
   // כחולים
   "#0086c0", "#579bfc", "#225091", "#175a63",
-  "#66ccff", "#4eccc6", "#a1e3f6", "#5559df",
+  "#66ccff", "#4eccc6", "#00c2b8", "#a1e3f6",
+  "#5559df", "#9d99b9",
   // ניטרליים
   "#808080", "#787d80", "#333333", "#7e7e7e",
 ];
@@ -148,6 +149,7 @@ function colWidth(c) {
 }
 
 function Cell({ column, value, onSave, readOnly }) {
+  const [asDate, setAsDate] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
   useEffect(() => { setDraft(value ?? ""); }, [value]);
 
@@ -198,9 +200,59 @@ function Cell({ column, value, onSave, readOnly }) {
 
   const type = column.kind === "number" ? "number"
              : column.kind === "date"   ? "date"
+             : asDate                   ? "date"
              : "text";
 
+  // ============================================================
+  // ⚠️ בורר תאריך בתא טקסט — ולא המרת העמודה כולה
+  // ============================================================
+  // עמודת "אחריות" מחזיקה **53 תאריכים מול 70 ערכים אחרים**: "#x",
+  // "השער באחריותנו", "5 שנים אחריות על קורות". המרת העמודה ל-date
+  // הייתה הופכת את 70 התאים האלה לבלתי-ניתנים להצגה **ולעריכה** —
+  // ‏`input[type=date]` אינו מקבל טקסט חופשי.
+  //
+  // לכן הבורר הוא לכל **תא**: לוחצים על סמל הלוח, השדה הופך לבורר
+  // תאריך, והערך נשמר בפורמט אחיד. תא שאינו תאריך נשאר טקסט.
+  //
+  // ⚠️ והפורמט שנשמר הוא DD/MM/YYYY — זה מה שכבר יש ב-53 התאים, ושינוי
+  // שלו היה מייצר שתי צורות באותה עמודה: בדיוק מה שתיקנו היום.
+  const toIso = (v) => {
+    const m = /^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/.exec(String(v ?? "").trim());
+    if (!m) return "";
+    let y = +m[3]; if (y < 100) y += 2000;
+    return `${y}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
+  };
+  const fromIso = (v) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? "").trim());
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v ?? "");
+  };
+
+  if (asDate) {
+    return (
+      <span className="tl-datecell">
+        <input
+          className="tl-input"
+          type="date"
+          autoFocus
+          value={toIso(draft) || (/^\d{4}-\d{2}-\d{2}$/.test(draft) ? draft : "")}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            const out = fromIso(draft);
+            setAsDate(false);
+            if (out !== String(value ?? "")) onSave(out === "" ? null : out);
+          }}
+        />
+        <button type="button" className="tl-cal tl-cal--on"
+                title="חזרה לטקסט חופשי"
+                onMouseDown={(e) => { e.preventDefault(); setAsDate(false); setDraft(value ?? ""); }}>
+          ✕
+        </button>
+      </span>
+    );
+  }
+
   return (
+    <span className="tl-datecell">
     <input
       className="tl-input"
       type={type}
@@ -223,6 +275,19 @@ function Cell({ column, value, onSave, readOnly }) {
         if (e.key === "Escape") { setDraft(value ?? ""); e.currentTarget.blur(); }
       }}
     />
+    {/* ⚠️ רק בעמודת טקסט. בעמודת date אמיתית הבורר כבר שם, ובעמודת
+        מספר תאריך אינו רלוונטי. */}
+    {column.kind === "text" && (
+      <button
+        type="button"
+        className="tl-cal"
+        title="הזנת תאריך"
+        onMouseDown={(e) => { e.preventDefault(); setAsDate(true); }}
+      >
+        ▦
+      </button>
+    )}
+    </span>
   );
 }
 

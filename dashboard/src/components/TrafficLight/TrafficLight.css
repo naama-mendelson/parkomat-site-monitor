@@ -651,3 +651,32 @@
   background: rgba(245, 158, 11, 0.10);
   color: #92400e;
 }
+
+/* ⚠️ הסמל מופיע רק במגע/מיקוד. כפתור קבוע בכל תא טקסט בלוח של 156
+   שורות הוא 156 כפתורים שמושכים את העין מהנתון עצמו. */
+.tl-datecell {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.tl-cal {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-inline-end: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.tl-table td:hover .tl-cal,
+.tl-datecell:focus-within .tl-cal { opacity: 1; }
+.tl-cal:hover { background: var(--surface-3, #eef0f4); color: var(--brand, #3d78d8); }
+.tl-cal--on { opacity: 1; color: var(--brand, #3d78d8); }
