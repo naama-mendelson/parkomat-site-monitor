@@ -104,10 +104,23 @@ public static class ConnectionTester
                     using var channel = new ModbusUdpChannel(plc.IpAddress, plc.Port, PlcTimeoutSeconds * 1000);
                     channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.ModeRegister, 1);
 
+                    // ⚠️ **והמערכת השנייה נבדקת בנפרד.** בדיקה שקוראת רק את
+                    // ה-MODE הראשון הייתה מחזירה ירוק על אתר שהוקלדה בו
+                    // כתובת שגויה ל-293/294 — כלומר מערכת שלמה שלא תדווח
+                    // לעולם, ברגע היחיד שבו מישהו עומד באתר ויכול לתקן.
+                    if (plc.HasSecondSystem)
+                    {
+                        channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.ModeRegister2, 1);
+                        channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.CardRegister2, 1);
+                    }
+
                     return new TestResult
                     {
                         Success = true,
                         Message = $"מחובר ל-PLC — {how}. הקריאה הצליחה."
+                               + (plc.HasSecondSystem
+                                    ? $" שתי מערכות: MODE {plc.ModeRegister}/{plc.ModeRegister2}."
+                                    : "")
                     };
                 }
 

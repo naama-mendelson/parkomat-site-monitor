@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Service.Modbus;
+using Parkomat.Agent.Tray.Services;
 
 namespace Parkomat.Agent.Service.Tests;
 
@@ -63,7 +64,11 @@ public class TwoSystemSiteTests
         private readonly CancellationTokenSource _cts = new();
         public int Requests;
 
-        public Controller(int port, IReadOnlyDictionary<int, ushort> registers)
+        // ⚠️ `refuseOutside` מייצג בקר אמיתי שאין בו הכתובת: הוא מחזיר
+        // תשובת שגיאה של Modbus. מאגר שמחזיר אפס לכל כתובת אינו יכול
+        // לייצג "הכתובת אינה קיימת" — וזו בדיוק הטעות שהפילה בדיקה
+        // קודמת בפרויקט הזה, כשמוטציה עברה ירוקה בגללה.
+        public Controller(int port, IReadOnlyDictionary<int, ushort> registers, bool refuseOutside = false)
         {
             _sock = new UdpClient(port);
             Task.Run(() =>
@@ -79,12 +84,26 @@ public class TwoSystemSiteTests
                     int start = (req[8] << 8) | req[9];
                     int count = (req[10] << 8) | req[11];
 
-                    var body = new List<byte> { 0, 0, 0, 0, 0, 0, 0x01, req[7], (byte)(count * 2) };
-                    for (int i = 0; i < count; i++)
+                    bool missing = false;
+                    for (int i = 0; i < count && refuseOutside; i++)
+                        if (!registers.ContainsKey(start + i)) missing = true;
+
+                    List<byte> body;
+                    if (missing)
                     {
-                        ushort v = registers.TryGetValue(start + i, out ushort f) ? f : (ushort)0;
-                        body.Add((byte)(v >> 8));
-                        body.Add((byte)(v & 0xFF));
+                        // תשובת שגיאה: הביט העליון של קוד הפונקציה, וקוד 02
+                        // (IllegalDataAddress) — מה שבקר אמיתי מחזיר.
+                        body = new List<byte> { 0, 0, 0, 0, 0, 0, 0x01, (byte)(req[7] | 0x80), 0x02 };
+                    }
+                    else
+                    {
+                        body = new List<byte> { 0, 0, 0, 0, 0, 0, 0x01, req[7], (byte)(count * 2) };
+                        for (int i = 0; i < count; i++)
+                        {
+                            ushort v = registers.TryGetValue(start + i, out ushort f) ? f : (ushort)0;
+                            body.Add((byte)(v >> 8));
+                            body.Add((byte)(v & 0xFF));
+                        }
                     }
 
                     byte[] answer = body.ToArray();
@@ -144,6 +163,70 @@ public class TwoSystemSiteTests
         Assert.Null(r.Mode2);
         Assert.Null(r.CardNumber2);
         Assert.Equal(1, plc.Requests);
+    }
+
+    // ============================================================
+    // ⚠️ הלוג אומר אם המערכת השנייה מוגדרת — אחרת אין דרך לדעת
+    // ============================================================
+    // אתר דו-מערכתי שאחד משני השדות נשכח בו עולה בשקט מוחלט ומדווח
+    // מערכת אחת. שורת היעד היא הדבר היחיד בלוג שיכול לחשוף את זה.
+    [Fact]
+    public void TheLogLineNamesTheSecondSystemWhenItIsConfigured()
+    {
+        var cfg = new SiteConfig { PollIntervalMs = 1000 };
+        cfg.Plc = Cfg(502, second: true);
+
+        string line = PlcTargetLine.Format(cfg);
+
+        Assert.Contains("system2 MODE=293 Card=294", line);
+    }
+
+    // ⚠️ ובאתר חד-מערכתי השורה חייבת להישאר **בדיוק** מה שהייתה: 21
+    // אתרים משווים אותה מול modpoll, וכל תוספת היא עוד דבר לפרש.
+    [Fact]
+    public void ASingleSystemSiteKeepsTheExactSameLogLine()
+    {
+        var cfg = new SiteConfig { PollIntervalMs = 1000 };
+        cfg.Plc = Cfg(502, second: false);
+
+        string line = PlcTargetLine.Format(cfg);
+
+        Assert.DoesNotContain("system2", line);
+        Assert.EndsWith("poll=1000ms", line);
+    }
+
+    // ============================================================
+    // ⚠️ "בדוק חיבור" קורא **את שני הרגיסטרים** של המערכת השנייה
+    // ============================================================
+    // בדיקה שקוראת רק את ה-MODE הראשון מחזירה ירוק על אתר שהוקלדה בו
+    // כתובת שגויה ל-293/294 — כלומר מערכת שלמה שלא תדווח לעולם, ודווקא
+    // ברגע היחיד שבו מישהו עומד באתר ויכול לתקן.
+    [Fact]
+    public async Task TheConnectionTestFailsWhenTheSecondSystemAddressIsWrong()
+    {
+        int port = FreePort();
+        // בקר שחושף רק 290..292 — בדיוק מה שקורה כשמקלידים כתובת שגויה.
+        using var plc = new Controller(port, new Dictionary<int, ushort>
+        {
+            [290] = 5, [291] = 42, [292] = 20234,
+        }, refuseOutside: true);
+
+        var cfg = Cfg(port, second: true);
+        TestResult r = await ConnectionTester.TestPlcAsync(cfg);
+
+        Assert.False(r.Success, "כתובת שגויה למערכת השנייה דווחה כחיבור תקין");
+    }
+
+    [Fact]
+    public async Task TheConnectionTestSaysBothSystemsWhenBothAnswer()
+    {
+        int port = FreePort();
+        using var plc = new Controller(port, Florentin);
+
+        TestResult r = await ConnectionTester.TestPlcAsync(Cfg(port, second: true));
+
+        Assert.True(r.Success, r.Message);
+        Assert.Contains("שתי מערכות", r.Message);
     }
 
     // ⚠️ **שני הרגיסטרים נדרשים יחד.** מצב בלי רכב אינו חצי-תכונה אלא

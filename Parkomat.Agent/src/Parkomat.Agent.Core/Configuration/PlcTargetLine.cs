@@ -52,8 +52,15 @@ public static class PlcTargetLine
         string transport = plc.UseUdp ? "UDP" : "TCP";
         string fc = plc.UseHoldingRegisters ? "03" : "04";
 
+        // ⚠️ **המערכת השנייה מופיעה רק כשהיא מוגדרת, ואז תמיד.** בלעדיה
+        // אין בלוג שום דבר שמבדיל אתר דו-מערכתי שהוגדר נכון מאתר
+        // דו-מערכתי ששדה אחד בו נשכח — ושניהם עולים בשקט מוחלט.
+        string second = plc.HasSecondSystem
+            ? $" | system2 MODE={plc.ModeRegister2} Card={plc.CardRegister2}"
+            : "";
+
         return $"{transport} {plc.IpAddress}:{plc.Port} | FC=0x{fc} | "
              + $"registers MODE={plc.ModeRegister} Card={plc.CardRegister} "
-             + $"Cycle={plc.CycleRegister}";
+             + $"Cycle={plc.CycleRegister}{second}";
     }
 }
