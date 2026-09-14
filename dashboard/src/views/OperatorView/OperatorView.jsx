@@ -33,7 +33,13 @@ function OperatorView({ sites, loading, error, onRetry, activeFilters = [], type
 
   const filtered = sites.filter((site) => {
     // רשימה ריקה = בלי סינון. אחרת: האתר צריך להיות באחד מהמצבים שנבחרו.
-    if (activeFilters.length > 0 && !activeFilters.includes(site.status)) return false;
+    // ⚠️ **`displayStatus` ולא `status`** — אותו ערך שהצ'יפ על הכרטיס
+    // מציג. באתר דו-מערכתי `status` הוא המצב של המערכת הטובה (זה
+    // שמחשב זמינות), והצ'יפ מציג את הגרועה; סינון לפי `status` היה
+    // מסתיר מ"תחזוקה" אתר שכתוב עליו "תחזוקה" — כלומר הסרגל והכרטיס
+    // היו סותרים זה את זה על אותו מסך.
+    const shown = site.displayStatus ?? site.status;
+    if (activeFilters.length > 0 && !activeFilters.includes(shown)) return false;
     // ⚠️ הכלל עצמו חי ב-SiteFilterTile ומיוצא — כך הסרגל והתצוגה מסכימים על
     // מה קורה עם אתר בלי סוג, במקום להגדיר את זה פעמיים.
     if (!matchesSiteFilters(site, typeFilter, tierFilter)) return false;

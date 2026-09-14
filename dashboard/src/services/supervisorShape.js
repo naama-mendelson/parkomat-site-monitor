@@ -48,10 +48,24 @@ export function toSupervisorShape({ siteRows, statsRows, uptimeRows, globalsRows
       ? "maintenance"
       : site.status;
 
+    // ⚠️ **אותו כלל בדיוק כמו ב-`sitesDirect`**, ולא העתק שיסטה:
+    // באתר דו-מערכתי מה שמוצג ומה שמסנן הוא המערכת **הגרועה**, בעוד
+    // ‏`status` — שממנו מחושבות הזמינות ואחוז הכשל — נשאר של הטובה.
+    // מסך שמסנן אחרת ממסך אחר על אותם אתרים הוא בדיוק הדבר שגורם
+    // למישהי לחשוב שאתר "נעלם".
+    const WORST = { error: 0, no_comm: 1, maintenance: 2, operating: 3, ready: 4 };
+    let worst = null;
+    for (const u of (Array.isArray(g.systems) ? g.systems : [])) {
+      const st = String(u?.state ?? "").trim();
+      if (!(st in WORST)) continue;
+      if (worst === null || WORST[st] < WORST[worst]) worst = st;
+    }
+
     return {
       code: site.code,
       name: site.site_name,
       status,
+      displayStatus: worst ?? status,
       tier: site.tier,
       // אובייקט או null — ולא אובייקט עם שדות undefined, שנראה למסך כמו
       // "יש פעולה אחרונה" ואז מרנדר ריק.

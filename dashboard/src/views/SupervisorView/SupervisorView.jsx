@@ -53,7 +53,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
     });
 
     const filtered = live.filter((s) => {
-      if (statusFilters.length > 0 && !statusFilters.includes(s.status)) return false;
+      // ⚠️ אותו כלל כמו במסך הכרטיסים — מסננים לפי מה שמוצג.
+      if (statusFilters.length > 0 &&
+          !statusFilters.includes(s.displayStatus ?? s.status)) return false;
       if (query && !fuzzyMatch(`${s.name} ${s.code}`, query)) return false;
       return true;
     });

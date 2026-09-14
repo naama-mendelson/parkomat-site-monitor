@@ -11,8 +11,11 @@ function StatusFilters({ sites, activeFilters = [], onFilterChange, trailing = n
     counts[s] = 0;
   }
   for (const site of sites) {
-    if (counts[site.status] !== undefined) {
-      counts[site.status]++;
+    // ⚠️ המונה סופר בדיוק את מה שהסינון יחזיר. מונה שאומר "3" וסינון
+    // שמראה 4 הוא בדיוק הדבר שגורם להפסיק לסמוך על שניהם.
+    const shown = site.displayStatus ?? site.status;
+    if (counts[shown] !== undefined) {
+      counts[shown]++;
     }
   }
   const total = sites.length;
