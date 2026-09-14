@@ -45,10 +45,12 @@ public class TwoSystemDetectorTests
         Assert.Equal(1, systems[0].Unit);
         Assert.Equal(SiteState.Error, systems[0].State);
         Assert.Equal("42", systems[0].Car);
+        Assert.Equal(5, systems[0].Mode);
 
         Assert.Equal(2, systems[1].Unit);
         Assert.Equal(SiteState.Ready, systems[1].State);
         Assert.Equal("", systems[1].Car);
+        Assert.Equal(1, systems[1].Mode);
     }
 
     // ⚠️ מצב שלא זז אינו משודר שוב — אחרת כל דגימה (שנייה!) הייתה
@@ -127,18 +129,45 @@ public class TwoSystemDetectorTests
 
     // ===== מצב לא ידוע =====
 
-    // ⚠️ MODE 4 (init) חולף בעליית הבקר. מערכת שאינה ידועה אינה מופיעה
-    // בפירוט — תצוגה שמראה מצב ישן כאילו הוא נוכחי גרועה מתצוגה שמודה
-    // שאינה יודעת.
+    // ============================================================
+    // ⚠️ **מערכת שמצבה אינו ידוע מופיעה, ואומרת שאינה ידועה**
+    // ============================================================
+    // כאן ישבה בדיקה הפוכה, שקיבעה שמערכת לא-ידועה **אינה מופיעה**.
+    // בשטח, באתר פלורנטין, הכרטיס הציג "1 — המתנה" ותו לא: אי אפשר
+    // היה להבחין בין *"לאתר יש מערכת אחת"* לבין *"יש שתיים, ואיננו
+    // יודעים מה עם השנייה"*.
+    //
+    // הנימוק המקורי היה נכון — אסור להציג מצב ישן כאילו הוא נוכחי —
+    // אבל המסקנה הייתה שגויה: **השמטה אינה הודאה, היא העלמה.**
     [Fact]
-    public void AnUnknownSystemIsAbsentFromTheDetailRatherThanStale()
+    public void AnUnknownSystemStillAppearsAndSaysItIsUnknown()
     {
         var d = New();
 
         DetectionResult r = d.Process(1, "", 4, "", 100);
 
         Assert.Equal(SiteState.Ready, r.State!.State);
-        SystemState systems = Assert.Single(r.State.Systems!);
-        Assert.Equal(1, systems.Unit);
+
+        SystemState[] systems = r.State.Systems!;
+        Assert.Equal(2, systems.Length);
+        Assert.Null(systems[1].State);
+
+        // ⚠️ וה-MODE הגולמי נשמר — בלעדיו אי אפשר לדעת אם הבקר ב-init
+        // או שהוקלדה כתובת רגיסטר שגויה, ושתי התקלות נראות זהות.
+        Assert.Equal(4, systems[1].Mode);
+    }
+
+    // ⚠️ וערך לגמרי לא צפוי (רגיסטר שגוי, למשל) מגיע אף הוא — עם
+    // המספר שנקרא בפועל, שהוא הרמז היחיד לכך שהכתובת אינה נכונה.
+    [Fact]
+    public void AnUnexpectedModeCarriesTheNumberThatWasActuallyRead()
+    {
+        var d = New();
+
+        DetectionResult r = d.Process(1, "", 20234, "", 100);
+
+        SystemState[] systems = r.State!.Systems!;
+        Assert.Null(systems[1].State);
+        Assert.Equal(20234, systems[1].Mode);
     }
 }

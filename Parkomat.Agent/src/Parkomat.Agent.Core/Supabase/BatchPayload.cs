@@ -148,7 +148,13 @@ public static class BatchPayload
         systems.Select(u => (object)new
         {
             unit  = u.Unit,
-            state = SiteStateJson.Name(u.State),
+            // ⚠️ **"unknown" ולא השמטה.** מערכת שמצבה לא תורגם נעלמה
+            // מהכרטיס בשטח, ואז אי אפשר היה להבחין בין "אין מערכת
+            // שנייה" לבין "יש ואיננו יודעים". המסך חייב להודות.
+            state = u.State is null ? "unknown" : SiteStateJson.Name(u.State.Value),
+            // ⚠️ ה-MODE הגולמי — ההבדל בין "הבקר ב-init" לבין "הוקלדה
+            // כתובת רגיסטר שגויה". שתיהן נראות זהות בלעדיו.
+            mode  = u.Mode,
             car   = u.Car ?? "",
         }).ToArray();
 

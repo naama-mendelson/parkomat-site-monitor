@@ -59,8 +59,18 @@ public class SystemState
     /// <summary>מספר המערכת: 1 או 2.</summary>
     public int Unit { get; set; }
 
-    /// <summary>מצב המערכת הזו.</summary>
-    public SiteState State { get; set; }
+    /// <summary>
+    /// מצב המערכת הזו. <c>null</c> = ה-MODE אינו מתורגם למצב (4 = init,
+    /// או ערך לא צפוי).
+    /// </summary>
+    public SiteState? State { get; set; }
+
+    // ⚠️ **ה-MODE הגולמי נשמר גם כשהוא לא מתורגם — וזה נולד מהשטח.**
+    // באתר פלורנטין מערכת 2 פשוט **נעלמה** מהכרטיס, כי מצב לא ידוע לא
+    // נכנס לרשימה. אי אפשר היה להבחין בין "אין מערכת שנייה" לבין "יש
+    // והיא במצב שאיננו מכירים" — ובלי המספר הזה גם אי אפשר היה לדעת
+    // אם הרגיסטר שגוי או שהבקר באמת ב-init.
+    public int Mode { get; set; }
 
     /// <summary>מספר הרכב במערכת הזו כרגע. ריק אם אין.</summary>
     public string Car { get; set; } = "";

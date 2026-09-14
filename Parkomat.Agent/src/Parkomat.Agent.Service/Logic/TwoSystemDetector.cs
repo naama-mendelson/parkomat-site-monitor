@@ -65,7 +65,7 @@ public class TwoSystemDetector
             {
                 Timestamp = _now(),
                 State = combined.Value,
-                Systems = Snapshot(s1, card1, s2, card2),
+                Systems = Snapshot(mode1, card1, mode2, card2),
             };
         }
 
@@ -75,20 +75,33 @@ public class TwoSystemDetector
         return result;
     }
 
-    /// <summary>
-    /// תצלום המערכות לתצוגה. ⚠️ מערכת שמצבה אינו ידוע (MODE 4 = init)
-    /// מדווחת עם המצב האחרון שהיה לה? <b>לא</b> — היא מדווחת כפי שהיא,
-    /// כי תצוגה שמראה מצב ישן כאילו הוא נוכחי גרועה מתצוגה שמודה שאינה
-    /// יודעת. לכן מערכת לא ידועה פשוט אינה מופיעה ברשימה.
-    /// </summary>
-    public static SystemState[] Snapshot(
-        SiteState? s1, string card1, SiteState? s2, string card2)
+    // ============================================================
+    // ⚠️ **שתי המערכות תמיד — גם זו שמצבה אינו ידוע**
+    // ============================================================
+    // כאן ישבה החלטה הפוכה, והיא נכשלה בשטח תוך דקות: מערכת שמצבה לא
+    // תורגם פשוט **לא נכנסה לרשימה**. באתר פלורנטין הכרטיס הציג
+    // "1 — המתנה" ותו לא, ואי אפשר היה להבחין בין *"לאתר יש מערכת
+    // אחת"* לבין *"יש שתיים, ואיננו יודעים מה עם השנייה"*.
+    //
+    // הנימוק המקורי היה נכון — תצוגה שמראה מצב ישן כאילו הוא נוכחי
+    // גרועה מתצוגה שמודה שאינה יודעת — אבל המסקנה הייתה שגויה:
+    // **השמטה אינה הודאה, היא העלמה.**
+    //
+    // ⚠️ ולכן ה-MODE הגולמי נוסע גם הוא. בלעדיו אי אפשר לדעת אם הבקר
+    // באמת ב-init (4) או שהוקלדה כתובת רגיסטר שגויה — ושתי התקלות
+    // האלה נראות זהות לחלוטין על המסך.
+    /// <summary>תצלום שתי המערכות לתצוגה. <b>טהור</b>.</summary>
+    public static SystemState[] Snapshot(int mode1, string card1, int mode2, string card2) => new[]
     {
-        var list = new List<SystemState>(2);
-
-        if (s1.HasValue) list.Add(new SystemState { Unit = 1, State = s1.Value, Car = card1 });
-        if (s2.HasValue) list.Add(new SystemState { Unit = 2, State = s2.Value, Car = card2 });
-
-        return list.ToArray();
-    }
+        new SystemState
+        {
+            Unit = 1, Mode = mode1, Car = card1,
+            State = ModeTranslator.FromMode(mode1),
+        },
+        new SystemState
+        {
+            Unit = 2, Mode = mode2, Car = card2,
+            State = ModeTranslator.FromMode(mode2),
+        },
+    };
 }

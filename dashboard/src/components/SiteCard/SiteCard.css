@@ -748,3 +748,13 @@
   content: "▲";
   font-size: 9px;
 }
+
+/* ⚠️ ה-MODE הגולמי — מוצג רק במצב לא מוכר, ובמשקל נמוך: הוא רמז
+   אבחוני, לא נתון שהמפעיל צריך בשגרה. */
+.system-mode {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}

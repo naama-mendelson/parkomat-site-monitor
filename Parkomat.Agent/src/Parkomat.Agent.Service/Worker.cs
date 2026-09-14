@@ -798,8 +798,8 @@ public class Worker : BackgroundService
             if (twoSystems is not null)
             {
                 latestSystems = BatchPayload.Systems(TwoSystemDetector.Snapshot(
-                    ModeTranslator.FromMode(reading.Mode), reading.CardNumber,
-                    ModeTranslator.FromMode(reading.Mode2 ?? 4), reading.CardNumber2 ?? ""));
+                    reading.Mode, reading.CardNumber,
+                    reading.Mode2 ?? 4, reading.CardNumber2 ?? ""));
             }
 
             // שומרים את מצב ה-detector כדי שהפעלה מחדש תמשיך ולא תפתח פעולה

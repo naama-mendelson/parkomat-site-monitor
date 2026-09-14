@@ -37,6 +37,10 @@ const SYSTEM_LABELS = {
   maintenance: "תחזוקה",
   error: "תקלה",
   no_comm: "אין תקשורת",
+  // ⚠️ **מצב שאיננו מכירים נאמר, ולא מועלם.** בגרסה הראשונה מערכת כזו
+  // פשוט לא הופיעה — ואז אי אפשר היה להבחין בין "לאתר יש מערכת אחת"
+  // לבין "יש שתיים ואיננו יודעים מה עם השנייה". נצפה בפלורנטין.
+  unknown: "לא ידוע",
 };
 
 function availabilityColor(pct) {
@@ -357,6 +361,14 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
                   <span className="system-state" style={{ color: c.text }}>
                     {SYSTEM_LABELS[u.state] || "לא ידוע"}
                   </span>
+                  {/* ⚠️ ה-MODE הגולמי מוצג **רק** כשאיננו מבינים אותו —
+                      שם הוא ההבדל היחיד בין "הבקר ב-init" (4) לבין
+                      "הוקלדה כתובת רגיסטר שגויה". בכל מצב מוכר הוא רעש. */}
+                  {u.state === "unknown" && u.mode != null ? (
+                    <span className="system-mode" title="הערך הגולמי שנקרא מהרגיסטר. 4 = הבקר באתחול; ערך אחר עשוי להעיד על כתובת רגיסטר שגויה.">
+                      MODE {u.mode}
+                    </span>
+                  ) : null}
                   {/* ⚠️ הרכב מוצג רק כשיש אחד. "רכב —" על מערכת ממתינה
                       הוא רעש שגורם לעין לדלג על השורה כולה. */}
                   {u.car ? <span className="system-car">רכב {u.car}</span> : null}
