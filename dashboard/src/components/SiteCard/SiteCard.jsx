@@ -330,25 +330,40 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
   const details = (
     <div className="card-details">
+      {/* ============================================================
+           ⚠️ שתי המערכות נקראות במילים, לא בשבבים ממוספרים
+           ============================================================
+           הגרסה הראשונה הציגה שני ריבועים צבעוניים עם "1" ו-"2",
+           והמצב עצמו ישב ב-tooltip. כלומר כדי לענות על "מה קורה עכשיו
+           בכל מערכת" היה צריך לרחף מעל שני אלמנטים בנפרד — וזו בדיוק
+           השאלה שהכרטיס קיים כדי לענות עליה במבט.
+
+           ⚠️ **וזה חשוב כאן יותר מבכל אתר אחר:** מצב האתר הוא "הטוב
+           מבין השתיים", ולכן הכרטיס נשאר ירוק גם כשמערכת שלמה מתה.
+           השורות האלה הן הדבר היחיד שאומר את זה. */}
       {systems && (
-        <div className="card-detail card-detail--systems">
+        <div className="card-systems">
           <span className="detail-label">מערכות</span>
-          <span className="detail-value">
+          <div className="systems-list">
             {systems.map((u) => {
               const c = STATUS_COLORS[u.state] || STATUS_COLORS.no_comm;
               return (
                 <span
                   key={u.unit}
-                  className="system-chip"
-                  style={{ background: c.bg, color: c.dot, borderColor: c.dot }}
-                  title={`מערכת ${u.unit}: ${SYSTEM_LABELS[u.state] || "לא ידוע"}` +
-                         (u.car ? ` · רכב ${u.car}` : "")}
+                  className="system-row"
+                  style={{ background: c.bg, borderColor: c.dot }}
                 >
-                  {u.unit}
+                  <span className="system-num" style={{ color: c.dot }}>{u.unit}</span>
+                  <span className="system-state" style={{ color: c.text }}>
+                    {SYSTEM_LABELS[u.state] || "לא ידוע"}
+                  </span>
+                  {/* ⚠️ הרכב מוצג רק כשיש אחד. "רכב —" על מערכת ממתינה
+                      הוא רעש שגורם לעין לדלג על השורה כולה. */}
+                  {u.car ? <span className="system-car">רכב {u.car}</span> : null}
                 </span>
               );
             })}
-          </span>
+          </div>
         </div>
       )}
       <div className="card-detail">

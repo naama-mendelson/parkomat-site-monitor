@@ -677,24 +677,52 @@
    ⚠️ מצב האתר הוא "הטוב מבין השתיים", ולכן מערכת שמתה אינה מורידה את
    הכרטיס מירוק ואינה מעלה אותו במיון. השבבים והתג הם הדבר היחיד על
    המסך שמעיד על כך — ולכן הם צריכים להיקרא במבט, לא בבהייה. */
-.card-detail--systems .detail-value {
-  display: inline-flex;
+.card-systems {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
-.system-chip {
+.systems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* ⚠️ שורה ולא שבב: המצב נקרא במילים, והצבע רק מחזק אותו. צבע לבדו
+   מחייב לזכור מה כל גוון אומר — ובדיוק במצב הזה, שבו הכרטיס ירוק
+   ומערכת אחת מתה, אי אפשר לסמוך על זיכרון. */
+.system-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 7px;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.system-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border: 1px solid;
-  border-radius: 5px;
-  font-size: 11px;
+  min-width: 15px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+}
+
+/* המצב הוא מה שנקרא ראשון — ולכן הוא נושא את המשקל. */
+.system-state {
+  font-weight: 600;
+}
+
+/* ⚠️ הרכב דהוי בכוונה: הוא פרט, והמצב הוא הכותרת. הפוך היה גורם
+   למספר למשוך את העין לפני המילה שאומרת מה קורה. */
+.system-car {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ⚠️ ענבר ולא אדום: אדום הוא הצבע של "האתר מושבת", וזה בדיוק מה
