@@ -235,7 +235,27 @@ LANGUAGE sql
 STABLE
 AS $fn$
 WITH ids AS (
-  SELECT s.id, app.service_agreement(s.id) AS kind
+  -- ============================================================
+  -- ⚠️ **הזמינות נמדדת לפי המסלול, לא לפי השירות** — החלטת מוצר
+  -- ============================================================
+  --     מסלול  = מה ההסכם שנחתם          ("סוג הסכם שירות במקור")
+  --     שירות  = איך מתייחסים אליו בפועל  ("להתייחס כ")
+  --
+  -- המדד שואל *"האם עמדנו במה שנמכר"*, ולכן המכנה הוא ההסכם החתום.
+  -- הטיפול בפועל יכול להיות נדיב יותר — ב-8 מתוך 28 האתרים הוא אכן
+  -- כזה — אבל נדיבות תפעולית אינה מרחיבה את ההתחייבות.
+  --
+  -- ⚠️ **וזה הפוך ממה שהיה כאן קודם.** החישוב היה לפי "להתייחס כ",
+  -- ולכן זלטופולסקי — שנחתם בסיסי ומטופל כ-VIP — נמדד על 103 שעות
+  -- בשבוע במקום 45. שינוי הכיוון מזיז את המספר של שמונה אתרים.
+  --
+  -- ⚠️ **ונפילה-לאחור לשירות כשאין מסלול.** שורה בלי "במקור" היא
+  -- שורה שאיש לא מילא, ו-24/7 שם היה מוחק מדידה של אתר שיש לו הסכם
+  -- — כלומר הרעה שקטה על סמך תא ריק.
+  SELECT s.id,
+         app.service_plan(s.id)                                         AS plan,
+         app.service_agreement(s.id)                                    AS served,
+         COALESCE(app.service_plan(s.id), app.service_agreement(s.id))  AS kind
     FROM sites s
    WHERE p_site_ids IS NULL OR s.id = ANY(p_site_ids)
 ),
@@ -280,8 +300,11 @@ svc AS (
     FROM win GROUP BY site_id
 )
 SELECT ids.id,
-       ids.kind,
-       app.service_plan(ids.id),
+       -- ⚠️ `agreement` נשאר **השירות** — זה מה שהכרטיס מציג ליד קוד
+       -- האתר, וזו השאלה "איך מתנהגים עם האתר". החישוב למטה נעשה לפי
+       -- `kind`, שהוא המסלול.
+       ids.served,
+       ids.plan,
        svc.hours::double precision,
        COALESCE(agg.ready_h, 0)::double precision,
        COALESCE(agg.operating_h, 0)::double precision,

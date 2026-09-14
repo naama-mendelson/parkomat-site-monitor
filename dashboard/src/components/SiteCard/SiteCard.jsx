@@ -164,6 +164,14 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const svc = nameOf(site.serviceAgreement);
   const plan = nameOf(site.servicePlan);
 
+  // ⚠️ **התג ליד קוד האתר אומר איך מתנהגים איתו** — זה מה שטכנאי
+  // צריך לדעת במבט. הוא מגיע מ"להתייחס כ" דרך `site.tier`.
+  //
+  // ⚠️ **והזמינות נמדדת לפי המסלול**, לא לפי התג. שני נתונים שונים
+  // בכוונה: התג הוא הוראת טיפול, המדד הוא "האם עמדנו במה שנמכר".
+  // ה-tooltip של הזמינות הוא המקום היחיד שבו ההבדל נאמר, ולכן הוא
+  // מנסח אותו במפורש ולא ברמז.
+
   // ⚠️ **סוג ההסכם מוצג על הכרטיס עצמו ולא רק בפאנל.** הוא מה שקובע
   // מתי הזמינות בכלל נמדדת, ולכן שני כרטיסים עם אותו אחוז אינם אומרים
   // אותו דבר אם אחד בסיסי והשני VIP. בלי זה על המסך, ההשוואה ביניהם
@@ -414,45 +422,6 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
       )}
-      {/* ⚠️ המסלול קודם והשירות אחריו — מה שנחתם, ואז מה שקורה בפועל.
-          הסדר ההפוך היה קורא כאילו השירות הוא הנתון והמסלול הוא הערה. */}
-      {plan && (
-        <div className="card-detail">
-          <span className="detail-label">מסלול</span>
-          <span className="detail-value">
-            <span className={`card-agreement card-agreement--${AGREEMENT_NAMES[plan.k] ? plan.k : "unknown"}`}
-                  title={svc && plan.k === svc.k
-                    ? `ההסכם שנחתם, וכך גם מטופל בפועל. הזמינות נמדדת רק בשעות השירות שלו.`
-                    : "ההסכם שנחתם. הזמינות מחושבת לפי השירות, לא לפיו."}>
-              {plan.label}
-            </span>
-          </span>
-        </div>
-      )}
-
-      {/* ⚠️ **שורת השירות מוצגת רק כשהיא אומרת משהו חדש.** מסלול
-          ושירות זהים הם שתי שורות שאומרות בדיוק אותו דבר — רעש שגורם
-          לעין לדלג על שתיהן, ובכרטיס צפוף זה מייקר את כל השאר.
-          כשהם נבדלים, וזה קורה ב-8 מתוך 28 האתרים, ההבדל הוא בדיוק
-          המידע. */}
-      {svc && (!plan || plan.k !== svc.k) && (
-        <div className="card-detail">
-          <span className="detail-label">שירות</span>
-          <span className="detail-value">
-            <span className={`card-agreement card-agreement--${AGREEMENT_NAMES[svc.k] ? svc.k : "unknown"}`}
-                  title={`כך מטופל האתר בפועל, והזמינות נמדדת רק בשעות השירות של ${svc.label}` +
-                         (plan && plan.k !== svc.k ? ` — למרות שנחתם ${plan.label}` : "")}>
-              {svc.label}
-            </span>
-            {/* ⚠️ הפער מסומן ולא מוסתר: אתר שנמדד לפי הסכם אחר מזה
-                שבחוזה הוא בדיוק מה שצריך לקפוץ לעין. */}
-            {plan && plan.k !== svc.k && (
-              <span className="card-agreement-gap" title={`נחתם ${plan.label}, מטופל כ-${svc.label}`}>≠</span>
-            )}
-          </span>
-        </div>
-      )}
-
       <div className="card-detail">
         <span className="detail-label">פעולות</span>
         <span className="detail-value">{(site.operations ?? 0).toLocaleString()}</span>
@@ -470,10 +439,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           title={availability == null
             ? "אין שעות נמדדות בטווח — לא ניתן לחשב זמינות"
             : agreementLabel
-              ? `זמינות ${availability}% בתוך שעות השירות של הסכם ` +
-                `${String(site.serviceAgreement).toUpperCase()} בלבד · ` +
-                `${Math.round(site.serviceHours || 0)} שעות שירות בטווח · ` +
-                `זמן מחוץ לשעות השירות אינו נספר לא לטובה ולא לרעה`
+              ? `זמינות ${availability}% בתוך שעות המסלול ` +
+                `${plan ? plan.label : (svc ? svc.label : "")} בלבד · ` +
+                `${Math.round(site.serviceHours || 0)} שעות בטווח · ` +
+                `זמן מחוץ לשעות המסלול אינו נספר לא לטובה ולא לרעה` +
+                (plan && svc && plan.k !== svc.k
+                  ? ` · האתר מטופל כ-${svc.label}, אך נמדד לפי המסלול שנחתם`
+                  : "")
               : `זמינות ${availability}% בשבוע האחרון · הסדר ברשת נקבע לפי אחוז הכשל`}
         >
           <span className={`card-trend card-trend--${trendMark.key}`} title={trendMark.title}>
