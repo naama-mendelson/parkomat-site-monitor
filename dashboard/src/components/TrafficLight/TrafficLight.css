@@ -637,3 +637,17 @@
 
 /* ⚠️ תא סטטוס — מרווח זהה לשאר, אחרת הצבע נראה בגובה אחר */
 .tl-status, .tl-status--ro { padding: 10px 14px; }
+
+/* ⚠️ אזהרה בתוך העורך — ענבר ולא אדום: זה מצב שצריך לתקן, לא שגיאה
+   שקרתה. אדום כאן היה קורא כאילו משהו נשבר. */
+.tl-hint--warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.10);
+  color: #92400e;
+}

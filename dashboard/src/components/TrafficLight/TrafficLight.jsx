@@ -229,17 +229,64 @@ function Cell({ column, value, onSave, readOnly }) {
 // ============================================================
 // עורך עמודה — שם, סוג, ואפשרויות הסטטוס
 // ============================================================
-function ColumnEditor({ column, onSave, onDelete, onClose }) {
+function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
   const [label, setLabel] = useState(column.label);
   const [kind, setKind] = useState(column.kind);
   const [options, setOptions] = useState(
     Array.isArray(column.options) ? column.options : []);
+  const [seeded, setSeeded] = useState(0);
 
   const addOption = () => setOptions((o) => [...o, {
     value: `o${Date.now()}`,
     label: "ערך חדש",
     color: STATUS_COLORS[o.length % STATUS_COLORS.length],
   }]);
+
+  // ============================================================
+  // ⚠️ הערכים שכבר כתובים בעמודה — ולמה זה לא נוחות
+  // ============================================================
+  // התא שומר את ה-**value** של האפשרות, לא את התווית. לכן מעבר מטקסט
+  // לרשימה בלי לזרוע אותה מייצר עמודה שבה **כל התאים נראים ריקים**:
+  // הערך שבתא אינו ברשימה, והבורר מציג "—". הנתון לא נמחק, אבל הוא
+  // נעלם מהמסך — וזה בדיוק סוג הכשל שמישהו יפרש כ"הנתונים אבדו".
+  //
+  // ⚠️ ולכן `value` הוא **הטקסט עצמו** ולא מזהה מיוצר. זה מה שגורם
+  // לתאים הקיימים להתאים מיד, בלי לגעת באף תא.
+  function cellValues() {
+    const seen = new Map();
+    for (const r of rows || []) {
+      const v = r.cells?.[column.key];
+      const t = typeof v === "string" ? v.trim() : "";
+      if (t && !seen.has(t)) seen.set(t, true);
+    }
+    return [...seen.keys()];
+  }
+
+  function seedFromCells(base = options) {
+    const have = new Set(base.map((o) => String(o.value)));
+    const add = cellValues()
+      .filter((t) => !have.has(t))
+      .map((t, i) => ({
+        value: t,
+        label: t,
+        color: STATUS_COLORS[(base.length + i) % STATUS_COLORS.length],
+      }));
+    if (add.length) setOptions([...base, ...add]);
+    setSeeded(add.length);
+    return add.length;
+  }
+
+  // ⚠️ זריעה אוטומטית ברגע המעבר לרשימה, ולא כפתור שצריך לגלות.
+  // מי שמחליף סוג ורואה עמודה ריקה יחזיר את הסוג ולא ילחץ על כלום.
+  function changeKind(next) {
+    setKind(next);
+    if (next === "status") seedFromCells();
+    else setSeeded(0);
+  }
+
+  const missing = kind === "status"
+    ? cellValues().filter((t) => !options.some((o) => String(o.value) === t))
+    : [];
 
   return (
     <div className="tl-pop" onClick={(e) => e.stopPropagation()}>
@@ -250,7 +297,7 @@ function ColumnEditor({ column, onSave, onDelete, onClose }) {
 
       <label className="tl-pop-row">
         <span>סוג</span>
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select value={kind} onChange={(e) => changeKind(e.target.value)}>
           {KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
         </select>
       </label>
@@ -282,6 +329,28 @@ function ColumnEditor({ column, onSave, onDelete, onClose }) {
             </div>
           ))}
           {options.length === 0 && <p className="tl-hint">אין ערכים — הוסיפי לפחות אחד.</p>}
+
+          {/* ⚠️ נאמר במפורש מה קרה. עמודה שקיבלה פתאום שמונה ערכים בלי
+              הסבר נראית כמו תקלה, ולא כמו עזרה. */}
+          {seeded > 0 && (
+            <p className="tl-hint">
+              נוצרו {seeded} ערכים ממה שכבר כתוב בעמודה — אפשר לשנות שם וצבע,
+              ולהוסיף עוד.
+            </p>
+          )}
+
+          {/* ⚠️ ערכים שנכתבו **אחרי** שהעמודה כבר הפכה לרשימה: התאים
+              שלהם יוצגו ריקים עד שיתווספו. הכפתור הזה הוא ההבדל בין
+              "הנתון נעלם" לבין "הנתון כאן, לחצי". */}
+          {missing.length > 0 && (
+            <div className="tl-hint tl-hint--warn">
+              {missing.length} ערכים קיימים בתאים ואינם ברשימה — התאים שלהם
+              יוצגו ריקים.
+              <button type="button" className="tl-mini" onClick={() => seedFromCells()}>
+                הוסף אותם
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -514,6 +583,7 @@ export default function TrafficLight({ onClose }) {
                       {canEdit && editCol === c.id && (
                         <ColumnEditor
                           column={c}
+                          rows={rows}
                           onClose={() => setEditCol(null)}
                           onSave={(patch) => { setEditCol(null); run(() => updateColumn(c.id, patch)); }}
                           onDelete={() => { setEditCol(null); run(() => deleteColumn(c.id)); }}

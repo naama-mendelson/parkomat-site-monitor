@@ -53,7 +53,16 @@ function FieldEditor({ column, value, disabled, onSave }) {
   useEffect(() => { setDraft(value ?? ""); }, [value]);
 
   if (column.kind === "status") {
-    const opts = Array.isArray(column.options) ? column.options : [];
+    const base = Array.isArray(column.options) ? column.options : [];
+
+    // ⚠️ **ערך שאינו ברשימה מוצג ולא נבלע.** התא שומר את ה-`value` של
+    // האפשרות; ערך שנכתב לפני שהעמודה הפכה לרשימה — או אחרי, בלי
+    // שהאפשרות נוספה — היה מציג בורר **ריק**, והשמירה הראשונה הייתה
+    // מוחקת אותו בשקט. כאן הוא מופיע כאפשרות נוספת, מסומן.
+    const cur = String(draft ?? "").trim();
+    const opts = cur && !base.some((o) => String(o.value) === cur)
+      ? [...base, { value: cur, label: `${cur} (לא ברשימה)` }]
+      : base;
     return (
       <select
         className="sa-select sa-select--cell"
