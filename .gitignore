@@ -95,3 +95,4 @@ master/public/
 # קובץ טקסט גלוי עם סיסמה לכל אתר — לא נכנס לגיט לעולם.
 agent-passwords*.txt
 master/agent-passwords*.txt
+master/traffic-light-backup-*.json
