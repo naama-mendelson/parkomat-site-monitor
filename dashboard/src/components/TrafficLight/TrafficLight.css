@@ -269,7 +269,10 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  padding: 10px 14px;
+  /* ⚠️ 16px ולא 14: יחד עם רצפת הרוחב (MIN_COL_WIDTH) יש עכשיו מקום
+     למרווח אמיתי. בלי הרצפה, הגדלה כאן הייתה **מחמירה** — פחות מקום
+     לטקסט בעמודה שכבר צרה מדי. */
+  padding: 10px 16px;
   /* חיתוך ולא מתיחה — הערך המלא ב-title ובמצב עריכה */
   text-overflow: ellipsis;
 }
@@ -404,7 +407,7 @@
    תקלה, וטקסט נראה כמו מידע. */
 .tl-ro {
   display: block;
-  padding: 10px 14px;
+  padding: 10px 16px;
   min-height: 1.2em;
   overflow: hidden;
   text-overflow: ellipsis;
