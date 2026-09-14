@@ -20,6 +20,7 @@
 // בידיו. הקוד הוא צעד אישור לפני עריכה, בדיוק כמו בניהול האתרים.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
+import CodePrompt from "./CodePrompt";
 import {
   fetchBoard, addColumn, updateColumn, deleteColumn,
   addRow, deleteRow, setCell, pasteRows,
@@ -313,66 +314,6 @@ function ColumnEditor({ column, onSave, onDelete, onClose }) {
 // תשובה שאי אפשר לעשות איתה כלום. כאן אפשר פשוט להסתכל.
 //
 // ⚠️ ומתחיל **מוסתר**, לא גלוי: הלוח נפתח לעיתים מול מסך משותף.
-function CodePrompt({ onUnlock, onClose, checking, error }) {
-  const [code, setCode] = useState("");
-  const [shown, setShown] = useState(false);
-
-  return (
-    <div className="tl-code-back" onClick={onClose}>
-      <form
-        className="tl-code"
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={(e) => { e.preventDefault(); onUnlock(code); }}
-      >
-        <h3>מצב עריכה</h3>
-        <p>הזיני את קוד המנהל כדי לערוך את הלוח.</p>
-
-        <div className="tl-code-field">
-          <input
-            type={shown ? "text" : "password"}
-            placeholder="קוד מנהל"
-            autoComplete="current-password"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            autoFocus
-          />
-          <button
-            type="button"
-            className="tl-eye"
-            onClick={() => setShown((v) => !v)}
-            aria-label={shown ? "הסתר את הקוד" : "הצג את הקוד"}
-            title={shown ? "הסתר" : "הצג"}
-          >
-            {shown ? (
-              // עין חצויה — מוצג כרגע, לחיצה תסתיר
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"
-                      fill="none" stroke="currentColor" strokeWidth="1.7" />
-                <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.7" />
-                <path d="M4 20L20 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"
-                      fill="none" stroke="currentColor" strokeWidth="1.7" />
-                <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.7" />
-              </svg>
-            )}
-          </button>
-        </div>
-
-        {error && <p className="tl-err">{error}</p>}
-
-        <div className="tl-lock-actions">
-          <button type="button" className="tl-btn-ghost" onClick={onClose}>ביטול</button>
-          <button type="submit" className="tl-btn" disabled={checking || !code}>
-            {checking ? "בודק…" : "פתח עריכה"}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 export default function TrafficLight({ onClose }) {
   const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();

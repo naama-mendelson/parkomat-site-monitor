@@ -107,3 +107,29 @@
   color: var(--text-muted, #6b7280);
   border-color: var(--border, #d1d5db);
 }
+
+.sa-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ⚠️ שדה עריכה בתוך התיבה — מרווח אמיתי ולא "בערך". אותה תקלה
+   שנראתה ברמזור, טקסט שנוגע בגבול, נולדת כאן בדיוק אותו דבר. */
+.sa-cell-input,
+.sa-select--cell {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--surface, #fff);
+  color: inherit;
+  unicode-bidi: plaintext;
+}
+
+.sa-cell-input:focus,
+.sa-select--cell:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -1px; }

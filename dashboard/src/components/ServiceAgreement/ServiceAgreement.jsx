@@ -13,6 +13,8 @@
 // שונים שהתאמה מקורבת הייתה מזווגת. זיווג שגוי מדווח זמינות של אתר
 // אחד על חשבון אחר.
 import { useEffect, useMemo, useState } from "react";
+import { useAdmin } from "../../hooks/useAdmin";
+import CodePrompt from "../TrafficLight/CodePrompt";
 import { fetchBoard, setCell, addRow } from "../../services/trafficLightDirect";
 import "./ServiceAgreement.css";
 
@@ -30,12 +32,72 @@ const HOURS = {
 
 const KIND_NAMES = { basic: "בסיסי", ext: "מורחב", vip: "VIP" };
 
+// ⚠️ **עמודת סטטוס נערכת ברשימה סגורה ולא בהקלדה.** "VIP " או "Vip"
+// אינם מוכרים ל-`app.service_agreement`, והאתר היה חוזר בשקט לחישוב
+// 24/7 — בדיוק הכשל שהמסך הזה קיים כדי למנוע. אותו נימוק שהוציא את
+// בורר התעבורה בסוכן מתיבת טקסט לרשימה.
+function FieldEditor({ column, value, disabled, onSave }) {
+  const [draft, setDraft] = useState(value ?? "");
+
+  useEffect(() => { setDraft(value ?? ""); }, [value]);
+
+  if (column.kind === "status") {
+    const opts = Array.isArray(column.options) ? column.options : [];
+    return (
+      <select
+        className="sa-select sa-select--cell"
+        value={String(draft ?? "")}
+        disabled={disabled}
+        onChange={(e) => { setDraft(e.target.value); onSave(e.target.value); }}
+      >
+        <option value="">—</option>
+        {opts.map((o) => (
+          <option key={o.value} value={o.value}>{o.label || o.value}</option>
+        ))}
+      </select>
+    );
+  }
+
+  if (column.kind === "checkbox") {
+    return (
+      <input
+        type="checkbox"
+        checked={draft === true}
+        disabled={disabled}
+        onChange={(e) => { setDraft(e.target.checked); onSave(e.target.checked); }}
+      />
+    );
+  }
+
+  // ⚠️ שמירה ב-blur ולא בכל הקשה: שמירה לכל תו היא עשרות קריאות רשת
+  // על מילוי שדה אחד, ובחיבור איטי היא גם מייצרת סדר כתיבה שאינו
+  // בהכרח סדר ההקלדה.
+  return (
+    <input
+      className="sa-cell-input"
+      type="text"
+      value={String(draft ?? "")}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (String(draft ?? "") !== String(value ?? "")) onSave(draft); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+    />
+  );
+}
+
 export default function ServiceAgreement({ site }) {
   const [board, setBoard] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [choice, setChoice] = useState("");
+
+  // ⚠️ **אותו שער בדיוק כמו בלוח עצמו**, ולא שני מנגנונים שנראים זהים.
+  // ‏`useAdmin` מאמת מול התפקיד, ו-`app.require_manager()` במסד הוא מה
+  // שבאמת דוחה כתיבה — הקוד כאן הוא נוחות.
+  const { unlocked, unlock, checking, error: unlockError } = useAdmin();
+  const [asking, setAsking] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +126,21 @@ export default function ServiceAgreement({ site }) {
   // לו שורה בלוח, כלומר בדיוק הצעד שצריך לזכור ושבגללו 23 אתרים לא
   // חוברו.
   const NEW_ROW = "__new__";
+
+  // ⚠️ **שמירה לפי תא ולא לפי שורה**, כמו בלוח עצמו: שליחת השורה
+  // כולה הופכת כל שמירה לדריסה של מה שעורך אחר כתב בתא אחר.
+  async function saveCell(rowId, key, value) {
+    setBusy(true);
+    setError(null);
+    try {
+      await setCell(rowId, key, value);
+      setBoard(await fetchBoard());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function link() {
     if (!choice || !codeKey) return;
@@ -135,24 +212,68 @@ export default function ServiceAgreement({ site }) {
           </div>
         )}
 
+        {/* ⚠️ **בעריכה כל העמודות מוצגות, גם הריקות.** בתצוגה שדה ריק
+            הוא רעש; בעריכה הוא בדיוק מה שבאו למלא, והסתרתו הייתה
+            הופכת את המסך הזה לחצי-עורך שאי אפשר לסמוך עליו. */}
         <dl className="sa-fields">
           {columns
             .filter((c) => c.label !== CODE_LABEL && c.key !== nameKey)
             .map((c) => {
               const v = row.cells?.[c.key];
-              if (!String(v ?? "").trim()) return null;
+              if (!editing && !String(v ?? "").trim()) return null;
               return (
                 <div className="sa-field" key={c.key}>
                   <dt>{c.label}</dt>
-                  <dd>{String(v)}</dd>
+                  <dd>
+                    {editing
+                      ? <FieldEditor
+                          column={c}
+                          value={v}
+                          disabled={busy}
+                          onSave={(next) => saveCell(row.id, c.key, next)}
+                        />
+                      : String(v)}
+                  </dd>
                 </div>
               );
             })}
         </dl>
 
-        <div className="sa-linked">
-          מחובר לשורה: <b>{String(row.cells?.[nameKey] ?? "—")}</b>
+        <div className="sa-foot">
+          <span className="sa-linked">
+            מחובר לשורה: <b>{String(row.cells?.[nameKey] ?? "—")}</b>
+          </span>
+
+          {editing ? (
+            <button type="button" className="sa-btn sa-btn--ghost"
+                    onClick={() => setEditing(false)} disabled={busy}>
+              סיום עריכה
+            </button>
+          ) : (
+            <button type="button" className="sa-btn sa-btn--ghost"
+                    onClick={() => (unlocked ? setEditing(true) : setAsking(true))}>
+              ערוך שורה
+            </button>
+          )}
         </div>
+
+        {error && <div className="sa-err">{error}</div>}
+
+        {asking && (
+          <CodePrompt
+            checking={checking}
+            error={unlockError}
+            onClose={() => setAsking(false)}
+            onUnlock={async (code) => {
+              const ok = await unlock(code);
+              // ⚠️ `!== false` ולא `if (ok)` — זרוע אחת של `useAdmin`
+              // מחזירה `undefined` בהצלחה, ואז `if (ok)` היה משאיר את
+              // התיבה פתוחה אחרי קוד **נכון**. אותו ניסוח בדיוק כמו
+              // בלוח עצמו, ובכוונה.
+              if (ok !== false) { setAsking(false); setEditing(true); }
+            }}
+          />
+        )}
       </div>
     );
   }
