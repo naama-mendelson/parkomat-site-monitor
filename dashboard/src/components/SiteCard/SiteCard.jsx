@@ -144,6 +144,20 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // בדיוק מה שהציג תמיד. null כאן פירושו "לא חובר", לא "אין נתון".
   const agreementLabel = site.serviceAgreement ? "שעות שירות" : null;
 
+  // ⚠️ **סוג ההסכם מוצג על הכרטיס עצמו ולא רק בפאנל.** הוא מה שקובע
+  // מתי הזמינות בכלל נמדדת, ולכן שני כרטיסים עם אותו אחוז אינם אומרים
+  // אותו דבר אם אחד בסיסי והשני VIP. בלי זה על המסך, ההשוואה ביניהם
+  // מטעה — והכרטיס הוא בדיוק המקום שבו משווים.
+  const AGREEMENT_NAMES = { basic: "בסיסי", ext: "מורחב", vip: "VIP" };
+  const agreementKind = site.serviceAgreement
+    ? String(site.serviceAgreement).trim().toLowerCase()
+    : null;
+  // ⚠️ ערך שאיננו מכירים מוצג כפי שהוא ולא נבלע: הוא הסיבה שהאתר
+  // עדיין מחושב 24/7, וההודאה בכך היא מה שיגרום למישהו לתקן.
+  const agreementName = agreementKind
+    ? (AGREEMENT_NAMES[agreementKind] || agreementKind)
+    : null;
+
   // ============================================================
   // ⚠️ שתי מערכות בבקר אחד — ולמה השבבים אינם קישוט
   // ============================================================
@@ -380,6 +394,19 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               );
             })}
           </div>
+        </div>
+      )}
+      {agreementName && (
+        <div className="card-detail">
+          <span className="detail-label">סוג שירות</span>
+          <span className="detail-value">
+            <span
+              className={`card-agreement card-agreement--${AGREEMENT_NAMES[agreementKind] ? agreementKind : "unknown"}`}
+              title={`הסכם ${agreementName} — הזמינות נמדדת רק בתוך שעות השירות שלו`}
+            >
+              {agreementName}
+            </span>
+          </span>
         </div>
       )}
       <div className="card-detail">
