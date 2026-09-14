@@ -44,11 +44,15 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
 
   // ⚠️ קריאה חמישית ולא סיבוב לכל אתר: site_stats מקבלת null ומחזירה שורה
   // לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת.
-  const [sitesRes, statsRes, uptimeRes, globalsRes, prevRes] = await Promise.all([
+  const [sitesRes, statsRes, uptimeRes, globalsRes, svcRes, prevRes] = await Promise.all([
     supabase.from("sites").select("*"),
     supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_globals", { p_site_ids: null }),
+    // ⚠️ זמינות בתוך שעות השירות — מחזירה שורה **רק** לאתר שחובר
+    // ברמזור (עמודת "קוד אתר"). אתר שלא חובר ממשיך על 24/7 כפי שהיה,
+    // כלומר השינוי חל רק על מה שמישהו הגדיר במפורש.
+    supabase.rpc("site_uptime_service", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     prevFromIso
       ? supabase.rpc("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
       : Promise.resolve({ data: [], error: null }),
@@ -68,12 +72,18 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   const statsById   = new Map((statsRes.data   || []).map((r) => [r.site_id, r]));
   const uptimeById  = new Map((uptimeRes.data  || []).map((r) => [r.site_id, r]));
   const globalsById = new Map((globalsRes.data || []).map((r) => [r.site_id, r]));
+
+  // ⚠️ **כשל בקריאה הזו אינו מפיל את הרשימה.** היא תוספת על מה שכבר
+  // עובד; אתר בלי ערך פשוט ממשיך להציג 24/7. `svcRes.error` לא נכלל
+  // ב-`failed` למעלה מאותה סיבה בדיוק.
+  const svcById = new Map(((svcRes && svcRes.data) || []).map((r) => [r.site_id, r]));
   const prevById    = new Map((prevRes.data     || []).map((r) => [r.site_id, r]));
 
   return (sitesRes.data || []).map((site) => {
     const st = statsById.get(site.id);
     const up = uptimeById.get(site.id);
     const g  = globalsById.get(site.id) || {};
+    const svc = svcById.get(site.id) || null;
 
     // תקלה שקורה בתוך תחזוקה מתוכננת אינה "תקלה" — היא כבר מוחרגת מאחוז
     // הכשל, וכאן היא לא הופכת את הכרטיס למושבת. אותו כלל בדיוק כמו בשרת;
@@ -102,7 +112,25 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       repairSeries:        st?.repair_minutes         ?? null,
       // measured_hours = 0 פירושו "אין נתון", ואז null כדי שהמסך יציג "—"
       // ולא "0%". "0%" נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
-      uptime: up && up.measured_hours > 0 ? up.availability_percent : null,
+      // ============================================================
+      // ⚠️ זמינות בתוך שעות השירות, כשהאתר חובר לרמזור
+      // ============================================================
+      // תקלה שקרתה בשבת באתר עם הסכם בסיסי אינה זמן שבו השירות נכשל —
+      // אין שירות בשבת. עד כה היא נספרה ככשל מלא, וזה עיוות את המספר
+      // לרעה דווקא באתרים שקנו פחות שירות.
+      //
+      // ⚠️ **החלפה ולא הוספה, במכוון.** שני מספרי זמינות לאותו אתר על
+      // אותו מסך הם בדיוק הדרך שבה אנשים מפסיקים להאמין לשניהם.
+      // ‏`serviceAgreement` הוא מה שאומר לכרטיס איזה מהם הוא מציג.
+      //
+      // ⚠️ ואתר בלי הסכם ממשיך על 24/7 בדיוק כפי שהיה — השינוי חל רק
+      // על מה שמישהו חיבר במפורש.
+      uptime: svc && svc.measured_hours > 0
+        ? svc.availability_percent
+        : (up && up.measured_hours > 0 ? up.availability_percent : null),
+
+      serviceAgreement: svc ? svc.agreement : null,
+      serviceHours: svc ? svc.service_hours : null,
       // אותו כלל בדיוק כמו בשרת — siteTrend במודול המשותף.
       trend: siteTrend(
         { operations: st?.operations ?? 0, failureRate: st?.failure_rate ?? 0 },

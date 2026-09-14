@@ -140,6 +140,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // נקרא כ"מושבת לגמרי" כשהמשמעות היא "איננו יודעים".
   const availability = site.uptime ?? null;
 
+  // ⚠️ אתר שחובר לרמזור מוצג לפי שעות ההסכם שלו; אתר שלא חובר מציג
+  // בדיוק מה שהציג תמיד. null כאן פירושו "לא חובר", לא "אין נתון".
+  const agreementLabel = site.serviceAgreement ? "שעות שירות" : null;
+
   // ============================================================
   // ⚠️ שתי מערכות בבקר אחד — ולמה השבבים אינם קישוט
   // ============================================================
@@ -383,13 +387,23 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         <span className="detail-value">{(site.operations ?? 0).toLocaleString()}</span>
       </div>
       <div className="card-detail">
-        <span className="detail-label">זמינות (שבועית)</span>
+        {/* ⚠️ **התווית משתנה עם המשמעות.** אתר שחובר לרמזור מוצג לפי
+            שעות ההסכם שלו, ואותה תווית על שני חישובים שונים היא בדיוק
+            הדרך להטעות מישהו שמשווה בין שני כרטיסים. */}
+        <span className="detail-label">
+          {agreementLabel ? `זמינות (${agreementLabel})` : "זמינות (שבועית)"}
+        </span>
         <span
           className="detail-value"
           style={{ color: availabilityColor(availability) }}
           title={availability == null
             ? "אין שעות נמדדות בטווח — לא ניתן לחשב זמינות"
-            : `זמינות ${availability}% בשבוע האחרון · הסדר ברשת נקבע לפי אחוז הכשל`}
+            : agreementLabel
+              ? `זמינות ${availability}% בתוך שעות השירות של הסכם ` +
+                `${String(site.serviceAgreement).toUpperCase()} בלבד · ` +
+                `${Math.round(site.serviceHours || 0)} שעות שירות בטווח · ` +
+                `זמן מחוץ לשעות השירות אינו נספר לא לטובה ולא לרעה`
+              : `זמינות ${availability}% בשבוע האחרון · הסדר ברשת נקבע לפי אחוז הכשל`}
         >
           <span className={`card-trend card-trend--${trendMark.key}`} title={trendMark.title}>
             {trendMark.glyph}
