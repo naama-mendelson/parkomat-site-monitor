@@ -221,7 +221,14 @@
 
    ⚠️ ורוחב קבוע ולא `auto`: העמודה השנייה נדבקת ל-46px, וערך שאינו
    קבוע היה מזיז אותה בכל טעינה. */
-.tl-th-num, .tl-td-num {
+/* ⚠️ **`.tl-table th.tl-th-num` ולא `.tl-th-num` — וזה לא קוסמטיקה.**
+   ‏`.tl-table td` הוא (0,1,1) ו-`.tl-td-num` הוא (0,1,0), כלומר
+   ‏`text-align: start` שלמעלה **גבר** על `center` שכאן. הכלל שאמור
+   למרכז את מספרי השורות מעולם לא חל: הם נצמדו לתחילת התא, והתא יושב
+   בקצה המסך — אז הם נגעו בגבול החלון.
+   נצפה על המסך, לא בקריאת הקוד. */
+.tl-table th.tl-th-num,
+.tl-table td.tl-td-num {
   position: sticky;
   inset-inline-start: 0;
   left: 0;
@@ -256,7 +263,9 @@
   background: var(--surface-2, #f7f8fa);
 }
 
-.tl-th-act, .tl-td-act { width: 44px; min-width: 44px; text-align: center; }
+/* ⚠️ אותה בעיית ספציפיות בדיוק — כאן היא רק פחות נראתה. */
+.tl-table th.tl-th-act,
+.tl-table td.tl-td-act { width: 44px; min-width: 44px; text-align: center; }
 
 .tl-table tbody tr:hover td { background: var(--surface-2, #fafbfc); }
 
@@ -507,10 +516,12 @@
    משמאל, ולכן הוא המקום היחיד שתמיד גלוי. */
 .tl-td-num { position: relative; }
 
+/* ⚠️ ומרווח אופקי אמיתי, לא רק מרכוז. הספרה ישבה על `padding: 8px 0`
+   בתא שנמצא בקצה החלון — כלומר במרחק אפס מגבול המסך. */
 .tl-rownum, .tl-rowdel {
   display: block;
   width: 100%;
-  padding: 8px 0;
+  padding: 8px 6px;
   line-height: 1.2;
 }
 
