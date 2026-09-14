@@ -229,7 +229,23 @@ RETURNS TABLE (
   maintenance_hours    double precision,
   no_comm_hours        double precision,
   measured_hours       double precision,
-  availability_percent double precision
+  availability_percent double precision,
+  -- ============================================================
+  -- ⚠️ אחוז הכשל גם הוא בתוך שעות המסלול בלבד
+  -- ============================================================
+  -- ⚠️ **וההגדרה זהה ל-`site_stats` במכוון:** תקלות חלקי פעולות, עם
+  -- אותם מסננים בדיוק (excluded_at, is_anomaly, start_end='end',
+  -- superseded_by, app.op_served) ומאותו מקור למקטעי התקלה
+  -- (`app.error_segments`). שכפול ההגדרה היה נפרד ביום שמישהו יתקן
+  -- אחד מהם, והתסמין הוא שני אחוזי כשל לאותו אתר.
+  --
+  -- ⚠️ **תקלה נספרת אם היא חופפת חלון שירות, לא אם היא התחילה בו.**
+  -- תקלה שנפתחה ב-03:00 ותוקנה ב-09:00 פגעה בשירות; ספירה לפי רגע
+  -- הפתיחה הייתה מוחקת אותה לגמרי. זו גם אותה חשבונאות שהזמינות
+  -- עושה — חיתוך, לא נקודה.
+  operations           integer,
+  errors               integer,
+  failure_rate         double precision
 )
 LANGUAGE sql
 STABLE
@@ -298,6 +314,32 @@ agg AS (
 svc AS (
   SELECT site_id, sum(extract(epoch FROM (ends_at - starts_at))) / 3600.0 AS hours
     FROM win GROUP BY site_id
+),
+-- ---------- פעולות בתוך חלון השירות ----------
+ops AS (
+  SELECT o.site_id, count(DISTINCT o.id)::int AS n
+    FROM operations o
+    JOIN win ON win.site_id = o.site_id
+   WHERE o.occurred_at >= p_from
+     AND o.occurred_at <  p_to
+     AND o.excluded_at IS NULL
+     AND o.is_anomaly = 0
+     AND o.start_end = 'end'
+     AND o.superseded_by IS NULL
+     AND app.op_served(o.site_id, o.occurred_at)
+     AND o.occurred_at::timestamptz >= win.starts_at
+     AND o.occurred_at::timestamptz <  win.ends_at
+   GROUP BY o.site_id
+),
+-- ---------- תקלות שחפפו חלון שירות ----------
+errs AS (
+  SELECT e.site_id, count(DISTINCT (e.site_id, e.started_at))::int AS n
+    FROM app.error_segments(p_site_ids, p_from, p_to) e
+    JOIN win ON win.site_id = e.site_id
+   WHERE NOT e.in_maintenance
+     AND e.started_at::timestamptz < win.ends_at
+     AND COALESCE(e.ended_at, p_to)::timestamptz > win.starts_at
+   GROUP BY e.site_id
 )
 SELECT ids.id,
        -- ⚠️ `agreement` נשאר **השירות** — זה מה שהכרטיס מציג ליד קוד
@@ -322,10 +364,20 @@ SELECT ids.id,
               / (COALESCE(agg.ready_h,0) + COALESCE(agg.operating_h,0)
                  + COALESCE(agg.error_h,0)))::numeric, 2)::double precision
          ELSE NULL
+       END,
+       COALESCE(ops.n, 0),
+       COALESCE(errs.n, 0),
+       -- ⚠️ **NULL כשאין פעולות, לא אפס.** "0% כשל" על אתר שלא עבד
+       -- בכלל קורא כ"מושלם", והוא בדיוק המקרה שבו איננו יודעים דבר.
+       CASE WHEN COALESCE(ops.n, 0) > 0
+            THEN round((100.0 * COALESCE(errs.n, 0) / ops.n)::numeric, 2)::double precision
+            ELSE NULL
        END
   FROM ids
   LEFT JOIN agg ON agg.site_id = ids.id
-  LEFT JOIN svc ON svc.site_id = ids.id
+  LEFT JOIN svc  ON svc.site_id  = ids.id
+  LEFT JOIN ops  ON ops.site_id  = ids.id
+  LEFT JOIN errs ON errs.site_id = ids.id
  WHERE ids.kind IS NOT NULL
  ORDER BY ids.id;
 $fn$;
