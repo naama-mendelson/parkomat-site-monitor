@@ -162,15 +162,37 @@ async function main() {
     // ------------------------------------------------------------
     // ⚠️ end בלי start תואם מנפח את ספירת הפעולות ומעוות את המשך
     // הממוצע. נצפה בשטח כשקריאה ראשונה נחתה באמצע מחזור.
+    //
+    // ⚠️⚠️ **הגרסה הראשונה כאן פילחה לפי (אתר, כרטיס), וזה היה שגוי.**
+    // היא דיווחה 15 יתומים ב-3501 ו-12 ב-1089 — ואפס מהם אמיתיים.
+    // מספר הכרטיס נקרא מהבקר ברגע ה-start, ולעתים הוא עדיין לא נכתב:
+    // **14 מתוך 74 ההתחלות ב-3501 הן בלי מספר כרטיס**, ו-11 מתוך 143
+    // ב-1089. כלומר ה-start נחת במחיצה "" וה-end במחיצה "4" — שתי
+    // מחיצות שונות, ואז ה-end נראה יתום. המספרים תואמים אחד לאחד.
+    //
+    // פילוח לפי **אתר בלבד** מחזיר אפס יתומים, וזה גם הנכון: מחסום
+    // אחד מבצע start→end→start→end בטור.
+    //
+    // ⚠️ **ואתר דו-מערכתי מוחרג במפורש.** שם שתי מערכות פועלות במקביל
+    // ומשרשרות לאותו זרם, ולכן שזירה היא התנהגות תקינה — פילוח לפי
+    // אתר היה מייצר שם יתומים מדומים, בדיוק הטעות ההפוכה.
     const { rows: orphans } = await c.query(`
-      WITH ops AS (
-        SELECT site_id, card_number, start_end, occurred_at,
-               lag(start_end) OVER (
-                 PARTITION BY site_id, card_number ORDER BY occurred_at) AS prev
-          FROM operations WHERE occurred_at >= $1)
+      WITH two_system AS (
+        SELECT site_id FROM alive WHERE systems IS NOT NULL),
+      ops AS (
+        SELECT o.site_id, o.start_end, o.occurred_at,
+               lag(o.start_end) OVER (
+                 PARTITION BY o.site_id ORDER BY o.occurred_at, o.id) AS prev
+          FROM operations o
+         WHERE o.occurred_at >= $1
+           AND o.site_id NOT IN (SELECT site_id FROM two_system))
       SELECT s.code, count(*)::int AS n
         FROM ops JOIN sites s ON s.id = ops.site_id
-       WHERE ops.start_end = 'end' AND (ops.prev IS NULL OR ops.prev <> 'start')
+       -- ⚠️ **prev IS NULL אינו יתום, והוא היה נספר ככזה.** זו פשוט
+       -- הפעולה הראשונה **בחלון**, וה-start שלה נמצא לפניו. שלושה
+       -- "יתומים" שנותרו אחרי תיקון הפילוח היו בדיוק זה — אחד לכל
+       -- אתר, בקצה. יתום אמיתי הוא end שקודמו end.
+       WHERE ops.start_end = 'end' AND ops.prev = 'end'
        GROUP BY s.code ORDER BY n DESC`, [iso(from)]);
 
     warn("אין תפעולי end בלי start תואם", orphans.length === 0,
