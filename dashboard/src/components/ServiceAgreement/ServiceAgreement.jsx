@@ -13,7 +13,7 @@
 // שונים שהתאמה מקורבת הייתה מזווגת. זיווג שגוי מדווח זמינות של אתר
 // אחד על חשבון אחר.
 import { useEffect, useMemo, useState } from "react";
-import { fetchBoard, setCell } from "../../services/trafficLightDirect";
+import { fetchBoard, setCell, addRow } from "../../services/trafficLightDirect";
 import "./ServiceAgreement.css";
 
 const CODE_LABEL = "קוד אתר";
@@ -58,12 +58,30 @@ export default function ServiceAgreement({ site }) {
     return { codeKey: ck, kindKey: kk, nameKey: nk, row: r, columns: cols };
   }, [board, site.code]);
 
+  // ⚠️ **שורה חדשה היא המקרה הרגיל, לא החריג.** ברוב האתרים אין שורה
+  // בלוח כלל — הלוח נבנה מרשימת לקוחות ולא מרשימת האתרים המנוטרים.
+  // דרישה למצוא שורה קיימת הייתה אומרת שכדי לחבר אתר צריך קודם ליצור
+  // לו שורה בלוח, כלומר בדיוק הצעד שצריך לזכור ושבגללו 23 אתרים לא
+  // חוברו.
+  const NEW_ROW = "__new__";
+
   async function link() {
     if (!choice || !codeKey) return;
     setBusy(true);
     setError(null);
     try {
-      await setCell(Number(choice), codeKey, String(site.code));
+      let rowId = Number(choice);
+
+      if (choice === NEW_ROW) {
+        rowId = Number(await addRow(null));
+
+        // ⚠️ **השם נכתב לפני הקוד, וזה לא סגנון.** אם הכתיבה השנייה
+        // תיכשל, שורה עם שם ובלי קוד היא שורה שאפשר לראות ולתקן ביד;
+        // שורה עם קוד ובלי שם היא שורה אלמונית שנראית כמו תקלה בלוח.
+        if (nameKey) await setCell(rowId, nameKey, String(site.site_name ?? ""));
+      }
+
+      await setCell(rowId, codeKey, String(site.code));
       setBoard(await fetchBoard());
       setPicking(false);
       setChoice("");
@@ -170,6 +188,11 @@ export default function ServiceAgreement({ site }) {
             disabled={busy}
           >
             <option value="">בחרי שורה…</option>
+            {/* ⚠️ ראשון ברשימה: ברוב האתרים אין שורה בלוח בכלל, ולכן
+                זו הבחירה הצפויה ולא החריגה. */}
+            <option value={NEW_ROW}>
+              ➕ צור שורה חדשה — {site.site_name}
+            </option>
             {free.map((r) => (
               <option key={r.id} value={r.id}>
                 {String(r.cells?.[nameKey] ?? `שורה ${r.id}`)}
@@ -200,8 +223,10 @@ export default function ServiceAgreement({ site }) {
           כאן הייתה מסתירה איזו שכבה סירבה. */}
       {error && <div className="sa-err">{error}</div>}
 
-      {free.length === 0 && (
-        <div className="sa-dim">אין שורות פנויות בלוח — כל השורות כבר מחוברות לאתר.</div>
+      {picking && free.length === 0 && (
+        <div className="sa-dim">
+          כל השורות בלוח כבר מחוברות לאתרים — תיווצר שורה חדשה.
+        </div>
       )}
     </div>
   );
