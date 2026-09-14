@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
 import CodePrompt from "../TrafficLight/CodePrompt";
-import { fetchBoard, setCell, addRow } from "../../services/trafficLightDirect";
+import { fetchBoard, setCell, addRow, deleteRow } from "../../services/trafficLightDirect";
 import "./ServiceAgreement.css";
 
 const CODE_LABEL = "קוד אתר";
@@ -220,6 +220,19 @@ export default function ServiceAgreement({ site }) {
         : [...existing, String(site.code)];
 
       await setCell(rowId, codeKey, next.join(", "));
+
+      // ============================================================
+      // ⚠️ ניתוק מהשורה הקודמת — אחרת הקוד יושב בשתיים
+      // ============================================================
+      // ‏`app.service_agreement` בוחרת `LIMIT 1` בלי סדר מוגדר. קוד
+      // שמופיע בשתי שורות עם הסכמים שונים פירושו שהזמינות של האתר
+      // תחושב לפי אחת מהן — **ולא תמיד אותה אחת**. זה לא "לא מסודר",
+      // זה מדד שמשנה את עצמו בלי סיבה.
+      if (row && row.id !== rowId) {
+        const rest = codesOf(row.cells?.[codeKey]).filter((x) => x !== String(site.code));
+        await setCell(row.id, codeKey, rest.length ? rest.join(", ") : "");
+      }
+
       setBoard(await fetchBoard());
       setPicking(false);
       setChoice("");
@@ -259,7 +272,7 @@ export default function ServiceAgreement({ site }) {
   }
 
   // ===== מחובר =====
-  if (row) {
+  if (row && !picking) {
     const kind = String(row.cells?.[kindKey] ?? "").trim().toLowerCase();
     // ⚠️ ערך שאיננו מכירים מוצג כפי שהוא ולא נבלע לברירת מחדל: הוא
     // הסיבה שהזמינות של האתר הזה עדיין מחושבת 24/7, וההודאה בכך היא
@@ -335,10 +348,52 @@ export default function ServiceAgreement({ site }) {
               סיום עריכה
             </button>
           ) : (
-            <button type="button" className="sa-btn sa-btn--ghost"
-                    onClick={() => (unlocked ? setEditing(true) : setAsking(true))}>
-              ערוך שורה
-            </button>
+            <>
+              <button type="button" className="sa-btn sa-btn--ghost"
+                      onClick={() => (unlocked ? setEditing(true) : setAsking(true))}>
+                ערוך שורה
+              </button>
+
+              {/* ⚠️ **חיבור לשורה אחרת — הפער שחסם בפועל.** אתר שחובר
+                  לשורה שגויה, או שנוצרה לו שורה ריקה בזמן שהפרטים
+                  יושבים בשורה אחרת, לא היה ניתן להזזה בכלל. זה קרה
+                  לפלורנטין: הקוד בשורה אחת, ההסכם והפרטים בשנייה. */}
+              <button type="button" className="sa-btn sa-btn--ghost"
+                      onClick={() => {
+                        if (!unlocked) return setAsking(true);
+                        setChoice(""); setQ(""); setPicking(true);
+                      }}>
+                חבר לשורה אחרת
+              </button>
+
+              <button
+                type="button"
+                className="sa-btn sa-btn--danger"
+                disabled={busy}
+                onClick={() => {
+                  if (!unlocked) return setAsking(true);
+                  // ⚠️ האזהרה אומרת **מה יקרה למדד**, לא רק "האם את בטוחה".
+                  // מחיקת שורה מחזירה את האתר ל-24/7, וזה נתון שישתנה על
+                  // המסך בלי שאיש יקשר בין השניים.
+                  const others = codesOf(row.cells?.[codeKey]).filter((x) => x !== String(site.code));
+                  const extra = others.length
+                    ? `
+
+שים לב: לשורה הזו מחוברים גם ${others.join(", ")} — גם הם יחזרו ל-24/7.`
+                    : "";
+                  if (!confirm(`למחוק את השורה "${String(row.cells?.[nameKey] ?? "")}"?` +
+                               `
+
+האתר יחזור לחישוב זמינות 24/7.${extra}`)) return;
+                  setBusy(true);
+                  deleteRow(row.id)
+                    .then(fetchBoard).then(setBoard)
+                    .catch((e) => setError(e.message))
+                    .finally(() => setBusy(false));
+                }}>
+                מחק שורה
+              </button>
+            </>
           )}
         </div>
 
@@ -395,12 +450,26 @@ export default function ServiceAgreement({ site }) {
     <div className="sa">
       <div className="sa-head">
         <span className="sa-title">הסכם שירות</span>
-        <span className="sa-kind sa-kind--unknown">לא מחובר</span>
+        {/* ⚠️ הכותרת אומרת את המצב **הנוכחי**, לא את המסך. אתר מחובר
+            שמחפש שורה אחרת אינו "לא מחובר" — והודעה כזו הייתה גורמת
+            למישהי לחשוב שהחיבור כבר נותק. */}
+        <span className="sa-kind sa-kind--unknown">
+          {row ? "בחירת שורה אחרת" : "לא מחובר"}
+        </span>
       </div>
 
       <div className="sa-note">
-        האתר אינו מחובר לשורה ברמזור, ולכן הזמינות שלו מחושבת <b>24/7</b> —
-        גם בשעות שאין בהן שירות.
+        {row ? (
+          <>
+            מחובר כעת ל־<b>{String(row.cells?.[nameKey] ?? "")}</b>.
+            בחירת שורה אחרת תנתק אותו מהשורה הזו ותחבר אותו לחדשה.
+          </>
+        ) : (
+          <>
+            האתר אינו מחובר לשורה ברמזור, ולכן הזמינות שלו מחושבת <b>24/7</b> —
+            גם בשעות שאין בהן שירות.
+          </>
+        )}
       </div>
 
       {!picking ? (

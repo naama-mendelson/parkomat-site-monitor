@@ -198,3 +198,12 @@
 .sa-result-codes { color: var(--text-muted, #6b7280); font-variant-numeric: tabular-nums; }
 
 .sa-pick-actions { display: flex; gap: 8px; }
+
+/* ⚠️ אדום רק על המחיקה, ורק במסגרת — לא כפתור אדום מלא. פעולה הרסנית
+   צריכה להיראות שונה, לא לצעוק: כפתור שצועק הוא כפתור שמסיטים ממנו
+   את העין, ואז לוחצים עליו בטעות. */
+.sa-btn--danger {
+  background: transparent;
+  color: #c02b3f;
+  border-color: #c02b3f;
+}
