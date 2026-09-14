@@ -32,6 +32,17 @@ const HOURS = {
 
 const KIND_NAMES = { basic: "בסיסי", ext: "מורחב", vip: "VIP" };
 
+// ⚠️ **תא הקוד מחזיק רשימה, לא קוד יחיד.** לקוח אחד יכול להחזיק כמה
+// חניונים תחת אותו הסכם — אותם אנשי קשר, אותה אחריות, אותו סוג שירות.
+// שורה כפולה לכל אתר פירושה שעדכון פרט אחד צריך להיעשות בכמה מקומות,
+// ומי שיעדכן רק אחד מהם יישאר עם לוח שסותר את עצמו.
+function codesOf(cell) {
+  return String(cell ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 // ⚠️ **עמודת סטטוס נערכת ברשימה סגורה ולא בהקלדה.** "VIP " או "Vip"
 // אינם מוכרים ל-`app.service_agreement`, והאתר היה חוזר בשקט לחישוב
 // 24/7 — בדיוק הכשל שהמסך הזה קיים כדי למנוע. אותו נימוק שהוציא את
@@ -115,7 +126,7 @@ export default function ServiceAgreement({ site }) {
     const nk = cols[0]?.key;
     const r = ck
       ? (board.rows || []).find(
-          (x) => String(x.cells?.[ck] ?? "").trim() === String(site.code))
+          (x) => codesOf(x.cells?.[ck]).includes(String(site.code)))
       : null;
     return { codeKey: ck, kindKey: kk, nameKey: nk, row: r, columns: cols };
   }, [board, site.code]);
@@ -158,7 +169,16 @@ export default function ServiceAgreement({ site }) {
         if (nameKey) await setCell(rowId, nameKey, String(site.site_name ?? ""));
       }
 
-      await setCell(rowId, codeKey, String(site.code));
+      // ⚠️ **מוסיפים לרשימה ולא דורסים אותה.** דריסה הייתה מנתקת אתר
+      // אחר מההסכם שלו — בשקט, ובלי שאיש יראה זאת עד שמישהו ישים לב
+      // שהזמינות שלו חזרה ל-24/7.
+      const target = (board.rows || []).find((r) => r.id === rowId);
+      const existing = codesOf(target?.cells?.[codeKey]);
+      const next = existing.includes(String(site.code))
+        ? existing
+        : [...existing, String(site.code)];
+
+      await setCell(rowId, codeKey, next.join(", "));
       setBoard(await fetchBoard());
       setPicking(false);
       setChoice("");
@@ -242,6 +262,15 @@ export default function ServiceAgreement({ site }) {
         <div className="sa-foot">
           <span className="sa-linked">
             מחובר לשורה: <b>{String(row.cells?.[nameKey] ?? "—")}</b>
+            {/* ⚠️ שיתוף מוצג במפורש: עריכה כאן משנה גם את האתרים
+                האחרים, ומי שלא יודע זאת יגלה את זה אחרי שכבר שינה. */}
+            {(() => {
+              const others = codesOf(row.cells?.[codeKey])
+                .filter((x) => x !== String(site.code));
+              return others.length
+                ? <> · משותפת עם <b>{others.join(", ")}</b></>
+                : null;
+            })()}
           </span>
 
           {editing ? (
@@ -281,8 +310,10 @@ export default function ServiceAgreement({ site }) {
   // ===== לא מחובר =====
   // ⚠️ הרשימה מציעה **רק שורות פנויות**. שורה שכבר נושאת קוד אחר
   // תיקח את הזמינות של אתר אחר אם ידרסו אותה, ולכן היא אינה מוצעת.
-  const free = (board.rows || []).filter(
-    (r) => !String(r.cells?.[codeKey] ?? "").trim());
+  // ⚠️ **כל השורות מוצעות, לא רק הפנויות.** שורה שכבר מחוברת לאתר
+  // אחר היא בדיוק המקרה של לקוח עם כמה חניונים תחת הסכם אחד, והסתרתה
+  // הייתה מאלצת לשכפל שורה — כלומר ליצור שני מקומות לאותה אמת.
+  const free = board.rows || [];
 
   return (
     <div className="sa">
@@ -314,11 +345,15 @@ export default function ServiceAgreement({ site }) {
             <option value={NEW_ROW}>
               ➕ צור שורה חדשה — {site.site_name}
             </option>
-            {free.map((r) => (
-              <option key={r.id} value={r.id}>
-                {String(r.cells?.[nameKey] ?? `שורה ${r.id}`)}
-              </option>
-            ))}
+            {free.map((r) => {
+              const linked = codesOf(r.cells?.[codeKey]);
+              const name = String(r.cells?.[nameKey] ?? `שורה ${r.id}`);
+              return (
+                <option key={r.id} value={r.id}>
+                  {linked.length ? `${name}  (מחובר: ${linked.join(", ")})` : name}
+                </option>
+              );
+            })}
           </select>
           <button
             type="button"
@@ -344,9 +379,10 @@ export default function ServiceAgreement({ site }) {
           כאן הייתה מסתירה איזו שכבה סירבה. */}
       {error && <div className="sa-err">{error}</div>}
 
-      {picking && free.length === 0 && (
+      {picking && (
         <div className="sa-dim">
-          כל השורות בלוח כבר מחוברות לאתרים — תיווצר שורה חדשה.
+          אפשר לחבר כמה אתרים לאותה שורה — לקוח אחד עם כמה חניונים תחת
+          אותו הסכם.
         </div>
       )}
     </div>

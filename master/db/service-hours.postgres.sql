@@ -133,10 +133,22 @@ AS $fn$
       -- נבדלות היום ב-3 אתרים.
       (SELECT key FROM traffic_light_columns WHERE label = 'להתייחס כ' LIMIT 1) AS k_kind
   )
+  -- ⚠️ **התא מחזיק רשימת קודים, לא קוד יחיד.** לקוח אחד יכול להחזיק
+  -- כמה חניונים תחת אותו הסכם שירות, ואותה שורה בלוח מתארת את כולם —
+  -- אותם אנשי קשר, אותה אחריות, אותו הסכם. שורה כפולה לכל אתר פירושה
+  -- שעדכון פרט אחד צריך להיעשות בכמה מקומות, ומי שיעדכן אחד מהם
+  -- יישאר עם לוח שסותר את עצמו.
+  --
+  -- הפרדה בפסיקים, והרווחים נזרקים: "1275, 2439" ו-"1275,2439" הם
+  -- אותו דבר, כי מי שמקליד ביד יכתוב את שניהם.
   SELECT lower(btrim(r.cells ->> k.k_kind))
     FROM traffic_light_rows r, keys k, sites s
    WHERE s.id = p_site_id
-     AND btrim(r.cells ->> k.k_code) = s.code
+     AND s.code = ANY(
+           string_to_array(
+             replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')),
+                             chr(32), ''), chr(9), ''),
+             ','))
      AND btrim(coalesce(r.cells ->> k.k_kind, '')) <> ''
    LIMIT 1;
 $fn$;
