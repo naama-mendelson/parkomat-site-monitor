@@ -680,3 +680,39 @@
 .tl-datecell:focus-within .tl-cal { opacity: 1; }
 .tl-cal:hover { background: var(--surface-3, #eef0f4); color: var(--brand, #3d78d8); }
 .tl-cal--on { opacity: 1; color: var(--brand, #3d78d8); }
+
+/* ============================================================
+   חיפוש בלוח
+   ============================================================ */
+.tl-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.tl-search-input {
+  width: 260px;
+  max-width: 40vw;
+  padding: 7px 12px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 7px;
+  font: inherit;
+  background: var(--surface, #fff);
+  color: inherit;
+  unicode-bidi: plaintext;
+}
+
+.tl-search-input:focus {
+  outline: 2px solid var(--brand, #3d78d8);
+  outline-offset: -1px;
+}
+
+/* ⚠️ מספר התוצאות מוצג תמיד בזמן חיפוש. "לא מצאתי" בלי מספר נראה
+   כמו תקלה; "0 מתוך 156" נראה כמו תשובה. */
+.tl-search-count {
+  color: var(--text-muted, #6b7280);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

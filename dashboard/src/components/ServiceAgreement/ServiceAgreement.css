@@ -159,3 +159,42 @@
   background: rgba(34, 197, 94, 0.10);
   font-size: 0.85rem;
 }
+
+.sa-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 7px;
+}
+
+.sa-result {
+  text-align: start;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  unicode-bidi: plaintext;
+}
+
+.sa-result:hover { background: var(--surface-2, #f7f8fa); }
+
+/* ⚠️ הנבחר מסומן במסגרת ולא רק ברקע: רקע עדין לבדו נעלם על מסך בהיר,
+   ואז לוחצים "חבר" בלי לדעת מה נבחר. */
+.sa-result--on {
+  border-color: var(--brand, #3d78d8);
+  background: rgba(61, 120, 216, 0.10);
+  font-weight: 600;
+}
+
+.sa-result--exact { color: #15803d; }
+
+.sa-result-codes { color: var(--text-muted, #6b7280); font-variant-numeric: tabular-nums; }
+
+.sa-pick-actions { display: flex; gap: 8px; }

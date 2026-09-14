@@ -457,6 +457,7 @@ export default function TrafficLight({ onClose }) {
   // כאן הלוח **נשאר פתוח** אחרי היציאה ממצב עריכה, ולכן צריך מתג משלו;
   // בלעדיו כפתור "נעל" היה נראה כאילו הוא עובד ולא משנה דבר.
   const [editMode, setEditMode] = useState(false);
+  const [query, setQuery] = useState("");
 
   const [board, setBoard] = useState({ columns: [], rows: [] });
   const [loading, setLoading] = useState(true);
@@ -506,7 +507,24 @@ export default function TrafficLight({ onClose }) {
   }, [load]);
 
   const columns = board.columns;
-  const rows = board.rows;
+  // ============================================================
+  // ⚠️ חיפוש — על **כל** התאים, לא רק על השם והקוד
+  // ============================================================
+  // הבקשה הייתה "לפי שם אתר או לפי קוד", וזה המקרה הנפוץ. אבל הלוח
+  // מחזיק גם טלפונים, שמות אנשי קשר וקודי כניסה — ומי שמחפש "0524637238"
+  // מחפש בדיוק את מה שהוא רואה על המסך. הגבלה לשתי עמודות הייתה מייצרת
+  // "לא נמצא" על ערך שנמצא שם בבירור.
+  //
+  // ⚠️ **וההשוואה מתעלמת מפיסוק**, כמו בכל שאר החיפושים בפרויקט הזה:
+  // ‏"אביגיל 20 ר\"ג" ימצא גם כשבלוח כתוב "אביגיל 20, ר\"ג". בלי זה
+  // החיפוש נכשל בדיוק על מה שהמשתמשת הקלידה מהזיכרון.
+  const norm = (v) => String(v ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCase();
+
+  const allRows = board.rows;
+  const q = norm(query);
+  const rows = q
+    ? allRows.filter((r) => Object.values(r.cells ?? {}).some((v) => norm(v).includes(q)))
+    : allRows;
 
   // ⚠️ הדבקה מ-Excel/Monday: טאבים בין תאים, שורות חדשות בין שורות.
   // זו הדרך שבה הלוח באמת ימולא, ולכן היא קריאה אחת ולא מאות.
@@ -539,6 +557,23 @@ export default function TrafficLight({ onClose }) {
           <span className={`tl-mode ${canEdit ? "tl-mode--edit" : ""}`}>
             {canEdit ? "מצב עריכה" : "צפייה בלבד"}
           </span>
+
+          {/* ⚠️ שדה החיפוש לפני הפעולות ולא אחריהן: בלוח של 156 שורות
+              זו הפעולה הראשונה שעושים, לא האחרונה. */}
+          <div className="tl-search">
+            <input
+              type="search"
+              className="tl-search-input"
+              placeholder="חיפוש — שם אתר, קוד, טלפון…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <span className="tl-search-count">
+                {rows.length} מתוך {allRows.length}
+              </span>
+            )}
+          </div>
 
           <div className="tl-head-actions">
             {canEdit ? (
@@ -660,7 +695,10 @@ export default function TrafficLight({ onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {/* ⚠️ המספור הוא של השורה **בלוח המלא**, לא של התוצאה.
+                    מספר שמשתנה לפי החיפוש הוא מספר שאי אפשר להסתמך עליו
+                    כדי לומר למישהו אחר "תסתכלי בשורה 14". */}
+                {rows.map((r) => (
                   <tr key={r.id}>
                     {/* ============================================================
                         ⚠️ המחיקה יושבת כאן ולא בסוף השורה
@@ -674,14 +712,14 @@ export default function TrafficLight({ onClose }) {
                         הופך מחיקה ללחיצה מקרית, ומספר שנעלם תמיד מקשה
                         לספור. */}
                     <td className="tl-td-num">
-                      <span className="tl-rownum">{i + 1}</span>
+                      <span className="tl-rownum">{allRows.indexOf(r) + 1}</span>
                       {canEdit && (
                         <button
                           type="button"
                           className="tl-rowdel"
                           disabled={busy}
                           title="מחק שורה"
-                          aria-label={`מחק שורה ${i + 1}`}
+                          aria-label={`מחק שורה ${allRows.indexOf(r) + 1}`}
                           onClick={() => { if (confirm("למחוק את השורה?")) run(() => deleteRow(r.id)); }}
                         >✕</button>
                       )}

@@ -142,6 +142,7 @@ export default function ServiceAgreement({ site }) {
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [choice, setChoice] = useState("");
+  const [q, setQ] = useState("");
 
   // ⚠️ **אותו שער בדיוק כמו בלוח עצמו**, ולא שני מנגנונים שנראים זהים.
   // ‏`useAdmin` מאמת מול התפקיד, ו-`app.require_manager()` במסד הוא מה
@@ -377,6 +378,16 @@ export default function ServiceAgreement({ site }) {
   // ⚠️ שתי דרגות, ולא אחת. זהות אותיות היא **אותו אתר** ולכן היא
   // נבחרת מראש; דמיון הוא **חשד** ולכן הוא רק מוצג.
   const exactRow = free.find((r) => letters(r.cells?.[nameKey]) === lt) || null;
+
+  // ⚠️ החיפוש רץ על **כל** תאי השורה — שם, קוד, טלפון. מי שמחפש
+  // "0524637238" מחפש בדיוק את מה שהוא רואה בלוח.
+  const nq = String(q ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCase();
+  const matches = (nq
+    ? free.filter((r) => Object.values(r.cells ?? {}).some(
+        (v) => String(v ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCase().includes(nq)))
+    : free)
+    // השורה בשם זהה תמיד ראשונה, גם בתוך תוצאות החיפוש.
+    .sort((a, b) => (b === exactRow) - (a === exactRow));
   const similar = free.filter(
     (r) => r !== exactRow && fingerprint(r.cells?.[nameKey]) === fp);
 
@@ -418,56 +429,78 @@ export default function ServiceAgreement({ site }) {
         </>
       ) : (
         <div className="sa-pick">
-          <select
+          {/* ============================================================
+              ⚠️ חיפוש ולא רשימה נפתחת
+              ============================================================
+              הלוח מחזיק 156 שורות. רשימה נפתחת באורך כזה אינה "פחות
+              נוחה" — היא בלתי שמישה: אי אפשר לגלול אליה בעין, אי אפשר
+              להקליד בה, ומי שלא ימצא את השורה ייצור חדשה. כלומר הרשימה
+              עצמה הייתה מייצרת את הכפילויות שאנחנו מונעים.
+
+              ⚠️ וההשוואה מתעלמת מפיסוק, כמו בכל שאר החיפושים כאן. */}
+          <input
+            type="search"
             className="sa-select"
-            value={choice}
-            onChange={(e) => setChoice(e.target.value)}
+            placeholder="חיפוש שורה — שם או קוד…"
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setChoice(""); }}
             disabled={busy}
-          >
-            <option value="">בחרי שורה…</option>
-            {exactRow && (
-              <option value={exactRow.id}>
-                ✔ {String(exactRow.cells?.[nameKey] ?? "")} — שם זהה
-              </option>
-            )}
-            {/* ⚠️ ראשון ברשימה: ברוב האתרים אין שורה בלוח בכלל, ולכן
-                זו הבחירה הצפויה ולא החריגה. */}
-            {/* ⚠️ שורה דומה מוצגת **לפני** "צור חדשה", ולא אחריה.
-                הסדר הוא ההמלצה: מי שרואה "צור חדשה" ראשון ילחץ עליו. */}
-            {similar.map((r) => (
-              <option key={`sim-${r.id}`} value={r.id}>
-                ↳ {String(r.cells?.[nameKey] ?? "")} — נראית כמו אותו אתר
-              </option>
-            ))}
-            <option value={NEW_ROW}>
+            autoFocus
+          />
+
+          <div className="sa-results">
+            {/* יצירת שורה חדשה — תמיד ראשונה וזמינה, גם בזמן חיפוש. */}
+            <button
+              type="button"
+              className={`sa-result ${choice === NEW_ROW ? "sa-result--on" : ""}`}
+              onClick={() => setChoice(NEW_ROW)}
+              disabled={busy}
+            >
               ➕ צור שורה חדשה — {site.site_name}
-            </option>
-            {free.filter((r) => r !== exactRow).map((r) => {
+            </button>
+
+            {matches.slice(0, 12).map((r) => {
               const linked = codesOf(r.cells?.[codeKey]);
-              const name = String(r.cells?.[nameKey] ?? `שורה ${r.id}`);
+              const isExact = r === exactRow;
               return (
-                <option key={r.id} value={r.id}>
-                  {linked.length ? `${name}  (מחובר: ${linked.join(", ")})` : name}
-                </option>
+                <button
+                  type="button"
+                  key={r.id}
+                  className={`sa-result ${String(choice) === String(r.id) ? "sa-result--on" : ""}` +
+                             (isExact ? " sa-result--exact" : "")}
+                  onClick={() => setChoice(String(r.id))}
+                  disabled={busy}
+                >
+                  {isExact ? "✔ " : ""}
+                  {String(r.cells?.[nameKey] ?? `שורה ${r.id}`)}
+                  {linked.length ? <span className="sa-result-codes"> · {linked.join(", ")}</span> : null}
+                </button>
               );
             })}
-          </select>
-          <button
-            type="button"
-            className="sa-btn"
-            onClick={link}
-            disabled={!choice || busy}
-          >
-            {busy ? "מחבר…" : "חבר"}
-          </button>
-          <button
-            type="button"
-            className="sa-btn sa-btn--ghost"
-            onClick={() => { setPicking(false); setChoice(""); }}
-            disabled={busy}
-          >
-            ביטול
-          </button>
+
+            {/* ⚠️ נאמר כמה לא מוצג. רשימה שנקטעת בשקט גורמת לחפש שוב
+                את מה שכבר נמצא. */}
+            {matches.length > 12 && (
+              <div className="sa-dim">ועוד {matches.length - 12} — צמצמי את החיפוש</div>
+            )}
+            {q && matches.length === 0 && (
+              <div className="sa-dim">אין שורה תואמת — אפשר ליצור חדשה</div>
+            )}
+          </div>
+
+          <div className="sa-pick-actions">
+            <button type="button" className="sa-btn" onClick={link} disabled={!choice || busy}>
+              {busy ? "מחבר…" : "חבר"}
+            </button>
+            <button
+              type="button"
+              className="sa-btn sa-btn--ghost"
+              onClick={() => { setPicking(false); setChoice(""); setQ(""); }}
+              disabled={busy}
+            >
+              ביטול
+            </button>
+          </div>
         </div>
       )}
 
