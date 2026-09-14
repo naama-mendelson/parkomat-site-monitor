@@ -192,7 +192,11 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                 המקום שבו מחברים אותו — מהנקודה שבה שואלים. */}
             {section === "overview" && !allSites && (
               <section className="insights-card">
-                <ServiceAgreement site={site} />
+                {/* ⚠️ `onRefresh` אינו נוחות: החיבור משנה את **רמת
+                    השירות** של האתר, ובלעדיו התג בכרטיס ממשיך להציג את
+                    הערך הישן עד לרענון ידני — כלומר המשתמשת רואה שהפעולה
+                    "לא עשתה כלום". */}
+                <ServiceAgreement site={site} onLinked={onRefresh} />
               </section>
             )}
 

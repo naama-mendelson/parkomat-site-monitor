@@ -20,6 +20,13 @@ import "./ServiceAgreement.css";
 
 const CODE_LABEL = "קוד אתר";
 const KIND_LABEL = "להתייחס כ";
+// ⚠️ **שתי עמודות, שתי שאלות שונות — וזה לא כפילות.**
+//   מסלול  = מה ההסכם שנחתם          (סוג הסכם שירות במקור)
+//   שירות  = איך מתייחסים אליו בפועל  (להתייחס כ)
+// ‏**רק "שירות" מחשב את הזמינות.** אתר שנחתם עליו בסיסי ומטופל כ-VIP
+// יימדד לפי VIP, וזו החלטה תפעולית שגוברת על החוזה. הצגת שניהם זה לצד
+// זה היא מה שהופך את הפער הזה לגלוי במקום למפתיע.
+const PLAN_LABEL = "סוג הסכם שירות במקור";
 
 // שעות ההסכם — אותו מקור אמת כמו `app.service_windows` ב-SQL.
 // ⚠️ כפילות מודעת: כאן זה טקסט למסך, שם זה חישוב. מה שאסור הוא ששניהם
@@ -136,7 +143,7 @@ function FieldEditor({ column, value, disabled, onSave }) {
   );
 }
 
-export default function ServiceAgreement({ site }) {
+export default function ServiceAgreement({ site, onLinked = null }) {
   const [board, setBoard] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -159,17 +166,18 @@ export default function ServiceAgreement({ site }) {
     return () => { alive = false; };
   }, []);
 
-  const { codeKey, kindKey, nameKey, row, columns } = useMemo(() => {
+  const { codeKey, kindKey, planKey, nameKey, row, columns } = useMemo(() => {
     if (!board) return {};
     const cols = board.columns || [];
     const ck = cols.find((c) => c.label === CODE_LABEL)?.key;
     const kk = cols.find((c) => c.label === KIND_LABEL)?.key;
+    const pk = cols.find((c) => c.label === PLAN_LABEL)?.key;
     const nk = cols[0]?.key;
     const r = ck
       ? (board.rows || []).find(
           (x) => codesOf(x.cells?.[ck]).includes(String(site.code)))
       : null;
-    return { codeKey: ck, kindKey: kk, nameKey: nk, row: r, columns: cols };
+    return { codeKey: ck, kindKey: kk, planKey: pk, nameKey: nk, row: r, columns: cols };
   }, [board, site.code]);
 
   // ⚠️ **שורה חדשה היא המקרה הרגיל, לא החריג.** ברוב האתרים אין שורה
@@ -187,6 +195,10 @@ export default function ServiceAgreement({ site }) {
     try {
       await setCell(rowId, key, value);
       setBoard(await fetchBoard());
+
+      // ⚠️ שינוי ב"שירות" משנה את שעות המדידה ואת התג בכרטיס — לכן
+      // רענון גם כאן, ולא רק בחיבור.
+      if (key === kindKey) onLinked?.();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -237,6 +249,11 @@ export default function ServiceAgreement({ site }) {
       setPicking(false);
       setChoice("");
 
+      // ⚠️ **רשימת האתרים נטענת מחדש מיד.** רמת השירות של הכרטיס נגזרת
+      // מההסכם שבשורה, ובלי הרענון התג ממשיך להציג את הערך הישן —
+      // והמשתמשת רואה פעולה שלא עשתה כלום.
+      onLinked?.();
+
       // ============================================================
       // ⚠️ שורה שנוצרה עכשיו נפתחת ישר לעריכה
       // ============================================================
@@ -282,10 +299,22 @@ export default function ServiceAgreement({ site }) {
     return (
       <div className="sa">
         <div className="sa-head">
-          <span className="sa-title">הסכם שירות</span>
+          <span className="sa-title">שירות</span>
           <span className={`sa-kind sa-kind--${known ? kind : "unknown"}`}>
             {known ? KIND_NAMES[kind] : (kind || "לא הוגדר")}
           </span>
+
+          {/* ⚠️ המסלול מוצג רק כשהוא **שונה** מהשירות. שני תגים זהים
+              זה לצד זה הם רעש; שניים שונים הם בדיוק המידע. */}
+          {(() => {
+            const plan = String(row.cells?.[planKey] ?? "").trim().toLowerCase();
+            if (!plan || plan === kind) return null;
+            return (
+              <span className="sa-plan" title="המסלול שנחתם בפועל — הזמינות מחושבת לפי השירות, לא לפיו">
+                מסלול: {KIND_NAMES[plan] || plan}
+              </span>
+            );
+          })()}
         </div>
 
         <div className="sa-hours">
@@ -387,7 +416,8 @@ export default function ServiceAgreement({ site }) {
 האתר יחזור לחישוב זמינות 24/7.${extra}`)) return;
                   setBusy(true);
                   deleteRow(row.id)
-                    .then(fetchBoard).then(setBoard)
+                    .then(fetchBoard)
+                    .then((b) => { setBoard(b); onLinked?.(); })
                     .catch((e) => setError(e.message))
                     .finally(() => setBusy(false));
                 }}>

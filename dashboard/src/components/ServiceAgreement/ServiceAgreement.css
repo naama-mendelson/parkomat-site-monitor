@@ -207,3 +207,13 @@
   color: #c02b3f;
   border-color: #c02b3f;
 }
+
+/* ⚠️ המסלול במשקל נמוך מהשירות: השירות הוא מה שמחשב, המסלול הוא
+   רקע חוזי. משקל שווה היה גורם להסתכל על הלא-נכון. */
+.sa-plan {
+  padding: 2px 9px;
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 999px;
+  color: var(--text-muted, #6b7280);
+  font-size: 0.74rem;
+}
