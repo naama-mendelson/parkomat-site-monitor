@@ -1,0 +1,109 @@
+/* ⚠️ מרווח אמיתי בכל התיבה. אותה תקלה שנראתה ברמזור — טקסט שנוגע
+   בגבול — נולדת כאן בדיוק אותו דבר אם ה-padding נקבע "בערך". */
+.sa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+.sa--dim, .sa-dim { color: var(--text-muted, #6b7280); font-size: 0.85rem; }
+.sa--err, .sa-err { color: #c02b3f; font-size: 0.85rem; }
+
+.sa-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sa-title { font-weight: 700; }
+
+.sa-kind {
+  padding: 2px 10px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* ⚠️ שלושה גוונים ולא שלושה צבעים שרירותיים: ההסכם הוא **רמה**, לא
+   קטגוריה. מי שסורק צריך לראות מיד מי קנה יותר שירות. */
+.sa-kind--vip     { color: #0e7a54; border-color: #0e7a54; background: rgba(0,200,117,0.12); }
+.sa-kind--ext     { color: #1d4ed8; border-color: #1d4ed8; background: rgba(29,78,216,0.10); }
+.sa-kind--basic   { color: #92400e; border-color: #92400e; background: rgba(217,119,6,0.12); }
+.sa-kind--unknown { color: #6b7280; border-color: #d1d5db; background: rgba(107,114,128,0.10); }
+
+.sa-hours {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+
+.sa-note {
+  font-size: 0.82rem;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.5;
+}
+
+.sa-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.sa-field {
+  display: flex;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+
+.sa-field dt {
+  flex: 0 0 40%;
+  color: var(--text-muted, #6b7280);
+}
+
+/* ⚠️ `min-width: 0` — בלעדיו ערך ארוך (רשימת אנשי קשר) מותח את התיבה
+   מעבר לרוחב הפאנל במקום להישבר. */
+.sa-field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.sa-linked { font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+
+.sa-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.sa-select {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 7px;
+  font: inherit;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.sa-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--brand, #3d78d8);
+  border-radius: 7px;
+  background: var(--brand, #3d78d8);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sa-btn:disabled { opacity: 0.5; cursor: default; }
+
+.sa-btn--ghost {
+  background: transparent;
+  color: var(--text-muted, #6b7280);
+  border-color: var(--border, #d1d5db);
+}

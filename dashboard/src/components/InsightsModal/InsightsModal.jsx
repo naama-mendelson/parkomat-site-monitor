@@ -15,6 +15,7 @@ import RepairChart from "../SiteCard/RepairChart";
 import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
 import Logo from "../Logo/Logo";
+import ServiceAgreement from "../ServiceAgreement/ServiceAgreement";
 
 const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
 const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יציאות
@@ -181,6 +182,17 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
             {section === "overview" && !allSites && (
               <section className="insights-card">
                 <SiteFacts site={site} maintenance={maintenance} onRefresh={onRefresh} />
+              </section>
+            )}
+
+            {/* ⚠️ **הסכם השירות יושב כאן ולא במסך נפרד, וזו לא נוחות.**
+                שעות ההסכם קובעות מתי הזמינות בכלל נמדדת, ולכן השאלה
+                "למה המספר הזה כזה" והתשובה "כי אין שירות בשבת" חייבות
+                להיות באותו מסך. אתר שאינו מחובר מחושב 24/7, וכאן גם
+                המקום שבו מחברים אותו — מהנקודה שבה שואלים. */}
+            {section === "overview" && !allSites && (
+              <section className="insights-card">
+                <ServiceAgreement site={site} />
               </section>
             )}
 
