@@ -47,6 +47,17 @@ const KIND_NAMES = { basic: "בסיסי", ext: "מורחב", vip: "VIP" };
 // ⚠️ ומספרי הבתים נשמרים בהשוואה, ולכן "אחד העם 13" ו-"אחד העם 100"
 // **אינם** דומים — הספרות שונות. זיהוי מוטעה כאן גרוע מהחמצה: הוא
 // היה מציע לחבר אתר לשורה של בניין אחר.
+// ⚠️ **אותן אותיות, לא אותם פסיקים.** "אוסישקין 58 , ת\"א" במערכת מול
+// "אוסישקין 58, ת\"א" בלוח הם אותו אתר; ההבדל היחיד הוא סימני פיסוק
+// ורווחים. ההשוואה כאן היא על רצף האותיות והספרות בלבד — **בסדר**,
+// בניגוד ל-`fingerprint` שלמטה — ולכן היא זהות ולא דמיון.
+function letters(name) {
+  return String(name ?? "").replace(/[^0-9א-תA-Za-z]/g, "");
+}
+
+// ⚠️ וזו השכבה השנייה: רב-קבוצת תווים, שתופסת גם החלפת סדר אותיות
+// ("בוטינסקי" מול "בוטניסקי"). היא **מציעה** ואינה מזהה — ולכן היא
+// אזהרה, ולא בחירה מראש.
 function fingerprint(name) {
   return String(name ?? "")
     .replace(/["'׳״,()\-]/g, "")
@@ -361,7 +372,13 @@ export default function ServiceAgreement({ site }) {
 
   // שורות שנראות כמו אותו אתר — מוצגות לפני האפשרות ליצור חדשה.
   const fp = fingerprint(site.site_name);
-  const similar = free.filter((r) => fingerprint(r.cells?.[nameKey]) === fp);
+  const lt = letters(site.site_name);
+
+  // ⚠️ שתי דרגות, ולא אחת. זהות אותיות היא **אותו אתר** ולכן היא
+  // נבחרת מראש; דמיון הוא **חשד** ולכן הוא רק מוצג.
+  const exactRow = free.find((r) => letters(r.cells?.[nameKey]) === lt) || null;
+  const similar = free.filter(
+    (r) => r !== exactRow && fingerprint(r.cells?.[nameKey]) === fp);
 
   return (
     <div className="sa">
@@ -376,9 +393,29 @@ export default function ServiceAgreement({ site }) {
       </div>
 
       {!picking ? (
-        <button type="button" className="sa-btn" onClick={() => setPicking(true)}>
-          חבר לשורה ברמזור
-        </button>
+        <>
+          {/* ⚠️ **שורה בשם זהה מוצעת מיד, בלי לפתוח רשימה.** היא אינה
+              "אפשרות אחת מני רבות" — היא האתר הזה. רשימה שצריך לפתוח
+              ולחפש בה היא בדיוק הצעד שבגללו נוצרו שורות כפולות. */}
+          {exactRow && (
+            <div className="sa-match">
+              נמצאה שורה בשם זהה: <b>{String(exactRow.cells?.[nameKey] ?? "")}</b>
+              <button
+                type="button"
+                className="sa-btn"
+                disabled={busy}
+                onClick={() => { setChoice(String(exactRow.id)); setPicking(true); }}
+              >
+                חבר אליה
+              </button>
+            </div>
+          )}
+
+          <button type="button" className="sa-btn sa-btn--ghost"
+                  onClick={() => { setChoice(exactRow ? String(exactRow.id) : ""); setPicking(true); }}>
+            {exactRow ? "בחירה אחרת…" : "חבר לשורה ברמזור"}
+          </button>
+        </>
       ) : (
         <div className="sa-pick">
           <select
@@ -388,6 +425,11 @@ export default function ServiceAgreement({ site }) {
             disabled={busy}
           >
             <option value="">בחרי שורה…</option>
+            {exactRow && (
+              <option value={exactRow.id}>
+                ✔ {String(exactRow.cells?.[nameKey] ?? "")} — שם זהה
+              </option>
+            )}
             {/* ⚠️ ראשון ברשימה: ברוב האתרים אין שורה בלוח בכלל, ולכן
                 זו הבחירה הצפויה ולא החריגה. */}
             {/* ⚠️ שורה דומה מוצגת **לפני** "צור חדשה", ולא אחריה.
@@ -400,7 +442,7 @@ export default function ServiceAgreement({ site }) {
             <option value={NEW_ROW}>
               ➕ צור שורה חדשה — {site.site_name}
             </option>
-            {free.map((r) => {
+            {free.filter((r) => r !== exactRow).map((r) => {
               const linked = codesOf(r.cells?.[codeKey]);
               const name = String(r.cells?.[nameKey] ?? `שורה ${r.id}`);
               return (
