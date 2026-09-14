@@ -213,6 +213,144 @@ async function main() {
       stuck.map((r) => `${r.code}: ${r.ops_week} פעולות, מונה=${r.plc_cycle_last ?? "null"}`).join(" · "));
 
     // ------------------------------------------------------------
+    // 10. משימות pg_cron — הכשל השקט ביותר במערכת
+    // ------------------------------------------------------------
+    // ⚠️ app.mark_silent_agents היא מה שהופך אתר שקט ל-no_comm. אם
+    // המשימה מפסיקה לרוץ, **שום אתר לא ייחשב מנותק לעולם** — כל
+    // הלוח נשאר ירוק בזמן שחניונים מתים. אין שום מסך שבו זה נראה.
+    try {
+      const { rows: jobs } = await c.query(`
+        SELECT j.jobname,
+               max(r.end_time) AS last_run,
+               count(*) FILTER (WHERE r.status <> 'succeeded'
+                                  AND r.end_time > now() - interval '1 day')::int AS failed_24h
+          FROM cron.job j
+          LEFT JOIN cron.job_run_details r ON r.jobid = j.jobid
+         GROUP BY j.jobname ORDER BY j.jobname`);
+
+      const stale = jobs.filter((j) => {
+        if (!j.last_run) return true;
+        // משימה דקתית שלא רצה חצי שעה — או שאינה רצה, או שהיא תקועה.
+        return /silent|minute/i.test(j.jobname)
+          && (Date.now() - new Date(j.last_run).getTime()) > 30 * 60e3;
+      });
+
+      check("⚠️ משימות pg_cron רצות", stale.length === 0,
+        stale.map((j) => `${j.jobname}: ${j.last_run ?? "מעולם"}`).join(" · "));
+
+      const broken = jobs.filter((j) => j.failed_24h > 0);
+      warn("אין משימת cron שנכשלה ביממה האחרונה", broken.length === 0,
+        broken.map((j) => `${j.jobname}: ${j.failed_24h}`).join(" · "));
+    } catch (e) {
+      // ⚠️ **לא דילוג שקט.** אם אין הרשאה לקרוא את cron, זו עובדה
+      // שצריך לדעת — ולא סימן שהכול תקין.
+      warn("משימות pg_cron ניתנות לבדיקה", false, e.message.slice(0, 120));
+    }
+
+    // ------------------------------------------------------------
+    // 11. סחיפת שעון באתרים
+    // ------------------------------------------------------------
+    // ⚠️ חותם הזמן של כל פעולה נלקח משעון מחשב האתר. מחשב עם שעון סוטה
+    // רושם את כל הפעולות שלו בזמן שגוי — וזה מרעיל משכי מצבים, זמינות
+    // והארכיון החודשי. נמדד בשטח: אתר אחד מקדים ב-34 שניות, אחר מפגר
+    // ב-235.
+    //
+    // reported_at הוא מה שהסוכן שידר **בדיוק כפי ששידר**; received_at
+    // הוא מתי השרת קלט. ההפרש ביניהם הוא הסחיפה ועיכוב הרשת יחד, ולכן
+    // הסף רחב בכוונה — מה שמעניין הוא חריגה בוטה, לא שניות.
+    const DRIFT_LIMIT_S = 120;
+    const { rows: drift } = await c.query(`
+      SELECT s.code,
+             round(avg(extract(epoch from
+               (o.received_at::timestamptz - o.reported_at::timestamptz))))::int AS avg_s,
+             count(*)::int AS n
+        FROM operations o JOIN sites s ON s.id = o.site_id
+       WHERE o.occurred_at >= $1 AND o.reported_at IS NOT NULL
+       GROUP BY s.code HAVING count(*) >= 5
+       ORDER BY abs(avg(extract(epoch from
+               (o.received_at::timestamptz - o.reported_at::timestamptz)))) DESC`, [iso(from)]);
+
+    const skewed = drift.filter((r) => Math.abs(r.avg_s) > DRIFT_LIMIT_S);
+    warn(`אין אתר עם סחיפת שעון מעל ${DRIFT_LIMIT_S} שניות`,
+      skewed.length === 0,
+      skewed.map((r) => `${r.code}: ${r.avg_s > 0 ? "מפגר" : "מקדים"} ${Math.abs(r.avg_s)}s (${r.n} פעולות)`).join(" · "));
+
+    // ------------------------------------------------------------
+    // 12. מקטעי "בפעולה" תקועים
+    // ------------------------------------------------------------
+    // ⚠️ **מתועד וידוע, ולא באג.** הסוכן edge-triggered: רגיסטר קפוא
+    // אינו משדר דבר, ולכן מקטע "בפעולה" גדל בלי גבול — ונספר כזמינות
+    // מלאה. נמדד בעבר: 381 שעות במקטעים ארוכים מ-30 דקות מול 153 שעות
+    // של פעולות אמיתיות. פיצול "תקוע" נבנה והוסר לבקשת בעלת המוצר.
+    //
+    // כאן זו **מדידה**, לא דרישה לשינוי: כמה מהזמינות נשענת על מקטעים
+    // שאיש לא יקרא להם "פעולה".
+    const { rows: longOps } = await c.query(`
+      SELECT s.code,
+             round(sum(extract(epoch from (
+               COALESCE(h.ended_at, $2)::timestamptz - h.started_at::timestamptz
+             )) / 3600.0)::numeric, 1) AS hours,
+             count(*)::int AS n
+        FROM status_history h JOIN sites s ON s.id = h.site_id
+       WHERE COALESCE(h.reclassified_to, h.status) = 'operating'
+         AND h.started_at >= $1
+         AND extract(epoch from (
+               COALESCE(h.ended_at, $2)::timestamptz - h.started_at::timestamptz)) > 1800
+       GROUP BY s.code ORDER BY hours DESC`,
+      [iso(from), iso(to)]);
+
+    const longHours = longOps.reduce((a, r) => a + Number(r.hours), 0);
+    warn("אין מקטעי 'בפעולה' ארוכים מ-30 דקות", longOps.length === 0,
+      longOps.length
+        ? `${longHours.toFixed(1)} שעות ב-${longOps.length} אתרים · ` +
+          longOps.slice(0, 5).map((r) => `${r.code}: ${r.hours}ש×${r.n}`).join(" · ")
+        : "");
+
+    // ------------------------------------------------------------
+    // 13. תפעולים כפולים
+    // ------------------------------------------------------------
+    // ⚠️ הדדופ בשרת מפתחו הוא reported_at המקורי. כפילות פירושה שהמנגנון
+    // לא תפס — וכל כפילות מנפחת ישירות את ספירת הפעולות ואת המכנה של
+    // אחוז הכשל.
+    const { rows: dupes } = await c.query(`
+      SELECT s.code, count(*)::int AS n FROM (
+        SELECT site_id, card_number, start_end, occurred_at, count(*) AS k
+          FROM operations WHERE occurred_at >= $1
+         GROUP BY 1,2,3,4 HAVING count(*) > 1) d
+      JOIN sites s ON s.id = d.site_id GROUP BY s.code`, [iso(from)]);
+
+    check("אין תפעולים כפולים", dupes.length === 0,
+      dupes.map((r) => `${r.code}: ${r.n}`).join(" · "));
+
+    // ------------------------------------------------------------
+    // 14. מקטעים באורך שלילי
+    // ------------------------------------------------------------
+    // ⚠️ ended_at לפני started_at פירושו משך שלילי, ש**מקזז** זמן אמיתי
+    // מסכום השעות — כלומר הזמינות מחושבת על מכנה קטן מהאמת.
+    const { rows: neg } = await c.query(`
+      SELECT s.code, count(*)::int AS n
+        FROM status_history h JOIN sites s ON s.id = h.site_id
+       WHERE h.ended_at IS NOT NULL AND h.ended_at < h.started_at
+       GROUP BY s.code`);
+
+    check("אין מקטעים באורך שלילי", neg.length === 0,
+      neg.map((r) => `${r.code}: ${r.n}`).join(" · "));
+
+    // ------------------------------------------------------------
+    // 15. מה נזרק, ולמה
+    // ------------------------------------------------------------
+    // ⚠️ ingest_drops היא הטבלה היחידה שעונה על "למה ההודעה הזו לא
+    // הגיעה". טבלה ריקה אינה בהכרח בשורה — היא גם מה שקורה כשהרישום
+    // עצמו נשבר, וזה כבר קרה כאן.
+    const { rows: drops } = await c.query(`
+      SELECT reason, count(*)::int AS n
+        FROM ingest_drops WHERE at >= $1
+       GROUP BY reason ORDER BY n DESC LIMIT 8`, [iso(from)]);
+
+    console.log(String.fromCharCode(10) + "נזרק בשבוע האחרון: " +
+      (drops.length ? drops.map((r) => `${r.reason}×${r.n}`).join("  ") : "כלום"));
+
+    // ------------------------------------------------------------
     // 9. תמונת מצב — הקשר, לא טענה
     // ------------------------------------------------------------
     const { rows: vers } = await c.query(`
