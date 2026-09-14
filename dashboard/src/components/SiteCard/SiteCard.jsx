@@ -148,15 +148,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // מתי הזמינות בכלל נמדדת, ולכן שני כרטיסים עם אותו אחוז אינם אומרים
   // אותו דבר אם אחד בסיסי והשני VIP. בלי זה על המסך, ההשוואה ביניהם
   // מטעה — והכרטיס הוא בדיוק המקום שבו משווים.
-  const AGREEMENT_NAMES = { basic: "בסיסי", ext: "מורחב", vip: "VIP" };
-  const agreementKind = site.serviceAgreement
-    ? String(site.serviceAgreement).trim().toLowerCase()
-    : null;
-  // ⚠️ ערך שאיננו מכירים מוצג כפי שהוא ולא נבלע: הוא הסיבה שהאתר
-  // עדיין מחושב 24/7, וההודאה בכך היא מה שיגרום למישהו לתקן.
-  const agreementName = agreementKind
-    ? (AGREEMENT_NAMES[agreementKind] || agreementKind)
-    : null;
+  // ⚠️ **אין כאן תג שני לרמת השירות.** הוספתי כזה, וזו הייתה כפילות:
+  // ‏`TierBadge` כבר מציג בדיוק את המושג הזה. מה שהשתנה הוא **המקור** —
+  // ‏`site.tier` מוזן עכשיו מההסכם שבשורת הרמזור (ראה `sitesDirect`),
+  // ולכן התג, שורת הטבלה והמיון כולם עוקבים אחרי אותו ערך.
+  //
+  // שני תגים לאותו מושג על כרטיס אחד הם בדיוק הדרך שבה אנשים מפסיקים
+  // להאמין לשניהם.
 
   // ============================================================
   // ⚠️ שתי מערכות בבקר אחד — ולמה השבבים אינם קישוט
@@ -394,19 +392,6 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               );
             })}
           </div>
-        </div>
-      )}
-      {agreementName && (
-        <div className="card-detail">
-          <span className="detail-label">סוג שירות</span>
-          <span className="detail-value">
-            <span
-              className={`card-agreement card-agreement--${AGREEMENT_NAMES[agreementKind] ? agreementKind : "unknown"}`}
-              title={`הסכם ${agreementName} — הזמינות נמדדת רק בתוך שעות השירות שלו`}
-            >
-              {agreementName}
-            </span>
-          </span>
         </div>
       )}
       <div className="card-detail">

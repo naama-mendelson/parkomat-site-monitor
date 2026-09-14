@@ -93,8 +93,27 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       ? "maintenance"
       : site.status;
 
+    // ============================================================
+    // ⚠️ רמת השירות מגיעה מהרמזור, לא משדה נפרד על האתר
+    // ============================================================
+    // ל-`sites` יש שדה `tier` משלו, והתג בכרטיס הוצג ממנו. אבל
+    // **ההסכם בלוח הוא מה שקובע מתי הזמינות בכלל נמדדת** — כלומר שני
+    // מקורות לאותה אמת, ואחד מהם משפיע על מספר והשני רק על תווית.
+    // תג שאומר "בסיסי" בזמן שהשורה אומרת VIP הוא בדיוק סוג הסתירה
+    // שאיש לא מבחין בה עד שמישהו משווה.
+    //
+    // ⚠️ ואוצר המילים שונה: הלוח כותב `ext`, השדה הישן `extended`.
+    // התרגום כאן ולא בכרטיס — אחרת כל צרכן של `tier` (הכרטיס, שורת
+    // הטבלה, המיון) היה צריך לזכור אותו בעצמו.
+    const TIER_FROM_AGREEMENT = { vip: "vip", ext: "extended", basic: "basic" };
+    const agreed = svc?.agreement
+      ? TIER_FROM_AGREEMENT[String(svc.agreement).trim().toLowerCase()]
+      : null;
+
     return {
       ...site,
+      // אתר שלא חובר לרמזור ממשיך עם הדרגה שהוגדרה לו ידנית.
+      tier: agreed ?? site.tier,
       status,
       inMaintenance,
       failureRate: st?.failure_rate ?? 0,
