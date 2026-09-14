@@ -133,3 +133,15 @@
 
 .sa-cell-input:focus,
 .sa-select--cell:focus { outline: 2px solid var(--brand, #3d78d8); outline-offset: -1px; }
+
+/* ⚠️ ענבר ולא אדום: שורה דומה אינה שגיאה — לפעמים באמת צריך שתיים.
+   אדום כאן היה נקרא כאיסור, ואז לומדים לעקוף אותו. */
+.sa-warn {
+  padding: 8px 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 7px;
+  background: rgba(245, 158, 11, 0.10);
+  color: #92400e;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
