@@ -37,6 +37,23 @@ import { siteTrend } from "../../../shared/executive.mjs";
  * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
  * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
+// ⚠️ הדירוג הוא **ההפך** מזה של `SiteStateAggregator` בסוכן, ובכוונה:
+// שם מחפשים את הטוב (מה עדיין עובד), כאן את הגרוע (מה דורש טיפול).
+// שתי הפונקציות מתארות את אותו אתר ואינן סותרות — הן עונות על שתי
+// שאלות שונות.
+const WORST_RANK = { error: 0, no_comm: 1, maintenance: 2, operating: 3, ready: 4 };
+
+function worstOfSystems(systems) {
+  if (!Array.isArray(systems) || systems.length === 0) return null;
+  let worst = null;
+  for (const u of systems) {
+    const st = String(u?.state ?? "").trim();
+    if (!(st in WORST_RANK)) continue;          // "unknown" אינו מצב גרוע
+    if (worst === null || WORST_RANK[st] < WORST_RANK[worst]) worst = st;
+  }
+  return worst;
+}
+
 export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
@@ -175,6 +192,20 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       //
       // null = לאתר יש מערכת אחת. מערך = יש שתיים, והנה הן.
       systems: Array.isArray(g.systems) && g.systems.length > 0 ? g.systems : null,
+
+      // ============================================================
+      // ⚠️ באתר דו-מערכתי — **הצגה לפי הגרוע, מדידה לפי הטוב**
+      // ============================================================
+      // שתי שאלות שונות שהיו עד כה נתון אחד:
+      //   "האם צריך לטפל בזה עכשיו?"  → המערכת הגרועה. מערכת שמתה היא
+      //      סיבה לנסוע לאתר, גם אם השנייה מחזיקה את החניון פתוח.
+      //   "האם עמדנו בהתחייבות?"       → המערכת הטובה. האתר שירת רכבים.
+      //
+      // ⚠️ **וזו הסיבה ש-`status` לא נוגע.** הוא מה שנכתב ל-
+      // ‏`status_history`, וממנו מחושבות הזמינות ואחוז הכשל — שינוי שלו
+      // היה מעביר גם אותם לגרוע, כלומר בדיוק ההפך ממה שנקבע.
+      // ‏`displayStatus` הוא שכבת תצוגה בלבד: הצ'יפ והמיון.
+      displayStatus: worstOfSystems(g.systems) ?? status,
 
       lastFaultAt: g.last_fault_at ?? null,
       // ⚠️ ?? ולא ||: '' הוא ערך תקף ("הבקר נשאל והחזיר ריק"), ו-|| היה

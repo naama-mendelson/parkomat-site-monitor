@@ -100,7 +100,11 @@ function TypeBadge({ type }) {
 }
 
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
-  const status = site.status;
+  // ⚠️ **הצ'יפ מציג את המערכת הגרועה, המדד מחשב את הטובה.** באתר
+  // דו-מערכתי אלה שני דברים שונים במכוון: "במה לטפל עכשיו" מול "האם
+  // עמדנו בהתחייבות". באתר חד-מערכתי `displayStatus` שווה ל-`status`,
+  // ולכן שום דבר שם לא משתנה.
+  const status = site.displayStatus ?? site.status;
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
   // ⚠️ לא STATUS_LABELS ישירות: תחזוקה שנפתחה אחרי תקלה נקראת "תפעול
   // תקלה". ראה ההסבר המלא ב-utils/constants.js.
@@ -254,7 +258,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ⚠️ **גם `no_comm` מקבל אותו**, ומסיבה נפרדת: אתר מנותק אינו נספר
   // בזמינות כלל ("לא יודעים אינו כישלון"), ולכן הוא **נעלם מהמדדים**.
   // הסטופר הוא הדבר היחיד שאומר כמה זמן הוא נעלם.
-  const showTimer = (status === "error" || status === "no_comm") && site.statusSince;
+  // ⚠️ **הסטופר נקשר ל-`site.status` האמיתי ולא ל-`displayStatus`.**
+  // ‏`statusSince` הוא מתי נפתח המקטע של המצב **המאוחד** — באתר
+  // דו-מערכתי שבו מערכת אחת בתקלה והשנייה עובדת, המקטע הפתוח הוא
+  // "מוכן", והסטופר היה מציג "בתקלה כבר 4 שעות" על משך של מצב תקין.
+  // מספר שנכון לשדה אחר הוא גרוע ממספר חסר.
+  const showTimer =
+    (site.status === "error" || site.status === "no_comm") && site.statusSince;
 
   const statusTag = (
     <span className="card-status" style={{ background: colors.bg, color: colors.text }}>
