@@ -144,6 +144,26 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // בדיוק מה שהציג תמיד. null כאן פירושו "לא חובר", לא "אין נתון".
   const agreementLabel = site.serviceAgreement ? "שעות שירות" : null;
 
+  // ============================================================
+  // ⚠️ מסלול ושירות — שתי שאלות שונות, ושתיהן על הכרטיס
+  // ============================================================
+  //     מסלול  = מה ההסכם שנחתם
+  //     שירות  = איך מתייחסים אליו בפועל — **וזה מה שמחשב את הזמינות**
+  //
+  // נמדד: ב-8 מתוך 28 האתרים הם נבדלים. זלטופולסקי נחתם "בסיסי"
+  // ומטופל כ-VIP, כלומר נמדד על 103 שעות בשבוע במקום 45 — פער של יותר
+  // מפי שניים שאיש לא יכול היה לראות משום מסך.
+  const AGREEMENT_NAMES = {
+    basic: "בסיסי", ext: "מורחב", vip: "VIP",
+    no_service: "לא בשירות", maintenance_only: "תחזוקה בלבד", none: "אין",
+  };
+  const nameOf = (v) => {
+    const k = v ? String(v).trim().toLowerCase() : null;
+    return k ? { k, label: AGREEMENT_NAMES[k] || k } : null;
+  };
+  const svc = nameOf(site.serviceAgreement);
+  const plan = nameOf(site.servicePlan);
+
   // ⚠️ **סוג ההסכם מוצג על הכרטיס עצמו ולא רק בפאנל.** הוא מה שקובע
   // מתי הזמינות בכלל נמדדת, ולכן שני כרטיסים עם אותו אחוז אינם אומרים
   // אותו דבר אם אחד בסיסי והשני VIP. בלי זה על המסך, ההשוואה ביניהם
@@ -394,6 +414,38 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
       )}
+      {/* ⚠️ המסלול קודם והשירות אחריו — מה שנחתם, ואז מה שקורה בפועל.
+          הסדר ההפוך היה קורא כאילו השירות הוא הנתון והמסלול הוא הערה. */}
+      {plan && (
+        <div className="card-detail">
+          <span className="detail-label">מסלול</span>
+          <span className="detail-value">
+            <span className={`card-agreement card-agreement--${AGREEMENT_NAMES[plan.k] ? plan.k : "unknown"}`}
+                  title="ההסכם שנחתם. הזמינות מחושבת לפי השירות, לא לפיו.">
+              {plan.label}
+            </span>
+          </span>
+        </div>
+      )}
+
+      {svc && (
+        <div className="card-detail">
+          <span className="detail-label">שירות</span>
+          <span className="detail-value">
+            <span className={`card-agreement card-agreement--${AGREEMENT_NAMES[svc.k] ? svc.k : "unknown"}`}
+                  title={`כך מטופל האתר בפועל, והזמינות נמדדת רק בשעות השירות של ${svc.label}` +
+                         (plan && plan.k !== svc.k ? ` — למרות שנחתם ${plan.label}` : "")}>
+              {svc.label}
+            </span>
+            {/* ⚠️ הפער מסומן ולא מוסתר: אתר שנמדד לפי הסכם אחר מזה
+                שבחוזה הוא בדיוק מה שצריך לקפוץ לעין. */}
+            {plan && plan.k !== svc.k && (
+              <span className="card-agreement-gap" title={`נחתם ${plan.label}, מטופל כ-${svc.label}`}>≠</span>
+            )}
+          </span>
+        </div>
+      )}
+
       <div className="card-detail">
         <span className="detail-label">פעולות</span>
         <span className="detail-value">{(site.operations ?? 0).toLocaleString()}</span>

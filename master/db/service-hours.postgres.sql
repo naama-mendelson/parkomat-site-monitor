@@ -157,6 +157,43 @@ COMMENT ON FUNCTION app.service_agreement(integer) IS
   'סוג הסכם השירות של אתר לפי עמודת "קוד אתר" בלוח הרמזור. NULL = לא חובר.';
 
 -- ============================================================
+-- app.service_plan — **המסלול** שנחתם, להבדיל מהשירות בפועל
+-- ============================================================
+-- ⚠️ **שתי עמודות, שתי שאלות — וזו אינה כפילות:**
+--     מסלול  = מה ההסכם שנחתם          ("סוג הסכם שירות במקור")
+--     שירות  = איך מתייחסים אליו בפועל  ("להתייחס כ")
+--
+-- ⚠️ **ורק השירות מחשב את הזמינות.** אתר שנחתם עליו בסיסי ומטופל
+-- כ-VIP יימדד לפי 103 שעות בשבוע ולא לפי 45. זו החלטה תפעולית
+-- שגוברת על החוזה — והיא הייתה בלתי-נראית לחלוטין עד שהוצגו שניהם
+-- זה לצד זה. מי שרואה רק מספר אחד אינו יודע לפי מה הוא חושב.
+CREATE OR REPLACE FUNCTION app.service_plan(p_site_id integer)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $fn$
+  WITH keys AS (
+    SELECT
+      (SELECT key FROM traffic_light_columns WHERE label = 'קוד אתר' LIMIT 1) AS k_code,
+      (SELECT key FROM traffic_light_columns
+        WHERE label = 'סוג הסכם שירות במקור' LIMIT 1) AS k_plan
+  )
+  SELECT lower(btrim(r.cells ->> k.k_plan))
+    FROM traffic_light_rows r, keys k, sites s
+   WHERE s.id = p_site_id
+     AND s.code = ANY(
+           string_to_array(
+             replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')),
+                             chr(32), ''), chr(9), ''),
+             ','))
+     AND btrim(coalesce(r.cells ->> k.k_plan, '')) <> ''
+   LIMIT 1;
+$fn$;
+
+COMMENT ON FUNCTION app.service_plan(integer) IS
+  'המסלול שנחתם ("סוג הסכם שירות במקור"). אינו מחשב זמינות — ראה app.service_agreement.';
+
+-- ============================================================
 -- public.site_uptime_service — זמינות בתוך שעות השירות בלבד
 -- ============================================================
 -- ⚠️ **פונקציה נפרדת ולא שינוי של `site_uptime`, וזו החלטה.**
@@ -182,6 +219,9 @@ CREATE OR REPLACE FUNCTION public.site_uptime_service(
 RETURNS TABLE (
   site_id              integer,
   agreement            text,
+  -- ⚠️ המסלול נוסע לצד השירות כדי שהמסך יוכל להציג את שניהם. הוא
+  -- **אינו** משתתף בשום חישוב כאן.
+  plan                 text,
   service_hours        double precision,
   ready_hours          double precision,
   operating_hours      double precision,
@@ -241,6 +281,7 @@ svc AS (
 )
 SELECT ids.id,
        ids.kind,
+       app.service_plan(ids.id),
        svc.hours::double precision,
        COALESCE(agg.ready_h, 0)::double precision,
        COALESCE(agg.operating_h, 0)::double precision,

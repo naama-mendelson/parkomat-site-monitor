@@ -149,6 +149,10 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
         : (up && up.measured_hours > 0 ? up.availability_percent : null),
 
       serviceAgreement: svc ? svc.agreement : null,
+      // ⚠️ **המסלול אינו מחשב דבר** — הוא מה שנחתם. הוא נוסע לכרטיס
+      // כדי שהפער בינו לבין השירות יהיה גלוי: 8 אתרים נמדדים היום לפי
+      // הסכם שונה מזה שבחוזה, וזה היה בלתי-נראה לחלוטין.
+      servicePlan: svc ? svc.plan : null,
       serviceHours: svc ? svc.service_hours : null,
       // אותו כלל בדיוק כמו בשרת — siteTrend במודול המשותף.
       trend: siteTrend(
