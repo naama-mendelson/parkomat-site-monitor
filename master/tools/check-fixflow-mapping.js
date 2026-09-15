@@ -9,11 +9,21 @@
 // ⚠️ הכלי אינו כותב דבר, לא כאן ולא ב-FixFlow.
 import { DatabaseSync } from "node:sqlite";
 import pg from "pg";
-import { resolveProfile } from "../../shared/fixflow-profiles.mjs";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { resolveLink } from "../../shared/fixflow-profiles.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const FIXFLOW_DB =
   process.env.FIXFLOW_DB_PATH ||
   "C:\\Users\\נעמהמנדלסון\\Documents\\FixFlow\\server\\data\\parkomat.sqlite";
+
+// המפה שהדשבורד נושא איתו — אותו קובץ בדיוק, כדי שהשער ימדוד את מה שנשלח.
+const MAP = JSON.parse(
+  readFileSync(join(HERE, "..", "..", "dashboard", "src", "components", "FixFlowLink", "fixflow-sites.json"), "utf8")
+);
 
 async function main() {
   const ff = new DatabaseSync(FIXFLOW_DB, { readOnly: true });
@@ -35,9 +45,9 @@ async function main() {
 
   const buckets = { ok: [], empty: [], needsSystem: [], unmapped: [], noType: [] };
   for (const s of sites) {
-    // ⚠️ המערכת (לולק/ביטנקם) אינה נשמרת באף שדה ב-SiteMonitor, ולכן לא מועבר
-    // כאן ערך. זו אינה השמטה — זה בדיוק הפער שהכלי אמור להאיר.
-    const r = resolveProfile(s.plc_type, null);
+    // ⚠️ אותו מימוש שהדשבורד מריץ, ועם אותה מפה. גרסה קודמת של השער הכירה רק
+    // את המיפוי לפי סוג ודיווחה "14 מחוברים" בזמן שהמסך חיבר 25.
+    const r = resolveLink(s, MAP);
     const row = { ...s, ...r };
     if (r.status === "no-type") buckets.noType.push(row);
     else if (r.status === "needs-system") buckets.needsSystem.push(row);

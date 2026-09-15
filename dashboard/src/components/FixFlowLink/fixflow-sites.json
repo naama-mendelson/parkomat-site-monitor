@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-15T05:58:47.632Z",
+  "generatedAt": "2026-09-15T06:10:47.196Z",
   "sites": {
     "1089": {
       "by": "name",
@@ -71,6 +71,12 @@
       "profile": "שאטל דולי",
       "docs": 24
     },
+    "1376": {
+      "by": "type",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31
+    },
     "1399": {
       "by": "name",
       "siteId": "01KXMQJ76MFZ1HPZ75SX3F24C7",
@@ -134,6 +140,12 @@
       "system": "לולק",
       "profile": "שאטל מצבט x",
       "docs": 0
+    },
+    "3452": {
+      "by": "type",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31
     },
     "3456": {
       "by": "name",

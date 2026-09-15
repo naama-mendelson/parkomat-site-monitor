@@ -55,10 +55,21 @@ test("אין סוג — מצב נפרד, לא 'לא מופה'", () => {
 });
 
 test("סוג שטרם הוכרע מחזיר סיבה, ולא שתיקה", () => {
-  const r = resolveProfile("shuttle-x");
+  const r = resolveProfile("shuttle-y");
   assert.equal(r.status, "unmapped");
-  assert.match(r.reason, /טרם הוכרע/);
+  assert.match(r.reason, /לא הוכרע/);
   assert.equal(r.profile, undefined);
+});
+
+// ⚠️ המיפוי הזה נקבע **בספירה ולא בדמיון שמות**: ב-FixFlow יש בדיוק שני אתרי
+// "נמל", אצלנו בדיוק שני קודים באותו אתר פיזי (1376 ו-3501), והזיווג של 3501
+// ל-`שאטל דולי` מאומת עצמאית — ולכן השני נכפה. הדמיון בין "נמל מסילות"
+// ל-"שאטל מסילה" תומך בתוצאה ולא מבסס אותה; דמיון שמות הוא בדיוק מה שנפסל.
+test("שאטל X מגיע לשאטל מסילה", () => {
+  const r = resolveProfile("shuttle-x");
+  assert.equal(r.status, "ok");
+  assert.equal(r.system, "לולק");
+  assert.equal(r.profile, "שאטל מסילה");
 });
 
 // ⚠️ השער שתופס את התוספת הבאה. מי שיוסיף דגם ל-site-types.mjs ולא ימפה אותו

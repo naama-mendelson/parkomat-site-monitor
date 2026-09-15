@@ -35,7 +35,7 @@
 // יכול לעשות fetch לשרת http ברשת המשרד — הדפדפן חוסם, והדשבורד אינו יכול
 // לשאול את FixFlow דבר.
 import MAP from "../components/FixFlowLink/fixflow-sites.json";
-import { resolveProfile } from "../../../shared/fixflow-profiles.mjs";
+import { resolveLink } from "../../../shared/fixflow-profiles.mjs";
 
 /** האם הפיילוט פעיל. ברירת המחדל כבויה — תכונה ניסיונית אינה נדלקת מעצמה. */
 export const FIXFLOW_ENABLED = String(import.meta.env.VITE_FIXFLOW_ENABLED ?? "") === "true";
@@ -62,35 +62,14 @@ export const FIXFLOW_BASE_URL = String(import.meta.env.VITE_FIXFLOW_BASE_URL ?? 
 export function fixflowLinkFor(site, faultText = null) {
   if (!FIXFLOW_ENABLED || !FIXFLOW_BASE_URL || !site) return null;
 
+  const r = resolveLink(site, MAP);
+  if (r.status !== "ok") return { status: r.status, reason: r.reason, url: null };
+
   const q = faultText ? `?q=${encodeURIComponent(faultText)}` : "";
-  const entry = MAP?.sites?.[String(site.code)];
+  const path =
+    r.by === "name"
+      ? `#/site/${encodeURIComponent(r.siteId)}`
+      : `#/profile/${encodeURIComponent(r.system)}/${encodeURIComponent(r.profile)}`;
 
-  if (entry?.by === "name") {
-    return {
-      status: "ok",
-      by: "name",
-      scope: entry.siteName,
-      profile: entry.profile,
-      system: entry.system,
-      docs: entry.docs,
-      url: `${FIXFLOW_BASE_URL}/#/site/${encodeURIComponent(entry.siteId)}${q}`,
-    };
-  }
-
-  // ⚠️ ליפול חזרה ל-`resolveProfile` ולא להסתמך רק על המפה: המפה היא תמונת מצב
-  // שנוצרה בפקודה, ואתר שנרשם אחריה אינו בה. סוג מכונה שכבר הוגדר לו יביא אותו
-  // לספרייה הנכונה בלי שאיש יריץ שום דבר מחדש.
-  const type = entry?.by === "type" ? { status: "ok", system: entry.system, profile: entry.profile } : resolveProfile(site.plc_type ?? null, null);
-  if (type.status !== "ok") return { status: type.status, reason: type.reason, url: null };
-
-  return {
-    status: "ok",
-    by: "type",
-    scope: type.profile,
-    profile: type.profile,
-    system: type.system,
-    docs: entry?.docs,
-    url:
-      `${FIXFLOW_BASE_URL}/#/profile/${encodeURIComponent(type.system)}/${encodeURIComponent(type.profile)}` + q,
-  };
+  return { ...r, url: `${FIXFLOW_BASE_URL}/${path}${q}` };
 }
