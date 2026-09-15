@@ -1,0 +1,31 @@
+/* ⚠️ כל המחלקות כאן בקידומת `ffl-`, וזה לא סגנון אלא תנאי להסרה: מחיקת התיקייה
+   חייבת לא להשאיר כלל CSS יתום שמשפיע על משהו אחר. אין כאן שום סלקטור שנוגע
+   באלמנט של הכרטיס. */
+.ffl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid var(--border, #d7d7e0);
+  background: var(--surface-2, #f4f4f8);
+  color: var(--text, #2a2a35);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.ffl:hover {
+  background: var(--surface-3, #e9e9f2);
+  border-color: var(--accent, #9d99b9);
+}
+
+/* מצב מושבת: נראה ולא לחיץ, כדי שהיעדר הספרייה יהיה מידע ולא חידה. */
+.ffl-off {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ffl-icon { font-size: 13px; line-height: 1; }
+.ffl-text { white-space: nowrap; }
