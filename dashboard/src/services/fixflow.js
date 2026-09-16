@@ -7,9 +7,11 @@
 //
 //   כיבוי מיידי   — `VITE_FIXFLOW_ENABLED=false` ב-.env, בנייה, וזהו.
 //   הסרה מלאה     — מחיקת `services/fixflow.js`, מחיקת `components/FixFlowLink/`
-//                   (ובתוכה גם המפה, העקיפות והבורר), ומחיקת שתי שורות בכל
-//                   אחד משלושה קבצים: `SiteCard`, `AdminPanel`, `AddSiteModal`
-//                   (ה-import ואלמנט ה-JSX, שניהם מסומנים בהערה).
+//                   (ובתוכה גם המפה, הבורר, חלון השיוך והתאמת התקלות),
+//                   ומחיקת שתי שורות בכל אחד משלושה קבצים: `SiteCard`,
+//                   `AdminPanel`, `AddSiteModal` — ה-import ואלמנט ה-JSX,
+//                   שניהם מסומנים בהערה. (ב-SiteCard יש שתי שורות JSX:
+//                   `FixFlowSolution` ו-`FixFlowLink`.)
 //
 // ⚠️ **ויש היום גם עמודה אחת במסד** — `sites.fixflow_profile`. הכלל המקורי
 // אמר "אין טבלה ואין עמודה", והוא נשבר במודע אחרי שנמדד ששיוך אינו ניתן
@@ -87,4 +89,59 @@ export function fixflowLinkFor(site, faultText = null) {
     : `#/profile/${encodeURIComponent(r.system)}/${encodeURIComponent(r.profile)}`;
 
   return { ...r, url: `${FIXFLOW_BASE_URL}/${path}${q}` };
+}
+
+// ============================================================
+// מנוסח התקלה שהבקר כתב — אל הנוהל עצמו
+// ============================================================
+// ⚠️ **הקישור לספרייה אינו מספיק ברגע אמת.** מוקדן שרואה `מנהל חניון - דלתות
+// חניון פתוחות` באמצע אירוע צריך לדעת *מיד* שיש נוהל, ובעיקר — אם יש אזהרת
+// בטיחות. רשימה של 67 מסמכים שהוא צריך לחפש בה היא צעד נוסף בדיוק ברגע שבו
+// אין לו צעדים פנויים.
+//
+// נמדד על 90 צמדי (אתר, נוסח תקלה) אמיתיים: **47% נמצא להם נוהל** בציון
+// ≥0.55, רובם ב-0.88–1.00. השאר אינם התאמה חלשה — פשוט אין עליהם מסמך.
+import MAP_FAULTS from "../components/FixFlowLink/fixflow-sites.json";
+import { matchFault, buildWeights } from "../../../shared/fixflow-match.mjs";
+
+// ⚠️ טבלת המשקלים נבנית **פעם אחת לכל ספרייה** ונשמרת. בנייה בכל רינדור של
+// כרטיס הייתה 319 טוקניזציות × מספר הכרטיסים, בכל שנייה שבה מסך המפקח מתרענן.
+const weightCache = new Map();
+function modelFor(key, faults) {
+  if (!weightCache.has(key)) weightCache.set(key, buildWeights(faults));
+  return weightCache.get(key);
+}
+
+/**
+ * הנוהל שמתאים לתקלה הנוכחית של האתר, או null.
+ *
+ * ⚠️ החיפוש הוא **בתוך הספרייה של האתר בלבד**. חיפוש על כל 319 הנהלים היה
+ * מוצא כותרת דומה מספרייה של מתקן אחר — וכל הצעדים בה נראים סבירים.
+ */
+export function fixflowSolutionFor(site, faultText) {
+  if (!FIXFLOW_ENABLED || !FIXFLOW_BASE_URL || !faultText) return null;
+
+  const link = fixflowLinkFor(site, null);
+  if (!link || link.status !== "ok" || !link.system || !link.profile) return null;
+
+  const key = `${link.system}|${link.profile}`;
+  const raw = MAP_FAULTS.faults?.[key];
+  if (!raw?.length) return null;
+
+  // מפתחות קצרים בקובץ (i/t/w) — נפרשים כאן, כדי שהמתאם יישאר קריא.
+  const faults = raw.map((f) => ({ id: f.i, title: f.t, warning: f.w ?? null }));
+  const hit = matchFault(faultText, faults, modelFor(key, faults));
+  if (!hit) return null;
+
+  const base =
+    link.by === "name" || link.by === "chosen-site"
+      ? `#/site/${encodeURIComponent(link.siteId)}`
+      : `#/profile/${encodeURIComponent(link.system)}/${encodeURIComponent(link.profile)}`;
+
+  return {
+    title: hit.fault.title,
+    warning: hit.fault.warning,
+    score: hit.score,
+    url: `${FIXFLOW_BASE_URL}/${base}/fault/${encodeURIComponent(hit.fault.id)}`,
+  };
 }

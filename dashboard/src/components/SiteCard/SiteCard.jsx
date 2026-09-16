@@ -8,7 +8,8 @@ import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.
 import FaultTimer from "./FaultTimer";
 import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
-import FixFlowLink from "../FixFlowLink/FixFlowLink.jsx"; // פיילוט FixFlow — ראה services/fixflow.js
+import FixFlowLink from "../FixFlowLink/FixFlowLink.jsx";        // פיילוט FixFlow — ראה services/fixflow.js
+import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילוט FixFlow
 
 // ==========================================================
 // צבע הזמינות — והספים **נמדדו**, לא הומצאו
@@ -603,6 +604,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             {/* ⚠️ נקודת החיבור **היחידה** של פיילוט FixFlow לכרטיס. כל השאר יושב
                 ב-`components/FixFlowLink/` וב-`services/fixflow.js`. להסרה מלאה:
                 מחיקת שתי אלה ומחיקת שתי השורות האלה. ראה services/fixflow.js. */}
+            {/* ⚠️ הפאנל **מעל** הכפתור: אזהרת הבטיחות היא הדבר שצריך להיקרא
+                לפני שנוגעים במתקן, והכפתור הוא מה שעושים אחריה. */}
+            <FixFlowSolution site={site} faultText={showFault ? site.currentFaultText : null} />
             <FixFlowLink site={site} faultText={showFault ? site.currentFaultText : null} />
           </div>
         </div>

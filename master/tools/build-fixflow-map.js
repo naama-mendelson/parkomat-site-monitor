@@ -130,6 +130,38 @@ async function main() {
       overrides: r.overrides,
     };
 
+  // ============================================================
+  // ⚠️ הנהלים עצמם — כותרת ואזהרת בטיחות בלבד
+  // ============================================================
+  // הכרטיס בדשבורד צריך להתאים את נוסח התקלה שהבקר כתב לנוהל שמטפל בה. הוא
+  // אינו יכול לשאול את FixFlow: דף https מול שרת http ברשת המשרד. לכן הנהלים
+  // נוסעים עם המפה.
+  //
+  // ⚠️ **כותרת ואזהרה בלבד, ולא עצי הטיפול.** נמדד: העצים שוקלים 3.7MB —
+  // פי מאה מהמפה. ומעבר לגודל, שלושת הצעדים הראשונים **זהים כמעט בכל נוהל**
+  // (`פתח טים` ב-304 מתוך 319, `פתח מצלמות` ב-303), כי כך הם נכתבו. הצגתם
+  // על הכרטיס הייתה "הוראה" שנכונה לכל תקלה ואינה מלמדת דבר.
+  //
+  // מה שכן ייחודי לתקלה הוא **אזהרת הבטיחות** — 148 מתוך 319 מחזיקות אחת,
+  // והן ספציפיות ממש: "חובה לוודא במצלמות שאין אנשים בחניון וציוד שהושאר
+  // בפיר". זה מה שרוצים לראות בשנייה שבה תקלה קופצת.
+  const faultsByProfile = {};
+  for (const r of ff
+    .prepare(
+      `SELECT f.id, f.title, f.warning, sy.name AS system, p.name AS profile
+         FROM faults f
+         JOIN profiles p ON p.id = f.profile_id
+         JOIN systems sy ON sy.id = p.system_id
+        WHERE f.deleted_at IS NULL
+        ORDER BY sy.name, p.name, f.sort_order`)
+    .all()) {
+    const key = `${r.system}|${r.profile}`;
+    (faultsByProfile[key] ??= []).push(
+      // ⚠️ מפתחות קצרים: `id/title/warning` על 319 שורות מוסיפים ~6KB של שמות
+      // שדות בלבד. הקובץ הזה נטען בכל פתיחה של הדשבורד.
+      r.warning ? { i: r.id, t: r.title, w: r.warning } : { i: r.id, t: r.title });
+  }
+
   const profileList = {};
   for (const r of ff
     .prepare(
@@ -260,7 +292,7 @@ async function main() {
   }
   writeFileSync(
     OUT,
-    JSON.stringify({ generatedAt: new Date().toISOString(), profiles: profileList, ffSites: siteList, sites: map }, null, 2) + "\n",
+    JSON.stringify({ generatedAt: new Date().toISOString(), profiles: profileList, ffSites: siteList, faults: faultsByProfile, sites: map }, null, 2) + "\n",
     "utf8"
   );
   console.log(`\n✅ נכתב: ${OUT}`);

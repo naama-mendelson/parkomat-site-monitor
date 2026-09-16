@@ -57,3 +57,145 @@
 .ffp-row { display: flex; align-items: center; gap: 8px; }
 .ffp-row > span { white-space: nowrap; }
 .ffp-search { flex: 1; min-width: 0; }
+
+/* ============================================================
+   הנוהל שמתאים לתקלה — הפאנל שקופץ על הכרטיס
+   ============================================================
+   ⚠️ הוא מופיע רק כשיש התאמה ודאית. פאנל שמופיע תמיד — גם כדי לומר "לא
+   נמצא" — היה רעש קבוע על 53% מהתקלות, ומי שרואה אותו פעמיים מפסיק לקרוא
+   גם את זה שכן נמצא. */
+.ffs {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.07);
+  border-inline-start: 3px solid #2563eb;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+/* ⚠️ נוהל שיש בו אזהרת בטיחות נראה אחרת, ולא רק כותב אחרת. מי שסורק את
+   המסך בעין צריך להבחין בהבדל לפני שהוא קורא מילה. */
+.ffs-warn {
+  background: rgba(180, 83, 9, 0.09);
+  border-inline-start-color: #b45309;
+}
+
+.ffs-head { display: flex; align-items: center; gap: 6px; }
+.ffs-icon { flex: none; }
+.ffs-title { font-weight: 700; }
+
+.ffs-warning {
+  margin: 6px 0 0;
+  color: #b45309;
+  font-weight: 600;
+  /* ⚠️ שומר שורות חדשות: האזהרות בכונן מגיעות כמה שורות, וכל אחת עומדת
+     בפני עצמה. איחודן לפסקה אחת הופך רשימת בדיקות למשפט רץ. */
+  white-space: pre-line;
+}
+
+.ffs-open {
+  display: inline-block;
+  margin-top: 6px;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: none;
+}
+.ffs-open:hover { text-decoration: underline; }
+
+@media (prefers-color-scheme: dark) {
+  .ffs { background: rgba(96, 165, 250, 0.10); border-inline-start-color: #60a5fa; }
+  .ffs-warn { background: rgba(251, 146, 60, 0.12); border-inline-start-color: #fb923c; }
+  .ffs-warning { color: #fdba74; }
+  .ffs-open { color: #93c5fd; }
+}
+
+/* ============================================================
+   מצב שבור — כפתור, לא טקסט מושבת
+   ============================================================
+   ⚠️ עד כה זה היה `div` אפור שנראה כמו הודעה. עכשיו זו פעולה, והוא צריך
+   להיראות כמו כזו — אחרת איש לא ילחץ עליו ויידע שאפשר לתקן. */
+.ffl-fix {
+  cursor: pointer;
+  border: 1px dashed currentColor;
+  background: transparent;
+  font: inherit;
+  color: #b45309;
+}
+.ffl-fix:hover { background: rgba(180, 83, 9, 0.08); }
+
+/* ============================================================
+   חלון השיוך
+   ============================================================ */
+.ffa-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 16px;
+}
+
+.ffa {
+  background: var(--card-bg, #fff);
+  color: inherit;
+  border-radius: 12px;
+  padding: 18px 20px;
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+.ffa h3 { margin: 0 0 8px; font-size: 1rem; }
+
+.ffa-why {
+  margin: 0 0 12px;
+  color: #b45309;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.ffa-err {
+  margin: 10px 0 0;
+  color: #b91c1c;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.ffa-actions { display: flex; gap: 8px; margin-top: 16px; }
+.ffa-save, .ffa-cancel {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+}
+.ffa-save { background: #2563eb; border-color: #2563eb; color: #fff; }
+.ffa-save:disabled, .ffa-cancel:disabled { opacity: 0.55; cursor: default; }
+
+@media (prefers-color-scheme: dark) {
+  .ffa { background: #1f2937; }
+  .ffa-why { color: #fdba74; }
+  .ffl-fix { color: #fdba74; }
+}
+
+/* ⚠️ קטן ודהוי במכוון. הפעולה באירוע היא לפתוח את הנוהל — שינוי שיוך אינו
+   מתחרה עליה, אבל חייב להיות בהישג יד כשמתברר שהקישור מוביל למקום הלא נכון. */
+.ffl-edit {
+  margin-inline-start: 6px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  background: transparent;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.ffl-edit:hover { opacity: 1; background: rgba(128, 128, 128, 0.12); }
