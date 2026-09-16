@@ -13,7 +13,7 @@
 // הוא בדיוק איך שהמידע נעלם.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveProfile, PROFILE_BY_TYPE, UNRESOLVED_TYPES } from "../../shared/fixflow-profiles.mjs";
+import { resolveProfile, PROFILE_BY_TYPE, UNRESOLVED_TYPES, resolveLink } from "../../shared/fixflow-profiles.mjs";
 import { SITE_TYPE_KEYS } from "../../shared/site-types.mjs";
 
 test("דולי מגיע לשאטל דולי", () => {
@@ -89,4 +89,117 @@ test("סוג מומצא אינו מתחזה ללא-מוכרע", () => {
   const r = resolveProfile("banana");
   assert.equal(r.status, "unmapped");
   assert.match(r.reason, /לא מוכר/);
+});
+
+// ============================================================
+// הבחירה שנשמרה על האתר — ולמה היא גוברת על הכול
+// ============================================================
+// ⚠️ שלוש שיטות גזירה נוסו ונמדדו, וכולן נכשלו או סירבו. והחמור: גזירה אינה
+// יכולה לעבוד בעיקרון — FixFlow מתייקת 5 אתרים ל-`שאטל מצבט x` שיש בו 0
+// מסמכים בזמן ש-25 המסמכים יושבים ב-`שאטל מצבט שמסובבת במעלית` שיש בו אתר
+// אחד. סבך במקור אינו ניתן להתרה; רק להכרעה.
+const MAP = {
+  profiles: {
+    "לולק|xy לולק": { system: "לולק", profile: "xy לולק", docs: 67 },
+    "לולק|שאטל מצבט שמסובבת במעלית": { system: "לולק", profile: "שאטל מצבט שמסובבת במעלית", docs: 25 },
+  },
+  sites: {
+    1284: { by: "name", siteId: "abc", siteName: "עמנואל הרומי 10", system: "לולק", profile: "xy לולק", docs: 67 },
+  },
+};
+
+test("בחירה שנשמרה גוברת על התאמת שם", () => {
+  const r = resolveLink(
+    { code: "1284", plc_type: "xy", fixflow_profile: "לולק|שאטל מצבט שמסובבת במעלית" }, MAP);
+  assert.equal(r.status, "ok");
+  assert.equal(r.by, "chosen");
+  assert.equal(r.profile, "שאטל מצבט שמסובבת במעלית");
+  assert.equal(r.docs, 25);
+});
+
+test("בחירה שנשמרה גוברת על גזירה מסוג המכונה", () => {
+  const r = resolveLink({ code: "9999", plc_type: "doli", fixflow_profile: "לולק|xy לולק" }, MAP);
+  assert.equal(r.by, "chosen");
+  assert.equal(r.profile, "xy לולק");
+});
+
+// ⚠️ **הבדיקה החשובה כאן.** ערך פגום שנופל בשקט לגזירה מייצר כפתור שעובד
+// ומוביל למקום אחר ממה שנבחר — כלומר מוקדן שנשלח לספרייה של מכונה אחרת,
+// ואף הודעה בשום מסך. חייב להיות סירוב מפורש.
+test("בחירה פגומה נדחית במפורש, ואינה נופלת בשקט לגזירה", () => {
+  for (const bad of ["לולק", "|xy לולק", "לולק|", "   |   "]) {
+    const r = resolveLink({ code: "1284", plc_type: "doli", fixflow_profile: bad }, MAP);
+    assert.equal(r.status, "bad-choice", `"${bad}" היה אמור להידחות`);
+  }
+});
+
+// ⚠️ ריק הוא ערך אמיתי: הוא **מנקה** בחירה ומחזיר לגזירה. בלעדיו אי אפשר
+// לבטל בחירה שנעשתה בטעות, וזה מצב שאין ממנו יציאה מהמסך.
+test("ריק מחזיר לגזירה הרגילה, ואינו נחשב בחירה", () => {
+  for (const empty of ["", "   ", null, undefined]) {
+    const r = resolveLink({ code: "1284", plc_type: "xy", fixflow_profile: empty }, MAP);
+    assert.equal(r.by, "name", `"${empty}" לא היה אמור להיחשב בחירה`);
+    assert.equal(r.profile, "xy לולק");
+  }
+});
+
+// ⚠️ ספרייה שנבחרה ואינה ברשימה עדיין מוחזרת כ-ok עם docs=undefined, ולא
+// כשגיאה: הרשימה היא תמונת מצב שנוצרה בפקודה, ופרופיל שנוסף ב-FixFlow אחריה
+// אינו "לא קיים" — הוא חדש. המסך מציג אזהרה; הקישור אינו נחסם.
+test("ספרייה שאינה ברשימה — קישור תקף בלי מספר מסמכים", () => {
+  const r = resolveLink({ code: "1", fixflow_profile: "לולק|חדשה לגמרי" }, MAP);
+  assert.equal(r.status, "ok");
+  assert.equal(r.docs, undefined);
+});
+
+// ============================================================
+// קישור ברמת האתר — ולמה הוא רמה נפרדת ולא "ספרייה יפה יותר"
+// ============================================================
+// ⚠️ קישור לאתר מביא את תקלות סוג המכונה **בתוספת חריגות האתר**. 22 חריגות
+// קיימות, ו-15 מהן בגרוזנברג 7 — אתר שלנו. הגרסה הראשונה של הבורר הציעה
+// ספריות בלבד, ובחירה ידנית שם הייתה מוחקת 15 חריגות בלי סימן על המסך.
+const MAP2 = {
+  ffSites: {
+    abc123: { name: "גרוזנברג 7 ת\"א", system: "ביטנקם", profile: "ביטנקם xy", docs: 37, overrides: 15 },
+  },
+  profiles: { "ביטנקם|ביטנקם xy": { system: "ביטנקם", profile: "ביטנקם xy", docs: 37 } },
+  sites: {
+    2222: { by: "name", siteId: "abc123", siteName: "גרוזנברג 7 ת\"א", system: "ביטנקם", profile: "ביטנקם xy", docs: 37 },
+  },
+};
+
+test("בחירת אתר מחזירה קישור ברמת האתר, עם מספר החריגות", () => {
+  const r = resolveLink({ code: "2222", fixflow_profile: "site:abc123" }, MAP2);
+  assert.equal(r.status, "ok");
+  assert.equal(r.by, "chosen-site");
+  assert.equal(r.siteId, "abc123");
+  assert.equal(r.overrides, 15);
+  assert.equal(r.scope, "גרוזנברג 7 ת\"א");
+});
+
+// ⚠️ ההבחנה שקובעת איזה נתיב ייבנה. `by` אחיד לשתי הרמות היה שולח בחירת
+// אתר לנתיב הספרייה — כלומר מוחק את החריגות בדיוק כשביקשו אותן במפורש.
+test("בחירת ספרייה אינה מתחזה לקישור ברמת אתר", () => {
+  const r = resolveLink({ code: "2222", fixflow_profile: "ביטנקם|ביטנקם xy" }, MAP2);
+  assert.equal(r.by, "chosen");
+  assert.equal(r.siteId, undefined);
+  assert.equal(r.overrides, undefined);
+});
+
+test("site: בלי מזהה נדחה במפורש", () => {
+  for (const bad of ["site:", "site:   "]) {
+    const r = resolveLink({ code: "2222", fixflow_profile: bad }, MAP2);
+    assert.equal(r.status, "bad-choice", `"${bad}" היה אמור להידחות`);
+  }
+});
+
+// ⚠️ מזהה שאינו במפה עדיין מייצר קישור תקף: המפה היא תמונת מצב, ואתר שנוסף
+// ב-FixFlow אחריה אינו "לא קיים". ⚠️ ו-`scope` נופל למזהה ולא לריק —
+// כותרת ריקה על הכפתור נראית כמו באג ולא כמו מידע חסר.
+test("אתר שאינו במפה — קישור תקף, וכותרת שאינה ריקה", () => {
+  const r = resolveLink({ code: "9", fixflow_profile: "site:zzz" }, MAP2);
+  assert.equal(r.status, "ok");
+  assert.equal(r.siteId, "zzz");
+  assert.equal(r.scope, "zzz");
+  assert.equal(r.docs, undefined);
 });

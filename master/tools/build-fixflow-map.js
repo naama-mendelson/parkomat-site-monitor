@@ -48,7 +48,7 @@ const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 // ⚠️ נרמול מינימלי בכוונה. הוא מסיר רק מה שאין בו מידע — גרשיים, פסיקים,
 // מקפים וכיווניות. מחיקת ספרות הייתה הופכת את "הירקון 38" ו-"הירקון 224"
 // לאותו שם, וזו בדיוק ההתאמה השגויה שהכלי הזה נועד למנוע.
-const norm = (s) =>
+const base = (s) =>
   String(s ?? "")
     .replace(BIDI, "")
     .replace(/['`׳״"]+/g, "")
@@ -57,11 +57,34 @@ const norm = (s) =>
     .trim()
     .toLowerCase();
 
+// ============================================================
+// ⚠️ שני כללים נוספים — ולמה הם אינם "התאמה מעורפלת"
+// ============================================================
+// ההבדל מציון דמיון הוא מהותי. ציון דמיון **מוותר על מידע**, ולכן הוא יכול
+// לחבר שני רחובות שונים: `ברנדיס 38 → הירקון 38` קיבל 0.67, בדיוק כמו זוג נכון.
+// הכללים כאן אינם מוותרים על כלום — הם מסירים הבדלי כתיב באותו שם בדיוק:
+//
+//   עיר      — אצלנו `עמנואל הרומי 10, ת"א`, ב-FixFlow `עמנואל הרומי 10`.
+//              אותו רחוב, אותו מספר, והעיר נכתבה בצד אחד בלבד.
+//   סדר טווח — אצלנו `בארט 19-11`, ב-FixFlow `בארט 11-19`. אותו טווח, הפוך.
+//
+// ⚠️ **ונמדדו לפני שנכנסו**, כי כלל שמייצר התנגשות אחת גרוע מארבעה חיבורים
+// ידניים: 117 השמות ב-FixFlow נשארים 117 ייחודיים תחת שניהם. אפס התנגשויות.
+// אם יום אחד תיווצר התנגשות, הכלי מדווח עליה ואינו מתאים בשקט — ראה `byName`.
+const CITY_SUFFIX =
+  /\s*(תא|ת א|תל אביב|רג|ר ג|רמת גן|בת ים|חולון|רעננה|ירושלים|הוד השרון|רמת השרון|רמהש|גבעתיים|הרצליה|נס ציונה|פקיעין|ראשון לציון)\s*$/;
+
+// "19 11" → "11 19". רק זוג מספרים צמודים, כלומר טווח.
+const sortRange = (s) => s.replace(/(\d+)\s+(\d+)/g, (m, a, b) => (+a <= +b ? `${a} ${b}` : `${b} ${a}`));
+
+const norm = (s) => sortRange(base(s).replace(CITY_SUFFIX, "").trim());
+
 async function main() {
   const ff = new DatabaseSync(FIXFLOW_DB, { readOnly: true });
   const ffSites = ff
     .prepare(
-      `SELECT s.id, s.name, p.id AS profile_id, p.name AS profile, sy.name AS system
+      `SELECT s.id, s.name, p.id AS profile_id, p.name AS profile, sy.name AS system,
+              (SELECT COUNT(*) FROM site_fault_overrides o WHERE o.site_id = s.id) AS overrides
          FROM sites s
          JOIN profiles p ON p.id = s.profile_id
          JOIN systems sy ON sy.id = p.system_id
@@ -78,6 +101,46 @@ async function main() {
     .all())
     docCount.set(r.id, r.n);
   const profileIdByName = new Map(ffSites.map((s) => [`${s.system}|${s.profile}`, s.profile_id]));
+
+  // ⚠️ רשימת הספריות — האפשרויות שבתפריט במסך הניהול.
+  // הדפדפן אינו יכול לשאול את FixFlow מה הספריות שלה (דף https מול שרת http
+  // ברשת המשרד), ולכן הרשימה נוסעת עם המפה.
+  //
+  // ⚠️ **והיא כוללת גם ספריות ריקות**, עם מספר המסמכים ליד כל אחת. הסתרת
+  // הריקות הייתה מונעת בחירה נכונה שעוד לא יוצאה מהכונן — ו-34 מסמכי מצבט X
+  // הם בדיוק המצב הזה היום.
+  // ============================================================
+  // ⚠️ רשימת האתרים של FixFlow — ולמה היא נחוצה לצד רשימת הספריות
+  // ============================================================
+  // קישור ל**ספרייה** מביא את התקלות של סוג המכונה. קישור ל**אתר** מביא את
+  // אותן תקלות **בתוספת חריגות האתר** — דרך טיפול שנכתבה במיוחד למתקן אחד.
+  //
+  // ⚠️ **וזה אינו תיאורטי:** 22 חריגות קיימות, ו-15 מהן שייכות לגרוזנברג 7
+  // — אתר שלנו. בורר שמציע רק ספריות היה גורם לבחירה ידנית בגרוזנברג למחוק
+  // 15 חריגות בלי שום סימן על המסך.
+  const siteList = {};
+  // ⚠️ ממוין לפי שם, כי זו הדרך שבה מחפשים אתר. מיון לפי מספר חריגות היה
+  // "חכם" ובלתי ניתן לניווט ברשימה של 117.
+  for (const r of [...ffSites].sort((a, b) => String(a.name).localeCompare(String(b.name), "he")))
+    siteList[r.id] = {
+      name: r.name,
+      system: r.system,
+      profile: r.profile,
+      docs: docCount.get(r.profile_id) ?? 0,
+      overrides: r.overrides,
+    };
+
+  const profileList = {};
+  for (const r of ff
+    .prepare(
+      `SELECT sy.name AS system, p.name AS profile,
+              (SELECT COUNT(*) FROM faults f WHERE f.profile_id = p.id AND f.deleted_at IS NULL) AS docs,
+              (SELECT COUNT(*) FROM sites s WHERE s.profile_id = p.id AND s.deleted_at IS NULL) AS sites
+         FROM profiles p JOIN systems sy ON sy.id = p.system_id
+        ORDER BY sy.name, p.name`)
+    .all())
+    profileList[`${r.system}|${r.profile}`] = { system: r.system, profile: r.profile, docs: r.docs, sites: r.sites };
+
   ff.close();
 
   // ⚠️ שם שמופיע פעמיים אינו מזהה. במדידה יש 0 כאלה, אבל הבדיקה נשארת: ביום
@@ -107,12 +170,33 @@ async function main() {
     for (const c of String(raw).split(/[,\s]+/).filter(Boolean)) tlName.set(c.trim(), nm);
   }
 
+  // ============================================================
+  // ⚠️ המפה הזו היא **הצעה**, לא סמכות
+  // ============================================================
+  // מה שקובע בפועל הוא `sites.fixflow_profile` — הבחירה שנעשית במסך הניהול.
+  // המפה משמשת רק כשלא נבחר דבר, ו-`resolveLink` מעדיף אותה על פני ניחוש.
+  //
+  // ⚠️ **והיה כאן קובץ עקיפות, והוסר.** הוא עשה בדיוק את מה שהשדה עושה —
+  // ורק אני יכולתי לערוך אותו. שני מנגנונים לאותה שאלה הם שני מקורות אמת
+  // שסוטים, וזה בדיוק הפגם שהשדה נועד לסגור.
+  // פרופילים שהמפה מצביעה עליהם ואינם קיימים ב-FixFlow — באג, לא ספרייה ריקה.
+  const broken = new Set();
   const map = {};
   const report = [];
   for (const s of sites) {
     const byType = resolveProfile(s.plc_type ?? null, null);
-    const typeDocs =
-      byType.status === "ok" ? (docCount.get(profileIdByName.get(`${byType.system}|${byType.profile}`)) ?? 0) : 0;
+    // ============================================================
+    // ⚠️ "הפרופיל אינו קיים" אינו "הפרופיל ריק"
+    // ============================================================
+    // עד כה שניהם נבלעו ב-`?? 0` והוצגו כ"ספרייה ריקה". והיום `matzbet-x`
+    // ממופה ל-`שאטל מצבט x קומתי (מצבטון על המעלית)` — **שם שאינו קיים
+    // ב-FixFlow כלל**; זה שם התיקייה בכונן, לא שם הפרופיל. הירקון 224 יושב
+    // שם עכשיו, והמסך אומר "ספרייה ריקה" — כלומר באג במיפוי נראה בדיוק כמו
+    // המתנה לייצוא מסמכים מהכונן.
+    const typeKey = byType.status === "ok" ? `${byType.system}|${byType.profile}` : null;
+    const typeMissing = typeKey !== null && !profileIdByName.has(typeKey);
+    if (typeMissing) broken.add(typeKey);
+    const typeDocs = typeKey && !typeMissing ? (docCount.get(profileIdByName.get(typeKey)) ?? 0) : 0;
 
     let hit = null;
     for (const candidate of [tlName.get(String(s.code)), s.site_name]) {
@@ -157,6 +241,13 @@ async function main() {
         (docs || "—")
     );
 
+  if (broken.size) {
+    console.log(`
+❌ מיפוי לפרופיל שאינו קיים ב-FixFlow (${broken.size}) — באג ב-PROFILE_BY_TYPE:`);
+    for (const k of broken) console.log(`   ${k}`);
+    console.log(`   ⚠️ האתרים האלה הוצגו עד כה כ"ספרייה ריקה" — באג שנראה כמו המתנה.`);
+  }
+
   const linked = Object.keys(map).length;
   const byName_ = Object.values(map).filter((m) => m.by === "name").length;
   const empty = Object.values(map).filter((m) => m.docs === 0).length;
@@ -169,7 +260,7 @@ async function main() {
   }
   writeFileSync(
     OUT,
-    JSON.stringify({ generatedAt: new Date().toISOString(), sites: map }, null, 2) + "\n",
+    JSON.stringify({ generatedAt: new Date().toISOString(), profiles: profileList, ffSites: siteList, sites: map }, null, 2) + "\n",
     "utf8"
   );
   console.log(`\n✅ נכתב: ${OUT}`);

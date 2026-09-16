@@ -510,6 +510,8 @@ function init() {
       await setup.query(schema);
       await setup.query(`
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS plc_type    TEXT;
+        -- ⚠️ עמודת הפיילוט של FixFlow. ההסרה היא DROP COLUMN אחד — ראה schema.
+        ALTER TABLE sites ADD COLUMN IF NOT EXISTS fixflow_profile TEXT;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS is_new_site INTEGER NOT NULL DEFAULT 1;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS tier        TEXT NOT NULL DEFAULT 'basic';
       `);

@@ -1,5 +1,942 @@
 {
-  "generatedAt": "2026-09-15T06:10:47.196Z",
+  "generatedAt": "2026-09-16T05:36:36.050Z",
+  "profiles": {
+    "ביטנקם|אקסטרקטור": {
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "sites": 5
+    },
+    "ביטנקם|ביטנקם xy": {
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "sites": 27
+    },
+    "ביטנקם|דולי ביטנקם": {
+      "system": "ביטנקם",
+      "profile": "דולי ביטנקם",
+      "docs": 16,
+      "sites": 4
+    },
+    "ביטנקם|מערכת cam": {
+      "system": "ביטנקם",
+      "profile": "מערכת cam",
+      "docs": 21,
+      "sites": 2
+    },
+    "ביטנקם|קומבי": {
+      "system": "ביטנקם",
+      "profile": "קומבי",
+      "docs": 0,
+      "sites": 1
+    },
+    "ביטנקם|שאטל xy ביטנקם": {
+      "system": "ביטנקם",
+      "profile": "שאטל xy ביטנקם",
+      "docs": 9,
+      "sites": 1
+    },
+    "ביטנקם|שאטל אקסטרקטור": {
+      "system": "ביטנקם",
+      "profile": "שאטל אקסטרקטור",
+      "docs": 6,
+      "sites": 1
+    },
+    "ביטנקם|שאטל מסילה ביטנקם": {
+      "system": "ביטנקם",
+      "profile": "שאטל מסילה ביטנקם",
+      "docs": 21,
+      "sites": 3
+    },
+    "לולק|xy לולק": {
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "sites": 20
+    },
+    "לולק|דולי": {
+      "system": "לולק",
+      "profile": "דולי",
+      "docs": 11,
+      "sites": 1
+    },
+    "לולק|מצבט": {
+      "system": "לולק",
+      "profile": "מצבט",
+      "docs": 0,
+      "sites": 1
+    },
+    "לולק|קומבי": {
+      "system": "לולק",
+      "profile": "קומבי",
+      "docs": 0,
+      "sites": 4
+    },
+    "לולק|שאטל דולי": {
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "sites": 28
+    },
+    "לולק|שאטל מסילה": {
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31,
+      "sites": 4
+    },
+    "לולק|שאטל מצבט x": {
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "sites": 5
+    },
+    "לולק|שאטל מצבט y": {
+      "system": "לולק",
+      "profile": "שאטל מצבט y",
+      "docs": 0,
+      "sites": 1
+    },
+    "לולק|שאטל מצבט y שמסובבת בשאטל": {
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "sites": 6
+    },
+    "לולק|שאטל מצבט קומתי": {
+      "system": "לולק",
+      "profile": "שאטל מצבט קומתי",
+      "docs": 0,
+      "sites": 2
+    },
+    "לולק|שאטל מצבט שמסובבת במעלית": {
+      "system": "לולק",
+      "profile": "שאטל מצבט שמסובבת במעלית",
+      "docs": 25,
+      "sites": 1
+    }
+  },
+  "ffSites": {
+    "01KXMQJ7G27130925A6H7400GT": {
+      "name": "אביגיל 14 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "קומבי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ73QQCYWK9CD2Q4M6W8T": {
+      "name": "אביגיל 20 ר''ג",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ75TH24XFNYKX1BPYERX": {
+      "name": "אהרונסון 40 ר''ג",
+      "system": "ביטנקם",
+      "profile": "דולי ביטנקם",
+      "docs": 16,
+      "overrides": 0
+    },
+    "01KXMQJ50FBQXFTRGX4BTX5CS3": {
+      "name": "אוארבך 7 ת\"א קשתות",
+      "system": "ביטנקם",
+      "profile": "שאטל xy ביטנקם",
+      "docs": 9,
+      "overrides": 0
+    },
+    "01KXMQJ4BRJZH75SNACX8WM817": {
+      "name": "אחד העם 100 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7526YDGAJ83GD80F49Z": {
+      "name": "אילת 4 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7B0JP9CQME61J9PM2RZ": {
+      "name": "אלדד הדני 15 ת\"א",
+      "system": "לולק",
+      "profile": "קומבי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7430H9M1PHZP0BR1GTV": {
+      "name": "אמציה 6 ירושלים",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7591JN56V6W53MYREZJ": {
+      "name": "אנטוקולסקי 8 ת''א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ3DKP14FGG34JZ6RKEM8": {
+      "name": "אנטיגונוס 11 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31,
+      "overrides": 0
+    },
+    "01KXMQJ741A975Z2NJG2D7Y5BH": {
+      "name": "אנטיגונוס 13 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31,
+      "overrides": 0
+    },
+    "01KXMQJ749GAASJATJP016Z1DV": {
+      "name": "אנילביץ 11 בת ים",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ74N8DXR8Y326DZM49VK": {
+      "name": "אפשטיין 5 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ75FJ2A9N6ND2YE0P5Z8": {
+      "name": "ארלוזורוב 67-69 בת ים",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ75N41XV03T8Z5RRM7Y2": {
+      "name": "ארלינג'ר 13 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ79AG174XDVC1PNQGP3T": {
+      "name": "אשכנזי 42 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7E424D2Q89TPYXBWP8G": {
+      "name": "בארט 11-19",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ79M0QHSKVTEGW602H7G": {
+      "name": "בובליק 4 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ75ZTN4AA3T71V1REPA0": {
+      "name": "בורוכוב 35 רעננה",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ79GDEN4708SWWX9PGR0": {
+      "name": "בורוכוב 9 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ79WVBFH7NR30G60M4SC": {
+      "name": "בלוך 22 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ79RYQDXYX2SWRXA1VKG": {
+      "name": "בלוך 5 גבעתיים",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ79ZGAR1W5PW5JFYYWFW": {
+      "name": "בן עטר 12 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7AATBYM5XYT8V9ZE0TE": {
+      "name": "בר אילן 15 רעננה",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ45GHNDC391D80JEQKZC": {
+      "name": "בר אילן 51 רעננה",
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "overrides": 0
+    },
+    "01KXMQJ7AHTDDYY925WGMPT8G5": {
+      "name": "ברנר 14 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ768SF96F02CRYKQNNQA": {
+      "name": "גדרה 15 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7B639N6AGQR1M2AG0AS": {
+      "name": "גולדברג 5 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7EQ6ZCEXJ217PCSGP2J": {
+      "name": "גנני 5-7 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט קומתי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ4C08JBWA56HSM0G86KA": {
+      "name": "גרוזנברג 7 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 15
+    },
+    "01KXMQJ7A2B5WJDD6KQGY6R7AD": {
+      "name": "דה האז 3 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ33YMYH50S3CPVA4SJZ0": {
+      "name": "דיזינגוף 135 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ74VT3QFHPX3CSQ4MZ9P": {
+      "name": "דיזנגוף 135-137 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ2XC2HC8RJ2AXK3WE43V": {
+      "name": "הבוסתן 8-10 הוד\"ש",
+      "system": "לולק",
+      "profile": "דולי",
+      "docs": 11,
+      "overrides": 0
+    },
+    "01KXMQJ765STMS46CAK7QAWYKV": {
+      "name": "הבילויים 37 ר''ג",
+      "system": "ביטנקם",
+      "profile": "דולי ביטנקם",
+      "docs": 16,
+      "overrides": 0
+    },
+    "01KXMQJ7AXAX7JWWKRAWABM2PT": {
+      "name": "הגפן 14 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ74ZQSEF93Z6CY35W1KX": {
+      "name": "הורקונוס 3 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7554BABV5ASJR8SCV5F": {
+      "name": "הזוהר 5 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ75BV86PXCWMZ18C7FET": {
+      "name": "הזורע רמה''ש",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ75JP799Z4RHE82RDCCA": {
+      "name": "הירדן 67 ר\"ג",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7B3CG9C0VSP5V8YJRBZ": {
+      "name": "הירקון 38 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ75RSZTDN81PVABGDWF4": {
+      "name": "הירקון 72 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7FMR47ZDHRP50XG7B69": {
+      "name": "הירקון180ת''א",
+      "system": "לולק",
+      "profile": "מצבט",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7622NZ4G0GVZA2ZG3A5": {
+      "name": "הנוטרים 7 חולון",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7B9QD98849CGEA39Z7J": {
+      "name": "העצמאות 9 בת ים",
+      "system": "לולק",
+      "profile": "קומבי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ76B657R8TJTTARGFSDJ": {
+      "name": "הרב לוין 6 ר\"ג",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7BCYDWFG6EHS4454MJW": {
+      "name": "הרצל 50 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7BKN9FGA94SB29GPE5E": {
+      "name": "השופטים 2 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ55X8M7JR038VTXP4R1Y": {
+      "name": "ז'בוטינסקי 23 חולון",
+      "system": "ביטנקם",
+      "profile": "שאטל מסילה ביטנקם",
+      "docs": 21,
+      "overrides": 4
+    },
+    "01KXMQJ7BVV901BHK66G4S5B71": {
+      "name": "ז'בוטינסקי 6 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ76MFZ1HPZ75SX3F24C7": {
+      "name": "זבוטינסקי 91 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7AD57ZX4HTEG5GMYSCD": {
+      "name": "זלטופולסקי 17 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ7BQV8HRK7AZV0HQJV6T": {
+      "name": "זמנהוף 40 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7BZ8Y6DSJJV8JCZCC37": {
+      "name": "חולדה 1 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ76HVMMDGZ62T8CGFZ0D": {
+      "name": "חולדה 4 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7AS65HQ285V84T4TC1D": {
+      "name": "חצור 18 ר''ג",
+      "system": "לולק",
+      "profile": "קומבי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ4NHPF0P5DDGEQ46F78Q": {
+      "name": "יגאל אלון 2 הרצליה",
+      "system": "ביטנקם",
+      "profile": "דולי ביטנקם",
+      "docs": 16,
+      "overrides": 0
+    },
+    "01KXMQJ7C66YMRD2JNEGNWFV18": {
+      "name": "יהודה הלוי 16 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7DFMXAAC319AXJ89BCT": {
+      "name": "יהודה הלוי 88 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ4ST1NPK3DYJNZ59F6MX": {
+      "name": "יונה הנביא 36 ת\"א",
+      "system": "ביטנקם",
+      "profile": "מערכת cam",
+      "docs": 21,
+      "overrides": 0
+    },
+    "01KXMQJ76WZJHK5PMYP17CAMY0": {
+      "name": "יסוד המעלה 13",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7DMF5D0YW7GDGB5JN6T": {
+      "name": "יסוד המעלה 31 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ523VQTPGV1HY80RFDSA": {
+      "name": "יסוד המעלה 33 ת\"א",
+      "system": "ביטנקם",
+      "profile": "שאטל אקסטרקטור",
+      "docs": 6,
+      "overrides": 0
+    },
+    "01KXMQJ773EXSMFE2E7CTRGN3W": {
+      "name": "יעל 6 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7DZK6QZ94YA2YWAVKR9": {
+      "name": "ירמיהו 29 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7E9PH2TQBP60W8JAQPG": {
+      "name": "כל ישראל חברים 10",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7788491WM3A02563AZH": {
+      "name": "כצנלסון 81 גבעתיים",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7EFN0A81SRXF2GGZJ16": {
+      "name": "מאנה 6 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ76S5WBGBEP8YMYQCAVT": {
+      "name": "מגדל 1 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7709NCNXV8AZJ46VNRR": {
+      "name": "מזא\"ה 63-65 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ2S47R9WZG3SGX6A6N6B": {
+      "name": "מזא\"ה 65",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ775EHAS27AR678PMA9M": {
+      "name": "מטלון 49 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ77E5FKGZ4FQ19DTMPCQ": {
+      "name": "מיכה 24 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7EK3HGNCJZ0RM3JQM6C": {
+      "name": "מכבי 22 רעננה",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ77M0ARW8YH180Y6YJW2": {
+      "name": "מנדלשטם 8 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ77S4H7DPQ8JRJKREQMR": {
+      "name": "מנחם בגין 3 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ73YZPQY84CPJBJWAGGK": {
+      "name": "מעיין 1",
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "overrides": 0
+    },
+    "01KXMQJ4T23N3BJ6XDWG9AD7DB": {
+      "name": "מעיין 2",
+      "system": "ביטנקם",
+      "profile": "מערכת cam",
+      "docs": 21,
+      "overrides": 1
+    },
+    "01KXMQJ77ZMZ8E3ZNQZW80EWSD": {
+      "name": "מעפילי אגוז 38 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ77BA9E971JNZHDZKKYR": {
+      "name": "מרכז בעלי מלאכה 8 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ746KJV2ZA3P57AHJ918": {
+      "name": "נגבה 26 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "overrides": 0
+    },
+    "01KXMQJ785GATC4ST2AQQ6VDC9": {
+      "name": "נחמני 22 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ3DQF8JAV3NXSJMXAPFE": {
+      "name": "נמל מגשים",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31,
+      "overrides": 1
+    },
+    "01KXMQJ78CJAB4G7KN5AD32KKY": {
+      "name": "נמל סילומט",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ57M523YQK67HF4F4E2F": {
+      "name": "נס ציונה 3 ת\"א",
+      "system": "ביטנקם",
+      "profile": "שאטל מסילה ביטנקם",
+      "docs": 21,
+      "overrides": 1
+    },
+    "01KXMQJ7C2A8DQEC2Z4KTBQP46": {
+      "name": "סוקולוב 10 בת ים",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7BFKRST1P1DEQSZGXNT": {
+      "name": "סטרומה 3 ר\"ג",
+      "system": "לולק",
+      "profile": "קומבי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ76QG6PJA9D5VQ29MRY1": {
+      "name": "עוזיאל 120 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "דולי ביטנקם",
+      "docs": 16,
+      "overrides": 0
+    },
+    "01KXMQJ74ECM13JS9G234F7N0H": {
+      "name": "עוזיאל 122 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "overrides": 0
+    },
+    "01KXMQJ77H0W8C53DEV4GBHK7H": {
+      "name": "עמנואל הרומי 10",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ74RW3NJ3TKJDEZNKD66": {
+      "name": "ענתות 35 ת\"א",
+      "system": "ביטנקם",
+      "profile": "אקסטרקטור",
+      "docs": 13,
+      "overrides": 0
+    },
+    "01KXMQJ77QH64XPFAXXGW889QE": {
+      "name": "פייבל 17 ת''א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ78HBBFKVSE8208FWQA9": {
+      "name": "פינסקר 38 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ55T4MPYHB8H5QJQPZJQ": {
+      "name": "פקיעין 10 ת\"א",
+      "system": "ביטנקם",
+      "profile": "שאטל מסילה ביטנקם",
+      "docs": 21,
+      "overrides": 0
+    },
+    "01KXMQJ77W558S9P3DS4HC08CM": {
+      "name": "פרנקפורט 5 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ783D8M9WSY15C392NAM": {
+      "name": "צונץ 16 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ3PYJC9F6J643RMFM2A2": {
+      "name": "קינג גורג 79 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ7EWPWWTG9BQXW7ZAM35": {
+      "name": "קמינסקה 26 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7F6BBWG0S10CTAEN182": {
+      "name": "ראש פינה 15 הרצליה",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ7FB5RS4W2SYN0H4W9GR": {
+      "name": "רבי עקיבא 5-7 ת''א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ78SA4AVP3FV7VJV6E2T": {
+      "name": "רביעיית פלורנטין",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ789180AHDTYH1HCG5A9": {
+      "name": "רופין 20 ת''א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ74H7Y0BVE625EYE4G38": {
+      "name": "רמב''ן 20 ירושלים",
+      "system": "לולק",
+      "profile": "שאטל מסילה",
+      "docs": 31,
+      "overrides": 0
+    },
+    "01KXMQJ78F438ABJTZC9BV6ZY1": {
+      "name": "רמב\"ם 36 רעננה",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ78NBTEN6KH5YTEWDVTM": {
+      "name": "רמז 5 רמת השרון",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7F1BBYVGGP6ZB9JD8ZE": {
+      "name": "רנק 14 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט קומתי",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7FF6YT5P8W8Q8B91NJ0": {
+      "name": "רש\"י 6 ת\"א",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ42EJG5GQ1RM1GR1X8NH": {
+      "name": "שאטל מצבט שמסובבת במעלית — אתר בסיס",
+      "system": "לולק",
+      "profile": "שאטל מצבט שמסובבת במעלית",
+      "docs": 25,
+      "overrides": 0
+    },
+    "01KXMQJ3PTMV5MDVKYDW1E2238": {
+      "name": "שאטל מצבט y שמסובבת בשאטל — אתר בסיס",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38,
+      "overrides": 0
+    },
+    "01KXMQJ78ZQKA3GPTVN86Y18GH": {
+      "name": "שד' בן צבי 25-27 ירושלים",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ796HP4D64JTCGYYN1W3": {
+      "name": "שד' ירושלים 8 ר''ג",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7FQNSCECDR8PX8FTGYQ": {
+      "name": "שדרות נורדאו 37",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    },
+    "01KXMQJ78W7B305V86H2Z2ERMB": {
+      "name": "שטריקר 5 ת\"א",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67,
+      "overrides": 0
+    },
+    "01KXMQJ7D77AZ1PRS52G197AXW": {
+      "name": "שינקין 74 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ79DE9GE70BMBE7N3KZR": {
+      "name": "שפר 17 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24,
+      "overrides": 0
+    },
+    "01KXMQJ7DVXPC63DANJGABP3XX": {
+      "name": "שפר 20-22 ת''א",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0,
+      "overrides": 0
+    },
+    "01KXMQJ7FYDY0S7KEW7S7Z6MAF": {
+      "name": "תל חי 21 ר\"ג",
+      "system": "ביטנקם",
+      "profile": "ביטנקם xy",
+      "docs": 37,
+      "overrides": 0
+    }
+  },
   "sites": {
     "1089": {
       "by": "name",
@@ -9,6 +946,30 @@
       "profile": "שאטל דולי",
       "docs": 24
     },
+    "1097": {
+      "by": "name",
+      "siteId": "01KXMQJ75JP799Z4RHE82RDCCA",
+      "siteName": "הירדן 67 ר\"ג",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24
+    },
+    "1102": {
+      "by": "name",
+      "siteId": "01KXMQJ7E424D2Q89TPYXBWP8G",
+      "siteName": "בארט 11-19",
+      "system": "לולק",
+      "profile": "שאטל מצבט x",
+      "docs": 0
+    },
+    "1232": {
+      "by": "name",
+      "siteId": "01KXMQJ7A2B5WJDD6KQGY6R7AD",
+      "siteName": "דה האז 3 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38
+    },
     "1275": {
       "by": "name",
       "siteId": "01KXMQJ74ZQSEF93Z6CY35W1KX",
@@ -17,6 +978,14 @@
       "profile": "שאטל דולי",
       "docs": 24
     },
+    "1284": {
+      "by": "name",
+      "siteId": "01KXMQJ77H0W8C53DEV4GBHK7H",
+      "siteName": "עמנואל הרומי 10",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67
+    },
     "1326": {
       "by": "name",
       "siteId": "01KXMQJ74N8DXR8Y326DZM49VK",
@@ -24,6 +993,14 @@
       "system": "לולק",
       "profile": "שאטל דולי",
       "docs": 24
+    },
+    "1330": {
+      "by": "name",
+      "siteId": "01KXMQJ75ZTN4AA3T71V1REPA0",
+      "siteName": "בורוכוב 35 רעננה",
+      "system": "לולק",
+      "profile": "xy לולק",
+      "docs": 67
     },
     "1343": {
       "by": "name",
@@ -46,6 +1023,14 @@
       "system": "לולק",
       "profile": "שאטל מצבט y שמסובבת בשאטל",
       "docs": 38
+    },
+    "1351": {
+      "by": "name",
+      "siteId": "01KXMQJ77S4H7DPQ8JRJKREQMR",
+      "siteName": "מנחם בגין 3 ת''א",
+      "system": "לולק",
+      "profile": "שאטל דולי",
+      "docs": 24
     },
     "1358": {
       "by": "name",
@@ -76,6 +1061,14 @@
       "system": "לולק",
       "profile": "שאטל מסילה",
       "docs": 31
+    },
+    "1395": {
+      "by": "name",
+      "siteId": "01KXMQJ79M0QHSKVTEGW602H7G",
+      "siteName": "בובליק 4 ת\"א",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38
     },
     "1399": {
       "by": "name",
@@ -141,6 +1134,12 @@
       "profile": "שאטל מצבט x",
       "docs": 0
     },
+    "3439": {
+      "by": "type",
+      "system": "לולק",
+      "profile": "שאטל מצבט y שמסובבת בשאטל",
+      "docs": 38
+    },
     "3452": {
       "by": "type",
       "system": "לולק",
@@ -154,12 +1153,6 @@
       "system": "לולק",
       "profile": "xy לולק",
       "docs": 67
-    },
-    "3458": {
-      "by": "type",
-      "system": "לולק",
-      "profile": "שאטל מצבט x קומתי (מצבטון על המעלית)",
-      "docs": 0
     },
     "3461": {
       "by": "name",

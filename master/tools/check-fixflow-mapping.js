@@ -12,7 +12,7 @@ import pg from "pg";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { resolveLink } from "../../shared/fixflow-profiles.mjs";
+import { resolveLink, PROFILE_BY_TYPE } from "../../shared/fixflow-profiles.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +39,54 @@ async function main() {
     counts.set(`${r.system}|${r.profile}`, r.faults + r.procs);
   ff.close();
 
+  // ============================================================
+  // ⚠️ כל פרופיל שמישהו כתב במפה חייב להתקיים ב-FixFlow
+  // ============================================================
+  // נמדד ב-16/09/2026: `matzbet-x` הצביע על `שאטל מצבט x קומתי (מצבטון על
+  // המעלית)` — **שם התיקייה בכונן G, לא שם הפרופיל**. הוא אינו קיים, ולכן
+  // ספירת המסמכים יצאה 0, ולכן המסך אמר "ספרייה ריקה". כלומר באג במיפוי
+  // הוצג בדיוק כמו המתנה לייצוא מסמכים, והירקון 224 ישב כך חודשיים.
+  //
+  // ⚠️ **והבדיקה עוברת על המפה עצמה ולא על האתרים.** פרופיל שגוי שאין לו
+  // אתר היום אינו נראה בשום מקום — עד שמישהו ירשום אתר מהסוג הזה, ואז הוא
+  // ייראה כמו ספרייה ריקה גם הוא.
+  const named = [];
+  for (const [type, entry] of Object.entries(PROFILE_BY_TYPE)) {
+    if (entry.bySystem) for (const e of Object.values(entry.bySystem)) named.push([type, e]);
+    else named.push([type, entry]);
+  }
+  const phantom = named.filter(([, e]) => !counts.has(`${e.system}|${e.profile}`));
+  if (phantom.length) {
+    console.log(`
+❌ פרופיל שאינו קיים ב-FixFlow (${phantom.length}) — באג ב-PROFILE_BY_TYPE:
+`);
+    for (const [type, e] of phantom)
+      console.log(`   ${String(type).padEnd(12)} → ${e.system} / ${e.profile}`);
+    console.log(`   ⚠️ מוצג למשתמשת כ"ספרייה ריקה" — באג שנראה כמו המתנה.`);
+  }
+
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-  const { rows: sites } = await pool.query(`SELECT code, site_name, plc_type FROM sites ORDER BY code`);
+  // ⚠️ `fixflow_profile` נקרא כאן כי **הוא מה שהמסך משתמש בו**. שער שקורא
+  // פחות שדות מהמסך מודד מצב אחר — וזה כבר קרה: כשהשער הכיר רק מיפוי לפי
+  // סוג, הוא דיווח "14 מחוברים" בזמן שהמסך חיבר 25.
+  //
+  // ⚠️ ועמודה חסרה אינה נבלעת. `fixflow_profile` נוספת בעליית `master`, ולכן
+  // לפני פריסה היא אינה קיימת — ושער שממשיך בלעדיה בשקט היה מדווח "הכול
+  // מחובר" על מערכת שהתכונה בה כלל לא נפרסה. ההודעה אומרת בדיוק מה חסר.
+  let sites;
+  try {
+    ({ rows: sites } = await pool.query(
+      `SELECT code, site_name, plc_type, fixflow_profile FROM sites ORDER BY code`));
+  } catch (e) {
+    if (e.code !== "42703") throw e;
+    await pool.end();
+    console.log(`
+❌ העמודה sites.fixflow_profile אינה קיימת במסד.`);
+    console.log(`   בחירת ספריית התקלות נוספה בקוד אך **טרם נפרסה**.`);
+    console.log(`   להרצה על DELL008:  deploy.ps1   (מוסיף את העמודה ומחליף את הפונקציות)`);
+    console.log(`   ⚠️ ולפרוס את הדשבורד רק אחרי — מסך שקורא לפונקציה שאינה קיימת נכשל בשמירה.`);
+    process.exit(1);
+  }
   await pool.end();
 
   const buckets = { ok: [], empty: [], needsSystem: [], unmapped: [], noType: [] };
@@ -82,7 +128,9 @@ async function main() {
     for (const s of buckets.noType) console.log(line(s));
   }
 
-  const broken = buckets.empty.length;
+  // ⚠️ פרופיל רפאים נספר ככשל, לא כאזהרה: הוא **תמיד** באג, בעוד שספרייה
+  // ריקה עשויה להיות המתנה לגיטימית לייצוא מהכונן.
+  const broken = buckets.empty.length + phantom.length;
   console.log(
     `\nמחוברים: ${buckets.ok.length} · ריקים: ${buckets.empty.length} · ממתינים להכרעה: ${buckets.needsSystem.length + buckets.unmapped.length + buckets.noType.length}`
   );

@@ -387,16 +387,74 @@ END;
 $fn$;
 
 -- ============================================================
+-- ============================================================
+-- app.check_fixflow_profile — ולידציה לבחירת ספריית התקלות
+-- ============================================================
+-- ⚠️ **ולידציית צורה בלבד, ובמכוון.** ה-SQL אינו יכול לדעת אילו ספריות קיימות
+-- ב-FixFlow: היא SQLite על מחשב במשרד, ואין לה שום קשר למסד הזה. רשימה
+-- שהייתה משוכפלת לכאן הייתה מקור אמת שני שמתיישן בשקט בכל פעם שמישהו מוסיף
+-- תיקייה בכונן — וטעות כזו נראית בדיוק כמו בחירה שגויה של המשתמשת.
+--
+-- לכן: כאן נבדקת הצורה, והקיום נבדק במקום שבו הוא ידוע — התפריט במסך הניהול
+-- מוגש מרשימה שנוצרת מ-FixFlow עצמה, ו-`check-fixflow-mapping` נופל על ערך
+-- שאינו קיים.
+--
+-- ⚠️ ומחרוזת ריקה מחזירה NULL ולא שגיאה: זו הדרך **לנקות** בחירה ולחזור
+-- לגזירה האוטומטית. בלעדיה לא הייתה דרך לבטל בחירה שנעשתה בטעות.
+CREATE OR REPLACE FUNCTION app.check_fixflow_profile(p_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+  v text := NULLIF(BTRIM(COALESCE(p_value, '')), '');
+BEGIN
+  IF v IS NULL THEN RETURN NULL; END IF;
+  IF length(v) > 200 THEN
+    RAISE EXCEPTION 'ספריית תקלות ארוכה מדי' USING ERRCODE = 'check_violation';
+  END IF;
+  -- ============================================================
+  -- שתי צורות, ולכל אחת משמעות אחרת
+  -- ============================================================
+  --   `site:<id>`      קישור ל**אתר** ב-FixFlow — כולל חריגות האתר.
+  --   `מערכת|פרופיל`   קישור ל**ספרייה** — סוג המכונה בלבד.
+  --
+  -- ⚠️ ההבדל אינו קוסמטי: 22 חריגות אתר קיימות, ו-15 מהן בגרוזנברג 7.
+  IF v LIKE 'site:%' THEN
+    IF BTRIM(substring(v FROM 6)) = '' THEN
+      RAISE EXCEPTION 'קישור לאתר FixFlow לא תקין: %', v USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN v;
+  END IF;
+
+  -- אחרת: `מערכת|פרופיל`, ושני הצדדים לא ריקים.
+  IF position('|' IN v) = 0
+     OR BTRIM(split_part(v, '|', 1)) = ''
+     OR BTRIM(substring(v FROM position('|' IN v) + 1)) = '' THEN
+    RAISE EXCEPTION 'יעד FixFlow לא תקין: %', v USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN v;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.check_fixflow_profile(text) FROM PUBLIC;
+
+-- ============================================================
 -- public.register_site
 -- ============================================================
+-- ⚠️ שתי החתימות: הישנה (5) והנוכחית (6). בלי הישנה תיווצר **עמסה** ולא
+-- החלפה, וקריאה מהדפדפן הייתה נופלת על "function is not unique".
 DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean);
+DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, text);
 
 CREATE OR REPLACE FUNCTION public.register_site(
   p_code      text,
   p_site_name text,
   p_plc_type  text    DEFAULT NULL,
   p_tier      text    DEFAULT 'basic',
-  p_is_new    boolean DEFAULT true
+  p_is_new    boolean DEFAULT true,
+  -- ספריית התקלות ב-FixFlow, `"מערכת|פרופיל"`. ריק = תיגזר אוטומטית.
+  p_fixflow_profile text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -434,10 +492,11 @@ BEGIN
     RAISE EXCEPTION 'אתר עם קוד זה כבר רשום: %', p_code USING ERRCODE = 'PT409';
   END IF;
 
-  INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier)
+  INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier, fixflow_profile)
   VALUES (p_code, v_name,
           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-          v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier)
+          v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier,
+          app.check_fixflow_profile(p_fixflow_profile))
   RETURNING sites.id INTO v_id;
 
   PERFORM app.record_write_audit('site.register', v_actor, app.current_app_role(),
@@ -469,13 +528,17 @@ $fn$;
 -- `delete_site` (שאין בו פרמטר פלט בשם `id`) עבדו. כלומר הבאג היה נראה
 -- כמו "רק העדכון שבור" ולא כמו שגיאת שם.
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text, text);
 
 CREATE OR REPLACE FUNCTION public.update_site(
   p_code      text,
   p_new_code  text DEFAULT NULL,
   p_site_name text DEFAULT NULL,
   p_tier      text DEFAULT NULL,
-  p_plc_type  text DEFAULT NULL
+  p_plc_type  text DEFAULT NULL,
+  -- ⚠️ NULL = לא נגעו. מחרוזת ריקה = **נקה את הבחירה** וחזור לגזירה
+  -- האוטומטית. אותה סמנטיקה בדיוק כמו `p_plc_type` ממש מעל.
+  p_fixflow_profile text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -526,6 +589,11 @@ BEGIN
       RAISE EXCEPTION 'סוג מתקן לא תקין' USING ERRCODE = 'check_violation';
     END IF;
     UPDATE sites SET plc_type = NULLIF(TRIM(p_plc_type), '') WHERE sites.id = v_id;
+  END IF;
+
+  IF p_fixflow_profile IS NOT NULL THEN
+    UPDATE sites SET fixflow_profile = app.check_fixflow_profile(p_fixflow_profile)
+     WHERE sites.id = v_id;
   END IF;
 
   PERFORM app.record_write_audit('site.update', v_actor, app.current_app_role(),
@@ -623,12 +691,23 @@ BEGIN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text)      FROM PUBLIC;
+-- ============================================================
+-- ⚠️ החתימות כאן חייבות להסכים עם ה-CREATE שלמעלה
+-- ============================================================
+-- הוספת פרמטר לפונקציה משנה את חתימתה, ו-GRANT מצביע על **חתימה** ולא על
+-- שם. נמדד ב-16/09/2026: הוספת `p_fixflow_profile` הותירה כאן את החתימות
+-- הישנות, והקובץ כולו נכשל בהחלה עם `function ... does not exist` — כלומר
+-- פריסה שנופלת, ולא תכונה שחסרה.
+--
+-- ⚠️ ואפילו אם היה עובר: GRANT על חתימה שאינה קיימת פירושו שלמשתמשת אין
+-- הרשאה על הפונקציה החדשה, וכל עריכת אתר מהדפדפן מחזירה "permission denied".
+-- `tools/check-writes-sql-parses.js` תופס את שניהם.
+REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text)      FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.delete_site(text)                              FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text)      TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;
 
 -- ============================================================
@@ -872,6 +951,21 @@ BEGIN
                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       FROM app_users u
       LEFT JOIN auth.users au ON au.id = u.supabase_uid
+     -- ============================================================
+     -- ⚠️ סוכנים אינם משתמשים, והופעתם כאן הפילה 19 אתרים
+     -- ============================================================
+     -- `role='agent'` הוא **זהות מכונה**: חשבון לאתר, שהסוכן משתמש בו כדי
+     -- לכתוב ישירות ל-Supabase. הוא הופיע ברשימת המשתמשים בין בני אדם —
+     -- 21 שורות `site-XXXX@parkomat.co.il` שנראות בדיוק כמו זבל שצריך לנקות.
+     --
+     -- ⚠️ **וזה בדיוק מה שקרה ב-15/09/2026.** הם נמחקו, בהיגיון מלא, ומחיקתם
+     -- ניתקה את המסלול הישיר ב-19 אתרים בבת אחת. הכשל לא היה במחיקה אלא
+     -- בכך שהם הוצגו במקום שבו מחיקה היא הפעולה הנכונה.
+     --
+     -- ⚠️ הסינון כאן ולא במסך: `SECURITY DEFINER` עוקף RLS, ולכן זו הנקודה
+     -- היחידה שבה אפשר להבטיח שהם לא ידלפו לשום צרכן. מסך שמסנן בעצמו הוא
+     -- מסך אחד מתוך כמה, והבא לא יידע.
+     WHERE u.role <> 'agent'
      ORDER BY u.id;
 END;
 $fn$;

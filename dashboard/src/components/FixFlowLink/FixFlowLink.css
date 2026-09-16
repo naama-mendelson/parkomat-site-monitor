@@ -29,3 +29,31 @@
 
 .ffl-icon { font-size: 13px; line-height: 1; }
 .ffl-text { white-space: nowrap; }
+
+/* ============================================================
+   בורר ספריית התקלות — בטופס עריכת האתר
+   ============================================================
+   ⚠️ יושב כאן ולא ב-AdminPanel.css מאותה סיבה שהרכיב יושב בתיקייה הזו:
+   מחיקת התיקייה מוחקת גם את הסגנון, בלי שאריות בקובץ שאין לו קשר לפיילוט. */
+.ffp { display: flex; flex-direction: column; gap: 4px; }
+.ffp > select { width: 100%; }
+
+.ffp-note {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+
+/* ⚠️ אזהרה נראית, לא רק נאמרת. "ספרייה ריקה" נקרא בדיוק כמו "אין תקלות
+   ידועות", וזה הכשל השקט שכל הפיילוט הזה נאבק בו. */
+.ffp-warn {
+  color: #b45309;
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* שורת הכותרת + סינון. ⚠️ סינון ולא רשימה ארוכה: 117 אתרים בתפריט אחד
+   הם תפריט שגוללים בו ולא בוחרים ממנו. */
+.ffp-row { display: flex; align-items: center; gap: 8px; }
+.ffp-row > span { white-space: nowrap; }
+.ffp-search { flex: 1; min-width: 0; }

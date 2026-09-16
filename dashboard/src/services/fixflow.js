@@ -7,7 +7,18 @@
 //
 //   כיבוי מיידי   — `VITE_FIXFLOW_ENABLED=false` ב-.env, בנייה, וזהו.
 //   הסרה מלאה     — מחיקת `services/fixflow.js`, מחיקת `components/FixFlowLink/`
-//                   (ובתוכה גם המפה), ומחיקת שתי שורות ב-SiteCard.
+//                   (ובתוכה גם המפה, העקיפות והבורר), ומחיקת שתי שורות בכל
+//                   אחד משלושה קבצים: `SiteCard`, `AdminPanel`, `AddSiteModal`
+//                   (ה-import ואלמנט ה-JSX, שניהם מסומנים בהערה).
+//
+// ⚠️ **ויש היום גם עמודה אחת במסד** — `sites.fixflow_profile`. הכלל המקורי
+// אמר "אין טבלה ואין עמודה", והוא נשבר במודע אחרי שנמדד ששיוך אינו ניתן
+// לגזירה בעיקרון (ראה `resolveLink` ב-shared). ההסרה נשארת שורה אחת:
+//
+//     ALTER TABLE sites DROP COLUMN fixflow_profile;
+//
+// ובנוסף: `app.check_fixflow_profile`, והפרמטר `p_fixflow_profile`
+// ב-`register_site` / `update_site` — שלושתם ב-`db/writes.postgres.sql`.
 //
 // ⚠️ ולכן **אין טבלה, אין עמודה ואין מיגרציה**. הפיתוי היה לשמור ב-Supabase
 // מיפוי של אתר → תקלות. זה היה עובד, והיה מותיר טבלה שצריך להחליט מה לעשות
@@ -66,10 +77,14 @@ export function fixflowLinkFor(site, faultText = null) {
   if (r.status !== "ok") return { status: r.status, reason: r.reason, url: null };
 
   const q = faultText ? `?q=${encodeURIComponent(faultText)}` : "";
-  const path =
-    r.by === "name"
-      ? `#/site/${encodeURIComponent(r.siteId)}`
-      : `#/profile/${encodeURIComponent(r.system)}/${encodeURIComponent(r.profile)}`;
+  // ⚠️ שתי הדרכים לקישור **ברמת האתר** — התאמת שם אוטומטית ובחירה ידנית —
+  // מייצרות את אותו נתיב. בדיקה על `by === "name"` בלבד הייתה שולחת בחירה
+  // ידנית לנתיב הספרייה, כלומר מוחקת את חריגות האתר בדיוק כשמישהו ביקש אותן
+  // במפורש.
+  const siteLevel = r.by === "name" || r.by === "chosen-site";
+  const path = siteLevel
+    ? `#/site/${encodeURIComponent(r.siteId)}`
+    : `#/profile/${encodeURIComponent(r.system)}/${encodeURIComponent(r.profile)}`;
 
   return { ...r, url: `${FIXFLOW_BASE_URL}/${path}${q}` };
 }

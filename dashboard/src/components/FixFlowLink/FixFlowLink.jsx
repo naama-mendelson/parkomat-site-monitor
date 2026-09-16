@@ -55,8 +55,9 @@ export default function FixFlowLink({ site, faultText }) {
       // (עם חריגות האתר) לבין קישור לספריית סוג מכונה (בלעדיהן) הוא הבדל
       // בתוכן שהמוקדן יראה, ולכן הוא חייב להיות גלוי ולא רק נכון.
       title={
-        (link.by === "name"
-          ? `התקלות של ${link.scope} — כולל דרך טיפול ייחודית לאתר`
+        (link.by === "name" || link.by === "chosen-site"
+          ? `התקלות של ${link.scope} — כולל דרך טיפול ייחודית לאתר` +
+            (link.overrides ? ` (${link.overrides} חריגות)` : "")
           : `ספריית סוג המכונה ${link.profile} (${link.system}) — ללא חריגות אתר`) +
         (faultText ? ` · מסונן לפי "${faultText}"` : "")
       }
