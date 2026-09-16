@@ -402,7 +402,45 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
            השורות האלה הן הדבר היחיד שאומר את זה. */}
       {systems && (
         <div className="card-systems">
-          <span className="detail-label">מערכות</span>
+          <span className="detail-label">
+            מערכות
+            {/* ============================================================
+                ⚠️ כשהאתר בתקלה — לומר **איזו** מערכת, ולא להשאיר לעין
+                ============================================================
+                הכרטיס אמר "בתקלה" ומתחתיו `1 המתנה · 2 תחזוקה`, ואיש לא יכול
+                היה להרכיב מזה תשובה. שתי אפשרויות שונות לגמרי מסתתרות שם:
+                מערכת אחת נפלה והשנייה עובדת, או ששתיהן מושבתות.
+
+                ⚠️ וכשאף מערכת אינה בתקלה בזמן שהאתר כן — זה **אינו** רעש
+                בתצוגה אלא עובדה שצריך לומר: הפירוט ישן מכדי להראות את התקלה
+                שדווחה זה עתה. השתיקה כאן היא שגרמה לשאלה "מה קורה פה". */}
+            {status === "error" && systems && (() => {
+              const bad = systems.filter((u) => u.state === "error").map((u) => u.unit);
+              const ok = systems.filter((u) => u.state !== "error");
+              if (bad.length === 0) {
+                return <span className="systems-note"> · הפירוט אינו מראה את התקלה — הוא ישן מדי</span>;
+              }
+              if (bad.length === systems.length) {
+                return <span className="systems-note systems-note-bad"> · שתי המערכות בתקלה</span>;
+              }
+              return (
+                <span className="systems-note systems-note-bad">
+                  {` · מערכת ${bad.join(", ")} בתקלה · ${ok.map((u) => `${u.unit} ${SYSTEM_LABELS[u.state] || "לא ידוע"}`).join(", ")}`}
+                </span>
+              );
+            })()}
+            {/* ⚠️ הגיל מוצג רק כשהוא משמעותי. שורה שאומרת "לפני דקה" בכל
+                כרטיס היא רעש; שורה שאומרת "לפני 10 שעות" היא כל ההבדל בין
+                נתון שאפשר לפעול לפיו לבין נתון שצריך לאמת. */}
+            {site.systemsAgeMin != null && site.systemsAgeMin > 3 && (
+              <span className="systems-age" title="פירוט המערכות מגיע מפעימת הסוכן. זהו הזמן שבו הוא נקרא לאחרונה מהבקר.">
+                {" · נקרא לפני "}
+                {site.systemsAgeMin < 60
+                  ? `${site.systemsAgeMin} דק׳`
+                  : `${Math.round(site.systemsAgeMin / 60)} שעות`}
+              </span>
+            )}
+          </span>
           <div className="systems-list">
             {systems.map((u) => {
               const c = STATUS_COLORS[u.state] || STATUS_COLORS.no_comm;

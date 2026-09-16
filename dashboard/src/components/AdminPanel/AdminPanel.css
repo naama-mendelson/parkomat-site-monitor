@@ -408,3 +408,38 @@
   text-align: start;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
 }
+
+/* ⚠️ כתום ולא אדום: אתר בלי זהות אינו מושבת — הוא מדווח מצוין ב-MQTT.
+   מה שחסר הוא הכתיבה הישירה ואיתה זיהוי הניתוק. אדום היה קורא כמו תקלה
+   באתר עצמו, ושולח מישהו לנסוע לשם. */
+.adm-needs-identity {
+  border-color: var(--warn-dot, #e8a33d);
+  color: var(--warn-text, #a86a00);
+  font-weight: 600;
+}
+
+/* חיפוש אתר ברשימת הניהול */
+.adm-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.adm-search input {
+  flex: 1;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #d7d7e0);
+  background: var(--surface, #fff);
+  font-size: 13px;
+  font-family: inherit;
+}
+.adm-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6b8afd) 45%, transparent);
+  outline-offset: 1px;
+}
+.adm-search-count {
+  font-size: 12px;
+  color: var(--muted, #77778a);
+  white-space: nowrap;
+}

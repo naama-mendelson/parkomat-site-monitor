@@ -28,6 +28,7 @@
 
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { siteTrend } from "../../../shared/executive.mjs";
+import { liveSystems, displayStatusFor, systemsAgeMinutes } from "../../../shared/site-systems.mjs";
 
 /**
  * רשימת האתרים עם כל המדדים, ישירות מבסיס הנתונים.
@@ -37,23 +38,6 @@ import { siteTrend } from "../../../shared/executive.mjs";
  * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
  * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
-// ⚠️ הדירוג הוא **ההפך** מזה של `SiteStateAggregator` בסוכן, ובכוונה:
-// שם מחפשים את הטוב (מה עדיין עובד), כאן את הגרוע (מה דורש טיפול).
-// שתי הפונקציות מתארות את אותו אתר ואינן סותרות — הן עונות על שתי
-// שאלות שונות.
-const WORST_RANK = { error: 0, no_comm: 1, maintenance: 2, operating: 3, ready: 4 };
-
-function worstOfSystems(systems) {
-  if (!Array.isArray(systems) || systems.length === 0) return null;
-  let worst = null;
-  for (const u of systems) {
-    const st = String(u?.state ?? "").trim();
-    if (!(st in WORST_RANK)) continue;          // "unknown" אינו מצב גרוע
-    if (worst === null || WORST_RANK[st] < WORST_RANK[worst]) worst = st;
-  }
-  return worst;
-}
-
 export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
@@ -109,6 +93,11 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     const status = inMaintenance || site.status === "maintenance"
       ? "maintenance"
       : site.status;
+
+    // ============================================================
+    // הכלל עצמו, כולל הנימוק המלא, חי ב-shared/site-systems.mjs —
+    // כי גם מסך המפקח זקוק לו, ושני עותקים של אותו כלל סוטים.
+    const units = liveSystems(status, g.systems, g.systems_seen_at);
 
     // ============================================================
     // ⚠️ רמת השירות מגיעה מהרמזור, לא משדה נפרד על האתר
@@ -211,7 +200,13 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // שמערכת שלמה מושבתת.
       //
       // null = לאתר יש מערכת אחת. מערך = יש שתיים, והנה הן.
+      // ⚠️ **הפירוט מוצג תמיד, גם כשהוא ישן** — ולצידו גילו. הגרסה הקודמת
+      // הסתירה אותו, וזו הייתה החמרה: בפלורנטין `2 תחזוקה` מלפני עשר שעות
+      // היה **נכון**, והלובי השמאלי באמת לא באוטומט. הסתרה מחקה בדיוק את
+      // המידע שבגללו מסתכלים על הכרטיס.
       systems: Array.isArray(g.systems) && g.systems.length > 0 ? g.systems : null,
+      // גיל הפירוט בדקות. null = אין חותמת. המסך מציג אותו כשהוא משמעותי.
+      systemsAgeMin: systemsAgeMinutes(g.systems_seen_at),
 
       // ============================================================
       // ⚠️ באתר דו-מערכתי — **הצגה לפי הגרוע, מדידה לפי הטוב**
@@ -225,7 +220,7 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // ‏`status_history`, וממנו מחושבות הזמינות ואחוז הכשל — שינוי שלו
       // היה מעביר גם אותם לגרוע, כלומר בדיוק ההפך ממה שנקבע.
       // ‏`displayStatus` הוא שכבת תצוגה בלבד: הצ'יפ והמיון.
-      displayStatus: worstOfSystems(g.systems) ?? status,
+      displayStatus: displayStatusFor(status, g.systems),
 
       lastFaultAt: g.last_fault_at ?? null,
       // ⚠️ ?? ולא ||: '' הוא ערך תקף ("הבקר נשאל והחזיר ריק"), ו-|| היה

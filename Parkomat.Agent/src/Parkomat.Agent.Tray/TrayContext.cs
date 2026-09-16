@@ -139,7 +139,12 @@ public class TrayContext : ApplicationContext
         AgentServiceState state = _service.GetState();
         bool processRunning = _service.IsProcessRunning();
 
-        // מחוברים לבקר = פעימת לב טרייה; מחוברים לענן = סטטוס HiveMQ טרי.
+        // מחוברים לבקר = פעימת לב טרייה; מחוברים לענן = סטטוס ענן טרי.
+        //
+        // ⚠️ הקובץ שנקרא כאן הוא **מצב המסלול שהאתר משתמש בו**, ולא
+        // "מצב HiveMQ": באתר ש-MQTT כבוי בו השירות כותב לשם את תוצאת
+        // הכתיבה הישירה ל-Supabase. שם הקובץ נשאר הישן כדי ש-Tray ושירות
+        // מגרסאות שונות ימשיכו להבין זה את זה.
         bool plcConnected = state == AgentServiceState.Running;
         bool hiveConnected = plcConnected && _service.IsHiveMqConnected();
 
@@ -154,7 +159,10 @@ public class TrayContext : ApplicationContext
         else if (fullyConnected)
             statusText = "פועל — מחובר לבקר ולענן";
         else if (plcConnected)
-            statusText = "פועל — מחובר לבקר, אין קשר לענן (HiveMQ)";
+            // ⚠️ **בלי "(HiveMQ)".** באתר שכותב ישירות ל-Supabase השם הזה
+            // שולח את הטכנאי לבדוק ברוקר שכבוי במכוון — כלומר שולח אותו
+            // לתקן דבר תקין בזמן שהתקלה האמיתית במקום אחר לגמרי.
+            statusText = "פועל — מחובר לבקר, אין קשר לענן";
         else if (processRunning)
             statusText = "פועל — אין קשר לבקר";
         else

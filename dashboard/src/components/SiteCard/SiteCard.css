@@ -308,6 +308,9 @@
   inset-inline-start: 0;
   z-index: 50;
   min-width: 100%;
+  /* ⚠️ תקרה, כי `min-width: 100%` בלי גבול עליון מותח את הפאנל לפי תוכנו
+     והוא יוצא מגבול המסך. `90vw` מבטיח שהוא נשאר נראה בכל רוחב. */
+  max-width: min(90vw, 340px);
   margin-top: 6px;
   padding: 12px 14px;
   background: var(--bg-card);
@@ -326,10 +329,24 @@
   transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
 }
 
-.site-card:hover .card-hover-panel {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+/* ============================================================
+   ⚠️ hover בלבד במכשיר שיש לו hover — ובטלפון אין
+   ============================================================
+   ‏iOS **מדמה** hover בנגיעה: לחיצה על כרטיס פתחה את הפאנל, והוא נשאר
+   תקוע עד שנוגעים במקום אחר. נראה באייפון — פאנל שמרחף מעל הרשת ומסתיר
+   כרטיסים שכנים, בלי דרך מובנת לסגור אותו.
+   ⚠️ ובמסך צר הוא גם גולש: `inset-inline-start: 0` עם `min-width: 100%`
+   מותח אותו החוצה מגבול המסך, ובעברית זה קורה שמאלה — כלומר אל מחוץ
+   לתחום הנראה.
+
+   במגע אין בו צורך מלכתחילה: נגיעה בכרטיס פותחת את חלון הפרטים המלא,
+   שהוא הגרסה הטובה יותר של אותו מידע. */
+@media (hover: hover) and (pointer: fine) {
+  .site-card:hover .card-hover-panel {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
 }
 
 /* ==========================================================
@@ -792,3 +809,21 @@
 .card-agreement--none             { color: #cbd5e1; border-color: #94a3b8; background: rgba(148,163,184,0.14); }
 .card-agreement--unknown          { color: #cbd5e1; border-color: #94a3b8; background: rgba(148,163,184,0.14); }
 
+
+/* ⚠️ הגיל נכתב באותה שורה עם "מערכות" ובמשקל נמוך: הוא מוסיף הסתייגות
+   לנתון, ואינו נתון בפני עצמו. שורה נפרדת הייתה מתחרה בשבבים עצמם. */
+.systems-age {
+  font-weight: 400;
+  color: var(--warn-text, #a86a00);
+}
+
+/* ⚠️ אותו משקל נמוך כמו הגיל: זו הסתייגות/הבהרה על הפירוט, לא נתון נוסף
+   שמתחרה בשבבים עצמם. */
+.systems-note {
+  font-weight: 400;
+  color: var(--muted, #77778a);
+}
+.systems-note-bad {
+  color: var(--err-text, #b23c3c);
+  font-weight: 600;
+}

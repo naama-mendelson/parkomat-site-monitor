@@ -389,8 +389,38 @@ BEGIN
        -- ו-NULL פירושו שדבר לא הגיע מעולם — ולכן `-infinity`.
        AND COALESCE(e.last_seen::timestamptz, '-infinity'::timestamptz) <= e.seen_at
        AND e.status <> 'no_comm'
-       -- ⚠️ ותחזוקה גוברת. אתר שמישהו הכניס לתחזוקה אמור להיות שקט.
-       AND e.status <> 'maintenance'
+       -- ============================================================
+       -- ⚠️ שתי משמעויות ל"תחזוקה", וכאן הן הושוו — וזה הסתיר אתר
+       -- ============================================================
+       -- כאן כתוב היה `e.status <> 'maintenance'`, והנימוק היה
+       -- *"אתר שמישהו הכניס לתחזוקה אמור להיות שקט"*. הנימוק נכון,
+       -- והוא מתאר דבר אחד בלבד — **חלון תחזוקה שנפתח מהדשבורד**.
+       -- `sites.status = 'maintenance'` משמעו דבר אחר לגמרי: **הבקר דיווח
+       -- MODE 0**. איש לא ביקש שקט, והפעימה אינה תלויה ב-MODE בכלל —
+       -- סוכן של בקר בתחזוקה פועם כל 60 שניות בדיוק כמו כל סוכן אחר.
+       --
+       -- ⚠️ **נמדד במגדל 1 (2438) ב-15/09/2026, והכשל נועל את עצמו:**
+       --
+       --     05:15  הבקר דיווח MODE 0 → מקטע `maintenance` נפתח
+       --     05:31  הודעה אמיתית אחרונה
+       --     06:06  הפעימה נעצרה (הזהות נמחקה). ו-MQTT כבוי באתר הזה.
+       --
+       -- משם ואילך האתר חשוך לחלוטין, והתנאי הזה דילג עליו בכל סריקה —
+       -- כלומר **המצב הקפוא הגן על עצמו מלהיות מזוהה**. המפעילה החזירה
+       -- את הבקר לאוטומט, והכרטיס המשיך לומר "בתחזוקה" שעות אחר כך.
+       --
+       -- ⚠️ והנזק אינו בתצוגה בלבד: מקטע `maintenance` מוחרג ממכנה
+       -- הזמינות ומשתיק ספירת תקלות. אתר שחשך תוך כדי MODE 0 יוצא
+       -- מהמדידה לנצח, ואף מסך אינו מראה זאת.
+       --
+       -- לכן התנאי הוא על החלון עצמו, באותו ניב ש-`app.fault_counts` משתמשת
+       -- בו. בזמן חלון מישהו אכן עומד פיזית באתר ועשוי לכבות את המחשב.
+       AND NOT EXISTS (
+         SELECT 1 FROM public.maintenance_windows w
+          WHERE w.site_id = e.id
+            AND w.excluded_at IS NULL
+            AND v_now >= w.started_at
+            AND v_now <  COALESCE(w.cancelled_at, w.expires_at))
   )
   SELECT s.code, s.quiet FROM silent s;
 
@@ -412,7 +442,14 @@ BEGIN
       -- פירושו אתר שמסומן מנותק ואינו מופיע בדוח — כלומר שינוי מצב
       -- שאיש אינו יודע עליו.
       AND COALESCE(e.last_seen::timestamptz, '-infinity'::timestamptz) <= a.seen_at
-      AND e.status NOT IN ('no_comm', 'maintenance');
+      AND e.status <> 'no_comm'
+      -- ⚠️ אותו תנאי בדיוק כמו למעלה — חלון תחזוקה פעיל, ולא הסטטוס.
+      AND NOT EXISTS (
+        SELECT 1 FROM public.maintenance_windows w
+         WHERE w.site_id = e.id
+           AND w.excluded_at IS NULL
+           AND v_now >= w.started_at
+           AND v_now <  COALESCE(w.cancelled_at, w.expires_at));
 END;
 $fn$;
 

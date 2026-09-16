@@ -15,6 +15,7 @@
 // **הפונקציה עצמה** ולהשוות אותה לפלט השרת. אילו הוא היה מחזיק עותק של
 // המיפוי, הוא היה בודק את העותק ולא את הקוד שרץ — וזו בדיוק צורת הכשל
 // שהפרויקט הזה כבר נשרף בה.
+import { liveSystems, worstOfSystems } from "../../../shared/site-systems.mjs";
 
 /**
  * @returns אותו מבנה בדיוק ש-GET /api/stats/supervisor מחזיר.
@@ -53,13 +54,12 @@ export function toSupervisorShape({ siteRows, statsRows, uptimeRows, globalsRows
     // ‏`status` — שממנו מחושבות הזמינות ואחוז הכשל — נשאר של הטובה.
     // מסך שמסנן אחרת ממסך אחר על אותם אתרים הוא בדיוק הדבר שגורם
     // למישהי לחשוב שאתר "נעלם".
-    const WORST = { error: 0, no_comm: 1, maintenance: 2, operating: 3, ready: 4 };
-    let worst = null;
-    for (const u of (Array.isArray(g.systems) ? g.systems : [])) {
-      const st = String(u?.state ?? "").trim();
-      if (!(st in WORST)) continue;
-      if (worst === null || WORST[st] < WORST[worst]) worst = st;
-    }
+    // אותו מימוש בדיוק שהרשימה משתמשת בו — ראה shared/site-systems.mjs.
+    // ⚠️ היה כאן עותק שני של הדירוג, זהה מילה במילה ברגע שנכתב. זה בדיוק
+    // הרגע שבו עותק מתחיל לסטות: מי שיתקן במקום אחד לא ידע שיש שני.
+    // ⚠️ בלי סינון גיל — אותו כלל כמו ברשימה: מערכת בתחזוקה מופיעה
+    // ככזו גם אם נקראה לפני שעות. `no_comm` הוא החריג היחיד.
+    const worst = status === "no_comm" ? null : worstOfSystems(g.systems);
 
     return {
       code: site.code,

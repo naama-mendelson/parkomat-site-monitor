@@ -244,3 +244,25 @@
     order: 1;
   }
 }
+
+/* ============================================================
+   ⚠️ אזור הבטיחות — נפתח יחד עם `viewport-fit=cover`
+   ============================================================
+   ה-meta עודכן כדי ש-`env(safe-area-inset-*)` יחזיר ערך אמיתי (בלעדיו הוא
+   0 תמיד באייפון, וכל חישוב שנשען עליו הוא קוד מת). המחיר: הדף נפתח אל
+   **מתחת** למגרעת ולסרגל הבית.
+
+   ⚠️ הכותרת היא `position: sticky; top: 0`, כלומר היא הדבר שיושב שם — ובלי
+   התוספת הזו שורת הלוגו נכנסת מתחת לשעון ולסוללה. התיקון חייב ללוות את
+   ה-meta, אחרת פתרנו תחתית ושברנו כותרת. */
+.app-header {
+  padding-block-start: calc(14px + env(safe-area-inset-top, 0px));
+  padding-inline: max(24px, env(safe-area-inset-left, 0px)) max(24px, env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    padding-block-start: calc(8px + env(safe-area-inset-top, 0px));
+    padding-inline: max(12px, env(safe-area-inset-left, 0px)) max(12px, env(safe-area-inset-right, 0px));
+  }
+}

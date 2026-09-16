@@ -72,7 +72,7 @@ import {
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
-import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect } from "./sitesWriteDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
@@ -472,6 +472,18 @@ export async function markControllerReplaced(code) {
 }
 export async function agentEverBeat(siteId) {
   return agentEverBeatDirect(siteId);
+}
+
+/** כל זהויות האתרים, לניהול במסך ייעודי. */
+export async function listSiteIdentities() {
+  if (!useDirect) throw new Error("ניהול זהויות אתרים זמין רק במצב הישיר");
+  return listSiteIdentitiesDirect();
+}
+
+/** קבוצת מזהי האתרים שיש להם זהות סוכן פעילה, או null אם לא הצלחנו לברר. */
+export async function sitesWithAgentIdentity() {
+  if (!useDirect) return null;
+  return sitesWithAgentIdentityDirect();
 }
 
 export async function provisionAgent(code, opts) {

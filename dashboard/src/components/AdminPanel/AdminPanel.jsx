@@ -1,16 +1,18 @@
 // components/AdminPanel/AdminPanel.jsx — ניהול אתרים: הוספה, עריכה, מחיקה, שינוי קוד.
 // זמין רק למנהל בקרה ומנהל כללי, ומאחורי קוד מנהל שהשרת אוכף.
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import SiteIdentities from "../SiteIdentities/SiteIdentities";
 import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
-import { updateSite, deleteSite, provisionAgent, agentEverBeat, markControllerReplaced } from "../../services/dataSource";
+import { updateSite, deleteSite, provisionAgent, agentEverBeat, markControllerReplaced, sitesWithAgentIdentity } from "../../services/dataSource";
 import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import { useDirect } from "../../services/dataSource";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
+import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AdminPanel.css";
 import Logo from "../Logo/Logo";
 
@@ -34,6 +36,38 @@ function AdminPanel({ sites, onClose, onChanged }) {
   // לחיצה על אתר אחד החליפה את הכיתוב ל"מנפיק…" **בכל השורות** והשביתה
   // את כולן — נראה בדיוק כאילו נלחצו כל האתרים בבת אחת.
   const [issuing, setIssuing] = useState(null);
+
+  // ============================================================
+  // ⚠️ מי חסר זהות סוכן — שאלה שלא הייתה ניתנת לשאילה מהמסך
+  // ============================================================
+  // ‏15/09/2026: הזהויות הופיעו ברשימת המשתמשים בין בני אדם, נמחקו בהיגיון
+  // מלא, ו-19 אתרים איבדו את המסלול הישיר. איש לא ידע: MQTT המשיך למסור,
+  // המסכים נשארו נכונים, ורק הפעימה מתה — כלומר **זיהוי הניתוק עצמו**.
+  //
+  // ⚠️ `undefined` = עוד לא נבדק · `null` = לא הצלחנו לברר · Set = התשובה.
+  // שלושה מצבים ולא שניים: קבוצה ריקה בגלל שגיאת רשת הייתה צובעת את כל
+  // האתרים באזהרה שקרית.
+  const [showIdentities, setShowIdentities] = useState(false);
+
+  // ============================================================
+  // ⚠️ חיפוש אתר — והנרמול זהה לזה של הרמזור, בכוונה
+  // ============================================================
+  // ‏34 אתרים הם רשימה שגוללים בה, וכל פעולה כאן (עריכה, זהות, מחיקה) היא
+  // פעולה על **אתר מסוים** שצריך למצוא קודם.
+  //
+  // ⚠️ ההשוואה מתעלמת מפיסוק ומרווחים, בדיוק כמו בחיפוש הרמזור: מי שמקלידה
+  // "אביגיל 20 רג" מהזיכרון תמצא את `אביגיל 20, ר"ג`. חיפוש שנכשל על פסיק
+  // הוא חיפוש שנראה כאילו האתר אינו קיים.
+  const [query, setQuery] = useState("");
+  const normQ = (v) => String(v ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCase();
+  const q = normQ(query);
+  // מחפש בשם ובקוד: "2222" ו-"גרוזנברג" הם שתי דרכים לחשוב על אותו אתר.
+  const visibleSites = q
+    ? sites.filter((s) => normQ(s.site_name).includes(q) || normQ(s.code).includes(q))
+    : sites;
+  const [withIdentity, setWithIdentity] = useState(undefined);
+  useEffect(() => { sitesWithAgentIdentity().then(setWithIdentity).catch(() => setWithIdentity(null)); }, [agentIssued]);
+  const missingIdentity = (s) => withIdentity instanceof Set && !withIdentity.has(s.id);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,6 +100,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
       code: site.code,
       tier: site.tier || "basic",
       plcType: site.plc_type ?? "",
+      fixflowProfile: site.fixflow_profile ?? "",   // פיילוט FixFlow
     });
     setErr(null);
   }
@@ -91,6 +126,9 @@ function AdminPanel({ sites, onClose, onChanged }) {
         code: newCode,
         tier: draft.tier,
         plc_type: draft.plcType,
+        // ⚠️ נשלח תמיד, גם ריק — מאותה סיבה בדיוק כמו סוג המתקן: ריק הוא
+        // "חזור לגזירה האוטומטית", ובלי שליחה אי אפשר לבטל בחירה. פיילוט FixFlow.
+        fixflow_profile: draft.fixflowProfile,
       });
       setEditing(null);
       onChanged();
@@ -291,6 +329,12 @@ function AdminPanel({ sites, onClose, onChanged }) {
           </div>
           <div className="adm-head-actions">
             <button className="adm-btn" onClick={() => setAddOpen(true)}>+ הוסף אתר</button>
+            {/* ⚠️ מסך נפרד, ולא עוד עמודה בטבלת האתרים. זהות היא נושא בפני
+                עצמו — היא נוצרת, מושבתת ומוחלפת בסיסמה — והמקום היחיד שבו
+                היא הופיעה עד 15/09 היה רשימת המשתמשים, בין בני אדם. */}
+            <button className="adm-btn-ghost" onClick={() => setShowIdentities((v) => !v)}>
+              {showIdentities ? "← חזרה לאתרים" : "זהויות אתרים"}
+            </button>
             {/* ⚠️ מוסתר במצב ישיר, כי הוא משנה סוד שאף כתיבה כאן אינה
                 שולחת יותר. כפתור שנראה כמו "שנה סיסמת ניהול" ובפועל
                 משנה מנגנון רדום הוא הטעיה — למי שילחץ עליו ייראה שהוא
@@ -309,6 +353,11 @@ function AdminPanel({ sites, onClose, onChanged }) {
 
         {msg && <div className="adm-msg">{msg}</div>}
         {err && <div className="adm-err adm-err-bar">{err}</div>}
+
+        {/* ⚠️ החלפה מלאה ולא הצגה זו לצד זו: זהויות ואתרים הם שני נושאים,
+            ושתי טבלאות באותו מסך היו מחזירות בדיוק את הבלבול שהמסך הזה נולד
+            כדי לפתור — שורה שנראית כמו שורה אחרת ומזמינה את אותה פעולה. */}
+        {showIdentities ? <SiteIdentities /> : (<>
 
         {/* ==========================================================
             הזהות שהונפקה — נשארת עד סגירה ידנית
@@ -369,11 +418,33 @@ function AdminPanel({ sites, onClose, onChanged }) {
         {/* הפעלה מחדש של השרת                                          */}
 
         {/* רשימת האתרים */}
+        {/* ⚠️ מוצג רק כשיש מה לחפש בו. תיבת חיפוש מעל שלושה אתרים היא רעש. */}
+        {sites.length > 6 && (
+          <div className="adm-search">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="חיפוש אתר לפי שם או קוד…"
+              aria-label="חיפוש אתר"
+            />
+            {q && (
+              <span className="adm-search-count">
+                {visibleSites.length} מתוך {sites.length}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="adm-list">
           {sites.length === 0 ? (
             <p className="adm-empty">אין אתרים רשומים. התחל בהוספת אתר.</p>
+          ) : visibleSites.length === 0 ? (
+            /* ⚠️ אומר במפורש שזו תוצאת סינון ולא רשימה ריקה — אחרת זה נראה
+               כאילו האתרים נעלמו. */
+            <p className="adm-empty">אין אתר שתואם ל"{query}".</p>
           ) : (
-            sites.map((s) => {
+            visibleSites.map((s) => {
               const c = STATUS_COLORS[s.status] || STATUS_COLORS.no_comm;
               const isEditing = editing === s.code;
               const isConfirming = confirmDelete === s.code;
@@ -417,6 +488,11 @@ function AdminPanel({ sites, onClose, onChanged }) {
                           ))}
                         </select>
                       </label>
+                      <FixFlowPicker
+                        site={site}
+                        value={draft.fixflowProfile}
+                        onChange={(v) => setDraft({ ...draft, fixflowProfile: v })}
+                      />
                       <p className="adm-warn">
                         ⚠ שינוי הקוד משנה את נתיב ה-MQTT. הסוכן באתר חייב להתעדכן גם הוא,
                         אחרת הודעותיו יידחו.
@@ -486,9 +562,17 @@ function AdminPanel({ sites, onClose, onChanged }) {
                             נכשלה שם, האתר קיים ו**לא יוכל לדווח לעולם**. בלי
                             כפתור, הדרך היחידה חזרה היא פקודה על DELL008, וזה
                             בדיוק מה שהאוטומציה נועדה לבטל. */}
-                        <button className="adm-btn-ghost" disabled={issuing === s.code}
+                        {/* ⚠️ אתר בלי זהות אינו מציג שום סימן היום — הוא פשוט
+                            מפסיק לפעום, וזה נראה כמו אתר שקט. הסימון הוא
+                            ההבדל בין "צריך לטפל" לבין "לא שמתי לב חודשיים". */}
+                        <button
+                          className={missingIdentity(s) ? "adm-btn-ghost adm-needs-identity" : "adm-btn-ghost"}
+                          disabled={issuing === s.code}
+                          title={missingIdentity(s)
+                            ? "לאתר אין זהות סוכן — הוא אינו יכול לכתוב ישירות ל-Supabase"
+                            : "הנפקת זהות סוכן לאתר"}
                           onClick={() => issueAgent(s)}>
-                          {issuing === s.code ? "מנפיק…" : "זהות סוכן"}
+                          {issuing === s.code ? "מנפיק…" : missingIdentity(s) ? "⚠ חסרה זהות סוכן" : "זהות סוכן"}
                         </button>
                         {/* ⚠️ נמדד: בקר חדש שמגיע עם 87 מחזורי בדיקות מפעל
                             מוסיף אותם כמחזורים אמיתיים, ו-cycle_total הוא
@@ -514,6 +598,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
         <p className="adm-note">
           מחיקת אתר מוחקת גם את כל ההיסטוריה שלו — פעולות, שינויי מצב ותחזוקה. אין ביטול.
         </p>
+        </>)}
       </div>
 
       {addOpen && (

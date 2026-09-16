@@ -69,6 +69,8 @@ export async function registerSiteDirect(payload = {}) {
     // "בלי סוג מתקן" — מצב תקין לגמרי (כך כל 12 האתרים הקיימים).
     p_plc_type: payload.plc_type ? String(payload.plc_type) : null,
     p_tier: payload.tier ? String(payload.tier) : "basic",
+    // פיילוט FixFlow — ספריית התקלות של האתר. ריק = תיגזר אוטומטית.
+    p_fixflow_profile: payload.fixflow_profile ? String(payload.fixflow_profile) : null,
   });
 
   if (error) throw new Error(messageFor(error, "רישום האתר נכשל"));
@@ -204,6 +206,10 @@ export async function updateSiteDirect(code, payload = {}) {
   if (payload.site_name !== undefined) body.p_site_name = String(payload.site_name);
   if (payload.tier !== undefined) body.p_tier = String(payload.tier);
   if (payload.plc_type !== undefined) body.p_plc_type = String(payload.plc_type);
+  // ⚠️ אותה הבחנה בדיוק: מחרוזת ריקה **מנקה** את הבחירה ומחזירה את האתר
+  // לגזירה האוטומטית, ושדה חסר אינו נוגע. פיילוט FixFlow.
+  if (payload.fixflow_profile !== undefined)
+    body.p_fixflow_profile = String(payload.fixflow_profile);
 
   const { data, error } = await supabase.rpc("update_site", body);
   if (error) throw new Error(messageFor(error, "עדכון האתר נכשל"));
@@ -236,4 +242,68 @@ export async function deleteSiteDirect(code) {
       statusHistory: Number(row?.status_history ?? 0),
     },
   };
+}
+
+// ============================================================
+// ⚠️ אילו אתרים מחזיקים זהות סוכן — והשאלה הזו לא הייתה ניתנת לשאילה
+// ============================================================
+// ‏15/09/2026: זהויות הסוכן הופיעו ברשימת המשתמשים בין בני אדם, נמחקו
+// בהיגיון מלא, ו-19 אתרים איבדו את המסלול הישיר באותה דקה. איש לא ידע —
+// MQTT המשיך למסור, המסכים נשארו נכונים, ורק הפעימה מתה.
+//
+// ⚠️ **ומה שנשבר עם הפעימה הוא זיהוי הניתוק עצמו.** אתר בלי זהות אינו מציג
+// שום סימן: הוא פשוט מפסיק לפעום, וזה נראה כמו אתר שקט.
+//
+// ‏`list_users` כבר אינה מחזירה סוכנים (הסינון שם, ב-SQL, כדי שלא ידלפו
+// לשום מסך). הפונקציה הזו עונה על השאלה ההפוכה ובמקום הנכון: מי **חסר**.
+export async function sitesWithAgentIdentityDirect() {
+  assertConfigured();
+  const { data, error } = await supabase
+    .from("app_users").select("site_id").eq("role", "agent").eq("is_active", true);
+  // ⚠️ null ולא קבוצה ריקה: כשל קריאה אינו "לאף אתר אין זהות". קבוצה ריקה
+  // הייתה צובעת את כל 32 האתרים באזהרה על סמך שגיאת רשת.
+  if (error) return null;
+  return new Set((data ?? []).map((r) => r.site_id).filter((x) => x != null));
+}
+
+/**
+ * כל זהויות האתרים — קוד, שם, מצב, וכניסה אחרונה.
+ *
+ * ============================================================
+ * ⚠️ מסך נפרד, ולא שורות בתוך רשימת המשתמשים
+ * ============================================================
+ * שם הן ישבו עד 15/09/2026, בין בני אדם, ונמחקו — בהיגיון מלא. `list_users`
+ * כבר אינה מחזירה אותן, והפונקציה הזו היא הצד השני של אותה החלטה: מקום שבו
+ * הן **כן** שייכות, עם ההקשר שהופך אותן למובנות (איזה אתר, האם הוא פועם).
+ */
+export async function listSiteIdentitiesDirect() {
+  assertConfigured();
+  const [{ data: users, error: uErr }, { data: sites, error: sErr }, { data: beats }] = await Promise.all([
+    supabase.from("app_users").select("id, email, is_active, site_id").eq("role", "agent"),
+    supabase.from("sites").select("id, code, site_name"),
+    supabase.from("alive").select("site_id, seen_at, agent_version"),
+  ]);
+  if (uErr || sErr) throw new Error(uErr?.message || sErr?.message);
+
+  const byId = new Map((users ?? []).map((u) => [u.site_id, u]));
+  const beatById = new Map((beats ?? []).map((b) => [b.site_id, b]));
+  return (sites ?? [])
+    .map((s) => {
+      const u = byId.get(s.id);
+      const b = beatById.get(s.id);
+      return {
+        siteId: s.id,
+        code: s.code,
+        name: s.site_name,
+        email: u?.email ?? null,
+        userId: u?.id ?? null,
+        // ⚠️ שלושה מצבים ולא שניים: אין זהות · יש ומושבתת · יש ופעילה.
+        // "מושבתת" נראית כמו "אין" מהתוצאה (שתיהן לא כותבות), אבל הן דורשות
+        // פעולות הפוכות — האחת הפעלה, השנייה הנפקה עם סיסמה חדשה.
+        state: !u ? "none" : u.is_active ? "active" : "disabled",
+        lastBeat: b?.seen_at ?? null,
+        agentVersion: b?.agent_version ?? null,
+      };
+    })
+    .sort((a, b) => String(a.code).localeCompare(String(b.code)));
 }

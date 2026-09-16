@@ -1,0 +1,62 @@
+/* ⚠️ כל המחלקות בקידומת `si-`. המסך הזה נוגע בהרשאות ובסיסמאות, ואסור
+   שסלקטור שלו ידלוף למסך אחר. */
+.si { padding: 4px 2px 18px; }
+.si-head h3 { margin: 0 0 4px; font-size: 16px; }
+.si-head p { margin: 0 0 10px; font-size: 12.5px; color: var(--muted, #77778a); line-height: 1.6; }
+
+.si-summary {
+  margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  background: color-mix(in srgb, var(--warn-dot, #e8a33d) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn-dot, #e8a33d) 40%, transparent);
+}
+.si-err { margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  background: color-mix(in srgb, var(--err-dot, #d35b5b) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--err-dot, #d35b5b) 40%, transparent); }
+.si-load { padding: 16px; color: var(--muted, #77778a); }
+
+.si-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.si-table th { text-align: start; font-weight: 600; color: var(--muted, #77778a);
+  padding: 6px 8px; border-bottom: 1px solid var(--border, #d7d7e0); }
+.si-table td { padding: 7px 8px; border-bottom: 1px solid var(--border-soft, #ececf2); }
+.si-row-off { background: var(--surface-2, #fafafc); }
+
+.si-state { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.si-state-active   { background: color-mix(in srgb, var(--ok-dot, #2e9e6b) 16%, transparent); color: var(--ok-text, #1f7a51); }
+/* ⚠️ "מושבתת" ו"אין זהות" בצבעים שונים: התוצאה זהה (לא כותב), אבל הפעולה
+   הפוכה — האחת הפעלה בלחיצה, השנייה הנפקה עם סיסמה חדשה ונסיעה לאתר. */
+.si-state-disabled { background: color-mix(in srgb, var(--warn-dot, #e8a33d) 18%, transparent); color: var(--warn-text, #a86a00); }
+.si-state-none     { background: color-mix(in srgb, var(--err-dot, #d35b5b) 14%, transparent); color: var(--err-text, #b23c3c); }
+
+.si-beat-ok  { color: var(--ok-text, #1f7a51); font-weight: 600; }
+.si-beat-off { color: var(--muted, #77778a); }
+
+.si-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.si-btn { padding: 4px 11px; border-radius: 7px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border, #d7d7e0); background: var(--surface, #fff); }
+.si-btn:hover { background: var(--surface-2, #f2f2f6); }
+.si-btn:disabled { opacity: 0.5; cursor: default; }
+.si-btn-warn { border-color: var(--warn-dot, #e8a33d); color: var(--warn-text, #a86a00); }
+
+/* הסיסמה: גדולה, ניתנת לבחירה, ובולטת — היא מוצגת פעם אחת בחיים. */
+.si-issued, .si-confirm {
+  margin: 10px 0 14px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--accent, #6b8afd); background: color-mix(in srgb, var(--accent, #6b8afd) 8%, transparent);
+}
+.si-issued-title { font-weight: 700; margin-bottom: 8px; }
+.si-kv { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; font-size: 13px; }
+.si-kv span { min-width: 58px; color: var(--muted, #77778a); }
+.si-kv code { font-family: ui-monospace, Menlo, Consolas, monospace; user-select: all; }
+.si-pw { font-size: 15px; font-weight: 700; letter-spacing: 0.5px; }
+.si-warn { margin: 8px 0; font-size: 12.5px; line-height: 1.6; color: var(--warn-text, #a86a00); }
+.si-confirm-actions { display: flex; gap: 8px; }
+
+.si-search { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.si-search input {
+  flex: 1; padding: 7px 12px; border-radius: 8px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--border, #d7d7e0); background: var(--surface, #fff);
+}
+.si-search input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6b8afd) 45%, transparent); outline-offset: 1px;
+}
+.si-search-count { font-size: 12px; color: var(--muted, #77778a); white-space: nowrap; }
+.si-empty { padding: 14px 4px; color: var(--muted, #77778a); font-size: 13px; }

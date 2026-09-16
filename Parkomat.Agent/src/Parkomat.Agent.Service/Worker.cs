@@ -1,4 +1,4 @@
-using Parkomat.Agent.Core.Configuration;
+﻿using Parkomat.Agent.Core.Configuration;
 using System.Reflection;
 using System.Threading;
 using Parkomat.Agent.Core.Protocol;
@@ -632,7 +632,25 @@ public class Worker : BackgroundService
 
                 // כותבים את סטטוס ה-HiveMQ ל-Tray: "מחובר" רק אם גם ה-Broker המקומי
                 // וגם הגשר ל-HiveMQ חיים — כדי שהסמל יהיה צבעוני רק בחיבור מלא.
-                WriteHiveMqStatus(mqtt.IsConnected && mqtt.HiveMqBridgeConnected);
+                //
+                // ============================================================
+                // ⚠️ באתר ישיר-בלבד השורה הזו שיקרה לנצח
+                // ============================================================
+                // היא רצה בלי תנאי, ובאתר ש-MQTT כבוי בו `mqtt.IsConnected`
+                // הוא false תמיד — כלומר הקובץ נכתב `0` בכל סבב, האייקון
+                // נשאר אפור, וה-tooltip אמר *"אין קשר לענן (HiveMQ)"* — גם כשהמסלול
+                // הישיר עבד מצוין והאתר דיווח כל דקה.
+                //
+                // ⚠️ **מחוון שתמיד אדום גרוע מאין מחוון.** הוא מלמד את הטכנאי
+                // להתעלם ממנו, ואז היום שבו הקשר באמת נפל נראה בדיוק כמו כל יום אחר.
+                // נצפה במגדל 1 (2438) ב-15/09/2026: ה-tooltip אמר "אין קשר לענן" —
+                // וזה אכן היה נכון, במקרה, אחרי שבעה חודשים שבהם הוא אמר את זה בשקר.
+                //
+                // לכן הקובץ שייך **למסלול שהאתר באמת משתמש בו**. שם הקובץ לא
+                // משתנה במכוון: Tray ישן מול שירות חדש ימשיך לקרוא אותו, ושינוי
+                // שם היה משאיר אותו אפור לנצח בלי שאף אחד יראה שגיאה.
+                if (config.MqttEnabled)
+                    WriteHiveMqStatus(mqtt.IsConnected && mqtt.HiveMqBridgeConnected);
 
                 if (plcJustRecovered)
                 {
@@ -1294,6 +1312,11 @@ public class Worker : BackgroundService
                             supaFailures = 0;
                             supaNextAttempt = DateTimeOffset.MinValue;
 
+                            // ⚠️ באתר ישיר-בלבד **זה** הקשר לענן, ולכן זה מה
+                            // שה-Tray צריך להראות. באתר שגם MQTT פעיל בו הקובץ
+                            // שייך ל-MQTT — שני כותבים לאותו קובץ היו מבהבים את הסמל.
+                            if (!config.MqttEnabled) WriteHiveMqStatus(true);
+
                             // ⚠️ **המחיקה רק אחרי אישור.** מחיקה לפני השליחה,
                             // או בלי לבדוק את התוצאה, מחזירה בדיוק את האובדן
                             // שהתור נבנה למנוע. אותו כלל כמו ב-PendingQueue.
@@ -1324,6 +1347,11 @@ public class Worker : BackgroundService
                                 supaFailures, res.Status, res.Error);
                             int wait = SupabaseRetryPolicy.DelaySeconds(supaFailures);
                             supaNextAttempt = DateTimeOffset.UtcNow.AddSeconds(wait);
+
+                            // ⚠️ וכשל נרשם גם הוא. סוכן שנדחה על סיסמה שגויה
+                            // הוא בדיוק המקרה שבו הטכנאי עומד ליד המחשב וצריך
+                            // לדעת מיד, בלי לפתוח לוג.
+                            if (!config.MqttEnabled) WriteHiveMqStatus(false);
 
                             _logger.LogWarning(
                                 "Supabase write failed ({Status}): {Error}. " +

@@ -108,3 +108,14 @@ input, select {
 }
 
 .app-error-retry:hover { filter: brightness(1.1); }
+
+/* ⚠️ אותו נימוק כמו בכותרת: `viewport-fit=cover` פותח את הדף אל מתחת
+   לקצוות המסך, ולכן התוכן עצמו חייב לכבד את השוליים הצדדיים. באייפון
+   במצב לרוחב זה ההבדל בין טקסט קריא לבין טקסט מתחת למגרעת. */
+.app-main {
+  padding-inline: max(24px, env(safe-area-inset-left, 0px)) max(24px, env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 640px) {
+  .app-main { padding-inline: max(12px, env(safe-area-inset-left, 0px)) max(12px, env(safe-area-inset-right, 0px)); }
+}
