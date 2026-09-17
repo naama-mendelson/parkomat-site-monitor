@@ -23,8 +23,12 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// ⚠️ **סופי שורות מנורמלים.** הבדיקה מחפשת רצף שחוצה שורה (`runAll();\n    throw`),
+// ובשכפול חדש ב-Windows (`core.autocrlf=true`) הקובץ יורד עם CRLF — כלומר היא
+// נכשלה על כל מחשב שמשכפל מחדש, ועברה רק בעותק שבו הקובץ נשאר LF. נמצא
+// בשכפול נקי לפני דחיפה, 17/09/2026.
 const SRC = fs.readFileSync(
-  path.join(__dirname, "..", "tools", "lib", "gate-user.js"), "utf8");
+  path.join(__dirname, "..", "tools", "lib", "gate-user.js"), "utf8").replace(/\r\n/g, "\n");
 
 const at = (needle) => {
   const i = SRC.indexOf(needle);
