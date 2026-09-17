@@ -14,7 +14,6 @@ import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
 import { useDirect } from "./services/dataSource";
 import "./components/TrafficLight/TrafficLight.css";
-import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
@@ -314,8 +313,8 @@ function App() {
 
       {trafficOpen && <TrafficLight onClose={() => setTrafficOpen(false)} />}
 
-      {/* עוזר ה-AI — קריאה בלבד, זמין מכל תצוגה */}
-      <ChatAssistant />
+      {/* ⚠️ עוזר ה-AI הוסר (17/09/2026) לבקשת בעלת המוצר: הוא רץ על master,
+          ו-master יוצא משימוש — המערכת נשענת על Supabase והדשבורד בלבד. */}
     </div>
   );
 }

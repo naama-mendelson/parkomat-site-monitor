@@ -5,6 +5,24 @@ Guidance for Claude Code across the whole repo. Component-specific rules live in
 [`Parkomat.Agent/CLAUDE.md`](Parkomat.Agent/CLAUDE.md) (site agent) — read those before
 editing either component. Source comments are Hebrew; these instruction files are English.
 
+## ⚠️ Decision, 17/09/2026 — `master` is being retired. Target: Supabase + dashboard only
+
+The product owner: *"I don't need the server. I want only Supabase and the dashboard."*
+Do not build new work on `master`, and do not suggest moving something *into* it.
+
+**Measured the same day — what still depended on it, and the state of each:**
+
+| Dependency | State |
+|---|---|
+| **The AI assistant** | **Removed from the dashboard** (owner's choice over moving it to an Edge Function). `/api/chat` still exists in `master` but nothing calls it. |
+| **7 sites report over MQTT only** — 1343, 1348, 1416, 2439, 3439, 3456, 3465 | **Open — this is the blocker.** Their agent accounts were created 15/09 and have **never signed in** (`auth.users.last_sign_in_at` NULL); their MQTT payloads lack the `Systems` field every direct site sends, i.e. an older agent. Each needs the current installer plus its Supabase password entered on site. The other 30 sites already write directly. |
+| **Daily data backup** (`backup` container on DELL008) | **Stays for now.** The owner plans Supabase Pro, which includes backups. It is the only copy outside Supabase — stopping DELL008 entirely stops it. The `backup` container does not run `db.init`. |
+| **SQL is applied at `master` boot** (`db.init`) | ⚠️ **A hazard while `master` still runs old code**: a restart re-applies the SQL it was built with and overwrites newer functions in production. Stop the `parkomat` container, or redeploy it, whenever production SQL moves ahead of DELL008. |
+
+⚠️ **Turning `master` off before those 7 sites move silences them *and hides it*:**
+`app.mark_silent_agents` only watches sites that have an `alive` row, so an MQTT-only site
+that stops reporting keeps showing its last status indefinitely.
+
 ## Architecture today
 
 ```

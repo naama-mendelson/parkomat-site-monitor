@@ -157,15 +157,17 @@ if (bypass.length) {
 // אתרים — **אפס בקשות לשרת**. הבדיקה כאן מקבעת את זה: מדידה חד-פעמית
 // מוכיחה מצב, ורק שער מונע ממנו להישחק.
 //
-// שלושת המותרים, וכל אחד מנימוק אחר:
+// שני המותרים, וכל אחד מנימוק אחר:
 //   dataSource.js  — **הוא המתג עצמו**. זרוע השרת חייבת להיות שם, וזו
 //                    דלת היציאה: היום היא רדומה, ביום פורענות היא הדרך חזרה.
-//   ChatAssistant  — הבוט. מחזיק GROQ_API_KEY, שאסור לו להגיע לדפדפן.
 //   useSSE.js      — API_ROOT בלבד, לזרוע ה-EventSource של המתג. במצב
 //                    ישיר הוא מנוי על Supabase Realtime ואינו נוגע בשרת.
+//
+// ⚠️ **היה שלישי — ChatAssistant, הבוט — והוא הוסר מהדשבורד ב-17/09/2026**,
+// כחלק מהוצאת master משימוש. הוא יצא גם מהרשימה, ולא רק מהקוד: חריג שנשאר
+// לקובץ שאינו קיים הוא מקום מוכן מראש לרכיב חדש שיפנה לשרת בלי שהשער יראה.
 const SERVER_IMPORT_ALLOWED = new Set([
   "services/dataSource.js",
-  "components/ChatAssistant/ChatAssistant.jsx",
   "hooks/useSSE.js",
 ]);
 
@@ -183,10 +185,10 @@ for (const file of walkDir(SRC_DIR)) {
 if (serverUsers.length) {
   console.log("❌ רכיבים שפונים ל-master מחוץ למותר:");
   for (const s of serverUsers) console.log("   " + s);
-  console.log("\nה-master אמור לשמש ל-MQTT ולבוט בלבד.\n");
+  console.log("\nה-master אמור לשמש ל-MQTT בלבד — הדשבורד אינו פונה אליו מחוץ למתג.\n");
   fail += serverUsers.length;   // ⚠️ לא יוצאים — ראה ההסבר מעל סעיף העקיפה
 } else {
-  console.log("✅ ל-master פונים רק המתג, הבוט ו-SSE\n");
+  console.log("✅ ל-master פונים רק המתג ו-SSE\n");
 }
 
 const fns = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
