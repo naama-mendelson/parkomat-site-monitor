@@ -75,7 +75,11 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of all) {
-      if (new URL(c.url).origin === self.location.origin) {
+      const at = new URL(c.url);
+      // ⚠️ **לא לשונית FixFlow.** היא באותו origin ובתוך ה-scope של `/`, ולכן
+      // נמצאה כאן — ולשונית שהתמקדו בה לאחרונה חוזרת ראשונה. טכנאי באמצע
+      // נוהל שלחץ על התראה איבד את הצעד שלו: הלשונית נווטה לדשבורד.
+      if (at.origin === self.location.origin && !at.pathname.startsWith("/fixflow/")) {
         await c.navigate(url).catch(() => {});
         return c.focus();
       }
