@@ -282,34 +282,89 @@ win AS (
       ids.kind, p_from::timestamptz, p_to::timestamptz) w
    WHERE ids.kind IS NOT NULL
 ),
+-- ============================================================
+-- ⚠️ שלושה דברים ש-`site_uptime` עושה והפונקציה הזו לא עשתה
+-- ============================================================
+-- הכותרת למעלה אומרת "ההגדרה זהה ל-site_uptime במכוון" — והיא לא הייתה.
+-- נמדד על Postgres 17 מקומי (17/09/2026), יום VIP של 15 שעות:
+--
+--   1. **חלון תחזוקה ידני נספר כמוכן.** 4 שעות חלון → 15 מוכן / 0 תחזוקה,
+--      במקום 11 / 4. חלון ידני משתיק תקלות, ולכן הזמן בו חייב לצאת מהמכנה
+--      — אחרת אתר שהושתק נמדד כזמין.
+--   2. **מקטע שסומן כניסוי (`excluded_at`) נספר.** שעת תקלה שמנהל הוציא
+--      הורידה את האתר ל-93.33% במקום 100%.
+--   3. **מקטע פתוח נמשך עד `p_to` גם כשהוא בעתיד.** 58 שעות "נמדדו" בטווח
+--      שרק 24 מהן עברו — המצב הנוכחי הוקרן על חלונות שירות שטרם הגיעו.
+--
+-- התיקון מעתיק את החשבונאות של `site_uptime` ולא ממציא אחרת: זמן שמכוסה
+-- בחלון ידני הוא תחזוקה, יהיה המצב אשר יהיה.
+bound AS (
+  SELECT LEAST(p_to::timestamptz, now()) AS w_to
+),
 segs AS (
   -- ⚠️ הסינון על ה-TEXT נשאר לקסיקלי כדי לשמור על האינדקס; ההמרה
   -- ל-timestamptz קורית **אחרי** הסינון, רק על השורות שנבחרו.
   SELECT h.site_id,
-         COALESCE(h.reclassified_to, h.status)      AS st,
-         h.started_at::timestamptz                  AS s,
-         COALESCE(h.ended_at, p_to)::timestamptz    AS e
+         COALESCE(h.reclassified_to, h.status)                           AS st,
+         h.started_at::timestamptz                                       AS s,
+         LEAST(COALESCE(h.ended_at, p_to)::timestamptz, (SELECT w_to FROM bound)) AS e
     FROM status_history h
     JOIN ids ON ids.id = h.site_id
    WHERE h.started_at < p_to
      AND COALESCE(h.ended_at, p_to) > p_from
+     AND h.excluded_at IS NULL
+),
+mwin AS (
+  SELECT m.site_id,
+         m.started_at::timestamptz                          AS s,
+         COALESCE(m.cancelled_at, m.expires_at)::timestamptz AS e
+    FROM maintenance_windows m
+    JOIN ids ON ids.id = m.site_id
+   WHERE m.started_at < p_to
+     AND COALESCE(m.cancelled_at, m.expires_at) > p_from
+     AND m.excluded_at IS NULL
+),
+mwin_grp AS (
+  SELECT site_id, s, e,
+         SUM(CASE WHEN prev_max IS NULL OR s > prev_max THEN 1 ELSE 0 END)
+           OVER (PARTITION BY site_id ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp
+    FROM (
+      SELECT site_id, s, e,
+             MAX(e) OVER (PARTITION BY site_id ORDER BY s, e
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_max
+        FROM mwin WHERE e > s
+    ) w
+),
+mwin_merged AS (
+  SELECT site_id, MIN(s) AS s, MAX(e) AS e FROM mwin_grp GROUP BY site_id, grp
 ),
 cut AS (
   SELECT segs.site_id, segs.st,
-         extract(epoch FROM (
-           LEAST(segs.e, win.ends_at) - GREATEST(segs.s, win.starts_at))) AS sec
+         GREATEST(segs.s, win.starts_at) AS a,
+         LEAST(segs.e, win.ends_at)      AS b
     FROM segs
     JOIN win ON win.site_id = segs.site_id
    WHERE LEAST(segs.e, win.ends_at) > GREATEST(segs.s, win.starts_at)
 ),
+cov AS (
+  SELECT cut.site_id, cut.st,
+         extract(epoch FROM (cut.b - cut.a)) AS sec,
+         COALESCE((
+           SELECT sum(extract(epoch FROM (LEAST(w.e, cut.b) - GREATEST(w.s, cut.a))))
+             FROM mwin_merged w
+            WHERE w.site_id = cut.site_id AND w.e > cut.a AND w.s < cut.b
+         ), 0) AS covered
+    FROM cut
+),
 agg AS (
   SELECT site_id,
-         sum(sec) FILTER (WHERE st = 'ready')       / 3600.0 AS ready_h,
-         sum(sec) FILTER (WHERE st = 'operating')   / 3600.0 AS operating_h,
-         sum(sec) FILTER (WHERE st = 'error')       / 3600.0 AS error_h,
-         sum(sec) FILTER (WHERE st = 'maintenance') / 3600.0 AS maint_h,
-         sum(sec) FILTER (WHERE st = 'no_comm')     / 3600.0 AS nocomm_h
-    FROM cut GROUP BY site_id
+         sum(sec - covered) FILTER (WHERE st = 'ready')       / 3600.0 AS ready_h,
+         sum(sec - covered) FILTER (WHERE st = 'operating')   / 3600.0 AS operating_h,
+         sum(sec - covered) FILTER (WHERE st = 'error')       / 3600.0 AS error_h,
+         (COALESCE(sum(covered), 0)
+          + COALESCE(sum(sec - covered) FILTER (WHERE st = 'maintenance'), 0)) / 3600.0 AS maint_h,
+         sum(sec - covered) FILTER (WHERE st = 'no_comm')     / 3600.0 AS nocomm_h
+    FROM cov GROUP BY site_id
 ),
 svc AS (
   SELECT site_id, sum(extract(epoch FROM (ends_at - starts_at))) / 3600.0 AS hours

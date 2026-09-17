@@ -59,10 +59,15 @@ ALTER TABLE traffic_light_columns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE traffic_light_rows    ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tl_cols_read ON traffic_light_columns;
-CREATE POLICY tl_cols_read ON traffic_light_columns FOR SELECT TO authenticated USING (true);
+-- ⚠️ **`is_active_user()` ולא `true`** — אותו ביטוי כמו בכל טבלה אחרת (security.postgres.sql).
+-- משתמש שהושבת מחזיק אסימון תקף עד שיפוג; `USING (true)` השאיר לו את כל הלוח —
+-- אנשי קשר ו"מורשה כניסה למרתף". נמדד על Postgres 17 מקומי, 17/09/2026.
+CREATE POLICY tl_cols_read ON traffic_light_columns FOR SELECT TO authenticated
+  USING ((SELECT app.is_active_user()));
 
 DROP POLICY IF EXISTS tl_rows_read ON traffic_light_rows;
-CREATE POLICY tl_rows_read ON traffic_light_rows FOR SELECT TO authenticated USING (true);
+CREATE POLICY tl_rows_read ON traffic_light_rows FOR SELECT TO authenticated
+  USING ((SELECT app.is_active_user()));
 
 GRANT SELECT ON traffic_light_columns TO authenticated;
 GRANT SELECT ON traffic_light_rows    TO authenticated;
@@ -73,11 +78,19 @@ GRANT SELECT ON traffic_light_rows    TO authenticated;
 -- ⚠️ שתי קריאות נפרדות (עמודות, שורות) יכולות להחזיר מצבים לא עקביים:
 -- עמודה שנוספה בין שתי הקריאות מופיעה בכותרת בלי תא מתאים. קריאה אחת
 -- מחזירה תמונה אחת.
+-- ============================================================
+-- ⚠️ SECURITY INVOKER — ולא DEFINER, וזה היה חור
+-- ============================================================
+-- הפונקציה הייתה `SECURITY DEFINER` בלי בדיקת זהות ובלי REVOKE. ברירת המחדל של
+-- Postgres היא EXECUTE ל-PUBLIC, כלומר גם ל-`anon`, ו-DEFINER עוקף RLS — כך
+-- שכל מי שמחזיק את המפתח הפומבי (הוא בכל דפדפן) קרא את הלוח כולו בלי להתחבר.
+-- כקריאה בלבד אין לה שום צורך בהרשאות הבעלים: INVOKER מפעיל את מדיניות
+-- הקריאה שלמעלה, ומשתמש מושבת מקבל לוח ריק.
 CREATE OR REPLACE FUNCTION public.tl_board()
 RETURNS jsonb
 LANGUAGE sql
 STABLE
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, app, pg_temp
 AS $fn$
   SELECT jsonb_build_object(
@@ -95,6 +108,7 @@ AS $fn$
   );
 $fn$;
 
+REVOKE ALL ON FUNCTION public.tl_board() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.tl_board() TO authenticated;
 
 -- ============================================================
@@ -334,6 +348,19 @@ BEGIN
   RETURN v_count;
 END;
 $fn$;
+
+-- ⚠️ REVOKE לפני GRANT, כמו ב-writes.postgres.sql. הכתיבות בודקות
+-- `require_manager()` ולכן אנונימי נדחה ממילא — אבל "נדחה בתוך הפונקציה" אינו
+-- "אינו רשאי להריץ", והשני הוא מה ש-`check-security` יכול לאמת בלי לנחש.
+REVOKE ALL ON FUNCTION public.tl_add_column(text, text, jsonb)             FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_update_column(integer, text, text, jsonb, integer) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_delete_column(integer)                    FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_move_column(integer, double precision)    FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_add_row(double precision)                 FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_delete_row(bigint)                        FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_move_row(bigint, double precision)        FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_set_cell(bigint, text, jsonb)             FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_paste_rows(jsonb)                         FROM PUBLIC, anon;
 
 GRANT EXECUTE ON FUNCTION public.tl_add_column(text, text, jsonb)             TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_update_column(integer, text, text, jsonb, integer) TO authenticated;

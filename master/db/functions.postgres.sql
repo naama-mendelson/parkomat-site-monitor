@@ -71,6 +71,14 @@
 -- זה כבר קרה כאן פעמיים בכיוונים הפוכים: עמודה נוספה ואז הוסרה. ה-DROP
 -- הופך את הקובץ לאידמפוטנטי מול **כל** גרסה קודמת, וזו בדיוק ההבטחה
 -- שהקובץ הזה נשען עליה ("הקובץ הוא מצב היעד").
+--
+-- ⚠️ **והסכמה `app` נוצרת כאן, ולא רק ב-security.** הקובץ הזה מגדיר
+-- `app.op_served` ו-`app.error_segments`, והוא מוחל **לפני** security —
+-- שם היה ה-`CREATE SCHEMA` היחיד. בייצור הסכמה כבר קיימת ולכן זה לא נראה;
+-- על מסד חדש (שחזור, מסד בדיקות, יציאה מ-Supabase) העלייה נפלה על
+-- `schema "app" does not exist`. נמדד על Postgres 17 נקי, 17/09/2026.
+CREATE SCHEMA IF NOT EXISTS app;
+
 DROP FUNCTION IF EXISTS public.site_uptime(integer[], text, text);
 
 -- ⚠️ DROP ולא רק REPLACE: נוספה עמודה ל-RETURNS TABLE, ו-CREATE OR REPLACE

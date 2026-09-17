@@ -195,7 +195,10 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('GRANT SELECT ON public.%I TO authenticated', t);
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_read', t);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (true)',
+    -- ⚠️ `is_active_user()` ולא `true`: משתמש מושבת מחזיק אסימון תקף עד שיפוג.
+    -- "כל מי שמחובר" בכלל שלמעלה פירושו **משתמש פעיל** — כך הוא מנוסח בכל
+    -- טבלה אחרת (security.postgres.sql), וכאן הוא נשכח.
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING ((SELECT app.is_active_user()))',
                    t || '_read', t);
   END LOOP;
 END $$;

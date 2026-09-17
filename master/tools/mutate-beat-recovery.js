@@ -33,9 +33,11 @@ function gate() {
 const MUTATIONS = [
   ["ההחזרה כולה הוסרה",
     (s) => s.replace(/  IF v_status = 'no_comm' THEN[\s\S]*?\n  END IF;\n/, "")],
-  ["תחזוקה מוקמת מחדש",
-    (s) => s.replace("AND h.status NOT IN ('no_comm', 'maintenance')",
-                     "AND h.status NOT IN ('no_comm')")],
+  // ⚠️ הכיוון התהפך: הבאג היה **הוצאת** תחזוקה מההחזרה (ראה check-beat-recovery,
+  // סעיף 3). המוטציה מחזירה את ההוצאה, והשער חייב להאדים.
+  ["תחזוקה מהבקר מוצאת שוב מההחזרה",
+    (s) => s.replace("AND COALESCE(h.reclassified_to, h.status) <> 'no_comm'",
+                     "AND h.status NOT IN ('no_comm', 'maintenance')")],
   ["מחזירים תמיד ל-ready ובולעים תקלה",
     (s) => s.replace("PERFORM app.ingest_state(v_site, v_prev, v_now, NULL);",
                      "PERFORM app.ingest_state(v_site, 'ready', v_now, NULL);")],

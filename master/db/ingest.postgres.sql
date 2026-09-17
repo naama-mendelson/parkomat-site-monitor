@@ -950,6 +950,8 @@ DECLARE
   v_status text;
   v_prev   text;
   v_now    text;
+  v_batch_state text;   -- המצב האחרון (לפי occurred_at) שהסוכן שלח באצווה הזו
+  v_batch_at    text;
 BEGIN
   v_site := app.agent_site_id();
   IF v_site IS NULL THEN
@@ -1016,28 +1018,19 @@ BEGIN
   --
   -- שתי אלה יחד אומרות שהמצב שקדם ל-`no_comm` הוא **המצב עכשיו**.
   --
-  -- ⚠️ `maintenance` מווצא מההחזרה במפורש: חלון תחזוקה עשוי
-  -- היה לפוג בינתיים, והקמה מחדש שלו הייתה משתיקה אתר שאיש
-  -- לא ביקש להשתיק — והשתקה מוציאה את האתר ממכנה הזמינות.
+  -- ⚠️ ~~`maintenance` מווצא מההחזרה~~ — **כבר לא, והנימוק היה שגוי.**
+  -- ראה סוף הפונקציה: חלון ידני אינו כותב ל-`status_history`, ולכן
+  -- `maintenance` שם הוא הבקר ב-MODE 0, לא חלון שפג.
   --
   -- ⚠️ וההחזרה עוברת ב-`ingest_state`, כמו הסימון: שם נסגר המקטע
   -- הפתוח ונרשם האירוע. `UPDATE` ישיר היה מחזיר את הצ'יפ לירוק
   -- ומשאיר מקטע נתק פתוח לנצח — זמינות שאינה יודעת שהאתר חזר.
-  SELECT s.status INTO v_status FROM sites s WHERE s.id = v_site;
-
-  IF v_status = 'no_comm' THEN
-    SELECT h.status INTO v_prev
-      FROM status_history h
-     WHERE h.site_id = v_site
-       AND h.status NOT IN ('no_comm', 'maintenance')
-     ORDER BY h.id DESC
-     LIMIT 1;
-
-    IF v_prev IS NOT NULL THEN
-      v_now := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
-      PERFORM app.ingest_state(v_site, v_prev, v_now, NULL);
-    END IF;
-  END IF;
+  -- ⚠️ **ההחזרה עצמה רצה אחרי ההודעות — ראה בסוף הפונקציה.** כאן היא
+  -- רצה לפניהן, וחתמה את המצב הקודם ב-`now()` עם מילישניות. חותמות הסוכן
+  -- הן שניות שלמות ומוקדמות ממנו, ולכן **כל** הודעת מצב באותה אצווה נדחתה
+  -- כ-`state_late_vs_open_segment` — והסוכן, שקיבל 200, מחק אותה מהתור.
+  -- נמדד על Postgres 17 מקומי, 17/09/2026: אתר שעבר לתקלה בזמן נתק הוצג
+  -- "מוכן" אחרי שחזר.
 
   IF jsonb_array_length(p_messages) > MAX_BATCH THEN
     RAISE EXCEPTION 'אצווה גדולה מדי (% > %)', jsonb_array_length(p_messages), MAX_BATCH
@@ -1049,6 +1042,27 @@ BEGIN
     v_i := v_i + 1;
     v_kind := v_msg ->> 'kind';
 
+    -- המצב האחרון שהסוכן שלח. **נלכד לפני העיבוד**, כי הודעה שנדחית כמאוחרת
+    -- (נוצרה לפני שסריקת השתיקה סימנה נתק) עדיין אומרת מה הבקר עשה אחרון.
+    IF v_kind = 'state'
+       AND (v_msg ->> 'status') IN ('ready', 'operating', 'error', 'maintenance')
+       AND (v_batch_at IS NULL OR (v_msg ->> 'occurred_at') >= v_batch_at) THEN
+      v_batch_state := v_msg ->> 'status';
+      v_batch_at    := v_msg ->> 'occurred_at';
+    END IF;
+
+    -- ============================================================
+    -- ⚠️ הודעה פגומה אחת אינה מפילה את האצווה — וגם לא את הפעימה
+    -- ============================================================
+    -- ההערה מעל ה-upsert של `alive` מבטיחה ש"אצווה שתיפול על הודעה פגומה
+    -- עדיין מוכיחה שהסוכן חי". זה לא היה נכון: הכול טרנזקציה אחת, וחריגה
+    -- (`cycle` שאינו מספר, חותמת לא תקינה) גלגלה לאחור גם את הפעימה.
+    -- הסוכן שולח את התור **במקום** פעימה ריקה, ולכן הודעה אחת כזו הייתה
+    -- משתיקה את האתר לצמיתות ומסמנת אותו מנותק תוך 3 דקות.
+    --
+    -- כל הודעה בתת-טרנזקציה משלה: הפגומה נרשמת ב-`ingest_drops` עם הסיבה,
+    -- והשאר נקלטות.
+    BEGIN
     IF v_kind = 'state' THEN
       SELECT * INTO v_res FROM app.ingest_state(
         v_site,
@@ -1129,7 +1143,53 @@ BEGIN
       RETURN QUERY SELECT v_i, COALESCE(v_kind, 'unknown'), 'rejected'::text,
         'unknown_kind'::text;
     END IF;
+    EXCEPTION WHEN OTHERS THEN
+      PERFORM app.record_ingest_drop(v_site, COALESCE(v_kind, 'unknown'),
+        'message_threw', format('%s (SQLSTATE %s)', SQLERRM, SQLSTATE), v_msg);
+      RETURN QUERY SELECT v_i, COALESCE(v_kind, 'unknown'), 'rejected'::text,
+        'message_threw'::text;
+    END;
   END LOOP;
+
+  -- ============================================================
+  -- ⚠️ ההחזרה מנתק — **אחרי** ההודעות, ורק אם הן לא החזירו בעצמן
+  -- ============================================================
+  -- ההנמקה ל"מה מחזירים" נשארת זו שלמעלה: הסוכן משדר על שינוי, ופעימה
+  -- מוכיחה שקריאת הבקר הצליחה. שלושה תיקונים, כל אחד נמדד מקומית:
+  --
+  --   1. **המצב שהסוכן שלח עכשיו גובר על ההיסטוריה.** הוא מה שהבקר עשה
+  --      אחרון; ההיסטוריה היא מה שהיה לפני הנתק.
+  --   2. **`maintenance` מוחזר כמו כל מצב.** הנימוק להוצאתו ("חלון תחזוקה
+  --      עשוי היה לפוג") הניח שחלון ידני כותב שורה ל-`status_history` — והוא
+  --      אינו כותב: כל שורה שם מגיעה מהבקר. כלומר `maintenance` בהיסטוריה
+  --      הוא MODE 0, והוצאתו החזירה אתר בתחזוקה ל**תקלה שקדמה לה** — מקטע
+  --      תקלה חדש, אחוז כשל, והתראה. מאז 68d9474 סריקת השתיקה מסמנת גם
+  --      אתרים כאלה, ולכן זה קרה בכל נתק רשת של אתר בתחזוקה.
+  --   3. **המצב האפקטיבי, לפי זמן.** `COALESCE(reclassified_to, status)` כמו
+  --      כל מדד (תקלה שמנהל סיווג כתחזוקה לא חוזרת כתקלה), ו-`started_at`
+  --      ולא `id` — שורה שנכנסה מאוחר (backfill) אינה בהכרח האחרונה בזמן.
+  --
+  -- ⚠️ והחותמת בשניות שלמות, כמו חותמות הסוכן: חותמת עם מילישניות הייתה
+  -- דוחה הודעה שנוצרה באותה שנייה ונשלחה באצווה הבאה.
+  SELECT s.status INTO v_status FROM sites s WHERE s.id = v_site;
+
+  IF v_status = 'no_comm' THEN
+    v_prev := v_batch_state;
+
+    IF v_prev IS NULL THEN
+      SELECT COALESCE(h.reclassified_to, h.status) INTO v_prev
+        FROM status_history h
+       WHERE h.site_id = v_site
+         AND COALESCE(h.reclassified_to, h.status) <> 'no_comm'
+       ORDER BY h.started_at DESC, h.id DESC
+       LIMIT 1;
+    END IF;
+
+    IF v_prev IS NOT NULL THEN
+      v_now := to_char(date_trunc('second', now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+      PERFORM app.ingest_state(v_site, v_prev, v_now, NULL);
+    END IF;
+  END IF;
 END;
 $fn$;
 

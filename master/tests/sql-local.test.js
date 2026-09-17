@@ -1,0 +1,236 @@
+// tests/sql-local.test.js — הקליטה, ההרשאות ושעות השירות, על Postgres 17 מקומי.
+//
+// כל בדיקה כאן נכתבה **לפני** התיקון שלה ונכשלה מהסיבה הנכונה (17/09/2026),
+// ושש מוטציות על `ingest_batch` נתפסו כל אחת בבדיקה שנועדה לה. ראה
+// tests/helpers/local-pg.js למה זה רץ מקומית ולא מול הייצור.
+const { test, before, after } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const local = require("./helpers/local-pg");
+
+const skip = !local.available() && "PGlite אינו מותקן (npm ci --omit=dev)";
+
+let h;
+before(async () => { if (!skip) h = await local.boot(); });
+after(async () => { if (h) await h.close(); });
+
+const AGENT = "11111111-1111-1111-1111-111111111111";
+const USER = "22222222-2222-2222-2222-222222222222";
+const OFF = "33333333-3333-3333-3333-333333333333";
+const MGR = "44444444-4444-4444-4444-444444444444";
+const H = 3600e3;
+const iso = (t) => new Date(t).toISOString();
+const sec = (t) => iso(Math.floor(t / 1000) * 1000);   // חותמת סוכן: שניות שלמות
+
+let seq = 0;
+async function agentSite({ status = "no_comm", history = [] } = {}) {
+  const code = `T${++seq}`;
+  const id = (await h.pg.query(
+    `INSERT INTO sites (code, site_name, status, registered_at, last_seen) VALUES ($1,$1,$2,$3,$4) RETURNING id`,
+    [code, status, iso(Date.now() - 24 * H), iso(Date.now() - H)])).rows[0].id;
+  for (const [st, s, e, reclass] of history) {
+    await h.pg.query(
+      `INSERT INTO status_history (site_id, status, started_at, ended_at, reclassified_to) VALUES ($1,$2,$3,$4,$5)`,
+      [id, st, iso(s), e ? iso(e) : null, reclass ?? null]);
+  }
+  await h.pg.query(`DELETE FROM app_users WHERE supabase_uid = $1`, [AGENT]);
+  await h.pg.query(
+    `INSERT INTO app_users (email, role, is_active, supabase_uid, site_id, created_at) VALUES ($1,'agent',true,$2,$3,$4)`,
+    [`site-${code}@parkomat.co.il`, AGENT, id, iso(Date.now())]);
+  return { id, code };
+}
+const statusOf = async (id) => (await h.pg.query(`SELECT status FROM sites WHERE id=$1`, [id])).rows[0].status;
+const batch = (msgs) => h.as("authenticated", AGENT,
+  (tx) => tx.query(`SELECT * FROM public.ingest_batch($1::jsonb, '1.0.99')`, [JSON.stringify(msgs)]));
+const disconnected = (prev) => {
+  const now = Date.now();
+  return [...prev(now), ["no_comm", now - 10 * 60e3, null]];
+};
+
+// ================================================================
+// ingest_batch — ההחזרה מנתק
+// ================================================================
+
+test("⚠️ תקלה שנשלחה באותה אצווה של ההחזרה — אינה נזרקת", { skip }, async () => {
+  // ההחזרה רצה לפני ההודעות וחתמה במילישניות; כל הודעת מצב באצווה נדחתה כמאוחרת
+  const now = Date.now();
+  const s = await agentSite({ history: disconnected((n) => [["ready", n - 5 * H, n - 10 * 60e3]]) });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 2 * 60e3), fault_text: "x" }]);
+  assert.equal(await statusOf(s.id), "error");
+});
+
+test("⚠️ תקלה שקרתה לפני סימון הנתק — המצב האחרון באצווה גובר על ההיסטוריה", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ history: disconnected((n) => [["ready", n - 5 * H, n - 10 * 60e3]]) });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 12 * 60e3) }]);
+  assert.equal(await statusOf(s.id), "error");
+});
+
+test("⚠️ תחזוקה מהבקר (MODE 0) מוחזרת כתחזוקה — חלון ידני אינו כותב להיסטוריה", { skip }, async () => {
+  const s = await agentSite({ history: disconnected((n) => [
+    ["error", n - 6 * H, n - 5 * H], ["maintenance", n - 5 * H, n - 10 * 60e3]]) });
+  await batch([]);
+  assert.equal(await statusOf(s.id), "maintenance");
+});
+
+test("ההחזרה לפי started_at ולא לפי id (שורת backfill)", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ history: [
+    ["operating", now - 2 * H, now - 10 * 60e3], ["no_comm", now - 10 * 60e3, null], ["error", now - 9 * H, now - 8 * H]] });
+  await batch([]);
+  assert.equal(await statusOf(s.id), "operating");
+});
+
+test("תקלה שסווגה מחדש כתחזוקה אינה חוזרת כתקלה", { skip }, async () => {
+  const s = await agentSite({ history: disconnected((n) => [
+    ["ready", n - 9 * H, n - 5 * H], ["error", n - 5 * H, n - 10 * 60e3, "maintenance"]]) });
+  await batch([]);
+  assert.equal(await statusOf(s.id), "maintenance");
+});
+
+test("פעימה ריקה באתר מנותק שהיה מוכן — חוזר למוכן, ומקטע הנתק נסגר", { skip }, async () => {
+  const s = await agentSite({ history: disconnected((n) => [["ready", n - 5 * H, n - 10 * 60e3]]) });
+  await batch([]);
+  const open = (await h.pg.query(
+    `SELECT count(*)::int n FROM status_history WHERE site_id=$1 AND status='no_comm' AND ended_at IS NULL`, [s.id])).rows[0].n;
+  assert.deepEqual({ st: await statusOf(s.id), open }, { st: "ready", open: 0 });
+});
+
+test("פעימה באתר תקין אינה כותבת מקטע ואינה משנה מצב", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "operating", history: [["ready", now - 5 * H, now - H], ["operating", now - H, null]] });
+  const count = async () => (await h.pg.query(`SELECT count(*)::int n FROM status_history WHERE site_id=$1`, [s.id])).rows[0].n;
+  const before = await count();
+  await batch([]);
+  assert.deepEqual({ st: await statusOf(s.id), rows: await count() }, { st: "operating", rows: before });
+});
+
+test("⚠️ הודעה פגומה אחת — הפעימה נרשמת, שאר ההודעות נקלטות, והפגומה מתועדת", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([
+    { kind: "operation", start_end: "start", entry_exit: "entry", card: "1", state: "operating",
+      occurred_at: sec(now - 60e3), cycle: "not-a-number" },
+    { kind: "state", status: "error", occurred_at: sec(now - 30e3) },
+  ]);
+  const beat = (await h.pg.query(`SELECT beats FROM alive WHERE site_id=$1`, [s.id])).rows[0];
+  const drops = (await h.pg.query(`SELECT reason FROM ingest_drops WHERE site_code=$1`, [s.code])).rows.map((r) => r.reason);
+  assert.ok(beat, "הפעימה לא נרשמה");
+  assert.equal(await statusOf(s.id), "error");
+  assert.ok(drops.includes("message_threw"), `הפגומה לא תועדה: ${JSON.stringify(drops)}`);
+});
+
+test("ingest_batch — אנונימי אינו רשאי", { skip }, async () => {
+  await assert.rejects(
+    h.as("anon", null, (tx) => tx.query(`SELECT * FROM public.ingest_batch('[]'::jsonb)`)),
+    /permission denied/);
+});
+
+// ================================================================
+// הרשאות — לוח הרמזור ו-FixFlow
+// ================================================================
+
+test("⚠️ tl_board — אנונימי נדחה (היה SECURITY DEFINER בלי REVOKE)", { skip }, async () => {
+  await assert.rejects(h.as("anon", null, (tx) => tx.query(`SELECT public.tl_board()`)), /permission denied/);
+});
+
+test("אף פונקציית tl_* אינה ניתנת להרצה אנונימית", { skip }, async () => {
+  const r = await h.pg.query(`SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname LIKE 'tl\\_%' AND has_function_privilege('anon', p.oid, 'EXECUTE')`);
+  assert.deepEqual(r.rows.map((x) => x.proname), []);
+});
+
+test("⚠️ משתמש מושבת אינו רואה את הלוח ולא את FixFlow; פעיל רואה", { skip }, async () => {
+  await h.pg.query(`INSERT INTO traffic_light_rows (cells, position) VALUES ('{"a":"secret"}', 1)`);
+  await h.pg.query(`INSERT INTO ff_systems (id, name) VALUES ('s1', 'מערכת') ON CONFLICT DO NOTHING`);
+  await h.pg.query(
+    `INSERT INTO app_users (email, role, is_active, supabase_uid, created_at)
+     VALUES ('u@parkomat.co.il','operator',true,$1,$3), ('off@parkomat.co.il','operator',false,$2,$3)
+     ON CONFLICT (email) DO NOTHING`, [USER, OFF, iso(Date.now())]);
+  const read = (uid) => h.as("authenticated", uid, (tx) => tx.query(
+    `SELECT jsonb_array_length(public.tl_board()->'rows') AS tl, (SELECT count(*)::int FROM ff_systems) AS ff`));
+  assert.deepEqual((await read(USER)).rows[0], { tl: 1, ff: 1 });
+  assert.deepEqual((await read(OFF)).rows[0], { tl: 0, ff: 0 });
+});
+
+test("מנהל עדיין כותב ללוח; מפעיל נדחה", { skip }, async () => {
+  await h.pg.query(
+    `INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at)
+     VALUES ('m@parkomat.co.il','מנהלת','manager',true,$1,$2) ON CONFLICT (email) DO NOTHING`, [MGR, iso(Date.now())]);
+  const row = (await h.pg.query(`INSERT INTO traffic_light_rows (cells, position) VALUES ('{}', 9) RETURNING id`)).rows[0].id;
+  await h.as("authenticated", MGR, (tx) => tx.query(`SELECT public.tl_set_cell($1, 'a', '"x"'::jsonb)`, [row]));
+  await assert.rejects(h.as("authenticated", USER, (tx) => tx.query(`SELECT public.tl_set_cell($1, 'a', '"y"'::jsonb)`, [row])));
+  assert.equal((await h.pg.query(`SELECT cells->>'a' v FROM traffic_light_rows WHERE id=$1`, [row])).rows[0].v, "x");
+});
+
+test("כל קבצי ה-SQL אידמפוטנטיים — החלה שנייה עוברת", { skip }, async () => {
+  for (const f of ["functions", "security", "writes", "ingest", "traffic-light", "service-hours", "fixflow"]) {
+    await h.pg.exec(fs.readFileSync(path.join(h.MASTER, "db", `${f}.postgres.sql`), "utf8"));
+  }
+});
+
+// ================================================================
+// site_uptime_service — זמינות בתוך שעות השירות
+// ================================================================
+
+async function linkedSite(code, plan) {
+  await h.pg.query(`INSERT INTO traffic_light_columns (key, label, kind, position) VALUES
+    ('c_code','קוד אתר','text',1), ('c_plan','סוג הסכם שירות במקור','text',2), ('c_kind','להתייחס כ','text',3)
+    ON CONFLICT (key) DO NOTHING`);
+  const id = (await h.pg.query(
+    `INSERT INTO sites (code, site_name, status, registered_at) VALUES ($1,$1,'ready','2026-01-01T00:00:00.000Z') RETURNING id`,
+    [code])).rows[0].id;
+  await h.pg.query(`INSERT INTO traffic_light_rows (cells, position) VALUES ($1::jsonb, $2)`,
+    [JSON.stringify({ c_code: code, c_plan: plan, c_kind: plan }), 100 + id]);
+  return id;
+}
+const hist = (id, st, s, e, excluded = null) => h.pg.query(
+  `INSERT INTO status_history (site_id, status, started_at, ended_at, excluded_at) VALUES ($1,$2,$3,$4,$5)`, [id, st, s, e, excluded]);
+const svc = async (id, from, to) => (await h.pg.query(
+  `SELECT ready_hours r, error_hours e, maintenance_hours m, measured_hours meas, availability_percent a
+     FROM public.site_uptime_service(ARRAY[$1]::int[], $2, $3)`, [id, from, to])).rows[0];
+// יום ראשון 06/09/2026, VIP: 07:00–22:00 שעון ישראל = 04:00Z–19:00Z — 15 שעות
+const SUN = ["2026-09-06T00:00:00.000Z", "2026-09-07T00:00:00.000Z"];
+
+test("שעות שירות — בסיס: 15 שעות מוכן, 100%", { skip }, async () => {
+  const id = await linkedSite("S1", "vip");
+  await hist(id, "ready", "2026-09-05T00:00:00.000Z", "2026-09-08T00:00:00.000Z");
+  const r = await svc(id, ...SUN);
+  assert.deepEqual({ r: r.r, m: r.m, a: r.a }, { r: 15, m: 0, a: 100 });
+});
+
+test("שעות שירות — תקלה אמיתית של שעתיים: 13/15", { skip }, async () => {
+  const id = await linkedSite("S2", "vip");
+  await hist(id, "ready", "2026-09-05T00:00:00.000Z", "2026-09-06T08:00:00.000Z");
+  await hist(id, "error", "2026-09-06T08:00:00.000Z", "2026-09-06T10:00:00.000Z");
+  await hist(id, "ready", "2026-09-06T10:00:00.000Z", "2026-09-08T00:00:00.000Z");
+  const r = await svc(id, ...SUN);
+  assert.deepEqual({ r: r.r, e: r.e, a: r.a }, { r: 13, e: 2, a: 86.67 });
+});
+
+test("⚠️ שעות שירות — חלון תחזוקה ידני נספר כתחזוקה, לא כמוכן", { skip }, async () => {
+  const id = await linkedSite("S3", "vip");
+  await hist(id, "ready", "2026-09-05T00:00:00.000Z", "2026-09-08T00:00:00.000Z");
+  await h.pg.query(`INSERT INTO maintenance_windows (site_id, set_by_name, started_at, duration_hours, expires_at)
+                    VALUES ($1,'בדיקה','2026-09-06T06:00:00.000Z',4,'2026-09-06T10:00:00.000Z')`, [id]);
+  const r = await svc(id, ...SUN);
+  assert.deepEqual({ r: r.r, m: r.m }, { r: 11, m: 4 });
+});
+
+test("⚠️ שעות שירות — מקטע שסומן כניסוי אינו נספר כתקלה", { skip }, async () => {
+  const id = await linkedSite("S4", "vip");
+  await hist(id, "ready", "2026-09-05T00:00:00.000Z", "2026-09-06T12:00:00.000Z");
+  await hist(id, "error", "2026-09-06T12:00:00.000Z", "2026-09-06T13:00:00.000Z", "2026-09-06T14:00:00.000Z");
+  await hist(id, "ready", "2026-09-06T13:00:00.000Z", "2026-09-08T00:00:00.000Z");
+  const r = await svc(id, ...SUN);
+  assert.deepEqual({ r: r.r, e: r.e, a: r.a }, { r: 14, e: 0, a: 100 });
+});
+
+test("⚠️ שעות שירות — מקטע פתוח אינו נמשך אל העתיד", { skip }, async () => {
+  const id = await linkedSite("S5", "vip");
+  const now = Date.now();
+  await hist(id, "ready", iso(now - 3 * 24 * H), null);
+  const r = await svc(id, iso(now - 24 * H), iso(now + 3 * 24 * H));
+  assert.ok(r.meas <= 24, `נמדדו ${r.meas} שעות בטווח שרק 24 מהן עברו`);
+});

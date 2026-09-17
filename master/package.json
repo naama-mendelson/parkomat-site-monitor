@@ -28,6 +28,8 @@
     "node": ">=22.12"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
+    "@electric-sql/pglite-socket": "^0.0.22",
     "better-sqlite3": "^12.11.1"
   }
 }
