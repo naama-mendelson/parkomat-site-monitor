@@ -301,11 +301,23 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
     Array.isArray(column.options) ? column.options : []);
   const [seeded, setSeeded] = useState(0);
 
-  const addOption = () => setOptions((o) => [...o, {
-    value: `o${Date.now()}`,
-    label: "ערך חדש",
-    color: STATUS_COLORS[o.length % STATUS_COLORS.length],
-  }]);
+  // ⚠️ המזהה הזמני משמש רק כ-key בזמן העריכה. **בשמירה ערך חדש מקבל את
+  // התווית שלו כ-value** — אותו כלל כמו בזריעה מהתאים למטה. `o<timestamp>` נשמר
+  // בתאים, ובעמודות "להתייחס כ" / "סוג הסכם שירות במקור" הוא ערך ש-
+  // `app.service_windows` אינו מכיר: אפס חלונות, והאתר חזר בשקט ל-24/7.
+  // ערכים שכבר נשמרו לא משתנים — תאים קיימים מצביעים עליהם.
+  const created = useRef(new Set());
+  const addOption = () => setOptions((o) => {
+    const value = `o${Date.now()}`;
+    created.current.add(value);
+    return [...o, { value, label: "ערך חדש", color: STATUS_COLORS[o.length % STATUS_COLORS.length] }];
+  });
+  const finalOptions = () => options.map((o) => {
+    const text = String(o.label ?? "").trim();
+    if (!created.current.has(o.value) || !text) return o;
+    if (options.some((x) => x !== o && String(x.value) === text)) return o;
+    return { ...o, value: text };
+  });
 
   // ============================================================
   // ⚠️ הערכים שכבר כתובים בעמודה — ולמה זה לא נוחות
@@ -433,7 +445,7 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
         <button
           type="button"
           className="tl-btn"
-          onClick={() => onSave({ label, kind, options })}
+          onClick={() => onSave({ label, kind, options: finalOptions() })}
         >שמור</button>
       </div>
     </div>
