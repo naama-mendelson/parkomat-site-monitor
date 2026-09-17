@@ -207,6 +207,59 @@ SELECT cron.schedule('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.pr
 --
 -- לכן כאן: מפתח חסר מייצר WARNING **וגם** שורה ב-settings שאפשר לשאול
 -- עליה, והפונקציה מחזירה NULL כדי שהקורא יידע שלא נשלח כלום.
+-- ============================================================
+-- app.push_request — הבקשה עצמה, **לשני** השולחים
+-- ============================================================
+-- ⚠️ **נולד משני עותקים שסטו.** `send_push` תוקן לקרוא את המפתח מ-settings
+-- (359a448), והטריגר `notify_push_on_status` נשאר עם
+-- `'Bearer ' || current_setting('app.push_anon_key', true)` — GUC שאי אפשר
+-- להגדיר ב-Supabase, כלומר כותרת NULL ו-401 על כל תקלת אתר. אותו באג בדיוק,
+-- שתוקן בחצי.
+--
+-- ⚠️ **ומכאן גם הסוד המשותף** (`push_caller_secret`): notify-fault דוחה עכשיו
+-- כל קורא שאינו מציג אותו, כי המפתח הפומבי לבדו עבר את השער — והוא בכל
+-- דפדפן. ב-settings, שאין לה מדיניות RLS, הוא אינו נגיש מהדפדפן.
+--
+-- חסר מפתח או סוד → WARNING, שורה ב-`alert_last_error`, ו-NULL. לא חריגה:
+-- הטריגר רץ בתוך טרנזקציית הקליטה, וחריגה שם הייתה מגלגלת אחורה את התקלה עצמה.
+CREATE OR REPLACE FUNCTION app.push_request(p_body jsonb)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $req$
+DECLARE
+  v_key text := coalesce(
+    (SELECT value FROM settings WHERE key = 'push_anon_key'),
+    current_setting('app.push_anon_key', true));
+  v_secret text := (SELECT value FROM settings WHERE key = 'push_caller_secret');
+  v_missing text;
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  v_missing := CASE
+    WHEN coalesce(v_key, '') = ''    THEN 'push_anon_key'
+    WHEN coalesce(v_secret, '') = '' THEN 'push_caller_secret'
+  END;
+  IF v_missing IS NOT NULL THEN
+    INSERT INTO settings (key, value, updated_at)
+    VALUES ('alert_last_error', v_missing || ' אינו מוגדר ב-settings — התראות אינן נשלחות', v_now)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+    RAISE WARNING 'app.push_request: % אינו מוגדר — ההתראה לא נשלחה', v_missing;
+    RETURN NULL;
+  END IF;
+
+  RETURN net.http_post(
+    url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || v_key,
+      'x-parkomat-push-secret', v_secret),
+    body    := p_body);
+END;
+$req$;
+
+REVOKE ALL ON FUNCTION app.push_request(jsonb) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION app.send_push(
   p_kind       text,
   p_site_name  text,
@@ -233,32 +286,19 @@ DECLARE
   -- של הדשבורד. אין כאן סוד ש-settings חושפת.
   --
   -- ה-GUC נשאר כנפילה־לאחור, למקרה שמישהו כן הגדיר אותו.
-  v_key text := coalesce(
-    (SELECT value FROM settings WHERE key = 'push_anon_key'),
-    current_setting('app.push_anon_key', true));
   v_req bigint;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 BEGIN
   -- ⚠️ coalesce ואז השוואה למחרוזת ריקה: גם NULL וגם '' הם "אין מפתח",
   -- ו-'' היה עובר בדיקת IS NOT NULL ושולח 'Bearer ' ריק — כלומר אותו
   -- כשל בדיוק, בתחפושת אחרת.
-  IF coalesce(v_key, '') = '' THEN
-    INSERT INTO settings (key, value, updated_at)
-    VALUES ('alert_last_error', 'app.push_anon_key אינו מוגדר — התראות אינן נשלחות', v_now)
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
-    RAISE WARNING 'app.send_push: app.push_anon_key אינו מוגדר — ההתראה לא נשלחה';
+  -- ⚠️ המפתח והסוד נבדקים ב-`app.push_request` — מקום אחד לשני השולחים.
+  v_req := app.push_request(jsonb_build_object(
+    'site_id', 0, 'site_code', '—', 'site_name', p_site_name,
+    'kind', p_kind, 'fault_text', p_fault_text));
+  IF v_req IS NULL THEN
     RETURN NULL;
   END IF;
-
-  SELECT net.http_post(
-    url     := 'https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-fault',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || v_key),
-    body    := jsonb_build_object(
-      'site_id', 0, 'site_code', '—', 'site_name', p_site_name,
-      'kind', p_kind, 'fault_text', p_fault_text)
-  ) INTO v_req;
 
   -- ⚠️ מזהה הבקשה נשמר כדי שאפשר יהיה לשאול **אחר כך** מה חזר.
   -- pg_net אסינכרוני: הצלחת ה-POST כאן אינה אומרת שהצד השני קיבל,

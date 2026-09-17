@@ -99,9 +99,16 @@ Deno.serve(async (req) => {
   // ⚠️ קיים כבר? זו **אינה** שגיאה שכדאי לבלוע. הסיסמה אינה ניתנת לשחזור
   // (Supabase מחזיק גיבוב בלבד), ולכן "פשוט תריץ שוב כדי לראות אותה" הוא
   // בדיוק המצב שבו מישהו מנתק אתר עובד בלי לשים לב.
+  //
+  // ⚠️ **`ilike` עם תווים מוברחים — לא התבנית כמות שהיא.** ב-`ilike` התו `_` הוא
+  // "תו כלשהו", ו-`register_site` מתיר `_` בקוד אתר. אתר `12_4` התאים ל-
+  // `site-1234@` — 409 שגוי, ועם `rotate` **הסיסמה של 1234 הוחלפה וה-site_id
+  // שלו הועבר ל-12_4**: אתר עובד נחשך, והסוכן שלו כתב לאתר אחר. ההברחה משאירה
+  // את אי-הרגישות לאותיות (Supabase מנרמל אימיילים), ומבטלת את התבנית.
+  const literal = email.replace(/[\\%_]/g, (c) => "\\" + c);
   const { data: existing, error: existErr } = await admin
     .from("app_users").select("id, supabase_uid, site_id")
-    .ilike("email", email).maybeSingle();
+    .ilike("email", literal).maybeSingle();
 
   if (existErr) return json({ error: `בדיקת קיום נכשלה: ${existErr.message}` }, 500);
 

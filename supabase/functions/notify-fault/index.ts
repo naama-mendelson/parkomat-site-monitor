@@ -31,6 +31,31 @@ const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:lolek@parkomat.co
 // בדיוק הסיבה שהשליחה אינה יכולה לרוץ בדפדפן.
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+// ============================================================
+// ⚠️ מי רשאי לקרוא — סוד משותף, ולא "מי שעבר את השער"
+// ============================================================
+// שער ה-Edge Functions בודק רק ש-Authorization הוא JWT של הפרויקט, ו**המפתח
+// הפומבי עובר אותו** (נמדד ב-e50decd). המפתח הזה נמצא בכל דפדפן שפותח את
+// הדשבורד — כלומר כל אחד יכל לשלוח לכל טכנאי מנוי התראה בכל כותרת ובכל
+// טקסט, ועם `site_id` שאינו קיים גם לעקוף את מניעת ההצפה (ה-upsert נופל על
+// המפתח הזר ונבלע כאזהרה).
+//
+// הקוראים היחידים הם `app.send_push` והטריגר `app.notify_push_on_status`,
+// ושניהם קוראים את הסוד מ-`settings` — הטבלה בלי מדיניות RLS, שאינה נגישה
+// מהדפדפן. כאן הוא מגיע מ-`supabase secrets set PUSH_CALLER_SECRET=...`.
+//
+// ⚠️ **סגור כשאין סוד מוגדר, ולא פתוח.** פתיחה במקרה הזה הייתה משאירה את
+// החור בדיוק במצב שבו מישהו שכח שלב בפריסה — והוא לא היה יודע.
+const CALLER_SECRET = Deno.env.get("PUSH_CALLER_SECRET") ?? "";
+
+function sameSecret(a: string, b: string): boolean {
+  // השוואה בזמן קבוע: אורך שונה נדחה, ותווים נצברים ב-OR בלי יציאה מוקדמת.
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 
 // ============================================================
 // ⚠️ המרת המפתחות ל-JWK — שני פורמטים לאותו מפתח
@@ -94,6 +119,13 @@ Deno.serve(async (req) => {
   try {
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
+  if (!CALLER_SECRET) {
+    return new Response(JSON.stringify({ error: "PUSH_CALLER_SECRET אינו מוגדר — הפונקציה סגורה" }), { status: 503 });
+  }
+  if (!sameSecret(req.headers.get("x-parkomat-push-secret") ?? "", CALLER_SECRET)) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  }
+
   const body = await req.json().catch(() => null);
 
   // ============================================================
@@ -117,6 +149,14 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "חסר site_id או kind" }), { status: 400 });
   }
   const { site_id, site_code, site_name, kind, fault_text } = body;
+
+  // ⚠️ `site_id` זר הפיל את ה-upsert של `push_last_sent` על המפתח הזר — אזהרה
+  // בלבד — וחלון מניעת ההצפה לא נפתח לעולם. מאז הסוד המשותף רק ה-SQL שלנו
+  // קורא לכאן, ולכן בדיקת קיום מול `sites` אינה נחוצה — וגם אינה אפשרית:
+  // ל-`service_role` אין הרשאה על `sites`, בכוונה.
+  if (!Number.isInteger(site_id) || site_id < 0) {
+    return new Response(JSON.stringify({ error: "site_id אינו מספר שלם" }), { status: 400 });
+  }
 
   // ============================================================
   // מניעת הצפה — הערך מ-settings, לא מהקוד

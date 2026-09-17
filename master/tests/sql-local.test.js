@@ -234,3 +234,53 @@ test("⚠️ שעות שירות — מקטע פתוח אינו נמשך אל ה
   const r = await svc(id, iso(now - 24 * H), iso(now + 3 * 24 * H));
   assert.ok(r.meas <= 24, `נמדדו ${r.meas} שעות בטווח שרק 24 מהן עברו`);
 });
+
+// ================================================================
+// התראות push — הבקשה יוצאת עם מפתח וסוד, והטריגר אינו מפיל קליטה
+// ================================================================
+
+const pushMigration = () => h.pg.exec(fs.readFileSync(
+  path.join(h.MASTER, "..", "supabase", "migrations", "20260917_push_trigger_wired.sql"), "utf8"));
+const setSetting = (k, v) => h.pg.query(
+  `INSERT INTO settings (key, value, updated_at) VALUES ($1,$2,'x') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [k, v]);
+const lastRequest = async () => (await h.pg.query(
+  `SELECT headers, body FROM net.http_request_queue ORDER BY id DESC LIMIT 1`)).rows[0];
+
+test("⚠️ תקלת אתר — הטריגר שולח עם Bearer מ-settings ועם הסוד המשותף", { skip }, async () => {
+  await pushMigration();
+  await setSetting("push_anon_key", "pub-key");
+  await setSetting("push_caller_secret", "s3cret");
+  const s = await agentSite({ status: "ready", history: [] });
+  await h.pg.query(`INSERT INTO status_history (site_id, status, started_at, fault_text) VALUES ($1,'error',$2,'דלת')`,
+    [s.id, iso(Date.now())]);
+  const r = await lastRequest();
+  assert.equal(r.headers.Authorization, "Bearer pub-key");
+  assert.equal(r.headers["x-parkomat-push-secret"], "s3cret");
+  assert.deepEqual({ site: r.body.site_id, kind: r.body.kind }, { site: s.id, kind: "fault" });
+});
+
+test("חסר סוד — אין בקשה, והסיבה נרשמת ב-alert_last_error", { skip }, async () => {
+  await pushMigration();
+  await h.pg.query(`DELETE FROM settings WHERE key = 'push_caller_secret'`);
+  const before = (await h.pg.query(`SELECT count(*)::int n FROM net.http_request_queue`)).rows[0].n;
+  const s = await agentSite({ status: "ready", history: [] });
+  await h.pg.query(`INSERT INTO status_history (site_id, status, started_at) VALUES ($1,'error',$2)`, [s.id, iso(Date.now())]);
+  const after = (await h.pg.query(`SELECT count(*)::int n FROM net.http_request_queue`)).rows[0].n;
+  const err = (await h.pg.query(`SELECT value FROM settings WHERE key = 'alert_last_error'`)).rows[0]?.value;
+  assert.equal(after, before);
+  assert.match(err, /push_caller_secret/);
+});
+
+test("⚠️ שליחה שזורקת אינה מגלגלת אחורה את רישום התקלה", { skip }, async () => {
+  await pushMigration();
+  await setSetting("push_anon_key", "pub-key");
+  await setSetting("push_caller_secret", "s3cret");
+  const s = await agentSite({ status: "ready", history: [] });
+  await h.pg.transaction(async (tx) => {
+    await tx.query(`ALTER FUNCTION net.http_post(text, jsonb, jsonb, jsonb, integer) RENAME TO http_post_gone`);
+    await tx.query(`INSERT INTO status_history (site_id, status, started_at) VALUES ($1,'error',$2)`, [s.id, iso(Date.now())]);
+    const n = (await tx.query(`SELECT count(*)::int n FROM status_history WHERE site_id=$1 AND status='error'`, [s.id])).rows[0].n;
+    assert.equal(n, 1);
+    await tx.rollback();
+  });
+});
