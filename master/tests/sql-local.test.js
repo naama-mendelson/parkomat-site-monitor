@@ -284,3 +284,28 @@ test("⚠️ שליחה שזורקת אינה מגלגלת אחורה את רי�
     await tx.rollback();
   });
 });
+
+// ================================================================
+// ingest_batch — שעון האתר (אותה בדיקה כמו במסלול MQTT)
+// ================================================================
+
+test("⚠️ חותמת שעה בעתיד — נדחית ונרשמת, והמצב אינו זז", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now + H) }]);
+  const drops = (await h.pg.query(`SELECT reason FROM ingest_drops WHERE site_code=$1`, [s.code])).rows.map((r) => r.reason);
+  const seen = (await h.pg.query(`SELECT last_seen FROM sites WHERE id=$1`, [s.id])).rows[0].last_seen;
+  assert.equal(await statusOf(s.id), "ready");
+  assert.ok(drops.includes("timestamp_rejected"), JSON.stringify(drops));
+  assert.ok(Date.parse(seen) <= Date.now() + 5000, `last_seen נדחף לעתיד: ${seen}`);
+});
+
+test("חותמת דקה בעתיד — מיושרת לעכשיו ומוחלת", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now + 60e3) }]);
+  const open = (await h.pg.query(
+    `SELECT started_at FROM status_history WHERE site_id=$1 AND ended_at IS NULL`, [s.id])).rows[0].started_at;
+  assert.equal(await statusOf(s.id), "error");
+  assert.ok(Date.parse(open) <= Date.now() + 2000, `המקטע נפתח בעתיד: ${open}`);
+});

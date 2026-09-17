@@ -952,6 +952,7 @@ DECLARE
   v_now    text;
   v_batch_state text;   -- המצב האחרון (לפי occurred_at) שהסוכן שלח באצווה הזו
   v_batch_at    text;
+  v_ts          record;  -- פסק הדין של app.classify_timestamp להודעה הנוכחית
 BEGIN
   v_site := app.agent_site_id();
   IF v_site IS NULL THEN
@@ -1063,6 +1064,42 @@ BEGIN
     -- כל הודעה בתת-טרנזקציה משלה: הפגומה נרשמת ב-`ingest_drops` עם הסיבה,
     -- והשאר נקלטות.
     BEGIN
+    -- ============================================================
+    -- ⚠️ שעון האתר — אותה בדיקה כמו במסלול MQTT, שכאן לא נקראה כלל
+    -- ============================================================
+    -- `app.classify_timestamp` קיימת (ועברה parity מול ה-JS), אבל רק
+    -- הדיספצ'ר של MQTT קרא לה. חותמת שעה בעתיד נקלטה כאן כמות שהיא: `last_seen`
+    -- נדחף לעתיד (והוא זז רק קדימה), סריקת השתיקה הפסיקה לראות את האתר, והנתק
+    -- שהיא עצמה מסמנת נדחה כ-backfill מול המקטע העתידי. NTP בסוכן מצמצם את זה —
+    -- אבל לא ביום שהוא לא מגיע לשרת.
+    --
+    -- ⚠️ `no_comm` פטור, כמו ב-MQTT; ועבר **נשמר כמות שהוא** (`allow_past_clamp`
+    -- כבוי): אצווה מהתור היא פריקה אחרי נתק, לא שעון שמפגר.
+    IF v_kind IN ('state', 'operation')
+       AND NOT (v_kind = 'state' AND v_msg ->> 'status' = 'no_comm') THEN
+      SELECT * INTO v_ts FROM app.classify_timestamp(
+        FLOOR(EXTRACT(EPOCH FROM (v_msg ->> 'occurred_at')::timestamptz))::bigint,
+        FLOOR(EXTRACT(EPOCH FROM now()) * 1000)::bigint,
+        (SELECT FLOOR(EXTRACT(EPOCH FROM s.registered_at::timestamptz) * 1000)::bigint
+           FROM sites s WHERE s.id = v_site),
+        false);
+
+      IF v_ts.action = 'reject' THEN
+        PERFORM app.record_ingest_drop(v_site, v_kind, 'timestamp_rejected', v_ts.reason, v_msg);
+        RETURN QUERY SELECT v_i, v_kind, 'rejected'::text, 'timestamp_rejected'::text;
+        CONTINUE;
+      END IF;
+
+      IF v_ts.action = 'clamp' THEN
+        -- הזמן המדווח נשמר ב-reported_at, כמו `reported_timestamp` במסלול MQTT.
+        v_msg := jsonb_set(v_msg, '{reported_at}',
+                   to_jsonb(COALESCE(v_msg ->> 'reported_at', v_msg ->> 'occurred_at')));
+        v_msg := jsonb_set(v_msg, '{occurred_at}',
+                   to_jsonb(to_char(to_timestamp(v_ts.effective_sec) AT TIME ZONE 'UTC',
+                                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')));
+      END IF;
+    END IF;
+
     IF v_kind = 'state' THEN
       SELECT * INTO v_res FROM app.ingest_state(
         v_site,
