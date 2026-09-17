@@ -37,20 +37,30 @@ const check = (label, ok, detail) => {
 // ⚠️ מועתק מ-`build-fixflow-web.js` **בכוונה, וזו לא כפילות שאפשר לאחד**:
 // שער שמייבא את פונקציית התקציר מהכלי שהוא בודק מסכים איתו תמיד. אם השניים
 // יסטו זה מזה — השער ייכשל, וזה הסימן הנכון.
+//
+// ⚠️ **ו-`vite.config.js`, `package-lock.json` ו-`public/` נכנסו לשניהם יחד.**
+// שינוי באחד מהם משנה את התוצר בלי לגעת באף קובץ שנספר, והשער היה נשאר ירוק
+// על בנייה ישנה. הסבר מלא בכלי.
 function sourceDigest() {
   const h = createHash("sha256");
   const files = [];
-  const walk = (dir) => {
+  const walk = (dir, all = false) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === "node_modules" || name === "dist") continue;
       const full = join(dir, name);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (/\.(jsx?|mjs|css|html|json)$/.test(name) && name !== "package-lock.json") files.push(full);
+      if (statSync(full).isDirectory()) walk(full, all);
+      else if (all || (/\.(jsx?|mjs|css|html|json)$/.test(name) && name !== "package-lock.json")) files.push(full);
     }
   };
   walk(join(FIXFLOW_WEB, "src"));
   walk(SHARED);
-  files.push(join(FIXFLOW_WEB, "package.json"), join(FIXFLOW_WEB, "index.html"));
+  if (existsSync(join(FIXFLOW_WEB, "public"))) walk(join(FIXFLOW_WEB, "public"), true);
+  files.push(
+    join(FIXFLOW_WEB, "package.json"),
+    join(FIXFLOW_WEB, "package-lock.json"),
+    join(FIXFLOW_WEB, "index.html"),
+    join(FIXFLOW_WEB, "vite.config.js")
+  );
   for (const f of files.sort()) {
     h.update(relative(FIXFLOW_WEB, f).replace(/\\/g, "/"));
     h.update(readFileSync(f));
@@ -77,10 +87,48 @@ const assets = join(OUT, "assets");
 const js = existsSync(assets) ? readdirSync(assets).filter((f) => f.endsWith(".js")) : [];
 check("יש חבילת JS", js.length > 0, js.join(", "));
 
+// ============================================================
+// ⚠️ הכתובת והמפתח — **הערכים המדויקים** מ-`dashboard/.env`
+// ============================================================
+// הבדיקה הייתה `/supabase\.co/`. אבל `supabase-js` עצמו נושא את המחרוזת
+// `"*.supabase.co"` (רשימת מארחים פנימית), ולכן **כל** בנייה עברה אותה — גם
+// בנייה בלי כתובת ובלי מפתח. נמדד: בנייה ללא משתני סביבה כלל הכילה
+// `supabase.co` וגם `ff_faults`, כלומר עברה את שתי הבדיקות, והמסך שלה פונה
+// ל-`/api/read` שאינו קיים בדומיין של הדשבורד.
+//
+// ⚠️ **והמפתח נבדק גם הוא.** `SUPABASE_READY` ב-FixFlow דורש כתובת **ו**מפתח;
+// כתובת לבדה היא עדיין מסלול השרת המקומי. הערך אינו מודפס — רק "קיים".
+//
+// ⚠️ מול `dashboard/.env` ולא מול ביטוי כללי: כתובת של פרויקט **אחר** הייתה
+// עוברת כל ביטוי, ומסך שקורא מפרויקט אחר מהדשבורד שלצדו הוא בדיוק מה ששני
+// מקורות אמת מייצרים.
+function dashboardEnv() {
+  const p = fileURLToPath(new URL("../../dashboard/.env", import.meta.url));
+  if (!existsSync(p)) return null;
+  const out = {};
+  for (const line of readFileSync(p, "utf8").split(/\r?\n/)) {
+    if (!line.includes("=") || line.trim().startsWith("#")) continue;
+    const i = line.indexOf("=");
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+
 if (js.length) {
-  const bundle = readFileSync(join(assets, js[0]), "utf8");
-  // ⚠️ כתובת Supabase — בלעדיה המסך נטען ומציג רשימה ריקה בלי שום שגיאה.
-  check("⚠️ כתובת Supabase נצרבה בחבילה", /supabase\.co/.test(bundle));
+  // ⚠️ כל קובצי ה-JS, ולא הראשון בלבד — פיצול לחבילות היה מסתיר את הכתובת
+  // בקובץ השני, והשער היה נכשל (או עובר) לפי סדר אלפביתי.
+  const bundle = js.map((f) => readFileSync(join(assets, f), "utf8")).join("\n");
+  const env = dashboardEnv();
+  const url = env?.VITE_SUPABASE_URL?.replace(/\/+$/, "");
+  const key = env?.VITE_SUPABASE_PUBLISHABLE_KEY || env?.VITE_SUPABASE_ANON_KEY;
+  // "לא ניתן לבדוק" הוא כשל, לא דילוג: בדיקה שמדלגת בשקט היא בדיוק זו שלא
+  // תרוץ ביום שצריך אותה.
+  check("dashboard/.env נקרא, ובו כתובת ומפתח", Boolean(url && key),
+    env ? (url ? (key ? "" : "חסר VITE_SUPABASE_PUBLISHABLE_KEY") : "חסר VITE_SUPABASE_URL") : "הקובץ אינו קיים");
+  let host = "?";
+  try { host = new URL(url).host; } catch { /* מדווח בבדיקה למעלה */ }
+  check("⚠️ כתובת הפרויקט נצרבה בחבילה", Boolean(url) && bundle.includes(url), host);
+  check("⚠️ המפתח הציבורי נצרב בחבילה", Boolean(key) && bundle.includes(key), key ? "(הערך אינו מודפס)" : "");
   // ⚠️ שמות הטבלאות. בנייה שנפלה חזרה למסלול השרת לא תכיל אותם, והמסך
   // ינסה לפנות ל-`/api/read` שאינו קיים בדומיין של הדשבורד.
   check("⚠️ החבילה קוראת את טבלאות ff_", /ff_faults/.test(bundle) && /ff_site_fault_overrides/.test(bundle));

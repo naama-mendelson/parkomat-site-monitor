@@ -1,6 +1,9 @@
 // בונה את מסך FixFlow ומטמיע אותו בדשבורד תחת `/fixflow/`.
 //
-//   node --env-file=.env tools/build-fixflow-web.js
+//   node tools/build-fixflow-web.js
+//
+// ⚠️ **בלי `--env-file`.** הכלי קורא את `dashboard/.env` בעצמו (ראה למטה), ו-
+// `master/.env` מחזיק סודות של ייצור שלבנייה של מסך סטטי אין בהם שום צורך.
 //
 // ============================================================
 // ⚠️ למה הבנייה מוטבעת ולא נבנית ב-Cloudflare
@@ -18,8 +21,9 @@
 // `localStorage` משותף — כלומר ההתחברות של המוקדן עוברת, ואיש אינו מתבקש
 // להתחבר פעמיים באמצע אירוע.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, rmSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, cpSync, existsSync, readdirSync, statSync, mkdtempSync } from "node:fs";
 import { join, relative } from "node:path";
+import { tmpdir } from "node:os";
 // ⚠️ `fileURLToPath` ולא `.pathname`: הנתיב כאן מכיל עברית, ו-`.pathname`
 // מחזיר אותה מקודדת ב-%XX — מה שנותן נתיב שנראה תקין ואינו קיים.
 import { fileURLToPath } from "node:url";
@@ -44,21 +48,39 @@ function dashboardEnv() {
 }
 
 // תקציר של כל קובץ מקור שמשפיע על התוצר.
+//
+// ⚠️ **"משפיע על התוצר" היה צר מדי.** התקציר כיסה את `src`, `shared`,
+// `package.json` ו-`index.html` — ולא את שלושת אלה, שכל אחד מהם משנה את מה
+// שנבנה בלי לגעת באף קובץ שנספר:
+//
+//   `vite.config.js`     — תוספים, הגדרות בנייה
+//   `package-lock.json`  — הגרסה המדויקת של כל תלות שנכנסת לחבילה
+//                          (`package.json` אומר `^2.116.0`; הנעילה אומרת מה נבנה)
+//   `public/`            — מועתקת כמות שהיא לתוצר (הלוגו, למשל), בכל סיומת
+//
+// שינוי באחד מהם השאיר את השער ירוק על בנייה ישנה — בדיוק השקט שהשער קיים
+// כדי לשבור.
 function sourceDigest() {
   const h = createHash("sha256");
   const files = [];
-  const walk = (dir) => {
+  const walk = (dir, all = false) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === "node_modules" || name === "dist") continue;
       const full = join(dir, name);
       const st = statSync(full);
-      if (st.isDirectory()) walk(full);
-      else if (/\.(jsx?|mjs|css|html|json)$/.test(name) && name !== "package-lock.json") files.push(full);
+      if (st.isDirectory()) walk(full, all);
+      else if (all || (/\.(jsx?|mjs|css|html|json)$/.test(name) && name !== "package-lock.json")) files.push(full);
     }
   };
   walk(join(FIXFLOW_WEB, "src"));
   walk(SHARED);
-  files.push(join(FIXFLOW_WEB, "package.json"), join(FIXFLOW_WEB, "index.html"));
+  if (existsSync(join(FIXFLOW_WEB, "public"))) walk(join(FIXFLOW_WEB, "public"), true);
+  files.push(
+    join(FIXFLOW_WEB, "package.json"),
+    join(FIXFLOW_WEB, "package-lock.json"),
+    join(FIXFLOW_WEB, "index.html"),
+    join(FIXFLOW_WEB, "vite.config.js")
+  );
   for (const f of files.sort()) {
     h.update(relative(FIXFLOW_WEB, f).replace(/\\/g, "/"));
     h.update(readFileSync(f));
@@ -67,27 +89,60 @@ function sourceDigest() {
 }
 
 const env = dashboardEnv();
-for (const k of ["VITE_SUPABASE_URL"]) {
-  if (!env[k]) { console.error(`❌ חסר ${k} ב-dashboard/.env`); process.exit(1); }
+// ============================================================
+// ⚠️ גם המפתח חובה — לא רק הכתובת
+// ============================================================
+// הכלי דרש את `VITE_SUPABASE_URL` בלבד, והעביר את המפתח כ-`?? ""`. אבל
+// `supabase.js` ב-FixFlow קובע `SUPABASE_READY = Boolean(url && key)`: מפתח ריק
+// = **מסלול השרת המקומי**, שקורא `/api/read/...` — כתובת שאינה קיימת בדומיין
+// של הדשבורד. הבנייה עברה, השער עבר (ראה check-fixflow-web-fresh.js), והמסך
+// היה שבור בשטח.
+const url = env.VITE_SUPABASE_URL;
+const key = env.VITE_SUPABASE_PUBLISHABLE_KEY || env.VITE_SUPABASE_ANON_KEY;
+if (!url) { console.error("❌ חסר VITE_SUPABASE_URL ב-dashboard/.env"); process.exit(1); }
+if (!key) {
+  console.error("❌ חסר VITE_SUPABASE_PUBLISHABLE_KEY (או VITE_SUPABASE_ANON_KEY) ב-dashboard/.env");
+  console.error("   בלעדיו המסך נבנה במסלול השרת המקומי, שאינו קיים תחת /fixflow/.");
+  process.exit(1);
 }
 
+// ============================================================
+// ⚠️ הבנייה יוצאת לתיקייה זמנית — לא ל-`web/dist`
+// ============================================================
+// `web/dist` הוא מה ששרת ה-Express של FixFlow מגיש במשרד (server.js). הכלי
+// כתב לשם בנייה עם `base=/fixflow/`, ולכן **כל הרצה שלו שברה את המסך המקומי**:
+// הדף ביקש `/fixflow/assets/...` מהשרת שמגיש מהשורש, וקיבל דף ריק. וזה המסך
+// היחיד שבו לשוניות הניהול (ייבוא, שיוך אתרים) עובדות.
+const dist = mkdtempSync(join(tmpdir(), "fixflow-web-"));
+
 console.log(`  בונה מ-${FIXFLOW_WEB}`);
-execFileSync("npm", ["run", "build", "--", "--base=/fixflow/", "--outDir=dist"], {
-  cwd: FIXFLOW_WEB,
-  stdio: "inherit",
-  shell: true,
-  env: {
-    ...process.env,
-    VITE_SUPABASE_URL: env.VITE_SUPABASE_URL,
-    VITE_SUPABASE_PUBLISHABLE_KEY: env.VITE_SUPABASE_PUBLISHABLE_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? "",
-  },
-});
+let failed = null;
+try {
+  execFileSync("npm", ["run", "build", "--", "--base=/fixflow/", `--outDir="${dist}"`, "--emptyOutDir"], {
+    cwd: FIXFLOW_WEB,
+    stdio: "inherit",
+    shell: true,
+    env: {
+      ...process.env,
+      VITE_SUPABASE_URL: url,
+      VITE_SUPABASE_PUBLISHABLE_KEY: key,
+      // ⚠️ מתג היציאה של FixFlow (`VITE_FIXFLOW_READ=server`) אסור שיזלוג לכאן
+      // מהסביבה של מי שמריץ: הבנייה הזו היא Supabase בהגדרה.
+      VITE_FIXFLOW_READ: "",
+    },
+  });
 
-const dist = join(FIXFLOW_WEB, "dist");
-if (!existsSync(join(dist, "index.html"))) { console.error("❌ הבנייה לא ייצרה index.html"); process.exit(1); }
+  if (!existsSync(join(dist, "index.html"))) throw new Error("הבנייה לא ייצרה index.html");
 
-rmSync(OUT, { recursive: true, force: true });
-cpSync(dist, OUT, { recursive: true });
+  rmSync(OUT, { recursive: true, force: true });
+  cpSync(dist, OUT, { recursive: true });
+} catch (e) {
+  failed = e;
+} finally {
+  // ⚠️ `process.exit` בתוך `try` מדלג על `finally` — לכן הכשל נשמר ויוצאים אחרי.
+  rmSync(dist, { recursive: true, force: true });
+}
+if (failed) { console.error(`❌ ${failed.message}`); process.exit(1); }
 
 const { digest, files } = sourceDigest();
 writeFileSync(join(OUT, "manifest.json"),
