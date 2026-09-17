@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS sites (
   -- ההסרה נשארת שורה אחת: `ALTER TABLE sites DROP COLUMN fixflow_profile`.
   fixflow_profile TEXT,
 
+  -- ============================================================
+  -- ⚠️ מערכת ההפעלה — היצרן, ציר נפרד מסוג המכונה
+  -- ============================================================
+  -- "סוג מערכת הפעלה" בטבלת האתרים: לולק / ביטנקם / סוטפין / סוטפין-לולק. אותו
+  -- `plc_type` (למשל xy) מקבל ספריית תקלות אחרת בכל יצרן — גרוזנברג 7 הוא xy של
+  -- ביטנקם, מגדל 1 הוא xy של לולק. NULL = לא הוגדר, וההתאמה לפי סוג מסרבת.
+  -- הרשימה נאכפת ב-`app.check_control_system` (writes.postgres.sql).
+  control_system TEXT,
+
   -- דרגת האתר (רמת שירות) — מוצגת על הכרטיס, נערכת בניהול. ברירת מחדל: basic.
   tier           TEXT NOT NULL DEFAULT 'basic' CHECK (tier IN ('vip','extended','basic'))
 );

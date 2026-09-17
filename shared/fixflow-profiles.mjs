@@ -18,18 +18,33 @@
 // מספר רחוב ו"ת\"א" מספיקים כדי להרים אותו. לכן כל שורה כאן נשענת על שיוך
 // שקיים ב-FixFlow עצמה או על תיקיית אתר בכונן, והראיה רשומה לידה.
 import { SITE_TYPE_KEYS } from "./site-types.mjs";
+import { CONTROL_SYSTEM_KEYS, normalizeControlSystem } from "./control-systems.mjs";
 
 /**
- * סוג מכונה → הפרופיל שמחזיק את ספריית התקלות שלו.
+ * סוג מכונה → הפרופיל שמחזיק את ספריית התקלות שלו, **לכל מערכת בנפרד**.
  *
- * `system` הוא לולק או ביטנקם. `profile` הוא שם התיקייה בכונן, שהוא גם שם
- * הפרופיל ב-FixFlow — הסנכרון יוצר אותם מאותו מקור, ולכן אלה לא שני שמות.
+ * `profile` הוא שם התיקייה בכונן, שהוא גם שם הפרופיל ב-FixFlow — הסנכרון יוצר
+ * אותם מאותו מקור, ולכן אלה לא שני שמות.
+ *
+ * ============================================================
+ * ⚠️ כל סוג ממופה לפי מערכת — ואין ברירת מחדל ללולק
+ * ============================================================
+ * עד 17/09/2026 רק `xy` היה ממופה לפי מערכת; `doli`, `matzbet-y` ו-`shuttle-x`
+ * נפתרו **תמיד ללולק**. אבל בכונן יש `דולי ביטנקם` ו-`שאטל מסילה ביטנקם` — כלומר
+ * אתר דולי של ביטנקם היה מקבל את הנהלים של הלולק, וכל הצעדים שם נראים סבירים.
+ * דרישת המוצר: "גרוזנברג והזורע יכולים להיות אותו סוג, אך מסוג אחר, ולכן הם
+ * צריכים לקבל סוג טיפול תקלה שונה". מכאן `sites.control_system`, וכל סוג כאן
+ * מחייב אותה.
+ *
+ * ⚠️ **ומה שלא מופה לביטנקם — לא מופה בכוונה.** `דולי ביטנקם` ו-`שאטל מסילה
+ * ביטנקם` קיימים, אבל שהסוג `doli` / `shuttle-x` בדשבורד הוא אותה מכונה לא
+ * אומת לאף אתר. אתר כזה יקבל סירוב עם סיבה ובחירה ידנית, לא ניחוש.
  */
 export const PROFILE_BY_TYPE = {
   // ראיה: שמונה אתרי דולי שלנו מופיעים ב-FixFlow, וכולם תחת הפרופיל הזה —
   // דיזינגוף 135, אפשטיין 5, אביגיל 20, הנוטרים 7, הרב לוין 6, ז'בוטינסקי 91,
   // רביעיית פלורנטין והורקונוס 3. אין ולו אחד תחת `דולי` או `דולי ביטנקם`.
-  doli: { system: "לולק", profile: "שאטל דולי" },
+  doli: { bySystem: { לולק: { system: "לולק", profile: "שאטל דולי" } } },
 
   // ⚠️ `xy` לבדו אינו מספיק, וזו אינה החמרה תיאורטית. גרוזנברג 7 הוא
   // `ביטנקם / ביטנקם xy`, ואילת 4, חולדה 4 ומגדל 1 הם `לולק / xy לולק`.
@@ -46,7 +61,7 @@ export const PROFILE_BY_TYPE = {
   // ראיה: זלטופולסקי 17 יושב שם. ⚠️ גולדברג 5 יושב על פרופיל בשם `שאטל מצבט y`
   // שאין לו תיקייה בכונן כלל — שארית מזריעה ישנה, 0 מסמכים, ולעולם לא יקבל
   // תוכן. הוא אינו מיפוי חלופי אלא תקלה בשיוך של אותו אתר.
-  "matzbet-y": { system: "לולק", profile: "שאטל מצבט y שמסובבת בשאטל" },
+  "matzbet-y": { bySystem: { לולק: { system: "לולק", profile: "שאטל מצבט y שמסובבת בשאטל" } } },
 
   // ראיה, ובכפייה ולא בדמיון שמות: ב-FixFlow יש בדיוק **שני** אתרי "נמל" —
   // `נמל סילומט` תחת `שאטל דולי` ו-`נמל מגשים` תחת `שאטל מסילה`. ואצלנו יש
@@ -58,7 +73,7 @@ export const PROFILE_BY_TYPE = {
   // תומך בתוצאה, אבל דמיון שמות הוא בדיוק מה שנפסל כאן — הוא נתן את אותו
   // ציון לזוג נכון ולזוג שגוי. הראיה היא ספירה: שני מתקנים, שני פרופילים,
   // אחד מהם כבר ידוע.
-  "shuttle-x": { system: "לולק", profile: "שאטל מסילה" },
+  "shuttle-x": { bySystem: { לולק: { system: "לולק", profile: "שאטל מסילה" } } },
 
   // ראיה: סוקולוב 10 וז'בוטינסקי 6 — שניהם אתרים שלנו — משויכים ב-FixFlow
   // ל-`שאטל מצבט x`, שגם הוא שארית בלי תיקייה. התיקייה האמיתית בכונן היא זו,
@@ -131,19 +146,42 @@ export function resolveProfile(plcType, system = null) {
     };
   }
 
-  if (entry.bySystem) {
-    if (!system) {
-      return {
-        status: "needs-system",
-        reason: `הסוג "${plcType}" קיים בשתי המערכות (${Object.keys(entry.bySystem).join(" / ")}) — צריך לדעת באיזו`,
-      };
-    }
-    const hit = entry.bySystem[system];
-    if (!hit) return { status: "unmapped", reason: `המערכת "${system}" אינה מוכרת עבור הסוג "${plcType}"` };
-    return { status: "ok", ...hit };
+  const sys = normalizeControlSystem(system);
+  if (!sys) {
+    return {
+      status: "needs-system",
+      reason: "לא הוגדרה מערכת לאתר (לולק / ביטנקם …) — אותו סוג מקבל טיפול שונה בכל מערכת. " +
+              "יש להגדיר אותה בעריכת האתר.",
+    };
   }
+  if (!CONTROL_SYSTEM_KEYS.includes(sys)) {
+    return { status: "unmapped", reason: `מערכת לא מוכרת: "${sys}"` };
+  }
+  const hit = entry.bySystem?.[sys];
+  if (!hit) {
+    return {
+      status: "unmapped",
+      reason: `לסוג "${plcType}" אין ספריית תקלות מוגדרת במערכת ${sys} — יש לבחור ספרייה ידנית בעריכת האתר`,
+    };
+  }
+  return { status: "ok", ...hit };
+}
 
-  return { status: "ok", ...entry };
+// ============================================================
+// ⚠️ קישור ליצרן אחר — נחסם, ולא מוצג כקישור תקין
+// ============================================================
+// הירקון 224 הוא לולק, והקישור שנבחר לו ידנית הוביל להירקון 38 של **ביטנקם**.
+// קישור כזה אינו "ספרייה לא מדויקת": כל הצעדים שם נכונים — למכונה אחרת, ואין
+// על המסך שום דבר שיעיד על כך. כשלאתר הוגדרה מערכת, כל יעד (בחירה ידנית,
+// התאמת שם) נבדק מולה. בלי מערכת מוגדרת — אין מול מה לבדוק, והקישור עובר.
+function guardSystem(site, link) {
+  const sys = normalizeControlSystem(site?.control_system);
+  if (!sys || link.status !== "ok" || !link.system || link.system === sys) return link;
+  return {
+    status: "system-mismatch",
+    reason: `היעד "${link.scope ?? link.profile}" שייך ל${link.system}, והאתר מוגדר ${sys} — ` +
+            "נהלים של יצרן אחר. יש לבחור יעד אחר בעריכת האתר.",
+  };
 }
 
 /**
@@ -171,6 +209,10 @@ export function resolveProfile(plcType, system = null) {
  * @param {{sites?: Record<string, any>, profiles?: Record<string, any>}} map  נוצרת ב-build-fixflow-map.js
  */
 export function resolveLink(site, map) {
+  return guardSystem(site, resolveLinkRaw(site, map));
+}
+
+function resolveLinkRaw(site, map) {
   // ============================================================
   // ⚠️ 0. הבחירה שנשמרה על האתר — גוברת על הכול
   // ============================================================
@@ -248,15 +290,16 @@ export function resolveLink(site, map) {
       docs: entry.docs,
     };
   }
-  if (entry?.by === "type") {
-    return { status: "ok", by: "type", scope: entry.profile, system: entry.system, profile: entry.profile, docs: entry.docs };
-  }
-  // ⚠️ נפילה ל-resolveProfile ולא הסתמכות על המפה בלבד: המפה היא תמונת מצב
-  // שנוצרה בפקודה, ואתר שנרשם אחריה אינו בה. סוג מכונה שכבר הוגדר לו יביא
-  // אותו לספרייה הנכונה בלי שאיש יריץ שום דבר מחדש.
-  const t = resolveProfile(site?.plc_type ?? null, null);
+  // ⚠️ נפילה ל-resolveProfile ולא הסתמכות על המפה: המפה היא תמונת מצב שנוצרה
+  // בפקודה, ואתר שנרשם אחריה אינו בה. ⚠️ **וגם רשומת `by: "type"` במפה אינה
+  // נקראת עוד** — היא חושבה בלי המערכת של האתר, כלומר בדיוק הניחוש ללולק
+  // שהשדה `control_system` בא לבטל. הגזירה נעשית כאן, עם המערכת, בכל פעם.
+  const t = resolveProfile(site?.plc_type ?? null, site?.control_system ?? null);
   if (t.status !== "ok") return { status: t.status, reason: t.reason };
-  return { status: "ok", by: "type", scope: t.profile, system: t.system, profile: t.profile, docs: undefined };
+  return {
+    status: "ok", by: "type", scope: t.profile, system: t.system, profile: t.profile,
+    docs: map?.profiles?.[`${t.system}|${t.profile}`]?.docs,
+  };
 }
 
 /**
@@ -278,8 +321,9 @@ export function resolveLink(site, map) {
  * הוא אינו קובע יצרן. היעדרות מהמפה פירושה "אין ציפייה", לא "אין סתירה".
  */
 export const SYSTEM_BY_TYPE = {
-  doli: "לולק",
-  "shuttle-x": "לולק",
+  // ⚠️ `doli` ו-`shuttle-x` **הוסרו** (17/09/2026): בכונן יש `דולי ביטנקם` ו-
+  // `שאטל מסילה ביטנקם`, כלומר הסוג אינו קובע יצרן. המצבט נשאר — כל פרופילי
+  // המצבט (שישה) תחת לולק, ואפס תחת ביטנקם.
   "matzbet-y": "לולק",
   "matzbet-x": "לולק",
 };

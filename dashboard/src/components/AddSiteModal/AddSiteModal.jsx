@@ -6,6 +6,7 @@ import { registerSite } from "../../services/dataSource";
 import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
+import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AddSiteModal.css";
 
@@ -18,6 +19,7 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [code, setCode] = useState("");
   const [siteName, setSiteName] = useState("");
   const [plcType, setPlcType] = useState("");
+  const [controlSystem, setControlSystem] = useState("");
   const [tier, setTier] = useState("basic");
   const [fixflowProfile, setFixflowProfile] = useState("");   // פיילוט FixFlow
 
@@ -48,6 +50,7 @@ function AddSiteModal({ onClose, onSuccess }) {
         site_name: trimmedName,
         tier,
         plc_type: plcType.trim() || undefined,
+        control_system: controlSystem || undefined,
         // ⚠️ ריק = תיגזר אוטומטית משם האתר או מסוג המכונה. פיילוט FixFlow.
         fixflow_profile: fixflowProfile || undefined,
       });
@@ -217,12 +220,24 @@ function AddSiteModal({ onClose, onSuccess }) {
             </select>
           </label>
 
+          {/* ⚠️ מערכת ההפעלה — בלעדיה ההתאמה לנהלים לפי סוג מסרבת: אותו XY של
+              לולק ושל ביטנקם מקבל ספריית תקלות אחרת, ואין ממה לנחש. */}
+          <label className="addsite-field">
+            <span>מערכת</span>
+            <select value={controlSystem} onChange={(e) => setControlSystem(e.target.value)}>
+              <option value="">לא הוגדר</option>
+              {CONTROL_SYSTEMS.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+
           {/* פיילוט FixFlow — ספריית התקלות של האתר. ⚠️ כאן ולא רק בעריכה:
               אתר שנרשם בלי בחירה מציג "אין ספריית תקלות" עד שמישהו יזכור
               לחזור אליו, וזה בדיוק סוג המשימה שנשכחת. */}
           <div className="addsite-field">
             <FixFlowPicker
-              site={{ code: code.trim(), plc_type: plcType.trim() || null }}
+              site={{ code: code.trim(), plc_type: plcType.trim() || null, control_system: controlSystem || null }}
               value={fixflowProfile}
               onChange={setFixflowProfile}
             />

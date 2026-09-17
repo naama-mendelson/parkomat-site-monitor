@@ -64,9 +64,19 @@ export default function FixFlowPicker({ site, value, onChange }) {
   if (!FIXFLOW_ENABLED) return null;
 
   const query = norm(q);
-  const profiles = profileGroups(query);
-  const sites = siteOptions(query);
-  const total = profiles.reduce((n, [, l]) => n + l.length, 0) + sites.length;
+  // ============================================================
+  // ⚠️ יעדים של המערכת של האתר — ראשונים; של מערכת אחרת — בנפרד ומסומנים
+  // ============================================================
+  // לא מוסתרים: קישור קיים ליצרן אחר (הירקון 224 → הירקון 38 של ביטנקם) חייב
+  // להיראות בתפריט, אחרת הוא נשמר בשקט ואי אפשר לראות מה נבחר. אבל הוא
+  // בקבוצה שכותרתה אומרת במפורש שזו מערכת אחרת.
+  const mySystem = site?.control_system || null;
+  const profiles = profileGroups(query).sort(([a], [b]) =>
+    (a === mySystem ? 0 : 1) - (b === mySystem ? 0 : 1));
+  const allSites = siteOptions(query);
+  const sites = mySystem ? allSites.filter((s) => s.system === mySystem) : allSites;
+  const otherSites = mySystem ? allSites.filter((s) => s.system !== mySystem) : [];
+  const total = profiles.reduce((n, [, l]) => n + l.length, 0) + allSites.length;
 
   // מה ייקרה אם לא בוחרים דבר — מוצג כדי שהבחירה תהיה מודעת ולא בחושך.
   const auto = resolveLink({ ...site, fixflow_profile: "" }, MAP);
@@ -95,7 +105,7 @@ export default function FixFlowPicker({ site, value, onChange }) {
         {/* ⚠️ האתרים ראשונים, כי קישור ברמת האתר עדיף תמיד: הוא מביא את אותן
             תקלות **ועוד** את חריגות האתר. סדר הוא המלצה שקטה. */}
         {sites.length > 0 && (
-          <optgroup label={`אתר ב-FixFlow — כולל חריגות אתר (${sites.length})`}>
+          <optgroup label={`אתר ב-FixFlow${mySystem ? ` · ${mySystem}` : ""} — כולל חריגות אתר (${sites.length})`}>
             {sites.map((s) => (
               <option key={s.id} value={`site:${s.id}`}>
                 {s.name} · {s.profile} · {s.docs} מסמכים
@@ -105,8 +115,19 @@ export default function FixFlowPicker({ site, value, onChange }) {
           </optgroup>
         )}
 
+        {otherSites.length > 0 && (
+          <optgroup label={`⚠️ אתר של מערכת אחרת — לא ${mySystem} (${otherSites.length})`}>
+            {otherSites.map((s) => (
+              <option key={s.id} value={`site:${s.id}`}>
+                ⚠️ {s.name} · {s.system} / {s.profile}
+              </option>
+            ))}
+          </optgroup>
+        )}
+
         {profiles.map(([system, list]) => (
-          <optgroup key={system} label={`ספרייה — ${system}`}>
+          <optgroup key={system}
+            label={mySystem && system !== mySystem ? `⚠️ ספרייה של מערכת אחרת — ${system}` : `ספרייה — ${system}`}>
             {list.map((p) => (
               <option key={p.key} value={p.key}>
                 {p.profile} — {p.docs} מסמכים
@@ -128,12 +149,18 @@ export default function FixFlowPicker({ site, value, onChange }) {
           קישור שמוביל ליעד הלא נכון אינו מציג שגיאה — כל הצעדים שם נראים
           סבירים. השורה הזו היא ההזדמנות היחידה להבחין בכך לפני שמוקדן
           נשלח לשם באמצע אירוע. */}
-      <Outcome value={value} chosenSite={chosenSite} chosenProfile={chosenProfile} auto={auto} />
+      <Outcome value={value} chosenSite={chosenSite} chosenProfile={chosenProfile} auto={auto}
+        chosenLink={value ? resolveLink({ ...site, fixflow_profile: value }, MAP) : null} />
     </div>
   );
 }
 
-function Outcome({ value, chosenSite, chosenProfile, auto }) {
+function Outcome({ value, chosenSite, chosenProfile, auto, chosenLink }) {
+  // ⚠️ יעד של יצרן אחר — לפני כל שאר ההודעות. הכרטיס יסרב להשתמש בו, ולכן
+  // "נבחר האתר X · 37 מסמכים" כאן היה מבטיח משהו שלא יקרה.
+  if (value && chosenLink?.status === "system-mismatch") {
+    return <small className="ffp-note ffp-warn">⚠️ {chosenLink.reason}</small>;
+  }
   if (!value) {
     return (
       <small className={auto.status === "ok" ? "ffp-note" : "ffp-note ffp-warn"}>

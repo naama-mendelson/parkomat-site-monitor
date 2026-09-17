@@ -76,7 +76,7 @@ async function main() {
   let sites;
   try {
     ({ rows: sites } = await pool.query(
-      `SELECT code, site_name, plc_type, fixflow_profile FROM sites ORDER BY code`));
+      `SELECT code, site_name, plc_type, fixflow_profile, control_system FROM sites ORDER BY code`));
   } catch (e) {
     if (e.code !== "42703") throw e;
     await pool.end();

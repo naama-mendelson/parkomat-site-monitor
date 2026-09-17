@@ -38,8 +38,10 @@ test("סוג לולק שקושר לספריית לולק — עובר", () => {
   assert.deepEqual(v.notes, []);
 });
 
+// ⚠️ הדוגמאות כאן היו `doli`, ועברו ל-`matzbet-y`: מאז 17/09/2026 דולי אינו
+// קובע יצרן — בכונן יש גם `דולי ביטנקם`. מצבט הוא עדיין לולק בלבד.
 test("פרופיל שגוי בתוך היצרן הנכון — נופל ברמת הפרופיל", () => {
-  const v = judge(link("לולק", "שאטל מסילה"), "doli", { ok: false });
+  const v = judge(link("לולק", "שאטל מסילה"), "matzbet-y", { ok: false });
   assert.equal(v.sysV, "✓", "היצרן תואם");
   assert.equal(v.profV, "✗", "והפרופיל לא");
   assert.equal(v.notes.length, 1);
@@ -63,7 +65,7 @@ test("בקר שמסרב להכריע אינו מאשר ואינו מפיל", () 
 test("⚠️ שלוש ראיות סותרות מדווחות כשלוש, ולא כאחת", () => {
   // איחוד לשורה אחת היה מסתיר שתי סיבות עצמאיות — ומי שמתקן את הראשונה
   // היה מניח שהשאר נפתר.
-  const v = judge(link("ביטנקם", "ביטנקם xy"), "doli", { ok: true, system: "לולק", score: 0.8 });
+  const v = judge(link("ביטנקם", "ביטנקם xy"), "matzbet-y", { ok: true, system: "לולק", score: 0.8 });
   assert.equal(v.notes.length, 3);
 });
 

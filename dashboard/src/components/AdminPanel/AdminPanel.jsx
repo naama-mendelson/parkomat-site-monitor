@@ -9,6 +9,7 @@ import { updateSite, deleteSite, provisionAgent, agentEverBeat, markControllerRe
 import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
+import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import { useDirect } from "../../services/dataSource";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
@@ -103,6 +104,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
       tier: site.manualTier ?? site.tier ?? "basic",
       initialTier: site.manualTier ?? site.tier ?? "basic",
       plcType: site.plc_type ?? "",
+      controlSystem: site.control_system ?? "",
+      initialControlSystem: site.control_system ?? "",
       fixflowProfile: site.fixflow_profile ?? "",   // פיילוט FixFlow
     });
     setErr(null);
@@ -130,6 +133,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
         // undefined = "אל תיגע" (updateSiteDirect אינו שולח p_tier).
         tier: draft.tier !== draft.initialTier ? draft.tier : undefined,
         plc_type: draft.plcType,
+        // ⚠️ רק כששונתה — ריק כששונתה פירושו "נקה". undefined = אל תיגע.
+        control_system: draft.controlSystem !== draft.initialControlSystem ? draft.controlSystem : undefined,
         // ⚠️ נשלח תמיד, גם ריק — מאותה סיבה בדיוק כמו סוג המתקן: ריק הוא
         // "חזור לגזירה האוטומטית", ובלי שליחה אי אפשר לבטל בחירה. פיילוט FixFlow.
         fixflow_profile: draft.fixflowProfile,
@@ -492,8 +497,23 @@ function AdminPanel({ sites, onClose, onChanged }) {
                           ))}
                         </select>
                       </label>
+                      {/* ⚠️ מערכת ההפעלה — ליד הסוג, כי שניהם יחד קובעים את הנהלים.
+                          אותו XY של לולק ושל ביטנקם מקבל ספריית תקלות אחרת. */}
+                      <label>
+                        <span>מערכת</span>
+                        <select value={draft.controlSystem}
+                          onChange={(e) => setDraft({ ...draft, controlSystem: e.target.value })}>
+                          <option value="">לא הוגדר</option>
+                          {CONTROL_SYSTEMS.map((c) => (
+                            <option key={c.key} value={c.key}>{c.label}</option>
+                          ))}
+                        </select>
+                      </label>
                       <FixFlowPicker
-                        site={s}
+                        // ⚠️ עם הטיוטה, לא עם השמור: שינוי מערכת או סוג בטופס חייב
+                        // לשנות מיד את היעד האוטומטי שמוצג מתחת — אחרת רואים את
+                        // התוצאה הישנה ושומרים משהו אחר.
+                        site={{ ...s, plc_type: draft.plcType || null, control_system: draft.controlSystem || null }}
                         value={draft.fixflowProfile}
                         onChange={(v) => setDraft({ ...draft, fixflowProfile: v })}
                       />

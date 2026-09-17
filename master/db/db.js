@@ -512,6 +512,8 @@ function init() {
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS plc_type    TEXT;
         -- ⚠️ עמודת הפיילוט של FixFlow. ההסרה היא DROP COLUMN אחד — ראה schema.
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS fixflow_profile TEXT;
+        -- ⚠️ מערכת ההפעלה (לולק / ביטנקם …) — ראה schema ו-shared/control-systems.mjs.
+        ALTER TABLE sites ADD COLUMN IF NOT EXISTS control_system TEXT;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS is_new_site INTEGER NOT NULL DEFAULT 1;
         ALTER TABLE sites ADD COLUMN IF NOT EXISTS tier        TEXT NOT NULL DEFAULT 'basic';
       `);

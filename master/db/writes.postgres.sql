@@ -387,6 +387,36 @@ END;
 $fn$;
 
 -- ============================================================
+-- app.check_control_system — מערכת ההפעלה של האתר
+-- ============================================================
+-- ⚠️ **כאן כן רשימה סגורה, בניגוד לספריית FixFlow למטה.** ארבע המערכות הן
+-- עובדה על הצי ולא על תיקיות בכונן: הן בדיוק הערכים בעמודה "סוג מערכת הפעלה"
+-- בטבלת האתרים. ערך חופשי היה מאפשר "לולק " או "Lolek" — ואז ההתאמה לפי
+-- מערכת נכשלת בשקט, והאתר נראה כאילו אין לו ספרייה.
+--
+-- ⚠️ אותה רשימה ב-`shared/control-systems.mjs`, ובדיקה ב-
+-- tests/fixflow-profiles.test.js משווה בין השתיים.
+--
+-- ⚠️ ומחרוזת ריקה מחזירה NULL: זו הדרך לנקות ערך שהוגדר בטעות.
+CREATE OR REPLACE FUNCTION app.check_control_system(p_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+  v text := NULLIF(BTRIM(COALESCE(p_value, '')), '');
+BEGIN
+  IF v IS NULL THEN RETURN NULL; END IF;
+  IF v NOT IN ('לולק', 'ביטנקם', 'סוטפין', 'סוטפין-לולק') THEN
+    RAISE EXCEPTION 'מערכת לא תקינה: %', v USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN v;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.check_control_system(text) FROM PUBLIC;
+
+-- ============================================================
 -- ============================================================
 -- app.check_fixflow_profile — ולידציה לבחירת ספריית התקלות
 -- ============================================================
@@ -446,6 +476,10 @@ REVOKE ALL ON FUNCTION app.check_fixflow_profile(text) FROM PUBLIC;
 -- החלפה, וקריאה מהדפדפן הייתה נופלת על "function is not unique".
 DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean);
 DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, text);
+-- ⚠️ והחתימה השלישית (7), מאז `p_control_system` — 17/09/2026. הדשבורד שכבר
+-- חי אינו שולח אותו, ו-PostgREST מתאים קריאה עם פחות פרמטרים לפונקציה שבה
+-- השאר עם DEFAULT — כלומר הוספה לסוף אינה שוברת את מי שלא התעדכן.
+DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, text, text);
 
 CREATE OR REPLACE FUNCTION public.register_site(
   p_code      text,
@@ -454,7 +488,9 @@ CREATE OR REPLACE FUNCTION public.register_site(
   p_tier      text    DEFAULT 'basic',
   p_is_new    boolean DEFAULT true,
   -- ספריית התקלות ב-FixFlow, `"מערכת|פרופיל"`. ריק = תיגזר אוטומטית.
-  p_fixflow_profile text DEFAULT NULL
+  p_fixflow_profile text DEFAULT NULL,
+  -- מערכת ההפעלה: לולק / ביטנקם / סוטפין / סוטפין-לולק. ריק = לא הוגדר.
+  p_control_system  text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -492,17 +528,23 @@ BEGIN
     RAISE EXCEPTION 'אתר עם קוד זה כבר רשום: %', p_code USING ERRCODE = 'PT409';
   END IF;
 
-  INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier, fixflow_profile)
+  INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier, fixflow_profile,
+                     control_system)
   VALUES (p_code, v_name,
           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier,
-          app.check_fixflow_profile(p_fixflow_profile))
+          app.check_fixflow_profile(p_fixflow_profile),
+          app.check_control_system(p_control_system))
   RETURNING sites.id INTO v_id;
 
+  -- ⚠️ ספריית FixFlow והמערכת נכנסות לביקורת: שתיהן קובעות לאיזה נוהל מוקדן
+  -- יישלח, ושינוי כזה בלי עקבה הוא בדיוק מה שאי אפשר לחקור אחר כך.
   PERFORM app.record_write_audit('site.register', v_actor, app.current_app_role(),
                                  'site', p_code,
                                  jsonb_build_object('site_name', v_name, 'tier', v_tier,
-                                                    'plc_type', v_plc, 'is_new', p_is_new));
+                                                    'plc_type', v_plc, 'is_new', p_is_new,
+                                                    'fixflow_profile', p_fixflow_profile,
+                                                    'control_system', p_control_system));
   PERFORM app.record_write_event(p_code, 'site-added',
                                  jsonb_build_object('type','site-added','code',p_code,
                                                     'siteName',v_name));
@@ -529,6 +571,7 @@ $fn$;
 -- כמו "רק העדכון שבור" ולא כמו שגיאת שם.
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text);
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text, text, text);
 
 CREATE OR REPLACE FUNCTION public.update_site(
   p_code      text,
@@ -538,7 +581,10 @@ CREATE OR REPLACE FUNCTION public.update_site(
   p_plc_type  text DEFAULT NULL,
   -- ⚠️ NULL = לא נגעו. מחרוזת ריקה = **נקה את הבחירה** וחזור לגזירה
   -- האוטומטית. אותה סמנטיקה בדיוק כמו `p_plc_type` ממש מעל.
-  p_fixflow_profile text DEFAULT NULL
+  p_fixflow_profile text DEFAULT NULL,
+  -- ⚠️ ואותה סמנטיקה גם כאן. בלעדיה דשבורד ישן, שאינו שולח את השדה, היה
+  -- מוחק את המערכת בכל שמירה.
+  p_control_system  text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -596,11 +642,18 @@ BEGIN
      WHERE sites.id = v_id;
   END IF;
 
+  IF p_control_system IS NOT NULL THEN
+    UPDATE sites SET control_system = app.check_control_system(p_control_system)
+     WHERE sites.id = v_id;
+  END IF;
+
   PERFORM app.record_write_audit('site.update', v_actor, app.current_app_role(),
                                  'site', v_code,
                                  jsonb_build_object('from_code', p_code, 'new_code', p_new_code,
                                                     'site_name', p_site_name, 'tier', p_tier,
-                                                    'plc_type', p_plc_type));
+                                                    'plc_type', p_plc_type,
+                                                    'fixflow_profile', p_fixflow_profile,
+                                                    'control_system', p_control_system));
   PERFORM app.record_write_event(v_code, 'site-updated',
                                  jsonb_build_object('type','site-updated','code',v_code));
 
@@ -702,12 +755,12 @@ $fn$;
 -- ⚠️ ואפילו אם היה עובר: GRANT על חתימה שאינה קיימת פירושו שלמשתמשת אין
 -- הרשאה על הפונקציה החדשה, וכל עריכת אתר מהדפדפן מחזירה "permission denied".
 -- `tools/check-writes-sql-parses.js` תופס את שניהם.
-REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text, text)      FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.delete_site(text)                              FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text, text)      TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;
 
 -- ============================================================

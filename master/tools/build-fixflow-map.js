@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pg from "pg";
 import { resolveProfile } from "../../shared/fixflow-profiles.mjs";
+import { norm } from "./lib/site-names.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "..", "..", "dashboard", "src", "components", "FixFlowLink", "fixflow-sites.json");
@@ -44,40 +45,7 @@ const FIXFLOW_DB =
   "C:/Users/נעמהמנדלסון/Documents/FixFlow/server/data/parkomat.sqlite";
 const WRITE = process.argv.includes("--write");
 
-const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-// ⚠️ נרמול מינימלי בכוונה. הוא מסיר רק מה שאין בו מידע — גרשיים, פסיקים,
-// מקפים וכיווניות. מחיקת ספרות הייתה הופכת את "הירקון 38" ו-"הירקון 224"
-// לאותו שם, וזו בדיוק ההתאמה השגויה שהכלי הזה נועד למנוע.
-const base = (s) =>
-  String(s ?? "")
-    .replace(BIDI, "")
-    .replace(/['`׳״"]+/g, "")
-    .replace(/[,\-–—]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-
-// ============================================================
-// ⚠️ שני כללים נוספים — ולמה הם אינם "התאמה מעורפלת"
-// ============================================================
-// ההבדל מציון דמיון הוא מהותי. ציון דמיון **מוותר על מידע**, ולכן הוא יכול
-// לחבר שני רחובות שונים: `ברנדיס 38 → הירקון 38` קיבל 0.67, בדיוק כמו זוג נכון.
-// הכללים כאן אינם מוותרים על כלום — הם מסירים הבדלי כתיב באותו שם בדיוק:
-//
-//   עיר      — אצלנו `עמנואל הרומי 10, ת"א`, ב-FixFlow `עמנואל הרומי 10`.
-//              אותו רחוב, אותו מספר, והעיר נכתבה בצד אחד בלבד.
-//   סדר טווח — אצלנו `בארט 19-11`, ב-FixFlow `בארט 11-19`. אותו טווח, הפוך.
-//
-// ⚠️ **ונמדדו לפני שנכנסו**, כי כלל שמייצר התנגשות אחת גרוע מארבעה חיבורים
-// ידניים: 117 השמות ב-FixFlow נשארים 117 ייחודיים תחת שניהם. אפס התנגשויות.
-// אם יום אחד תיווצר התנגשות, הכלי מדווח עליה ואינו מתאים בשקט — ראה `byName`.
-const CITY_SUFFIX =
-  /\s*(תא|ת א|תל אביב|רג|ר ג|רמת גן|בת ים|חולון|רעננה|ירושלים|הוד השרון|רמת השרון|רמהש|גבעתיים|הרצליה|נס ציונה|פקיעין|ראשון לציון)\s*$/;
-
-// "19 11" → "11 19". רק זוג מספרים צמודים, כלומר טווח.
-const sortRange = (s) => s.replace(/(\d+)\s+(\d+)/g, (m, a, b) => (+a <= +b ? `${a} ${b}` : `${b} ${a}`));
-
-const norm = (s) => sortRange(base(s).replace(CITY_SUFFIX, "").trim());
+// ⚠️ הנרמול עבר ל-lib/site-names.mjs — אותו מימוש משמש גם את backfill-control-system.
 
 async function main() {
   const ff = new DatabaseSync(FIXFLOW_DB, { readOnly: true });
@@ -185,7 +153,7 @@ async function main() {
   }
 
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-  const { rows: sites } = await pool.query(`SELECT code, site_name, plc_type FROM sites ORDER BY code`);
+  const { rows: sites } = await pool.query(`SELECT code, site_name, plc_type, control_system FROM sites ORDER BY code`);
   const { rows: cols } = await pool.query(`SELECT key, label FROM traffic_light_columns`);
   const { rows: tlRows } = await pool.query(`SELECT cells FROM traffic_light_rows`);
   await pool.end();
@@ -216,7 +184,8 @@ async function main() {
   const map = {};
   const report = [];
   for (const s of sites) {
-    const byType = resolveProfile(s.plc_type ?? null, null);
+    // ⚠️ עם המערכת של האתר — בלעדיה כל סוג מבקש מערכת, ואין יותר ברירת מחדל ללולק.
+    const byType = resolveProfile(s.plc_type ?? null, s.control_system ?? null);
     // ============================================================
     // ⚠️ "הפרופיל אינו קיים" אינו "הפרופיל ריק"
     // ============================================================

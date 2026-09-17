@@ -81,7 +81,10 @@ export function judge(link, plcType, ctrl) {
   const mustSystem = systemForType(plcType);
   const sysV = !mustSystem ? "—" : mustSystem === link.system ? "✓" : "✗";
 
-  const byType = resolveProfile(plcType ?? null, link.system);
+  // ⚠️ הספרייה הצפויה נגזרת מהיצרן **שהסוג מחייב**, ורק כשאינו מחייב — מזה של
+  // הקישור. גזירה מיצרן הקישור בלבד הייתה שואלת "מה הספרייה של מצבט בביטנקם",
+  // מקבלת "אין", ומשתיקה בדיוק את הסתירה שהשורה הזו אמורה לדווח.
+  const byType = resolveProfile(plcType ?? null, mustSystem ?? link.system);
   const profV = byType.status !== "ok" ? "—" : byType.profile === link.profile ? "✓" : "✗";
 
   const ctrlV = !ctrl?.ok ? "—" : ctrl.system === link.system ? "✓" : "✗";
@@ -110,7 +113,7 @@ async function main() {
 
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   const { rows: sites } = await pool.query(
-    `SELECT code, site_name, plc_type, fixflow_profile FROM sites ORDER BY code`);
+    `SELECT code, site_name, plc_type, fixflow_profile, control_system FROM sites ORDER BY code`);
   const { rows: faults } = await pool.query(
     `SELECT s.code, h.fault_text FROM status_history h JOIN sites s ON s.id=h.site_id
       WHERE COALESCE(h.fault_text,'') <> '' GROUP BY s.code, h.fault_text`);

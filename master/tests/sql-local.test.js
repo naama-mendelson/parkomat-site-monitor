@@ -309,3 +309,57 @@ test("חותמת דקה בעתיד — מיושרת לעכשיו ומוחלת", 
   assert.equal(await statusOf(s.id), "error");
   assert.ok(Date.parse(open) <= Date.now() + 2000, `המקטע נפתח בעתיד: ${open}`);
 });
+
+// ================================================================
+// sites.control_system — מערכת ההפעלה (לולק / ביטנקם …)
+// ================================================================
+
+const asManager = async (sql, params) => {
+  await h.pg.query(
+    `INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at)
+     VALUES ('m@parkomat.co.il','מנהלת','manager',true,$1,$2) ON CONFLICT (email) DO NOTHING`, [MGR, iso(Date.now())]);
+  return h.as("authenticated", MGR, (tx) => tx.query(sql, params));
+};
+const systemOf = async (code) =>
+  (await h.pg.query(`SELECT control_system FROM sites WHERE code = $1`, [code])).rows[0]?.control_system;
+
+test("רישום אתר עם מערכת — נשמרת", { skip }, async () => {
+  await asManager(`SELECT * FROM public.register_site(p_code => 'CS1', p_site_name => 'גרוזנברג בדיקה',
+    p_plc_type => 'xy', p_control_system => 'ביטנקם')`);
+  assert.equal(await systemOf("CS1"), "ביטנקם");
+});
+
+test("⚠️ מערכת שאינה ברשימה — נדחית (לא 'Lolek', לא 'לולק ')", { skip }, async () => {
+  for (const bad of ["Lolek", "לולק ביטנקם"]) {
+    await assert.rejects(
+      asManager(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => $1)`, [bad]),
+      /מערכת לא תקינה/);
+  }
+  // רווחים בקצוות אינם ערך אחר — הם נחתכים
+  await asManager(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => ' לולק ')`);
+  assert.equal(await systemOf("CS1"), "לולק");
+});
+
+test("⚠️ עדכון בלי השדה אינו נוגע במערכת — הדשבורד שכבר חי אינו שולח אותו", { skip }, async () => {
+  await asManager(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => 'ביטנקם')`);
+  // בדיוק הצורה של הדשבורד הישן: שישה פרמטרים, בלי p_control_system
+  await asManager(`SELECT * FROM public.update_site(p_code => 'CS1', p_new_code => 'CS1', p_site_name => 'שם חדש',
+    p_plc_type => 'xy', p_fixflow_profile => '')`);
+  assert.equal(await systemOf("CS1"), "ביטנקם");
+});
+
+test("מחרוזת ריקה מנקה את המערכת", { skip }, async () => {
+  await asManager(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => '')`);
+  assert.equal(await systemOf("CS1"), null);
+});
+
+test("רישום בצורה הישנה (בלי מערכת) עדיין עובד", { skip }, async () => {
+  await asManager(`SELECT * FROM public.register_site(p_code => 'CS2', p_site_name => 'ישן', p_plc_type => 'doli',
+    p_tier => 'basic', p_is_new => true, p_fixflow_profile => NULL)`);
+  assert.equal(await systemOf("CS2"), null);
+});
+
+test("מפעיל אינו רשאי לשנות מערכת", { skip }, async () => {
+  await assert.rejects(h.as("authenticated", USER, (tx) =>
+    tx.query(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => 'לולק')`)));
+});

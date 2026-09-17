@@ -71,6 +71,10 @@ export async function registerSiteDirect(payload = {}) {
     p_tier: payload.tier ? String(payload.tier) : "basic",
     // פיילוט FixFlow — ספריית התקלות של האתר. ריק = תיגזר אוטומטית.
     p_fixflow_profile: payload.fixflow_profile ? String(payload.fixflow_profile) : null,
+    // ⚠️ המפתח נשלח **רק כשיש ערך**. PostgREST מתאים פונקציה לפי שמות הפרמטרים
+    // שנשלחו, ולכן מפתח שהמסד עוד לא מכיר (לפני שהוחל writes.postgres.sql)
+    // היה מפיל כל רישום — גם רישום שלא בחר מערכת בכלל.
+    ...(payload.control_system ? { p_control_system: String(payload.control_system) } : {}),
   });
 
   if (error) throw new Error(messageFor(error, "רישום האתר נכשל"));
@@ -210,6 +214,10 @@ export async function updateSiteDirect(code, payload = {}) {
   // לגזירה האוטומטית, ושדה חסר אינו נוגע. פיילוט FixFlow.
   if (payload.fixflow_profile !== undefined)
     body.p_fixflow_profile = String(payload.fixflow_profile);
+  // ⚠️ מערכת ההפעלה — אותה הבחנה: חסר = אל תיגע, ריק = נקה. והטופס שולח אותה רק
+  // כשהמשתמשת שינתה, כך שעריכה רגילה אינה תלויה בכך שהמסד כבר מכיר את השדה.
+  if (payload.control_system !== undefined)
+    body.p_control_system = String(payload.control_system);
 
   const { data, error } = await supabase.rpc("update_site", body);
   if (error) throw new Error(messageFor(error, "עדכון האתר נכשל"));

@@ -5,6 +5,7 @@ import { siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, 
 import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
+import { controlSystemLabel } from "../../../../shared/control-systems.mjs";
 import FaultTimer from "./FaultTimer";
 import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
@@ -92,11 +93,16 @@ function TierBadge({ tier }) {
 // ⚠️ **והתג מופיע רק בריחוף — אבל שומר על מקומו.** הסתרה עם display:none
 // הייתה גורמת לכותרת "לקפוץ" בכל מעבר עכבר. opacity משאירה את השטח תפוס,
 // כך שהתג נחשף בלי שדבר זז.
-function TypeBadge({ type }) {
-  if (!type) return null;
+// ⚠️ **והמערכת בתוך אותו תג**, ולא תג שלישי. "XY" לבדו אינו מספיק כדי לדעת
+// לאיזה נוהל האתר שייך — XY של לולק ו-XY של ביטנקם הם שתי מכונות. תג נפרד
+// היה מתחרה על אותו מקום צר; הצמדה לסוג אומרת שהם נקראים יחד.
+function TypeBadge({ type, system }) {
+  if (!type && !system) return null;
+  const text = [type && siteTypeLabel(type), system].filter(Boolean).join(" · ");
   return (
-    <span className="type-badge" title={`סוג המתקן: ${siteTypeFullLabel(type)}`}>
-      {siteTypeLabel(type)}
+    <span className="type-badge"
+      title={`סוג המתקן: ${siteTypeFullLabel(type)} · מערכת: ${controlSystemLabel(system)}`}>
+      {text}
     </span>
   );
 }
@@ -585,7 +591,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           <div className="exp-title">
             <h3 className="exp-name">
               {site.site_name}
-              <TypeBadge type={site.plc_type} />
+              <TypeBadge type={site.plc_type} system={site.control_system} />
               <TierBadge tier={site.tier} />
             </h3>
             {/* ==========================================================
@@ -705,7 +711,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       // בעוד "לא הוגדר" אומר את האמת ומזמין להשלים.
       title={`${stuck ? stuck.title
         : isNormal ? "רחפו להרחבה · לחצו לנעילה"
-        : `${site.site_name} — ${label}`}\nסוג: ${siteTypeFullLabel(site.plc_type)}`}
+        : `${site.site_name} — ${label}`}\nסוג: ${siteTypeFullLabel(site.plc_type)} · מערכת: ${controlSystemLabel(site.control_system)}`}
     >
       <div className="card-header">
         <span className="card-name">
@@ -737,7 +743,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               ⚠️ ותג הדרגה אמר "בסיסי" ב**כל** 21 הכרטיסים: אפס מידע מבחין,
               על חשבון הדבר היחיד שכן מבחין ביניהם. השם הוא הזיהוי; אם רק
               אחד מהם יכול להיות גלוי, זה הוא. */}
-          {isNormal && <TypeBadge type={site.plc_type} />}
+          {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} />}
           {isNormal && <TierBadge tier={site.tier} />}
         </span>
         {!isMini && <span className="card-code">#{site.code}</span>}

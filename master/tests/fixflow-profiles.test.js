@@ -14,17 +14,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveProfile, PROFILE_BY_TYPE, UNRESOLVED_TYPES, resolveLink } from "../../shared/fixflow-profiles.mjs";
+import { CONTROL_SYSTEM_KEYS } from "../../shared/control-systems.mjs";
+import { readFileSync } from "node:fs";
 import { SITE_TYPE_KEYS } from "../../shared/site-types.mjs";
 
-test("דולי מגיע לשאטל דולי", () => {
-  const r = resolveProfile("doli");
+test("דולי של לולק מגיע לשאטל דולי", () => {
+  const r = resolveProfile("doli", "לולק");
   assert.equal(r.status, "ok");
   assert.equal(r.system, "לולק");
   assert.equal(r.profile, "שאטל דולי");
 });
 
 test("מצבט Y מגיע לספרייה שיש בה תוכן, ולא לשארית הריקה", () => {
-  const r = resolveProfile("matzbet-y");
+  const r = resolveProfile("matzbet-y", "לולק");
   assert.equal(r.status, "ok");
   // ⚠️ `שאטל מצבט y` הוא שארית זריעה בלי תיקייה בכונן — 0 מסמכים, לנצח.
   // גולדברג 5 משויך אליו ב-FixFlow, וזו תקלה בשיוך ולא מיפוי חלופי.
@@ -65,8 +67,8 @@ test("סוג שטרם הוכרע מחזיר סיבה, ולא שתיקה", () => 
 // "נמל", אצלנו בדיוק שני קודים באותו אתר פיזי (1376 ו-3501), והזיווג של 3501
 // ל-`שאטל דולי` מאומת עצמאית — ולכן השני נכפה. הדמיון בין "נמל מסילות"
 // ל-"שאטל מסילה" תומך בתוצאה ולא מבסס אותה; דמיון שמות הוא בדיוק מה שנפסל.
-test("שאטל X מגיע לשאטל מסילה", () => {
-  const r = resolveProfile("shuttle-x");
+test("שאטל X של לולק מגיע לשאטל מסילה", () => {
+  const r = resolveProfile("shuttle-x", "לולק");
   assert.equal(r.status, "ok");
   assert.equal(r.system, "לולק");
   assert.equal(r.profile, "שאטל מסילה");
@@ -202,4 +204,98 @@ test("אתר שאינו במפה — קישור תקף, וכותרת שאינה 
   assert.equal(r.siteId, "zzz");
   assert.equal(r.scope, "zzz");
   assert.equal(r.docs, undefined);
+});
+
+// ================================================================
+// ⚠️ המערכת (היצרן) — אותו סוג, שני יצרנים, שתי דרכי טיפול
+// ================================================================
+// דרישת המוצר, 17/09/2026: "יתכן וגרוזנברג והזורע יהיו אותו סוג, לדוגמא XY, אך
+// הם מסוג אחר ולכן הם צריכים לקבל סוג טיפול תקלה שונה". עד כאן `doli`,
+// `matzbet-y` ו-`shuttle-x` נפתרו **תמיד ללולק** — גם לאתר ביטנקם. ובכונן יש
+// `דולי ביטנקם` ו-`שאטל מסילה ביטנקם`, כלומר הניחוש היה שולח לספרייה של יצרן אחר.
+
+test("⚠️ שום סוג אינו נפתר בלי מערכת — אין יותר ברירת מחדל ללולק", () => {
+  for (const t of ["doli", "xy", "matzbet-y", "shuttle-x"]) {
+    const r = resolveProfile(t);
+    assert.equal(r.status, "needs-system", `${t} נפתר בלי מערכת`);
+    assert.equal(r.profile, undefined);
+  }
+});
+
+test("⚠️ דולי של ביטנקם אינו מקבל את ספריית הלולק", () => {
+  const r = resolveProfile("doli", "ביטנקם");
+  assert.notEqual(r.status, "ok");
+  assert.match(r.reason, /ביטנקם/);
+});
+
+test("סוטפין — אין ספריית תקלות, והסיבה נאמרת", () => {
+  const r = resolveProfile("xy", "סוטפין");
+  assert.equal(r.status, "unmapped");
+  assert.match(r.reason, /סוטפין/);
+});
+
+test("ארבע המערכות — אותן ארבע כמו בטבלת האתרים", () => {
+  assert.deepEqual([...CONTROL_SYSTEM_KEYS].sort(), ["ביטנקם", "לולק", "סוטפין", "סוטפין-לולק"].sort());
+});
+
+// ⚠️ "הגדרה אחת": הרשימה נאכפת במסד (`app.check_control_system`) ומוצגת בדשבורד.
+// שתי רשימות שסוטות הן בדיוק איך שערך שהטופס מציע נדחה בשמירה.
+test("⚠️ הערכים שהמסד מקבל זהים לרשימה המשותפת", () => {
+  const sql = readFileSync(new URL("../db/writes.postgres.sql", import.meta.url), "utf8");
+  const fn = sql.slice(sql.indexOf("FUNCTION app.check_control_system"));
+  const list = fn.slice(fn.indexOf("NOT IN (") + 8, fn.indexOf(")", fn.indexOf("NOT IN (")));
+  const inSql = [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(inSql, [...CONTROL_SYSTEM_KEYS].sort());
+});
+
+test("גזירה לפי סוג משתמשת במערכת של האתר", () => {
+  const lolek = resolveLink({ code: "7001", plc_type: "doli", control_system: "לולק" }, {});
+  assert.deepEqual([lolek.status, lolek.system, lolek.profile], ["ok", "לולק", "שאטל דולי"]);
+  const bitnkam = resolveLink({ code: "7002", plc_type: "xy", control_system: "ביטנקם" }, {});
+  assert.deepEqual([bitnkam.status, bitnkam.system, bitnkam.profile], ["ok", "ביטנקם", "ביטנקם xy"]);
+});
+
+test("אתר בלי מערכת — גזירה לפי סוג מבקשת מערכת, ואינה מנחשת", () => {
+  const r = resolveLink({ code: "7003", plc_type: "doli" }, {});
+  assert.equal(r.status, "needs-system");
+});
+
+// ⚠️ הירקון 224 — הלולק שקושר ידנית להירקון 38 של **ביטנקם**. שיוך בין יצרנים
+// אינו "ספרייה לא מדויקת": כל הצעדים שם נכונים — למכונה אחרת.
+const MAP3 = {
+  ffSites: { b38: { name: "הירקון 38 ת\"א", system: "ביטנקם", profile: "ביטנקם xy", docs: 37, overrides: 0 } },
+  profiles: {
+    "ביטנקם|ביטנקם xy": { system: "ביטנקם", profile: "ביטנקם xy", docs: 20 },
+    "לולק|xy לולק": { system: "לולק", profile: "xy לולק", docs: 58 },
+  },
+  sites: {
+    3458: { by: "name", siteId: "b38", siteName: "הירקון 38 ת\"א", system: "ביטנקם", profile: "ביטנקם xy", docs: 37 },
+  },
+};
+
+test("⚠️ קישור ידני לאתר של יצרן אחר — נחסם עם סיבה", () => {
+  const r = resolveLink({ code: "3458", plc_type: "matzbet-x", control_system: "לולק", fixflow_profile: "site:b38" }, MAP3);
+  assert.equal(r.status, "system-mismatch");
+  assert.match(r.reason, /ביטנקם/);
+  assert.match(r.reason, /לולק/);
+});
+
+test("⚠️ בחירת ספרייה של יצרן אחר — נחסמת", () => {
+  const r = resolveLink({ code: "1", plc_type: "xy", control_system: "לולק", fixflow_profile: "ביטנקם|ביטנקם xy" }, MAP3);
+  assert.equal(r.status, "system-mismatch");
+});
+
+test("⚠️ התאמת שם שמובילה ליצרן אחר — נחסמת", () => {
+  const r = resolveLink({ code: "3458", plc_type: "xy", control_system: "לולק" }, MAP3);
+  assert.equal(r.status, "system-mismatch");
+});
+
+test("אותו יצרן — הקישור עובר כרגיל", () => {
+  const r = resolveLink({ code: "1", plc_type: "xy", control_system: "ביטנקם", fixflow_profile: "ביטנקם|ביטנקם xy" }, MAP3);
+  assert.equal(r.status, "ok");
+});
+
+test("אתר בלי מערכת — קישור ידני והתאמת שם ממשיכים לעבוד", () => {
+  assert.equal(resolveLink({ code: "3458", plc_type: "xy" }, MAP3).status, "ok");
+  assert.equal(resolveLink({ code: "1", fixflow_profile: "site:b38" }, MAP3).status, "ok");
 });
