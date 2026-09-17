@@ -11,6 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const db = require("../db/db");
+const safety = require("./lib/mutation-safety");
 
 const FILE = path.join(__dirname, "..", "db", "ingest.postgres.sql");
 
@@ -48,6 +49,9 @@ const MUTATIONS = [
 async function main() {
   const src = fs.readFileSync(FILE, "utf8");
   const good = batchSource(src);
+  // ⚠️ צילום של מה שחי, ורק אם הוא זהה לקובץ — ראה tools/lib/mutation-safety.js.
+  const snaps = await safety.snapshotMatchingFile(db.pool,
+    [{ regprocedure: "public.ingest_batch(jsonb, text, jsonb)", createSql: good }]);
 
   let bad = 0;
   try {
@@ -63,7 +67,9 @@ async function main() {
         continue;
       }
       const res = gate();
-      await db.pool.query(good);          // מחזירים מיד, לפני ההדפסה
+      // מחזירים מיד, לפני ההדפסה — ומאמתים. החזרה שנכשלה עוצרת את הלולאה.
+      const restoreFailed = await safety.restoreAndVerify(db.pool, snaps);
+      if (restoreFailed.length) { bad += safety.reportRestore(restoreFailed); break; }
 
       console.log(res === "red"
         ? `✅ מוטציה נתפסה: ${label}`
@@ -71,7 +77,8 @@ async function main() {
       if (res !== "red") bad++;
     }
   } finally {
-    await db.pool.query(good);            // גם אם משהו זרק באמצע
+    // גם אם משהו זרק באמצע
+    bad += safety.reportRestore(await safety.restoreAndVerify(db.pool, snaps));
   }
 
   // ============================================================
@@ -96,4 +103,6 @@ async function main() {
   process.exit(bad ? 1 : 0);
 }
 
-main();
+// ⚠️ דחייה לא מטופלת הייתה יוצאת בלי שורה שאומרת מה קרה לייצור.
+main().catch((e) => { console.log(`
+⛔ הכלי נפל: ${e.message}`); process.exit(1); });

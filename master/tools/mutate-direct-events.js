@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const db = require("../db/db");
+const safety = require("./lib/mutation-safety");
 
 const FILE = path.join(__dirname, "..", "db", "ingest.postgres.sql");
 
@@ -52,6 +53,11 @@ const MUTATIONS = [
 
 async function main() {
   const good = { [STATE]: fn(STATE), [OP]: fn(OP) };
+  // ⚠️ צילום של מה שחי, ורק אם הוא זהה לקובץ — ראה tools/lib/mutation-safety.js.
+  const snaps = await safety.snapshotMatchingFile(db.pool, [
+    { regprocedure: "app.ingest_state(integer, text, text, text)", createSql: good[STATE] },
+    { regprocedure: "app.ingest_operation(integer, text, text, text, text, text, text, integer)", createSql: good[OP] },
+  ]);
   let bad = 0;
   try {
     for (const [label, header, mutate] of MUTATIONS) {
@@ -61,15 +67,16 @@ async function main() {
       catch (e) { console.log(`❌ ${label} — אינה מתקמפלת: ${e.message}`); bad++; continue; }
 
       const res = gate();
-      await db.pool.query(good[header]);
+      const restoreFailed = await safety.restoreAndVerify(db.pool, snaps);
+      if (restoreFailed.length) { bad += safety.reportRestore(restoreFailed); break; }
 
       console.log(res === "red" ? `✅ מוטציה נתפסה: ${label}`
                                 : `❌ מוטציה עברה בשקט: ${label} — השער עיוור`);
       if (res !== "red") bad++;
     }
   } finally {
-    await db.pool.query(good[STATE]);
-    await db.pool.query(good[OP]);
+    // ⚠️ כל פונקציה בנפרד: זריקה בהחזרת STATE דילגה כאן על OP.
+    bad += safety.reportRestore(await safety.restoreAndVerify(db.pool, snaps));
   }
 
   // ⚠️ שער אדום אחרי השחזור הוא **כשל**, ולא שורת דיווח. ראה ההסבר המלא
@@ -85,4 +92,6 @@ async function main() {
   process.exit(bad ? 1 : 0);
 }
 
-main();
+// ⚠️ דחייה לא מטופלת הייתה יוצאת בלי שורה שאומרת מה קרה לייצור.
+main().catch((e) => { console.log(`
+⛔ הכלי נפל: ${e.message}`); process.exit(1); });
