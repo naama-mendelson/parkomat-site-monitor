@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
 import CodePrompt from "../TrafficLight/CodePrompt";
-import { fetchBoard, setCell, addRow, deleteRow } from "../../services/trafficLightDirect";
+import { fetchBoard, setCell, addRow, deleteRow } from "../../services/dataSource";
 import "./ServiceAgreement.css";
 
 const CODE_LABEL = "קוד אתר";

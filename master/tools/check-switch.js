@@ -131,13 +131,21 @@ for (const file of walkDir(SRC_DIR)) {
   }
 }
 
+// ============================================================
+// ⚠️ סעיף אדום **ממשיך** לסעיפים הבאים — ולא יוצא
+// ============================================================
+// כאן היה `process.exit(1)`, ולכן סעיף אדום אחד הסתיר את כל מה שאחריו.
+// נמדד ב-17/09/2026: הרמזור עקף את המתג, השער יצא כאן — ו-`agentEverBeat`
+// בלי בדיקת useDirect ישב בסעיף הראשי ולא דווח. תוקן הראשון, והשני צץ
+// רק אז. מי שמתקן לפי הפלט מתקן חצי, ומריץ שוב כדי לגלות את החצי השני.
 if (bypass.length) {
   console.log("❌ רכיבים שעוקפים את המתג:");
   for (const b of bypass) console.log("   " + b);
   console.log("\nכל אחד מהם ייכשל כש-VITE_SUPABASE_DIRECT=false.\n");
-  process.exit(1);
+  fail += bypass.length;
+} else {
+  console.log("✅ אף רכיב אינו עוקף את המתג\n");
 }
-console.log("✅ אף רכיב אינו עוקף את המתג\n");
 
 // ============================================================
 // ⚠️ הכיוון ההפוך: מי בכלל נוגע בשרת
@@ -176,9 +184,10 @@ if (serverUsers.length) {
   console.log("❌ רכיבים שפונים ל-master מחוץ למותר:");
   for (const s of serverUsers) console.log("   " + s);
   console.log("\nה-master אמור לשמש ל-MQTT ולבוט בלבד.\n");
-  process.exit(1);
+  fail += serverUsers.length;   // ⚠️ לא יוצאים — ראה ההסבר מעל סעיף העקיפה
+} else {
+  console.log("✅ ל-master פונים רק המתג, הבוט ו-SSE\n");
 }
-console.log("✅ ל-master פונים רק המתג, הבוט ו-SSE\n");
 
 const fns = [...src.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]);
 console.log(`נמצאו ${fns.length} מסלולים במתג\n`);

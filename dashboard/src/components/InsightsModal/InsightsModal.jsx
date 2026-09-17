@@ -16,6 +16,7 @@ import SectionNav from "./SectionNav";
 import "./InsightsModal.css";
 import Logo from "../Logo/Logo";
 import ServiceAgreement from "../ServiceAgreement/ServiceAgreement";
+import { useDirect } from "../../services/dataSource";
 
 const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
 const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יציאות
@@ -189,8 +190,9 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                 שעות ההסכם קובעות מתי הזמינות בכלל נמדדת, ולכן השאלה
                 "למה המספר הזה כזה" והתשובה "כי אין שירות בשבת" חייבות
                 להיות באותו מסך. אתר שאינו מחובר מחושב 24/7, וכאן גם
-                המקום שבו מחברים אותו — מהנקודה שבה שואלים. */}
-            {section === "overview" && !allSites && (
+                המקום שבו מחברים אותו — מהנקודה שבה שואלים.
+                ⚠️ מוסתר במצב שרת: ללוח הרמזור אין זרוע שרת, ראה dataSource. */}
+            {section === "overview" && !allSites && useDirect && (
               <section className="insights-card">
                 {/* ⚠️ `onRefresh` אינו נוחות: החיבור משנה את **רמת
                     השירות** של האתר, ובלעדיו התג בכרטיס ממשיך להציג את

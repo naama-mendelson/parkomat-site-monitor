@@ -470,7 +470,14 @@ export async function markControllerReplaced(code) {
   if (!useDirect) throw new Error("סימון החלפת בקר זמין רק במצב הישיר");
   return markControllerReplacedDirect(code);
 }
+/**
+ * האם האתר פעם אי-פעם. `null` = "לא הצלחתי לברר", והקורא דורש אז אישור.
+ *
+ * ⚠️ במצב שרת — `null`, ולא קריאה ל-Supabase. בלי הבדיקה `check-switch`
+ * היה אדום, והוא הוסתר: הסריקה של רכיבים עוקפים יצאה לפניו.
+ */
 export async function agentEverBeat(siteId) {
+  if (!useDirect) return null;
   return agentEverBeatDirect(siteId);
 }
 
@@ -828,3 +835,12 @@ export {
   requestServiceRestart, recentServiceCommands, subscribeServiceCommands,
   fetchServiceHealth, requestServicePing,
 } from "./serviceCommandsDirect";
+
+// ⚠️ **הרמזור והסכם השירות — אותו כלל בדיוק, והוא הופר.** שני הרכיבים ייבאו
+// מ-`trafficLightDirect` ישירות, ו-`check-switch` היה אדום על כך. לתכונה אין
+// זרוע שרת (היא נולדה אחרי שהמתג הוכרע), ולכן במצב שרת הכפתור והמקטע
+// **מוסתרים** — ראה App.jsx ו-InsightsModal — במקום להיפתח למסך שנכשל.
+export {
+  fetchBoard, addColumn, updateColumn, deleteColumn, moveColumn,
+  addRow, deleteRow, moveRow, setCell, pasteRows,
+} from "./trafficLightDirect";

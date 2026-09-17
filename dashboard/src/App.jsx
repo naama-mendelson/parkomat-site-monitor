@@ -12,6 +12,7 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
+import { useDirect } from "./services/dataSource";
 import "./components/TrafficLight/TrafficLight.css";
 import ChatAssistant from "./components/ChatAssistant/ChatAssistant";
 import OperatorView from "./views/OperatorView/OperatorView";
@@ -296,7 +297,8 @@ function App() {
           ⚠️ ומוצג תמיד, גם לבקר — שער התפקיד יושב **בתוך** הפאנל ואומר
           במפורש מה התפקיד שלך. כפתור שנעלם משאיר את מי שחושבת שהיא
           מנהלת בלי שום דרך לדעת שהתפקיד שלה במסד שונה. */}
-      <button
+      {/* ⚠️ מוסתר במצב שרת: ללוח אין זרוע שרת, ראה dataSource. */}
+      {useDirect && <button
         type="button"
         className="tl-fab"
         onClick={() => setTrafficOpen(true)}
@@ -308,7 +310,7 @@ function App() {
           <span className="tl-lamp tl-lamp--g" />
         </span>
         רמזור
-      </button>
+      </button>}
 
       {trafficOpen && <TrafficLight onClose={() => setTrafficOpen(false)} />}
 

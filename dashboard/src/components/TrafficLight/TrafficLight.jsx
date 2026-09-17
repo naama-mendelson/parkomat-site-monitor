@@ -24,7 +24,7 @@ import CodePrompt from "./CodePrompt";
 import {
   fetchBoard, addColumn, updateColumn, deleteColumn,
   addRow, deleteRow, setCell, pasteRows,
-} from "../../services/trafficLightDirect";
+} from "../../services/dataSource";
 import "./TrafficLight.css";
 
 // ============================================================
