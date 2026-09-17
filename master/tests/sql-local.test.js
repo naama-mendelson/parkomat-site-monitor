@@ -165,7 +165,7 @@ test("מנהל עדיין כותב ללוח; מפעיל נדחה", { skip }, asy
 });
 
 test("כל קבצי ה-SQL אידמפוטנטיים — החלה שנייה עוברת", { skip }, async () => {
-  for (const f of ["functions", "security", "writes", "ingest", "traffic-light", "service-hours", "fixflow"]) {
+  for (const f of ["functions", "security", "writes", "ingest", "cron", "traffic-light", "service-hours", "fixflow"]) {
     await h.pg.exec(fs.readFileSync(path.join(h.MASTER, "db", `${f}.postgres.sql`), "utf8"));
   }
 });

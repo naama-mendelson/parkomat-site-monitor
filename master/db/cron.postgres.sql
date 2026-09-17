@@ -824,7 +824,22 @@ BEGIN
        'bridge_site_not_registered',
        'unknown_topic',
        'no_comm_rejected',
-       'bridge_disconnect_rejected'
+       'bridge_disconnect_rejected',
+       -- ⚠️ **אותה משפחה (*_rejected), שנולדה אחרי שהרשימה נכתבה** — המסלול
+       -- הישיר והשומר על הצוואה כותבים אותן בשגרה, וכולן הגנה שעבדה:
+       --   bridge_will_vs_live_beat — צוואה שמורה ישנה מול פעימה טרייה;
+       --                              נכתבת **בכל עליית master**.
+       --   state_no_change / operation_duplicate — אותה הודעה בשני המסלולים.
+       --   state_suppressed — תקלה בזמן תחזוקה, נרשמה ב-suppressed_faults.
+       --   state_lwt_late   — התאום הישיר של no_comm_rejected.
+       -- בלעדיהן, הדלקת הדגל הייתה יורה כמעט בכל ריצה וקוברת את
+       -- gave_up_after_retries. ⚠️ state_backfill / state_late_vs_open_segment
+       -- **נשארים רועשים**: הם עשויים להיות אובדן אמיתי (ראה 17/09 ב-ingest_batch).
+       'bridge_will_vs_live_beat',
+       'state_no_change',
+       'operation_duplicate',
+       'state_suppressed',
+       'state_lwt_late'
      );
 
   IF v_drops > 0 THEN
