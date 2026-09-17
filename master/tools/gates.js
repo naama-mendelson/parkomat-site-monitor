@@ -95,6 +95,35 @@ const GATES = [
   { name: "parity-ingest-state", what: "מסלול המצב — המסלול הקיים מול app.ingest_state" },
   { name: "check-agent-write",   what: "סוכן כותב דרך PostgREST — ורק לאתר שלו" },
   { name: "check-agent-live",    what: "קוד ה-C# האמיתי כותב ל-Supabase האמיתי" },
+  // ============================================================
+  // ⚠️ שנים-עשר שערים שנכתבו ולא נרשמו כאן — 14–16/09/2026
+  // ============================================================
+  // כל אחד מהם נכתב כ"שער, לא דוח", יוצא 1 בכשל, ונבדק כשנכתב — ואף אחד
+  // מהם לא נוסף לרשימה. כלומר `npm run gates` דיווח "כל השערים רצו ועברו"
+  // בלי להריץ אף בדיקה של FixFlow, של אתר דו-מערכתי או של המסך מול הנתונים.
+  // זה בדיוק הכשל שהקובץ הזה נבנה סביבו, מהכיוון השקט ביותר: לא "לא רץ",
+  // אלא **לא מופיע**.
+  //
+  // ⚠️ **ושניים הושארו בחוץ בכוונה:**
+  //   check-agent-identity-missing — נופל על כל אתר שעדיין לא נכנס, כלומר
+  //     על 20 אתרים שעוד ב-MQTT. זה מצב הצי ולא באג; שער אדום לצמיתות מלמד
+  //     להתעלם מהרשימה כולה.
+  //   measure-fixflow-speed — מדידה ולא טענה. אין לו מצב "נכשל".
+  //
+  // ⚠️ שני שערי FixFlow שקוראים מחוץ למאגר (`vs-drive` ו-`web-fresh`) נשענים
+  // על נתיבי המחשב הזה — גם השערים עצמם רצים רק ממנו.
+  { name: "check-dashboard-truth", what: "המספרים שעל המסך נאמנים לנתונים הגולמיים" },
+  { name: "check-two-systems",   what: "אתר דו-מערכתי — השרשרת המלאה" },
+  { name: "check-silence-in-maintenance", what: "אתר שנפל בזמן MODE 0 נספר כמנותק" },
+  { name: "check-direct-write",  what: "אין אתר חשוך — שאינו מדווח בשום מסלול" },
+  { name: "check-writes-sql-parses", what: "writes.postgres.sql נטען בלי שגיאת תחביר" },
+  { name: "check-fixflow-schema", what: "FixFlow — נקרא למוקדן, סגור לכל השאר" },
+  { name: "check-fixflow-read-path", what: "FixFlow — מסלול הקריאה מחזיר תוכן" },
+  { name: "check-fixflow-field", what: "sites.fixflow_profile קיים ונאכף" },
+  { name: "check-fixflow-mapping", what: "FixFlow — אף אתר אינו מגיע לספרייה ריקה" },
+  { name: "check-fixflow-targets", what: "FixFlow — כל כרטיס מחובר למקום הנכון" },
+  { name: "check-fixflow-vs-drive", what: "FixFlow — מה שמוגש זהה לכונן, מילה במילה" },
+  { name: "check-fixflow-web-fresh", what: "חבילת FixFlow המוטמעת בנויה מהקוד הנוכחי", noEnv: true },
   // ⚠️ **אחרון בכוונה.** הוא בודק מה נשאר אחרי כל השאר, ולכן חייב לרוץ
   // אחריהם. נמדד: 62 חלונות תחזוקה ו-297 שורות ביקורת הצטברו על אתר
   // אמיתי והופיעו בלוג הפעילות שלו כפעולות שאיש לא עשה.
