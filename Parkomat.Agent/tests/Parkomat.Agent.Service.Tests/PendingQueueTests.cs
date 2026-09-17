@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Queue;
 
@@ -98,6 +99,79 @@ public sealed class PendingQueueTests : IDisposable
 
         Assert.Equal(2, loaded.Count);
         Assert.Equal(new[] { "a", "b" }, loaded.Select(x => x.Message.User).ToArray());
+    }
+
+    // ============================================================
+    // ⚠️ קובץ שלא נקרא **כרגע** אינו קובץ פגום
+    // ============================================================
+    // ‏`LoadAll` מחק קובץ על **כל** חריגה — גם על sharing violation רגעית
+    // (אנטי-וירוס, גיבוי, אינדקס). קובץ תקין לגמרי, שמכיל תפעול שעוד לא
+    // נמסר, נמחק כי מישהו החזיק אותו באותה מילישנייה. זה אובדן שקט של
+    // בדיוק מה שהתור קיים כדי להציל.
+    //
+    // ⚠️ המחזיק כאן מתיר **מחיקה ולא קריאה** (FileShare.Delete): כך הקריאה
+    // נכשלת כמו בשטח, והמחיקה — אם הקוד מנסה — מצליחה. מחזיק שחוסם גם
+    // מחיקה היה מסתיר את הבאג, כי ה-TryDelete הישן נכשל בשקט בעצמו.
+    [Fact]
+    public void AFileThatCannotBeReadRightNowIsKeptNotDeleted()
+    {
+        var q = new PendingQueue(_dir);
+        string path = q.Enqueue(Op(1000, "a"));
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Delete))
+        {
+            var whileLocked = q.LoadAll<OperationMessage>();
+            Assert.Empty(whileLocked);   // לא נקרא — וזה בסדר
+        }
+
+        Assert.True(File.Exists(path), "קובץ תקין נמחק רק כי היה נעול לרגע — התפעול אבד");
+
+        var afterwards = q.LoadAll<OperationMessage>();
+        Assert.Single(afterwards);
+        Assert.Equal("a", afterwards[0].Message.User);
+    }
+
+    // ⚠️ והצד השני נשאר: קובץ **פגום באמת** עדיין נמחק, אחרת הוא היה
+    // נקרא ונכשל בכל סבב, לנצח.
+    [Fact]
+    public void AFileThatIsNotJsonIsStillRemoved()
+    {
+        var q = new PendingQueue(_dir);
+        string bad = Path.Combine(_dir, "0000000001500-0001.json");
+        File.WriteAllText(bad, "{ this is not json");
+
+        q.LoadAll<OperationMessage>();
+
+        Assert.False(File.Exists(bad));
+    }
+
+    // ============================================================
+    // ⚠️ Move אטומי אינו כתיבה עמידה — בלי Flush(true) הנתונים במטמון
+    // ============================================================
+    // ‏`WriteAllText` מחזיר כשהבייטים במטמון של מערכת ההפעלה, לא על הדיסק.
+    // ה-`Move` שאחריו נרשם ביומן של NTFS מיד, ולכן נפילת חשמל בחלון הזה
+    // משאירה **שם קובץ תקין עם תוכן ריק או זבל** — בדיוק מה שה-tmp+Move
+    // נועד למנוע. בתור זה תפעול שאבד; ב-config.json זו זהות האתר.
+    //
+    // ⚠️ בדיקה מבנית, ובמפורש: אין דרך לדמות נפילת חשמל מתוך בדיקת יחידה.
+    [Theory]
+    [InlineData("Parkomat.Agent.Core", "Queue", "PendingQueue.cs")]
+    [InlineData("Parkomat.Agent.Core", "Configuration", "ConfigStore.cs")]
+    public void TheWriteIsFlushedToDiskBeforeTheMove(string project, string folder, string file)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "src", project, folder, file));
+        string code = string.Join("\n", src.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+        int move = code.IndexOf("File.Move(", StringComparison.Ordinal);
+        Assert.True(move > 0, "לא נמצא File.Move — הבדיקה מסתכלת על קוד שהשתנה");
+
+        Match flush = Regex.Match(code[..move], @"Flush\(\s*(flushToDisk:\s*)?true\s*\)");
+        Assert.True(flush.Success, $"{file}: הכתיבה אינה נשטפת לדיסק לפני ה-Move");
     }
 
     [Fact]

@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using System.Globalization;
+using System.Text;
+using System.Text.Json;
 
 namespace Parkomat.Agent.Core.Configuration;
 
@@ -120,21 +122,54 @@ public static class ConfigStore
     // ההגדרות בלי למחוק את מה שמזהה את האתר הזה. ההחלטה עצמה נמצאת ב-
     // BuildResetConfig (טהורה וניתנת לבדיקה); כאן רק ה-I/O.
     // best-effort — כשל בו לא מפיל את הסוכן.
-    private static void ApplyResetMarkerIfPresent()
+    private static void ApplyResetMarkerIfPresent() =>
+        ApplyResetMarker(AgentPaths.ConfigFile, AgentPaths.ResetToDefaultsFlag);
+
+    /// <summary>
+    /// צריכת דגל האיפוס על נתיבים נתונים. ⚠️ <b>הנתיבים הם פרמטר בשביל
+    /// בדיקות</b>: המסלול האמיתי יושב ב-<c>C:\ProgramData</c>, שאסור לבדיקה
+    /// לגעת בו — ובלי התפר הזה ההחלטה "מה עושים בקובץ שאינו ניתן לפענוח"
+    /// הייתה נבדקת רק באתר.
+    /// </summary>
+    public static void ApplyResetMarker(string configPath, string flagPath)
     {
         try
         {
-            if (!File.Exists(AgentPaths.ResetToDefaultsFlag))
+            if (!File.Exists(flagPath))
                 return;
 
+            // ============================================================
+            // ⚠️ קובץ שאינו ניתן לפענוח אינו "אין הגדרות קודמות"
+            // ============================================================
+            // כאן עמד `catch { /* config פגום — מתחילים נקי */ }`, ואחריו
+            // `Save(BuildResetConfig(null))` — כלומר ברירות מחדל **מעל** הקובץ.
+            // מזהה האתר, סיסמת HiveMQ, וסיסמת Supabase — שמוצגת פעם אחת
+            // בהנפקה ואין מאיפה להעתיק אותה — נמחקו בהתקנה שגרתית. קובץ פגום
+            // ניתן לתיקון ביד; קובץ שנדרס אינו ניתן לתיקון בכלל.
+            //
+            // ⚠️ ושתי סיבות שונות לגמרי הגיעו לאותו catch:
+            //   • **קריאה שנכשלה** (אנטי-וירוס מחזיק את הקובץ ברגע העלייה) —
+            //     לא ידוע מה בקובץ, ולכן לא נוגעים בכלום, **גם לא בדגל**:
+            //     האיפוס שההתקנה ביקשה יקרה בעלייה הבאה.
+            //   • **פענוח שנכשל** — הקובץ נשמר כמות שהוא, עותק לצדו, ואדם
+            //     מחליט. ה-Worker אומר זאת בשורת Critical (ראה שם).
             SiteConfig? old = null;
-            if (File.Exists(AgentPaths.ConfigFile))
+            bool unparseable = false;
+            if (File.Exists(configPath))
             {
+                string json;
                 try
                 {
-                    old = FromJson(File.ReadAllText(AgentPaths.ConfigFile));
+                    json = File.ReadAllText(configPath);
                 }
-                catch { /* config פגום — מתחילים נקי */ }
+                catch
+                {
+                    return;
+                }
+
+                try { old = FromJson(json); }
+                catch { old = null; }
+                unparseable = old is null;
             }
 
             // ============================================================
@@ -155,7 +190,7 @@ public static class ConfigStore
             // שחוזר הוא מחיקה חוזרת של מה שהוקלד ביד.
             try
             {
-                File.Delete(AgentPaths.ResetToDefaultsFlag);
+                File.Delete(flagPath);
             }
             catch
             {
@@ -163,7 +198,16 @@ public static class ConfigStore
                 return;
             }
 
-            Save(BuildResetConfig(old));
+            // ⚠️ הדגל **נצרך** גם כאן, ובכוונה: האיפוס שייך להתקנה, ואדם
+            // שתיקן את הקובץ ביד אחריה אמור לקבל אותו כפי שכתב — לא איפוס
+            // מושהה שקופץ ברגע שהקובץ נעשה קריא.
+            if (unparseable)
+            {
+                PreserveIfUnreadable(configPath);
+                return;
+            }
+
+            Save(BuildResetConfig(old), configPath);
         }
         catch
         {
@@ -271,6 +315,13 @@ public static class ConfigStore
             if (old.Plc.CardRegister > 0) fresh.Plc.CardRegister = old.Plc.CardRegister;
             if (old.Plc.CycleRegister > 0) fresh.Plc.CycleRegister = old.Plc.CycleRegister;
 
+            // ⚠️ **ורגיסטרי המערכת השנייה, מאותו נימוק בדיוק.** `HasSecondSystem`
+            // נגזר משניהם, וברירת המחדל היא 0 — כלומר שדרוג שלא נושא אותם
+            // הופך אתר דו-מערכתי (פלורנטין) לחד-מערכתי בשקט מוחלט: הבקר
+            // עונה, הסמל ירוק, והמערכת השנייה פשוט מפסיקה לדווח.
+            if (old.Plc.ModeRegister2 > 0) fresh.Plc.ModeRegister2 = old.Plc.ModeRegister2;
+            if (old.Plc.CardRegister2 > 0) fresh.Plc.CardRegister2 = old.Plc.CardRegister2;
+
             // ⚠️ אפס כאן פירושו "התכונה כבויה" ולא "לא הוגדר" (ראה
             // PlcReader.ReadFaultText), ולכן הוא נשמר כמו כל ערך אחר.
             if (old.Plc.FaultTextRegister >= 0)
@@ -362,16 +413,116 @@ public static class ConfigStore
     public static SiteConfig? FromJson(string json) =>
         JsonSerializer.Deserialize<SiteConfig>(json, Options);
 
-    public static void Save(SiteConfig config)
+    public static void Save(SiteConfig config) => Save(config, AgentPaths.ConfigFile);
+
+    /// <summary>
+    /// שמירה לנתיב נתון. ⚠️ <b>הנתיב הוא פרמטר בשביל בדיקות</b> — ראה
+    /// <see cref="ApplyResetMarker"/>.
+    /// </summary>
+    public static void Save(SiteConfig config, string path)
     {
-        AgentPaths.EnsureBaseFolderExists();
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+
+        // ⚠️ **עותק לפני דריסה של קובץ שאינו ניתן לפענוח.** `Load` מחזירה
+        // עליו ברירות מחדל, טופס ההגדרות מציג אותן, והטכנאי מקליד מזהה אתר
+        // ולוחץ "שמור" — השמירה לגיטימית, אבל בלי העותק הקובץ המקורי (וסיסמת
+        // Supabase שבתוכו) נעלם לתמיד. עותק שנכשל זורק, והשמירה נכשלת בקול:
+        // עדיף "השמירה נכשלה" על מסך מאשר מחיקה שקטה.
+        PreserveIfUnreadable(path);
 
         string json = ToJson(config);
 
-        string tempFile = AgentPaths.ConfigFile + ".tmp";
-        File.WriteAllText(tempFile, json);
+        // ⚠️ **Flush(true) לפני ה-Move, ולא WriteAllText.** ‏`WriteAllText` חוזר
+        // כשהבייטים במטמון של Windows; ה-Move שאחריו נרשם ביומן NTFS מיד.
+        // נפילת חשמל בחלון הזה משאירה `config.json` **ריק** — כלומר ה-tmp+Move
+        // הגן מפני קובץ חצי-כתוב ולא מפני קובץ שתוכנו מעולם לא הגיע לדיסק.
+        string tempFile = path + ".tmp";
+        using (var fs = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            fs.Write(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(json));
+            fs.Flush(flushToDisk: true);
+        }
 
         // החלפה אטומית: או שהקובץ הישן נשאר, או שהחדש נכנס במלואו.
-        File.Move(tempFile, AgentPaths.ConfigFile, overwrite: true);
+        File.Move(tempFile, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// אם הקובץ קיים <b>ואינו ניתן לפענוח</b> — שומר עותק שלו לצדו
+    /// (<c>config.json.corrupt-yyyyMMdd-HHmmss</c>) ומחזיר את נתיב העותק.
+    /// אחרת (אין קובץ, קובץ תקין, או קובץ שלא ניתן לקרוא כרגע) — <c>null</c>.
+    ///
+    /// <para>⚠️ <b>"לא נקרא" אינו "פגום".</b> קובץ שמוחזק ברגע הזה בידי
+    /// אנטי-וירוס אינו מעיד דבר על תוכנו, ועותק שלו אינו אפשרי ממילא.</para>
+    ///
+    /// <para>⚠️ <b>עותק זהה אינו נוצר פעמיים.</b> סוכן שעולה שוב ושוב על
+    /// אותו קובץ פגום היה ממלא את התיקייה בעותקים זהים, ומי שמאבחן היה צריך
+    /// להשוות אותם ביד כדי לגלות שאין ביניהם הבדל.</para>
+    /// </summary>
+    /// <exception cref="IOException">הקובץ פגום ולא ניתן היה לשמור עותק.</exception>
+    public static string? PreserveIfUnreadable(string path)
+    {
+        byte[] bytes;
+        try
+        {
+            if (!File.Exists(path)) return null;
+            bytes = File.ReadAllBytes(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (IsParseable(bytes)) return null;
+
+        string full = Path.GetFullPath(path);
+        string dir = Path.GetDirectoryName(full)!;
+        string prefix = Path.GetFileName(full) + ".corrupt-";
+
+        foreach (string existing in Directory.GetFiles(dir, prefix + "*"))
+        {
+            try
+            {
+                if (File.ReadAllBytes(existing).AsSpan().SequenceEqual(bytes)) return existing;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // עותק שלא נקרא אינו הוכחה שיש עותק — ממשיכים ויוצרים חדש.
+            }
+        }
+
+        string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        for (int n = 0; ; n++)
+        {
+            string copy = Path.Combine(dir, prefix + stamp + (n == 0 ? "" : "-" + n));
+            try
+            {
+                // CreateNew: לעולם לא דורסים עותק קודם, גם אם שמו זהה.
+                using var fs = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                fs.Write(bytes);
+                fs.Flush(flushToDisk: true);
+                return copy;
+            }
+            catch (IOException) when (n < 100 && File.Exists(copy))
+            {
+                // השם תפוס (אותה שנייה, תוכן אחר) — מנסים את הבא.
+            }
+        }
+    }
+
+    // ⚠️ אותו פענוח בדיוק כמו Load: ReadAllText מזהה BOM, ולכן גם כאן. קובץ
+    // שנשמר ב-Notepad עם BOM הוא תקין, ו"עותק פגום" שלו היה אזעקת שווא.
+    private static bool IsParseable(byte[] bytes)
+    {
+        try
+        {
+            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            return FromJson(reader.ReadToEnd()) is not null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

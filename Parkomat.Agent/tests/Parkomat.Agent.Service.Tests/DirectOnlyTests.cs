@@ -203,18 +203,24 @@ public class DirectOnlyTests
         // הבאה דרשה הקלדת סיסמה, ולחיצת "שמור" החזירה את Mosquitto —
         // כלומר האשמה נפלה על ההתקנה, שלא עשתה דבר.
         //
-        // אותו דפוס בדיוק כמו `_sbOverrides`, שכבר מתועד באותו קובץ.
+        // ⚠️ **נבדק עכשיו על ההתנהגות.** השדה `_mqttDisabled` שנשא את הערך הוסר:
+        // "שמור" עורך את ה-config שנטען (SettingsFormEdit.Apply) במקום לבנות
+        // `MqttConfig` מאפס, ולכן הדגל שורד כי איש אינו נוגע בו. הבדיקה המבנית
+        // שהייתה כאן עקבה אחרי שדה הנשיאה — והייתה מאדימה על התיקון הזה.
+        var loaded = Configured();
+        loaded.Mqtt.Disabled = true;
+        Assert.False(loaded.MqttEnabled, "התנאי המקדים לא מתקיים — הבדיקה חסרת ערך");
+
+        SiteConfig saved = Parkomat.Agent.Tray.Forms.SettingsFormEdit.Apply(loaded,
+            SettingsFormEditTests.Values(siteId: "2438", supabasePassword: "issued-once"));
+
+        Assert.True(saved.Mqtt.Disabled, "\"שמור\" הדליק מחדש את MQTT באתר שכובה בכוונה");
+        Assert.False(saved.MqttEnabled);
+
+        // ⚠️ והטופס באמת עובר דרך העריכה, על מה שנטען מהקובץ.
         string form = Form();
-
-        Assert.Contains("private bool _mqttDisabled;", form);
-        Assert.Contains("_mqttDisabled = c.Mqtt.Disabled;", form);
-        Assert.Contains("Disabled = _mqttDisabled,", form);
-
-        // ⚠️ והנשיאה חייבת להיות **בתוך** בניית ה-MqttConfig שב-OnSave,
-        // לא איפשהו בקובץ: שורה שהתנתקה משם היא שורה שאינה עושה דבר.
-        int build = form.IndexOf("Mqtt = new MqttConfig", StringComparison.Ordinal);
-        Assert.True(build > 0, "לא נמצאה בניית MqttConfig ב-OnSave");
-        Assert.Contains("Disabled = _mqttDisabled,", form[build..(build + 400)]);
+        Assert.Contains("_loaded = c;", form);
+        Assert.Contains("SettingsFormEdit.Apply(_loaded,", form);
 
         static string Form()
         {

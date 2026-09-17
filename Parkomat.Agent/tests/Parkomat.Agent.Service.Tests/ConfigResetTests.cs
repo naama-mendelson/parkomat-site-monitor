@@ -382,10 +382,12 @@ public class ConfigResetTests
                                              StringComparison.Ordinal);
         Assert.True(marker > 0, "לא נמצאה ApplyResetMarkerIfPresent");
 
+        // ⚠️ העוגנים הם שמות הפרמטרים: הלוגיקה עברה ל-`ApplyResetMarker(configPath,
+        // flagPath)` כדי שתיבדק על תיקייה זמנית (CorruptConfigTests), וה-
+        // `ApplyResetMarkerIfPresent()` הישנה רק מעבירה אליה את נתיבי ProgramData.
         string body = src[marker..];
-        int delete = body.IndexOf("File.Delete(AgentPaths.ResetToDefaultsFlag)",
-                                  StringComparison.Ordinal);
-        int save = body.IndexOf("Save(BuildResetConfig(old))", StringComparison.Ordinal);
+        int delete = body.IndexOf("File.Delete(flagPath)", StringComparison.Ordinal);
+        int save = body.IndexOf("Save(BuildResetConfig(old), configPath)", StringComparison.Ordinal);
 
         Assert.True(delete > 0 && save > 0, "לא נמצאו שני העוגנים");
         Assert.True(delete < save,
@@ -447,6 +449,47 @@ public class ConfigResetTests
         Assert.Equal(107, fresh.Plc.CardRegister);
         Assert.Equal(105, fresh.Plc.CycleRegister);
         Assert.Equal(7, fresh.Plc.FaultTextRegister);
+    }
+
+    // ============================================================
+    // ⚠️ אתר דו-מערכתי נשאר דו-מערכתי אחרי שדרוג
+    // ============================================================
+    // ‏`HasSecondSystem` נגזר משני הרגיסטרים, וברירת המחדל שלהם היא 0.
+    // שדרוג שלא נושא אותם הופך את פלורנטין לאתר **חד-מערכתי** בשקט מוחלט:
+    // הבקר עונה, הסמל ירוק, והמערכת השנייה פשוט אינה מדווחת — לא תפעולים
+    // ולא מצב — בלי שורת לוג ובלי שום מסך שאומר שמשהו נמחק.
+    //
+    // ⚠️ ערכים לא-ברירתיים (293/294), ולכן הטענה אינה יכולה לעבור
+    // "במקרה" — אותו לקח כמו `ANonDefaultPortSurvivesTheUpgrade`.
+    [Fact]
+    public void ATwoSystemSiteStaysTwoSystemAfterAnUpgrade()
+    {
+        var old = new SiteConfig { SiteId = "3510" };
+        old.Plc.ModeRegister2 = 293;
+        old.Plc.CardRegister2 = 294;
+        Assert.True(old.Plc.HasSecondSystem, "התנאי המקדים לא מתקיים — הבדיקה חסרת ערך");
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+
+        Assert.Equal(293, fresh.Plc.ModeRegister2);
+        Assert.Equal(294, fresh.Plc.CardRegister2);
+        Assert.True(fresh.Plc.HasSecondSystem,
+            "שדרוג הפך אתר דו-מערכתי לחד-מערכתי — המערכת השנייה תפסיק לדווח בלי סימן");
+
+        // ⚠️ ודרך הדיסק וחזרה, כמו שקורה באתר.
+        SiteConfig? onDisk = ConfigStore.FromJson(ConfigStore.ToJson(fresh));
+        Assert.True(onDisk!.Plc.HasSecondSystem);
+    }
+
+    // ⚠️ והצד השני: 21 האתרים החד-מערכתיים נשארים חד-מערכתיים.
+    [Fact]
+    public void ASingleSystemSiteDoesNotGainASecondSystemInTheUpgrade()
+    {
+        var old = new SiteConfig { SiteId = "2438" };
+
+        SiteConfig fresh = ConfigStore.BuildResetConfig(old);
+
+        Assert.False(fresh.Plc.HasSecondSystem);
     }
 
     // ⚠️ **פורט לא-ברירתי** — זו הטענה שבאמת בודקת את שמירת הפורט.

@@ -96,18 +96,8 @@ public class AgentVersionTests
         //
         // בדיקה על הטקסט כי אין דרך אחרת: `installer.iss` הוא Inno Setup
         // ואינו ניתן להרצה מכאן. אותו שיקול כמו ביתר הבדיקות בקובץ הזה.
-        string iss = File.ReadAllText(Path.Combine(AgentRoot().FullName, "installer.iss"));
-        int section = iss.IndexOf("[UninstallDelete]", StringComparison.Ordinal);
-        Assert.True(section > 0, "לא נמצא [UninstallDelete]");
-
-        int next = iss.IndexOf("\n[", section + 1, StringComparison.Ordinal);
-        string body = next > 0 ? iss[section..next] : iss[section..];
-
-        foreach (string line in body.Split('\n'))
+        foreach (string t in UninstallDeleteTypeLines())
         {
-            string t = line.Trim();
-            if (t.StartsWith(';') || !t.StartsWith("Type:", StringComparison.Ordinal)) continue;
-
             // מחיקה גורפת של תיקיית ProgramData — בכל צורה שהיא
             Assert.False(
                 t.Contains("{commonappdata}\\Parkomat\"", StringComparison.Ordinal) ||
@@ -117,6 +107,62 @@ public class AgentVersionTests
             Assert.DoesNotContain("config.json", t);
             Assert.DoesNotContain("\\logs", t);
         }
+    }
+
+    // ============================================================
+    // ⚠️ הסרה אינה מוחקת נתונים שטרם נמסרו
+    // ============================================================
+    // הכלל שכתוב ב-[UninstallDelete] עצמו הוא "נמחק רק מה שנוצר מחדש
+    // מעצמו". `queue` ו-`queue-supabase` הם **ההפך הגמור**: כל קובץ שם הוא
+    // תפעול או הודעה שלא הגיעו לשרת, והם קיימים בדיוק כדי לשרוד את מה
+    // שהורג את הסוכן — נפילת חשמל, קריסה, **והסרה-והתקנה**.
+    //
+    // ⚠️ וזה לא תרחיש נדיר: שדרוג בשטח הוא לעתים קרובות הסרה ואז התקנה,
+    // ודווקא אתר שיש לו תור מלא (נתק ארוך) הוא האתר שמגיעים אליו לתקן.
+    // ההסרה הייתה מוחקת את התפעולים באותו רגע — אובדן שאין ממנו חזרה,
+    // כי הגלאי מונע-קצוות ומעבר שהוחמץ אינו מזוהה שוב.
+    [Fact]
+    public void UninstallKeepsUndeliveredMessages()
+    {
+        foreach (string t in UninstallDeleteTypeLines())
+        {
+            Assert.False(
+                Regex.IsMatch(t, @"\\queue(-supabase)?""", RegexOptions.IgnoreCase),
+                $"הסרה מוחקת תור של הודעות שטרם נמסרו: {t}");
+        }
+    }
+
+    /// <summary>
+    /// שורות ה-<c>Type:</c> של סעיף <c>[UninstallDelete]</c> <b>האמיתי</b>.
+    ///
+    /// ⚠️ <b>העוגן הוא תחילת שורה, וזה תיקון של שער עיוור.</b> שתי הבדיקות
+    /// כאן חיפשו <c>IndexOf("[UninstallDelete]")</c> — והמופע הראשון בקובץ
+    /// יושב ב<b>הערת היסטוריית הגרסאות</b> ("1.0.32 — ... [UninstallDelete]
+    /// הכיל"). הקטע שנחתך משם עד הסעיף הבא לא הכיל אף שורת <c>Type:</c>,
+    /// כלומר <c>UninstallNeverDeletesTheSitesIdentity</c> בדקה הערה ועברה
+    /// ירוקה על כל תוכן שהוא. נחשף כשבדיקה חדשה דרשה רצפה.
+    ///
+    /// ⚠️ ולכן הרצפה יושבת כאן, בעזר המשותף: עוגן שיזוז שוב ייכשל בקול
+    /// ולא יחזיר רשימה ריקה שכל טענה עליה "מתקיימת".
+    /// </summary>
+    private static List<string> UninstallDeleteTypeLines()
+    {
+        string iss = File.ReadAllText(Path.Combine(AgentRoot().FullName, "installer.iss"));
+        Match header = Regex.Match(iss, @"^\[UninstallDelete\]\s*$", RegexOptions.Multiline);
+        Assert.True(header.Success, "לא נמצא סעיף [UninstallDelete] בתחילת שורה");
+
+        int bodyStart = header.Index + header.Length;
+        Match next = Regex.Match(iss[bodyStart..], @"^\[", RegexOptions.Multiline);
+        string body = next.Success ? iss[bodyStart..(bodyStart + next.Index)] : iss[bodyStart..];
+
+        var lines = body.Split('\n')
+            .Select(l => l.Trim())
+            .Where(t => !t.StartsWith(';') && t.StartsWith("Type:", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(lines.Count > 3,
+            $"נמצאו רק {lines.Count} שורות Type ב-[UninstallDelete] — השער אינו בודק דבר");
+        return lines;
     }
 
     [Fact]

@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Parkomat.Agent.Core.Configuration;
+using Parkomat.Agent.Tray.Forms;
 
 namespace Parkomat.Agent.Service.Tests;
 
@@ -52,10 +54,26 @@ public class SettingsFormWiringTests
         // OnSave בונה SiteConfig **חדש**, ולכן בלי הנשיאה הזו כל לחיצה על
         // "שמור" הייתה מוחקת אותם בשקט: אתר שהופנה ל-Postgres אחר היה חוזר
         // לברירת המחדל ברגע שמישהו שינה כתובת PLC.
+        //
+        // ⚠️ **נבדק עכשיו על ההתנהגות ולא על שדה נשיאה.** `_sbOverrides` הוסר:
+        // "שמור" עורך את ה-config שנטען (SettingsFormEdit.Apply), ולכן העקיפות
+        // שורדות כי איש אינו נוגע בהן — לא כי מישהו זכר להעתיק אותן.
+        var loaded = new SiteConfig { SiteId = "2438" };
+        loaded.Supabase.Url = "https://postgrest.parkomat.internal";
+        loaded.Supabase.AnonKey = "self-hosted-key";
+        loaded.Supabase.Email = "agent-2438@parkomat.internal";
+
+        SiteConfig saved = SettingsFormEdit.Apply(loaded, SettingsFormEditTests.Values());
+
+        Assert.Equal("https://postgrest.parkomat.internal", saved.Supabase.Url);
+        Assert.Equal("self-hosted-key", saved.Supabase.AnonKey);
+        Assert.Equal("agent-2438@parkomat.internal", saved.Supabase.Email);
+
+        // ⚠️ והטופס באמת עובר דרך העריכה, על מה שנטען — אחרת הבדיקה שמעל
+        // מוכיחה פונקציה שאיש אינו קורא לה.
         string src = Form();
-        Assert.Matches(new Regex(@"_sbOverrides\s*=\s*c\.Supabase\s*;"), src);
-        foreach (string prop in new[] { "Url", "AnonKey", "Email" })
-            Assert.Matches(new Regex($@"{prop}\s*=\s*_sbOverrides\.{prop}"), src);
+        Assert.Matches(new Regex(@"_loaded\s*=\s*c\s*;"), src);
+        Assert.Matches(new Regex(@"SettingsFormEdit\.Apply\(\s*_loaded\s*,"), src);
     }
 
     [Fact]
@@ -64,8 +82,20 @@ public class SettingsFormWiringTests
         // ⚠️ שם המשתמש נגזר מקוד האתר. בלי ההשמה הזו ב-OnSave, השמירה
         // הייתה מייצרת הגדרות עם קוד ריק — Enabled=false עד הטעינה הבאה,
         // כלומר "שמרתי סיסמה ולא קרה כלום".
-        Assert.Matches(new Regex(@"SiteId\s*=\s*siteId,[\s\S]{0,200}?Password\s*=\s*_sbPass"),
-            Form());
+        //
+        // ⚠️ נבדק על ההתנהגות: ההשמה עברה מבלוק `new SupabaseConfig` בטופס אל
+        // SettingsFormEdit.Apply. קוד אתר **חדש** בטופס מול קוד ישן בקובץ.
+        var loaded = new SiteConfig { SiteId = "1111" };
+        loaded.Supabase.SiteId = "1111";
+
+        SiteConfig saved = SettingsFormEdit.Apply(loaded,
+            SettingsFormEditTests.Values(siteId: "2438", supabasePassword: "pw"));
+
+        Assert.Equal("2438", saved.Supabase.SiteId);
+        Assert.True(saved.Supabase.Enabled, "שמירה עם סיסמה השאירה את המסלול הישיר כבוי");
+
+        // ⚠️ והטופס מעביר את השדה עצמו, לא ערך מהקובץ.
+        Assert.Matches(new Regex(@"SiteId\s*=\s*siteId\s*,"), Form());
     }
 
     [Fact]

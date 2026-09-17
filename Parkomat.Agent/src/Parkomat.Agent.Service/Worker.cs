@@ -22,8 +22,14 @@ public class Worker : BackgroundService
     // ⚠️ **קובץ נפרד לזיכרון של המערכת השנייה.** קובץ אחד לשתיהן היה
     // משחזר את מצב מערכת 1 לתוך מערכת 2 — פעולה פיקטיבית בכל עלייה,
     // בדיוק התקלה ששחזור המצב קיים כדי למנוע.
-    private static string SecondDetectorFile =>
-        AgentPaths.DetectorStateFile.Replace(".json", "-2.json");
+    //
+    // ⚠️ **וזה בדיוק מה שקרה.** כאן עמד `Replace(".json", "-2.json")` — אבל
+    // `DetectorStateFile` הוא `...\detector-state`, **בלי סיומת**. ה-Replace
+    // לא מצא מה להחליף, שתי המערכות כתבו לאותו קובץ, מערכת 2 נכתבה אחרונה
+    // בכל דגימה, וכל עלייה שחזרה את ה-MODE והכרטיס שלה **לתוך מערכת 1**.
+    // ההערה שמעל תיארה את הכוונה, והקוד מימש את ההפך — בלי שום שגיאה.
+    // נעול ב-WorkerLossPathsTests.TheSecondSystemHasItsOwnDetectorStateFile.
+    private static string SecondDetectorFile => AgentPaths.DetectorStateFile + "-2";
 
     private readonly ILogger<Worker> _logger;
 
@@ -57,6 +63,35 @@ public class Worker : BackgroundService
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
                 .InformationalVersion.Split('+')[0] ?? "unknown");
         _logger.LogInformation("Config loaded for site '{SiteId}'", config.SiteId);
+
+        // ============================================================
+        // ⚠️ config.json שאינו ניתן לפענוח — נאמר כאן, ולא מאחורי "SITE ID"
+        // ============================================================
+        // ‏`Load` מחזירה ברירות מחדל על קובץ כזה, ולכן הסוכן ייעצר למטה על
+        // "מזהה אתר לא תקין" — הודעה שמפנה לטופס ההגדרות, כלומר לפעולה
+        // שדורסת את הקובץ. בלי השורה הזו אף אחד לא יודע שהזהות עדיין שם,
+        // בתוך קובץ שבור, ושאפשר לשחזר אותה.
+        //
+        // ⚠️ והאיפוס של ההתקנה **לא** דרס אותו (ConfigStore.ApplyResetMarker)
+        // — עד כה הוא כתב ברירות מחדל מעליו, ומחק את סיסמת Supabase שמוצגת
+        // פעם אחת בהנפקה.
+        try
+        {
+            string? corruptCopy = ConfigStore.PreserveIfUnreadable(AgentPaths.ConfigFile);
+            if (corruptCopy is not null)
+                _logger.LogCritical(
+                    "config.json EXISTS BUT CANNOT BE PARSED — it was left untouched (not reset, not " +
+                    "overwritten). A copy is at {Copy}. The agent is running on defaults and will not " +
+                    "report until someone repairs {Path} by hand or re-enters the settings.",
+                    corruptCopy, AgentPaths.ConfigFile);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(
+                "config.json exists but cannot be parsed, AND a safety copy could not be made: {Message}. " +
+                "Saving settings over it will be refused until a copy can be made. Copy {Path} by hand.",
+                ex.Message, AgentPaths.ConfigFile);
+        }
 
         // ============================================================
         // בלי מזהה אתר אין למי לשדר — ועוצרים כאן
@@ -582,10 +617,18 @@ public class Worker : BackgroundService
         // ל-int.MinValue כדי שהקריאה הראשונה לעולם לא תיראה כירידה.
         int previousCycle = int.MinValue;
 
-        // מה שכבר נשמר לדיסק, כדי לא לכתוב את אותו מצב שוב בכל דגימה.
-        // מאותחלים ממה שנטען (או null), כך שהשמירה הראשונה תקרה רק על שינוי אמיתי.
-        int? savedMode = saved?.PreviousMode;
-        string savedCard = saved?.OperationCard ?? "";
+        // ============================================================
+        // ⚠️ מתי נכתב זיכרון הגלאי — ההחלטה ב-DetectorStateSaver, קובץ לכל מערכת
+        // ============================================================
+        // עד כה: באתר חד-מערכתי רק על שינוי, ובאתר דו-מערכתי **בכל דגימה**.
+        // שתי ההחלטות היו שגויות, בכיוונים הפוכים:
+        //   • רק על שינוי — החותם בקובץ הוא רגע השינוי, ו-MaxAge (10 דקות)
+        //     פסל אחרי הפעלה מחדש MODE שתקוע יותר מזה. תפעול פיקטיבי, בדיוק
+        //     באתר התקוע שהשחזור נבנה בשבילו.
+        //   • בכל דגימה — ארבע פעולות דיסק בשנייה על מחשב שמריץ גם את המחסום.
+        // המשמר כותב על שינוי, ובלי שינוי — פעם בדקה.
+        var firstSaver = new DetectorStateSaver(AgentPaths.DetectorStateFile);
+        var secondSaver = new DetectorStateSaver(SecondDetectorFile);
 
         // ה-MODE שנרשם לאחרונה ללוג. משמש כדי לרשום (ב-Information) *כל* שינוי MODE
         // ואת התרגום שלו — כך שבשדה רואים מה הבקר מחזיר ואם הערך בכלל ממופה ל-state.
@@ -599,8 +642,11 @@ public class Worker : BackgroundService
             // הייתה גדלה בכל סבב עד שהיא חורגת מתקרת 200 של השרת — ואז **כל**
             // שליחה נדחית, לנצח, בגלל סבב אחד שנכשל לפני שעה.
             //
-            // ומה שנשאר מהסבב הקודם אכן נזרק: MQTT הוא מקור האמת בשלב הזה,
-            // וההודעות כבר נמסרו שם.
+            // ⚠️ ומה שנשאר מהסבב הקודם **כבר אינו אמור להיות כאן.** המשפט
+            // שעמד כאן — "נזרק, כי MQTT הוא מקור האמת" — היה נכון רק כש-MQTT
+            // דולק; באתר ישיר-בלבד הוא היה אובדן של שינוי מצב. סוף הלולאה מכניס
+            // לתור כל מה שלא אושר, ולכן שארית כאן פירושה שגם הדיסק סירב — וזה
+            // כבר נרשם ב-Error שם.
             mirrored.Clear();
 
             // ===== חיוּת: "הלולאה מסתובבת" — לפני הכול, ובלי תנאי =====
@@ -651,6 +697,13 @@ public class Worker : BackgroundService
                 // שם היה משאיר אותו אפור לנצח בלי שאף אחד יראה שגיאה.
                 if (config.MqttEnabled)
                     WriteHiveMqStatus(mqtt.IsConnected && mqtt.HiveMqBridgeConnected);
+                // ⚠️ **ובאתר ישיר-בלבד — גם בכל סבב, ולא רק אחרי שליחה.** הקובץ
+                // נכתב עד כה רק בענף ההצלחה של השליחה, כלומר באתר שקט פעם בדקה
+                // (הפעימה), וה-Tray מחשיב אותו טרי max(10, 3×poll) שניות. הסמל
+                // היה צבעוני עשר שניות ואפור חמישים, בכל דקה, באתר שעבד מצוין.
+                // ההחלטה (כשל אחרון, או שקט מעל 3 דקות ⇒ לא מחובר) ב-DirectLinkStatus.
+                else if (supabase is not null)
+                    WriteHiveMqStatus(DirectLinkStatus.IsUp(supaFailures, lastBeat, DateTimeOffset.UtcNow));
 
                 if (plcJustRecovered)
                 {
@@ -732,16 +785,23 @@ public class Worker : BackgroundService
                     // משדר את אותה תקלה בכל סבב, לנצח.
                     bool errorReported = false;
 
-                    if (await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(errorState, stoppingToken),
-                            "error state (PLC timeout)", stoppingToken))
+                    // ⚠️ **רק כש-MQTT דולק.** באתר ישיר-בלבד אין ברוקר מקומי, ו-
+                    // `TryPublishAsync` ניסה להתחבר ל-localhost:1883 ורשם **אזהרה**
+                    // על כל ניסיון — שורה שקרית ששולחת את מי שקורא את הלוג לתקן
+                    // ברוקר שכובה בכוונה. אותו כלל כמו בשלב ג': מדלגים, לא נכשלים.
+                    if (config.MqttEnabled)
                     {
-                        errorReported = true;
-                        mqttWasConnected = true;
-                        _logger.LogInformation("-> Published STATE: error (PLC timeout)");
-                    }
-                    else
-                    {
-                        mqttWasConnected = false;
+                        if (await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(errorState, stoppingToken),
+                                "error state (PLC timeout)", stoppingToken))
+                        {
+                            errorReported = true;
+                            mqttWasConnected = true;
+                            _logger.LogInformation("-> Published STATE: error (PLC timeout)");
+                        }
+                        else
+                        {
+                            mqttWasConnected = false;
+                        }
                     }
 
                     // ============================================================
@@ -761,34 +821,83 @@ public class Worker : BackgroundService
                     if (supabase is not null)
                     {
                         var item = BatchPayload.From(errorState);
+
+                        // ============================================================
+                        // ⚠️ תור הוא מסירה — ותקלה שנכנסה לתור **כבר דווחה**
+                        // ============================================================
+                        // עד כה כתיבה שנכשלה נכנסה לתור אבל השאירה את הדגל false.
+                        // הסף (10 כשלים) כבר נחצה, ולכן **כל סבב** — timeout של הבקר
+                        // ועוד דגימה, כארבע שניות — חזר לכאן: התחברות, שליחה, כשל,
+                        // **ועוד עותק בתור**. אלפי כפילויות ביום על תקלה אחת, וכל
+                        // אחת מהן בקשה לשרת שכבר מגן על עצמו (429).
+                        //
+                        // ⚠️ **וחלון הריסון חל גם כאן.** הנתיב הזה עקף את
+                        // `supaNextAttempt` שנבנה אחרי 78,000 הבקשות ביום באתר 1326 —
+                        // ודווקא כשהבקר והרשת נופלים יחד. שער סגור ⇒ ישר לתור.
+                        //
+                        // ⚠️ הלכה מכאן: התור מתרוקן בשלב הישיר, שה-`continue` למטה מדלג
+                        // עליו — כלומר תקלה שנכנסה לתור תגיע כשהבקר יחזור, **בחותם
+                        // המקורי**. זה המחיר של "לא לנסות שוב כל ארבע שניות".
+                        string? queueReason = null;
                         try
                         {
-                            WriteResult res = await supabase.SendAsync(new[] { item }, latestSystems, stoppingToken);
-                            if (res.Ok)
+                            if (DateTimeOffset.UtcNow < supaNextAttempt)
                             {
-                                errorReported = true;
-                                _logger.LogInformation(
-                                    "-> Supabase: error state (PLC timeout) written directly.");
+                                queueReason = "was not attempted (retry window closed)";
                             }
                             else
                             {
-                                // ⚠️ לתור, ולא לזריקה. הבקר עלול לחזור בעוד שעה,
-                                // ואז הסבב המוצלח הראשון ירוקן את התור — והמקטע
-                                // ייפתח בזמן שבו התקלה קרתה ולא בזמן ההתאוששות.
-                                supaQueue.Enqueue(item);
-                                supaWaiting = supaQueue.Count;
-                                _logger.LogWarning(
-                                    "Direct write of the PLC-timeout error failed ({Status}): {Error}. " +
-                                    "Queued ({Total} waiting).", res.Status, res.Error, supaWaiting);
+                                WriteResult res = await supabase.SendAsync(new[] { item }, latestSystems, stoppingToken);
+                                if (res.Ok)
+                                {
+                                    errorReported = true;
+                                    // אותו רישום כמו בשלב הישיר: השרת רשם את הקריאה
+                                    // כסימן חיים, והריסון מתאפס.
+                                    lastBeat = DateTimeOffset.UtcNow;
+                                    supaFailures = 0;
+                                    supaNextAttempt = DateTimeOffset.MinValue;
+                                    _logger.LogInformation(
+                                        "-> Supabase: error state (PLC timeout) written directly.");
+                                }
+                                else
+                                {
+                                    supaFailures = SupabaseRetryPolicy.NextFailureCount(
+                                        supaFailures, res.Status, res.Error);
+                                    supaNextAttempt = DateTimeOffset.UtcNow.AddSeconds(
+                                        SupabaseRetryPolicy.DelaySeconds(supaFailures));
+                                    queueReason = $"failed ({res.Status}): {res.Error}";
+                                }
                             }
                         }
                         catch (Exception direct)
                         {
-                            supaQueue.Enqueue(item);
-                            supaWaiting = supaQueue.Count;
-                            _logger.LogWarning(
-                                "Direct write of the PLC-timeout error threw: {Message}. " +
-                                "Queued ({Total} waiting).", direct.Message, supaWaiting);
+                            queueReason = "threw: " + direct.Message;
+                        }
+
+                        if (queueReason is not null)
+                        {
+                            // ⚠️ לתור, ולא לזריקה. הבקר עלול לחזור בעוד שעה,
+                            // ואז הסבב המוצלח הראשון ירוקן את התור — והמקטע
+                            // ייפתח בזמן שבו התקלה קרתה ולא בזמן ההתאוששות.
+                            //
+                            // ⚠️ ובתוך try: חריגת דיסק כאן הייתה בורחת מה-catch של
+                            // קריאת ה-PLC ומ-ExecuteAsync — ועוצרת את השירות כולו.
+                            try
+                            {
+                                supaQueue.Enqueue(item);
+                                supaWaiting = supaQueue.Count;
+                                errorReported = true;
+                                _logger.LogWarning(
+                                    "Direct write of the PLC-timeout error {Reason}. " +
+                                    "Queued ({Total} waiting) — it will go out with its original timestamp.",
+                                    queueReason, supaWaiting);
+                            }
+                            catch (Exception qex)
+                            {
+                                _logger.LogError(qex,
+                                    "PLC-timeout error was neither sent ({Reason}) nor queued: {Message}. " +
+                                    "Will try again next cycle.", queueReason, qex.Message);
+                            }
                         }
                     }
 
@@ -821,20 +930,20 @@ public class Worker : BackgroundService
             }
 
             // שומרים את מצב ה-detector כדי שהפעלה מחדש תמשיך ולא תפתח פעולה
-            // חדשה. **רק כשמשהו זז** — כתיבה בכל דגימה הייתה עוד I/O לשנייה
-            // בלי שום תועלת, והחותם בקובץ ממילא מתעדכן בכל שינוי אמיתי.
-            if (detector.PreviousMode != savedMode || detector.OperationCard != savedCard)
-            {
-                savedMode = detector.PreviousMode;
-                savedCard = detector.OperationCard;
-                new DetectorState(reading.Mode, detector.OperationCard).Save();
-            }
-
+            // חדשה. **מתי** — ב-DetectorStateSaver: על שינוי, ובלי שינוי פעם
+            // בדקה, כדי שהחותם יאמר "מתי ראינו את המצב" ולא "מתי הוא זז".
+            //
+            // ⚠️ באתר דו-מערכתי הגלאי הבודד אינו מעבד דבר (TwoSystemDetector
+            // מחזיק את שניהם), ולכן כל מערכת נשמרת מהגלאי שלה, לקובץ שלה.
+            DateTimeOffset observedAt = DateTimeOffset.UtcNow;
             if (twoSystems is not null)
             {
-                new DetectorState(reading.Mode, twoSystems.First.OperationCard).Save();
-                new DetectorState(reading.Mode2 ?? 4, twoSystems.Second.OperationCard)
-                    .Save(SecondDetectorFile);
+                firstSaver.Observe(reading.Mode, twoSystems.First.OperationCard, observedAt);
+                secondSaver.Observe(reading.Mode2 ?? 4, twoSystems.Second.OperationCard, observedAt);
+            }
+            else
+            {
+                firstSaver.Observe(reading.Mode, detector.OperationCard, observedAt);
             }
 
             // המצב הנוכחי המתורגם — לשימוש בשידור-מחדש אחרי חיבור-מחדש.
@@ -858,18 +967,31 @@ public class Worker : BackgroundService
             // בזיכרון ולא בתור שעל הדיסק, בניגוד לתפעול: מצב מתקן את עצמו —
             // העלייה הבאה משדרת resync עם חותם טרי, ושומר ה-backfill בשרת
             // ידחה ממילא מצב ישן שהגיע באיחור.
+            //
+            // ⚠️ **אבל "בזיכרון" פירושו עד סוף הסבב, לא "עד הסבב הבא".** מה שלא
+            // אושר בשלב הישיר — שער סגור, כשל, חריגה — נכנס לתור בסוף הלולאה.
+            // "מתקן את עצמו" נכון רק לעלייה הבאה; באתר ישיר-בלבד שלא עולה מחדש
+            // מצב שנזרק פשוט אינו מגיע, עד השינוי הבא — שעלול לא לבוא שעות.
             if (result.State is not null && supabase is not null)
                 mirrored.Add(BatchPayload.From(result.State));
 
             // לוכדים את הפעולות שהמוח זיהה *מיד* לתוך תור השידור — לפני כל ניסיון
             // שידור (שעלול לזרוק). כך אף כניסה/יציאה לא אובדת גם אם הברוקר נופל כאן.
+            //
+            // ⚠️ **כל הכנסה לתור בתוך try משלה.** `Enqueue` כותב קובץ, וזורק על
+            // דיסק מלא, הרשאות או אנטי-וירוס. כאן זה לא היה עטוף: החריגה ברחה
+            // מ-ExecuteAsync, וב-.NET ברירת המחדל היא **לעצור את ה-host** — אתר
+            // שהבקר שלו תקין מפסיק לדווח הכול בגלל קובץ אחד. ושתי הכניסות נפרדות:
+            // כשל בתור של MQTT אינו סיבה לא לנסות את התור של Supabase.
+            // נעול ב-WorkerLossPathsTests.EveryEnqueueInTheWorkerIsInsideATry.
             foreach (var op in result.Operations)
             {
                 // התקרה והמחיקה של הישן ביותר נאכפות בתוך PendingQueue.
                 // ⚠️ ולא כשה-MQTT כבוי: תור שאיש לא ירוקן גדל עד התקרה ואז
                 // מוחק את הישן ביותר בכל סבב — כתיבה לדיסק בלי סוף, במחשב
                 // שגם מריץ את המחסום, בשביל הודעות שלא יישלחו לעולם.
-                if (config.MqttEnabled) pendingOps.Enqueue(op);
+                try { if (config.MqttEnabled) pendingOps.Enqueue(op); }
+                catch (Exception qex) { LogQueueFailure(qex, "MQTT", op); }
 
                 // ⚠️ **המרכוז ל-Supabase קורה כאן — בנקודת ההפקה, ואל הדיסק.**
                 //
@@ -891,8 +1013,12 @@ public class Worker : BackgroundService
                 // שעליה בנוי pendingOps.
                 if (supabase is not null)
                 {
-                    supaQueue.Enqueue(BatchPayload.From(op));
-                    supaWaiting++;
+                    try
+                    {
+                        supaQueue.Enqueue(BatchPayload.From(op));
+                        supaWaiting++;
+                    }
+                    catch (Exception qex) { LogQueueFailure(qex, "Supabase", op); }
                 }
             }
 
@@ -1288,6 +1414,17 @@ public class Worker : BackgroundService
                     foreach (var (_, m) in retry) outgoing.Add(m);
                     outgoing.AddRange(mirrored);
 
+                    // ============================================================
+                    // ⚠️ אצווה ריקה יוצאת **רק** כפעימה שהגיע זמנה
+                    // ============================================================
+                    // השער נפתח גם על `supaWaiting > 0`. מאז ש-`LoadAll` **משאיר**
+                    // קובץ שלא נקרא כרגע (במקום למחוק אותו), ייתכן תור לא-ריק
+                    // ש-`LoadAll` מחזיר ממנו כלום — ובלי התנאי הזה `outgoing` ריק
+                    // הפך ל-`BeatAsync` **בכל סבב**: בקשה לשנייה, הלולאה של אתר
+                    // 1326 (78,000 ביום) מדלת אחרת. וגם לא `beatDue`: הוא דורש תור
+                    // ריק, ולכן קובץ נעול היה משתיק את הפעימה לגמרי — ו-
+                    // mark_silent_agents היה מסמן אתר חי כמנותק.
+                    if (outgoing.Count > 0 || DateTimeOffset.UtcNow - lastBeat >= HeartbeatInterval)
                     {
                         // ⚠️ **שתי דלתות שונות, וזה לא סגנון.** `SendAsync` חוסם
                         // אצווה ריקה בשורה הראשונה ומחזיר הצלחה בלי לשלוח — אז
@@ -1338,7 +1475,11 @@ public class Worker : BackgroundService
                             // היו בו נשארות שם — הן לא נמחקו, כי המחיקה קורית
                             // רק על הצלחה. הוספה חוזרת שלהן הייתה מכפילה אותן
                             // בכל כישלון, והתור היה מתפוצץ דווקא בנתק ארוך.
+                            int queued = mirrored.Count;
                             foreach (var m in mirrored) supaQueue.Enqueue(m);
+                            // ⚠️ מתנקה **מיד**, ולא רק בסוף השער: סוף הלולאה מכניס
+                            // לתור כל שארית, ושארית שכבר בתור הייתה נכנסת פעמיים.
+                            mirrored.Clear();
 
                             // ⚠️ כשל הזדהות קופץ ישר לתקרה: סיסמה שגויה
                             // תישאר שגויה גם בעוד שנייה, ומאות הניסיונות
@@ -1357,7 +1498,7 @@ public class Worker : BackgroundService
                                 "Supabase write failed ({Status}): {Error}. " +
                                 "{Queued} message(s) queued for retry ({Total} waiting). " +
                                 "Next attempt in {Wait}s.",
-                                res.Status, res.Error, mirrored.Count, supaQueue.Count, wait);
+                                res.Status, res.Error, queued, supaQueue.Count, wait);
                         }
                     }
 
@@ -1379,6 +1520,45 @@ public class Worker : BackgroundService
                 // ⚠️ נתפס בנפרד מ-MQTT: כשל בכתיבה הישירה אינו כשל ברוקר,
                 // וערבובם היה מדווח "הברוקר נפל" על תקלת רשת ל-Supabase.
                 _logger.LogWarning("Direct write cycle failed: {Message}", direct.Message);
+            }
+
+            // ============================================================
+            // ⚠️ מה שלא אושר — לתור, ולא לניקוי של הסבב הבא
+            // ============================================================
+            // עד כה `mirrored` נכנס לתור **רק** בענף הכשל של השליחה. אבל יש עוד
+            // שתי דרכים לא לשלוח: חלון הריסון סגור (`supaNextAttempt` בעתיד —
+            // עד חמש דקות אחרי כשל), או חריגה בשלב הישיר. בשתיהן השער מדולג,
+            // והניקוי בתחילת הסבב הבא **מחק את המצב**.
+            //
+            // ⚠️ באתר ישיר-בלבד זה אובדן מוחלט של שינוי מצב: אין מסלול אחר
+            // שנשא אותו. תקלה שקרתה דקה אחרי גמגום רשת פשוט לא הגיעה לשרת.
+            //
+            // ⚠️ כאן, אחרי ה-catch, ולא בתוך השער: רק כך אותה שורה מכסה גם שער
+            // סגור וגם חריגה. הצלחה וכשל מנקים את `mirrored` בעצמם, כך שמה
+            // שנשאר כאן לא נשלח ולא נכנס לתור.
+            if (supabase is not null && mirrored.Count > 0)
+            {
+                int spilled = 0;
+                try
+                {
+                    foreach (var m in mirrored)
+                    {
+                        supaQueue.Enqueue(m);
+                        spilled++;
+                    }
+                    supaWaiting = supaQueue.Count;
+                    _logger.LogInformation(
+                        "Direct write did not go out this cycle — {Count} message(s) queued ({Total} waiting).",
+                        spilled, supaWaiting);
+                }
+                catch (Exception qex)
+                {
+                    // ⚠️ Error: זה האובדן עצמו, והשורה הזו היא הראיה היחידה שהוא קרה.
+                    _logger.LogError(qex,
+                        "Could not queue {Lost} unsent message(s) for the direct path — they are LOST: {Message}",
+                        mirrored.Count - spilled, qex.Message);
+                }
+                mirrored.Clear();
             }
 
             // המתנה עד הדגימה הבאה, לפי ההגדרות.
@@ -1435,6 +1615,15 @@ public class Worker : BackgroundService
             _logger.LogWarning("Auto-start health check failed: {Message}", ex.Message);
         }
     }
+
+    // תפעול שלא נכנס לתור. ⚠️ **Error ולא Warning, ועם פרטי התפעול:** זה אובדן
+    // נתון שאין ממנו חזרה (הגלאי כבר התקדם), והשורה הזו היא הראיה היחידה
+    // שהוא קרה — בלעדיה מאזן הכניסות/יציאות פשוט לא מסתדר, בלי הסבר.
+    private void LogQueueFailure(Exception ex, string queue, OperationMessage op) =>
+        _logger.LogError(ex,
+            "Could not queue OPERATION for {Queue}: {StartEnd}/{EntryExit} card='{Card}' cycle={Cycle} " +
+            "at {Timestamp} — it is LOST for that path: {Message}",
+            queue, op.StartEnd, op.EntryExit, op.User, op.CycleCounter, op.Timestamp, ex.Message);
 
     // מנסה לפרסם הודעה תוך הבטחת חיבור, ומחזיר האם הצליח (בלי לזרוק).
     // משמש בנתיב תקלת ה-PLC, כדי ששידור ה-error לא יפיל את הלולאה אם ה-Broker למטה.

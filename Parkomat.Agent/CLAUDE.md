@@ -306,7 +306,14 @@ unchanged MODE produces nothing and a changed one produces a real end/start pair
   `DetectorRestoreTests` pins that relationship.
 - `Restore` throws if called after processing has begun — mid-run it would overwrite live
   state and synthesise a transition.
-- State is written only when MODE or the card changes, not every poll.
+- State is written when MODE or the card changes **and refreshed once a minute otherwise**
+  (`DetectorStateSaver`). ⚠️ "Only on change" was a bug: the age bound then measured time since
+  the last *change*, so a MODE stuck longer than 10 minutes was rejected on restart and opened
+  the phantom operation anyway. Every poll is wrong too — the two-system block did that, four
+  disk writes a second. `RefreshInterval + RestartPolicy.MaxDelaySeconds < MaxAge` is pinned.
+- ⚠️ A two-system site keeps system 2 in `detector-state-2`. The path used to be derived with
+  `Replace(".json", "-2.json")` on a file that has no extension, so both systems shared one file
+  and every restart restored system 2's MODE/card into system 1.
 
 ## ⚠️ `modpoll` counts from 1, the protocol counts from 0 — and the log looks wrong
 
@@ -573,7 +580,14 @@ file per pending operation under `AgentPaths.QueueFolder`.
   two operations in the same millisecond and without the counter the second overwrites the
   first. The 13-digit padding is what makes a *lexical* sort chronological.
 - A corrupt file is skipped, not fatal — one truncated file would otherwise block the whole
-  queue behind it forever, the exact opposite of the point.
+  queue behind it forever, the exact opposite of the point. ⚠️ **Deleted only when it fails to
+  parse** (`JsonException`); a file that cannot be *read* right now (sharing violation) is kept
+  for the next cycle — it used to be deleted too, losing a valid undelivered message.
+- ⚠️ **`Flush(true)` before the `Move`** (queue and `config.json`). tmp+Move protects against a
+  half-written file, not against one whose bytes never left the OS cache: the rename is
+  journaled at once, so a power cut in that window left a correctly-named *empty* file.
+- ⚠️ **Uninstall keeps `queue` and `queue-supabase`.** They are undelivered data, the opposite of
+  "regenerates by itself"; uninstall-then-install is a common field upgrade.
 
 ⚠️ **What is still not covered:** the queue only protects what the agent has *produced*. A
 PLC reading never taken is not recoverable by anything.
@@ -599,9 +613,16 @@ PLC -> Agent --+-> (MQTT) -> Mosquitto -> HiveMQ -> server -> Supabase
   runs on an empty string, `Enabled` stays false forever, and **nothing is logged**: the
   direct write simply never happens and it looks exactly like "this site was not switched on".
 - **The overrides (`Url`, `AnonKey`, `Email`) stay in `config.json` but not in the form.**
-  They are the exit door — repointing to another Postgres without touching 16 installers. The
-  form carries them through `OnSave` in `_sbOverrides` because it rebuilds `SiteConfig` from
-  scratch, and without that every "Save" would silently reset a repointed site.
+  They are the exit door — repointing to another Postgres without touching 16 installers.
+  ⚠️ `OnSave` now **edits the loaded config in place** (`SettingsFormEdit.Apply`, linked into the
+  tests) instead of rebuilding `SiteConfig`. The rebuild needed a carry field per control-less
+  value (`_sbOverrides`, `_mqttDisabled`), each added after it burned — and silently erased the
+  ones nobody carried: `NtpServer`, `NtpSyncIntervalMinutes`, `SiteName`.
+- ⚠️ **An unparseable `config.json` is never overwritten.** The install reset used to treat a
+  parse failure as "no previous config" and write defaults over it — site id, HiveMQ password
+  and the show-once Supabase password gone. Now the reset leaves it, `ConfigStore.Save` keeps a
+  `config.json.corrupt-<stamp>` copy before any overwrite, and the Worker logs `Critical`. A
+  *read* failure (file locked) is not a parse failure: no reset, and the flag stays.
 - **Dual write, MQTT authoritative — but the direct path is no longer best-effort.**
   ⚠️ This bullet used to end *"a failed batch is logged and not retried, because the message
   already went out over MQTT"*. That reasoning was sound **only while MQTT was the delivery

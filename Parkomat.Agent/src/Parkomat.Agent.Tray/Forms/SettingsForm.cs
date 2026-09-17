@@ -27,24 +27,16 @@ public class SettingsForm : Form
     // עד שממלאים אותם אחד-אחד.
     private readonly TextBox _sbPass = new();
 
-    // ⚠️ העקיפות (כתובת/מפתח/שם משתמש) אינן בטופס — אבל הן **חייבות לשרוד
-    // שמירה**. OnSave בונה SiteConfig חדש מהשדות, ולכן בלי השמירה הזו בזיכרון
-    // כל לחיצה על "שמור" הייתה מוחקת אותן בשקט: אתר שהופנה ל-Postgres אחר
-    // היה חוזר לברירת המחדל ברגע שמישהו שינה כתובת PLC. אותו דפוס כמו _plc.
-    private SupabaseConfig _sbOverrides = new();
-
     // ============================================================
-    // ⚠️ "האם MQTT כבוי" — נישא דרך הטופס, בדיוק כמו העקיפות שמעל
+    // ⚠️ ה-config שנטען — ו-"שמור" עורך **אותו**, לא בונה חדש
     // ============================================================
-    // `OnSave` בונה `MqttConfig` **מאפס** מארבעה שדות, ואין בטופס תיבה
-    // ל-`Disabled` (בכוונה — לחיצה אחת בשדה הייתה משביתה אתר). התוצאה, אם
-    // לא נושאים אותו: **כל לחיצה על "שמור" מדליקה מחדש את MQTT בשקט**.
-    //
-    // ⚠️ נמדד באתר 2438: הדגל הודלק ידנית, ההתקנה הבאה דרשה הקלדת סיסמה,
-    // ולחיצת "שמור" החזירה את Mosquitto לאוויר — בזמן שהלוג עדיין הראה
-    // הגדרה של מסלול ישיר. זה נראה בדיוק כאילו ההתקנה מחקה את הדגל,
-    // ושלח את האבחון למקום הלא נכון.
-    private bool _mqttDisabled;
+    // כאן ישבו `_sbOverrides` ו-`_mqttDisabled`: שדות נשיאה לערכים בלי פקד,
+    // כי `OnSave` בנה `SiteConfig` מאפס. כל אחד מהם נוסף **אחרי** שנשרף בשטח
+    // (אתר 2438 חזר ל-MQTT בלחיצת "שמור"; אתר שהופנה ל-Postgres אחר היה חוזר
+    // ל-Supabase) — ומה שאיש לא נשא נמחק: `NtpServer`, `NtpSyncIntervalMinutes`,
+    // `SiteName`. עריכה במקום (SettingsFormEdit.Apply) מסירה את הרשימה כולה:
+    // שדה חדש ב-SiteConfig שורד שמירה בלי שאיש יגע כאן.
+    private SiteConfig _loaded = new();
 
     // מחזיק את הגדרות ה-PLC (כולל הכתובות) בזיכרון, נערך דרך חלונית הכתובות.
     private PlcConfig _plc = new();
@@ -293,6 +285,7 @@ public class SettingsForm : Form
     private void LoadIntoFields()
     {
         SiteConfig c = ConfigStore.Load();
+        _loaded = c;
 
         _siteId.Text = c.SiteId;
         // מהדקים כל ערך לטווח של הפקד לפני ההשמה: NumericUpDown.Value זורק
@@ -312,8 +305,6 @@ public class SettingsForm : Form
         _mqttUser.Text = c.Mqtt.Username;
         _mqttPass.Text = c.Mqtt.Password;
 
-        _mqttDisabled = c.Mqtt.Disabled;
-        _sbOverrides = c.Supabase;
         _sbPass.Text = c.Supabase.Password;
     }
 
@@ -347,34 +338,21 @@ public class SettingsForm : Form
         _plc.IpAddress = _plcIp.Text.Trim();
         _plc.Port = (int)_plcPort.Value;
 
-        var c = new SiteConfig
+        // ⚠️ **עריכה של ה-config שנטען, לא בנייה של חדש** — אותו תיקון כמו
+        // ה-PLC שמעל, שכבה אחת למעלה. ראה `_loaded` ו-SettingsFormEdit.
+        SiteConfig c = SettingsFormEdit.Apply(_loaded, new SettingsFormValues
         {
             SiteId = siteId,
             PollIntervalMs = (int)_pollInterval.Value,
             Plc = _plc,
-            Mqtt = new MqttConfig
-            {
-                // ⚠️ נישא כפי שהוא — אין לו שדה בטופס. ראה _mqttDisabled.
-                Disabled = _mqttDisabled,
-                Host = _mqttHost.Text.Trim(),
-                Port = (int)_mqttPort.Value,
-                Username = _mqttUser.Text.Trim(),
-                Password = _mqttPass.Text
-            },
-            // ⚠️ Trim על כל השדות: רווח שנדבק בהדבקה נראה כערך תקין בטופס,
-            // ו-Enabled היה נדלק על הגדרות שאינן שלמות. נבדק ב-
-            // SupabaseWriteTests.WhitespaceIsNotAValue.
-            Supabase = new SupabaseConfig
-            {
-                // ⚠️ קוד האתר מהשדה שלמעלה, לא מהקובץ: שם המשתמש נגזר ממנו,
-                // ובלעדיו Enabled היה נשאר false אחרי שמירה עד לטעינה הבאה.
-                SiteId = siteId,
-                Url = _sbOverrides.Url,
-                AnonKey = _sbOverrides.AnonKey,
-                Email = _sbOverrides.Email,
-                Password = _sbPass.Text.Trim()
-            }
-        };
+            MqttHost = _mqttHost.Text.Trim(),
+            MqttPort = (int)_mqttPort.Value,
+            MqttUsername = _mqttUser.Text.Trim(),
+            MqttPassword = _mqttPass.Text,
+            // ⚠️ Trim: רווח שנדבק בהדבקה נראה כערך תקין בטופס, ו-Enabled היה
+            // נדלק על סיסמה שאינה סיסמה. נבדק ב-SupabaseWriteTests.WhitespaceIsNotAValue.
+            SupabasePassword = _sbPass.Text.Trim()
+        });
 
         // אפשר להפעיל את Mosquitto רק אם יש פרטי HiveMQ תקינים (host+username),
         // אחרת bridge.conf ייצא עם remote_username ריק ו-Mosquitto ייכשל.

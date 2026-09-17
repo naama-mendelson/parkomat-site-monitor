@@ -43,6 +43,12 @@
          לפתוח את המסך בעיניים באתר. -->
     <Compile Include="..\..\src\Parkomat.Agent.Tray\Services\ConnectionTester.cs"
              Link="Linked\ConnectionTester.cs" />
+
+    <!-- ⚠️ ו-`SettingsFormEdit` — המיפוי של "שמור" בטופס ההגדרות. הטופס בנה
+         `new SiteConfig` ומחק כל שדה בלי פקד (NtpServer, SiteName...), והבדיקות
+         היחידות שהיו עליו קראו את הטקסט של SettingsForm.cs. -->
+    <Compile Include="..\..\src\Parkomat.Agent.Tray\Forms\SettingsFormEdit.cs"
+             Link="Linked\SettingsFormEdit.cs" />
   </ItemGroup>
 
 </Project>

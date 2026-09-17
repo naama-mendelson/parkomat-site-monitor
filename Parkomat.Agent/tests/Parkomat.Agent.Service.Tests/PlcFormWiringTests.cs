@@ -67,6 +67,24 @@ public class PlcFormWiringTests
         Assert.DoesNotMatch(new Regex(@"new\s+PlcConfig\s*\{"), CodeOnly(file));
     }
 
+    // ============================================================
+    // ⚠️ ואותה תבנית בדיוק, שכבה אחת מעל: `new SiteConfig { ... }`
+    // ============================================================
+    // ה-PLC תוקן לעריכה במקום — אבל `OnSave` המשיך לבנות `SiteConfig`,
+    // `MqttConfig` ו-`SupabaseConfig` מאפס. כל שדה בלי פקד בטופס נמחק בכל
+    // "שמור": ‏`NtpServer` (אתר עם UDP/123 חסום שהוגדר לו שרת פנימי חזר
+    // ל-pool.ntp.org, והשעון הפסיק להסתנכרן), ‏`NtpSyncIntervalMinutes`,
+    // ‏`SiteName`. ‏`Mqtt.Disabled` ועקיפות Supabase שרדו רק כי מישהו זכר
+    // להוסיף להם שדה נשיאה — הרשימה שצריך לזכור להאריך, בפעם הרביעית.
+    [Fact]
+    public void TheSettingsFormNeverRebuildsTheConfigFromScratch()
+    {
+        string code = CodeOnly("SettingsForm.cs");
+        Assert.DoesNotMatch(new Regex(@"new\s+SiteConfig\s*\{"), code);
+        Assert.DoesNotMatch(new Regex(@"new\s+MqttConfig\s*\{"), code);
+        Assert.DoesNotMatch(new Regex(@"new\s+SupabaseConfig\s*\{"), code);
+    }
+
     /// <summary>
     /// ⚠️ ...ובלי זה, בדיקת החיתוך עצמה עיוורת: קובץ שכולו הערות היה עובר
     /// אותה. כאן נדרש ש<b>הקוד</b> אחרי החיתוך עדיין מכיל את מה שהבדיקות

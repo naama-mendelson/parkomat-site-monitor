@@ -80,7 +80,17 @@ public sealed class PendingQueue
 
         // ⚠️ כתיבה אטומית: קודם ל-.tmp, ואז Move. נפילת חשמל באמצע הכתיבה
         // משאירה .tmp חלקי שאיש אינו קורא — ולא קובץ תור קטוע שייקרא כהודעה.
-        File.WriteAllText(tmp, JsonSerializer.Serialize(message, Json));
+        //
+        // ⚠️ **ו-Flush(true) לפני ה-Move — בלעדיו האטומיות חלקית.** ‏
+        // `WriteAllText` חוזר כשהבייטים במטמון של Windows, וה-Move נרשם ביומן
+        // NTFS מיד. נפילת חשמל בחלון הזה משאירה קובץ `.json` **בשם תקין ובתוכן
+        // ריק** — ו-`LoadAll` מוחק אותו כפגום. כלומר התור שנבנה לשרוד נפילת
+        // חשמל איבד בדיוק את התפעול שנוצר רגע לפניה.
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            fs.Write(JsonSerializer.SerializeToUtf8Bytes(message, Json));
+            fs.Flush(flushToDisk: true);
+        }
         File.Move(tmp, path, overwrite: true);
         return path;
     }
@@ -91,21 +101,42 @@ public sealed class PendingQueue
     /// ⚠️ קובץ שאינו ניתן לפענוח מוסר ולא מפיל את הטעינה. קובץ פגום אחד —
     /// למשל כזה שנקטע בכתיבה בגרסה ישנה — היה חוסם את כל התור מאחוריו לנצח,
     /// וזה בדיוק ההפך ממה שהתור קיים בשבילו.
+    ///
+    /// ⚠️ <b>אבל רק קובץ שנקרא ולא פוענח.</b> המחיקה ישבה על <b>כל</b>
+    /// חריגה — גם על sharing violation רגעית (אנטי-וירוס, גיבוי, אינדקס) —
+    /// כלומר הודעה תקינה שטרם נמסרה נמחקה כי מישהו החזיק אותה באותה
+    /// מילישנייה. קובץ שלא נקרא <b>מדולג ונשאר</b>, ויילקח בסבב הבא.
     /// </summary>
     public List<(string Path, T Message)> LoadAll<T>()
     {
         var outp = new List<(string, T)>();
         foreach (string path in Files())
         {
+            string text;
             try
             {
-                T? msg = JsonSerializer.Deserialize<T>(File.ReadAllText(path));
-                if (msg is not null) outp.Add((path, msg));
-                else TryDelete(path);
+                text = File.ReadAllText(path);
             }
             catch (Exception)
             {
+                continue;   // לא נקרא עכשיו — אינו פגום. נשאר לסבב הבא.
+            }
+
+            try
+            {
+                T? msg = JsonSerializer.Deserialize<T>(text);
+                if (msg is not null) outp.Add((path, msg));
+                else TryDelete(path);
+            }
+            catch (JsonException)
+            {
                 TryDelete(path);
+            }
+            catch (Exception)
+            {
+                // ⚠️ לא JsonException = לא בעיה בנתונים (טיפוס שהממיר אינו
+                // תומך בו). מחיקה הייתה מאבדת הודעה תקינה; זריקה הייתה חוסמת
+                // את כל התור מאחוריה בכל סבב. מדלגים.
             }
         }
         return outp;

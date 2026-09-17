@@ -66,19 +66,21 @@ public sealed record DetectorState(int PreviousMode, string OperationCard)
     /// (ראה CLAUDE.md): הפסקת חשמל באמצע כתיבה לא משאירה קובץ חצי-כתוב.
     /// לעולם לא זורק.
     /// </summary>
-    public void Save(string? path = null)
+    public void Save(string? path = null, DateTimeOffset? savedAt = null)
     {
         try
         {
             path ??= AgentPaths.DetectorStateFile;
-            AgentPaths.EnsureBaseFolderExists();
+            // ⚠️ התיקייה של **הנתיב שנמסר**, ולא תיקיית הבסיס תמיד: בדיקה
+            // שכותבת לתיקייה זמנית אינה אמורה ליצור או לגעת ב-ProgramData.
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
 
             // הכרטיס מנוקה מרווחים ומשורות — הוא האיבר האחרון בפורמט, ורווח
             // בתוכו היה נבלע בשקט בקריאה.
             string card = (OperationCard ?? "").Replace(' ', '_').Replace('\n', '_').Replace('\r', '_');
             string content = string.Format(
                 CultureInfo.InvariantCulture, "{0} {1} {2}",
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), PreviousMode, card);
+                (savedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(), PreviousMode, card);
 
             string temp = path + ".tmp";
             File.WriteAllText(temp, content);
@@ -89,5 +91,64 @@ public sealed record DetectorState(int PreviousMode, string OperationCard)
             // כשל שמירה אינו קריטי — המצב חי בזיכרון, והעלייה הבאה פשוט
             // תתחיל נקי כמו קודם.
         }
+    }
+}
+
+/// <summary>
+/// מחליט <b>מתי</b> לכתוב מצב גלאי אחד לקובץ אחד: מיד על שינוי, ובלי
+/// שינוי — פעם ב-<see cref="RefreshInterval"/>.
+///
+/// ==========================================================
+/// ⚠️ למה "רק על שינוי" לא הספיק
+/// ==========================================================
+/// ‏<see cref="DetectorState.MaxAge"/> נמדד מהחותם שבקובץ, והקובץ נכתב רק
+/// כש-MODE או הכרטיס זזו. כלומר הגיל שנפסל היה "כמה זמן עבר מהשינוי
+/// האחרון" — ולא "כמה זמן עבר מאז שראינו את המצב". MODE שתקוע על 2 יותר
+/// מעשר דקות, ואז הפעלה מחדש: המצב נפסל כישן, והדגימה הראשונה פותחת
+/// **תפעול פיקטיבי** — בדיוק באתר התקוע שהשחזור נבנה בשבילו.
+///
+/// ⚠️ **ולא כתיבה בכל דגימה.** הבלוק הדו-מערכתי ב-Worker עשה בדיוק את זה:
+/// שני קבצים בכל שנייה, כלומר ארבע פעולות דיסק לשנייה על מחשב שמריץ גם את
+/// המחסום, בשביל ערך שלא זז. רענון פעם בדקה נותן את אותה הגנה ב-1/60 מהעלות.
+///
+/// ⚠️ הרענון קורה **רק בזמן שדוגמים**. סוכן שהיה למטה יותר מ-MaxAge עדיין
+/// נפסל — וזה בדיוק מה שהחסם קיים בשבילו.
+/// </summary>
+public sealed class DetectorStateSaver
+{
+    /// <summary>
+    /// ⚠️ יחד עם ההמתנה הארוכה ביותר של ה-Tray (<c>RestartPolicy.MaxDelaySeconds</c>)
+    /// חייב להישאר מתחת ל-<see cref="DetectorState.MaxAge"/> — נעול בבדיקה.
+    /// </summary>
+    public static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(1);
+
+    private readonly string _path;
+    private int? _mode;
+    private string? _card;
+    private DateTimeOffset _lastWrite = DateTimeOffset.MinValue;
+
+    public DetectorStateSaver(string path)
+    {
+        _path = path ?? throw new ArgumentNullException(nameof(path));
+    }
+
+    /// <summary>רושם דגימה; כותב אם צריך. מחזיר האם נכתב.</summary>
+    public bool Observe(int mode, string card, DateTimeOffset now)
+    {
+        card ??= "";
+        TimeSpan sinceWrite = now - _lastWrite;
+
+        // ⚠️ `sinceWrite` שלילי = השעון קפץ אחורה. בלי הבדיקה הזו חותם
+        // "מהעתיד" היה מקפיא את הרענון עד שהשעון ישיג אותו — ו-TryLoad
+        // פוסל חותם מהעתיד ממילא, כלומר שחזור מת בדיוק באותו חלון.
+        bool unchanged = _mode == mode && _card == card;
+        if (unchanged && sinceWrite >= TimeSpan.Zero && sinceWrite < RefreshInterval)
+            return false;
+
+        new DetectorState(mode, card).Save(_path, now);
+        _mode = mode;
+        _card = card;
+        _lastWrite = now;
+        return true;
     }
 }

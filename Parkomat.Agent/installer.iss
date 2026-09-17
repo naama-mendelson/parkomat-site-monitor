@@ -426,13 +426,21 @@ Type: filesandordirs; Name: "{app}"
 ; המכונה אחרי הסרה. זה נכון גם היום בזמן שהסוכן מותקן, המחשב יושב
 ; בחניון ולא עובר יד, והחלופה — מחיקת זהות האתר בכל שדרוג — הוכחה
 ; כיקרה בהרבה.
-Type: filesandordirs; Name: "{commonappdata}\Parkomat\Agent\queue"
-Type: filesandordirs; Name: "{commonappdata}\Parkomat\Agent\queue-supabase"
+;
+; ⚠️ **ו-`queue` / `queue-supabase` נשארים — הם ההפך הגמור מ"נוצר מחדש".**
+; כאן עמדו שתי שורות filesandordirs שמחקו אותם. כל קובץ שם הוא תפעול או
+; הודעה **שטרם הגיעו לשרת**, והתורים קיימים בדיוק כדי לשרוד את מה שהורג
+; את הסוכן — נפילת חשמל, קריסה, והסרה-והתקנה. שדרוג בשטח הוא לעתים קרובות
+; הסרה ואז התקנה, ודווקא אתר עם תור מלא (אחרי נתק ארוך) הוא האתר שמגיעים
+; אליו לתקן. הגלאי מונע-קצוות, כך שתפעול שנמחק כאן אינו מזוהה שוב לעולם.
+; נעול ב-AgentVersionTests.UninstallKeepsUndeliveredMessages.
 Type: files; Name: "{commonappdata}\Parkomat\Agent\bridge.conf"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\cacert.pem"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\heartbeat"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\alive"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\detector-state"
+; זיכרון הגלאי של המערכת השנייה (אתר דו-מערכתי) — נוצר מחדש בדגימה הראשונה.
+Type: files; Name: "{commonappdata}\Parkomat\Agent\detector-state-2"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\clock-offset"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\hivemq-status"
 Type: files; Name: "{commonappdata}\Parkomat\Agent\reset-to-defaults.flag"
