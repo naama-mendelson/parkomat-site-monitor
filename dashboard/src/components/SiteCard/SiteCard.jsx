@@ -110,7 +110,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const colors = STATUS_COLORS[status] || STATUS_COLORS.no_comm;
   // ⚠️ לא STATUS_LABELS ישירות: תחזוקה שנפתחה אחרי תקלה נקראת "תפעול
   // תקלה". ראה ההסבר המלא ב-utils/constants.js.
-  const label = siteStatusLabel(site);
+  // ⚠️ **ומאותו מצב שהצבע נגזר ממנו.** היה `siteStatusLabel(site)`, כלומר
+  // `site.status`: באתר דו-מערכתי עם מערכת בתקלה הצ'יפ היה אדום וכתוב עליו "מוכן".
+  const label = siteStatusLabel({ ...site, status });
   const isMini = density === "mini";
   const isNormal = density === "normal";
 
@@ -148,13 +150,17 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
   // ⚠️ אתר שחובר לרמזור מוצג לפי שעות ההסכם שלו; אתר שלא חובר מציג
   // בדיוק מה שהציג תמיד. null כאן פירושו "לא חובר", לא "אין נתון".
-  const agreementLabel = site.serviceAgreement ? "שעות שירות" : null;
+  // ⚠️ **לפי מה שנמדד, ולא לפי השירות.** המדידה היא לפי המסלול, עם נפילה
+  // לשירות; שורה עם מסלול ובלי שירות נמדדה בשעות המסלול ובכל זאת נקראה
+  // "שבועית". `serviceHours > 0` = נמצאו שעות מדידה, מאיזה עמוד שלא יהיה.
+  const agreementLabel = site.serviceHours > 0 ? "שעות שירות" : null;
 
   // ============================================================
   // ⚠️ מסלול ושירות — שתי שאלות שונות, ושתיהן על הכרטיס
   // ============================================================
   //     מסלול  = מה ההסכם שנחתם
-  //     שירות  = איך מתייחסים אליו בפועל — **וזה מה שמחשב את הזמינות**
+  //     שירות  = איך מתייחסים אליו בפועל — ⚠️ **הזמינות נמדדת לפי המסלול**
+  //              (bf9b8af), עם נפילה לשירות כשאין מסלול
   //
   // נמדד: ב-8 מתוך 28 האתרים הם נבדלים. זלטופולסקי נחתם "בסיסי"
   // ומטופל כ-VIP, כלומר נמדד על 103 שעות בשבוע במקום 45 — פער של יותר

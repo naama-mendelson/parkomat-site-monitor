@@ -106,6 +106,12 @@ export function displayStatusFor(status, systems, seenAt = null, now = Date.now(
   //
   // ⚠️ ו-`status` עצמו **אינו** משתנה. הוא מה שנכתב ל-`status_history`, וממנו
   // מחושבות הזמינות ואחוז הכשל — הן ממשיכות להימדד לפי הטוב, כפי שנקבע.
+  //
+  // ⚠️ **אין תקשורת — החריג יושב כאן, ולא אצל כל קורא.** הפירוט הוא טענה
+  // שגויה אחרי נתק (ראה `liveSystems`), ו-`error` גרוע מ-`no_comm` בדירוג —
+  // כלומר מערכת שהייתה בתקלה לפני הנתק הפכה אתר מנותק ל"תקלה". מסך המפקח
+  // עשה את החריג בעצמו ורשימת האתרים לא, ושני מסכים הציגו שני מצבים.
+  if (status === "no_comm") return "no_comm";
   const states = [status, ...(Array.isArray(systems) ? systems.map((u) => u?.state) : [])];
   let worst = null;
   for (const st of states) {

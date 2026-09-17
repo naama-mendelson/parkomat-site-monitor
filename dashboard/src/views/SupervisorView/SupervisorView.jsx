@@ -39,7 +39,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
 
   // מפה code → סטטוס *חי* מרשימת האתרים (מתעדכנת מיידית מ-SSE). משמשת להדבקת
   // הסטטוס העדכני על שורות הטבלה — ראה למטה.
-  const liveStatus = useMemo(() => new Map(sites.map((s) => [s.code, s.status])), [sites]);
+  // ⚠️ **גם displayStatus**, ולא רק status: הצ'יפ והסינון קוראים אותו. הדבקת
+  // status בלבד השאירה את המצב המוצג ישן — שורה "בפעולה" נשארה מסוננת כ"מוכן".
+  const liveStatus = useMemo(() => new Map(sites.map((s) => [s.code, s])), [sites]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -49,7 +51,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
     // מדביקים כאן את הסטטוס העדכני מרשימת האתרים — בלי שום בקשת רשת נוספת.
     const live = data.sites.map((s) => {
       const cur = liveStatus.get(s.code);
-      return cur && cur !== s.status ? { ...s, status: cur } : s;
+      return cur && (cur.status !== s.status || cur.displayStatus !== s.displayStatus)
+        ? { ...s, status: cur.status, displayStatus: cur.displayStatus ?? cur.status }
+        : s;
     });
 
     const filtered = live.filter((s) => {
@@ -193,7 +197,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                 </tr>
               ) : (
                 rows.map((s) => {
-                  const c = STATUS_COLORS[s.status] || STATUS_COLORS.no_comm;
+                  // ⚠️ צבע ותווית מהמצב **המוצג** — אותו ערך שהסינון והמיון קוראים.
+                  const shown = s.displayStatus ?? s.status;
+                  const c = STATUS_COLORS[shown] || STATUS_COLORS.no_comm;
                   return (
                     <tr
                       key={s.code}
@@ -205,7 +211,7 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                       <td>
                         <span className="sv-status" style={{ background: c.bg, color: c.text }}>
                           <i style={{ background: c.dot }} />
-                          {STATUS_LABELS[s.status] || s.status}
+                          {STATUS_LABELS[shown] || shown}
                         </span>
                       </td>
                       <td className="num">{s.operations.toLocaleString()}</td>

@@ -14,7 +14,7 @@
 // לכן כאן, ורק כאן, הן מופיעות — עם ההקשר שהופך אותן למובנות: איזה אתר, האם
 // הוא פועם, ומה קורה אם משביתים.
 import { useEffect, useState } from "react";
-import { listSiteIdentities, provisionAgent, setUserActive } from "../../services/dataSource";
+import { listSiteIdentities, provisionAgent, setUserActive, agentEverBeat } from "../../services/dataSource";
 import "./SiteIdentities.css";
 
 const STATE_LABEL = {
@@ -42,6 +42,7 @@ export default function SiteIdentities() {
   const [busy, setBusy] = useState(null);
   const [issued, setIssued] = useState(null);
   const [confirmOff, setConfirmOff] = useState(null);
+  const [confirmRotate, setConfirmRotate] = useState(null);
 
   // ⚠️ אותו נרמול בדיוק כמו בחיפוש האתרים וברמזור: מתעלם מפיסוק ומרווחים,
   // כך ש"אביגיל 20 רג" ימצא את `אביגיל 20, ר"ג`. חיפוש שמתנהג אחרת בכל מסך
@@ -62,6 +63,26 @@ export default function SiteIdentities() {
     } catch (e) {
       setErr(e.message);
     } finally { setBusy(null); }
+  }
+
+  // ============================================================
+  // ⚠️ "סיסמה חדשה" — באישור, אלא אם האתר מעולם לא פעם
+  // ============================================================
+  // כאן זה היה לחיצה אחת, בזמן שב-AdminPanel אותה פעולה בדיוק דורשת אישור.
+  // סיבוב מבטל את הסיסמה שבאתר מיד: ב-2438, שרץ **רק** במסלול הישיר, לחיצה
+  // שגויה אחת הייתה משתיקה את האתר עד שמישהו ייסע לעדכן את ה-config.
+  //
+  // אותו כלל כמו שם: `false` ("מעולם לא פעם") — אין מה לשבור, מסובבים מיד.
+  // `null` ("לא הצלחתי לברר") דורש אישור כמו אתר שפועם. ⚠️ לא `row.lastBeat`:
+  // הרשימה אינה בודקת את השגיאה של שאילתת הפעימות, ולכן כשל שם נראה בדיוק
+  // כמו "מעולם לא פעם".
+  async function askRotate(row) {
+    setBusy(row.code); setErr(null);
+    let beat = null;
+    try { beat = await agentEverBeat(row.siteId); } catch { beat = null; }
+    setBusy(null);
+    if (beat === false) { await issue(row, true); return; }
+    setConfirmRotate(row.code);
   }
 
   async function toggleActive(row, active) {
@@ -169,7 +190,7 @@ export default function SiteIdentities() {
                         onClick={() => setConfirmOff(r.code)}>
                         השבת
                       </button>
-                      <button className="si-btn" disabled={busy === r.code} onClick={() => issue(r, true)}>
+                      <button className="si-btn" disabled={busy === r.code} onClick={() => askRotate(r)}>
                         סיסמה חדשה
                       </button>
                     </>
@@ -183,6 +204,29 @@ export default function SiteIdentities() {
       {/* ⚠️ "לא נמצא" מפורש, ולא טבלה ריקה: טבלה בלי שורות נראית כמו תקלת
           טעינה, ולא כמו תוצאה של מה שהוקלד. */}
       {shown.length === 0 && <p className="si-empty">אין אתר שתואם ל"{query}".</p>}
+
+      {confirmRotate && (() => {
+        const row = rows.find((r) => r.code === confirmRotate);
+        if (!row) return null;
+        return (
+          <div className="si-confirm">
+            <p>
+              להנפיק סיסמה חדשה ל-<b>{row.name}</b> ({row.code})?
+            </p>
+            <p className="si-warn">
+              ⚠️ הסיסמה שבאתר <b>תפסיק לעבוד מיד</b>. אם האתר כותב ישירות ל-Supabase
+              הוא יפסיק לדווח במסלול הזה עד שהסיסמה החדשה תוזן בהגדרות הסוכן שבאתר.
+            </p>
+            <div className="si-confirm-actions">
+              <button className="si-btn si-btn-warn" disabled={busy === row.code}
+                onClick={async () => { setConfirmRotate(null); await issue(row, true); }}>
+                הנפק סיסמה חדשה
+              </button>
+              <button className="si-btn" onClick={() => setConfirmRotate(null)}>ביטול</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {confirmOff && (() => {
         const row = rows.find((r) => r.code === confirmOff);

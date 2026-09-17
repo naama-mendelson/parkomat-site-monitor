@@ -23,9 +23,10 @@ const KIND_LABEL = "להתייחס כ";
 // ⚠️ **שתי עמודות, שתי שאלות שונות — וזה לא כפילות.**
 //   מסלול  = מה ההסכם שנחתם          (סוג הסכם שירות במקור)
 //   שירות  = איך מתייחסים אליו בפועל  (להתייחס כ)
-// ‏**רק "שירות" מחשב את הזמינות.** אתר שנחתם עליו בסיסי ומטופל כ-VIP
-// יימדד לפי VIP, וזו החלטה תפעולית שגוברת על החוזה. הצגת שניהם זה לצד
-// זה היא מה שהופך את הפער הזה לגלוי במקום למפתיע.
+// ‏⚠️ **הזמינות נמדדת לפי המסלול**, עם נפילה לשירות כשאין מסלול (bf9b8af,
+// `app.site_uptime_service`). אתר שנחתם בסיסי ומטופל כ-VIP נמדד לפי בסיסי:
+// המדד שואל "האם עמדנו במה שנמכר". הצגת שניהם זה לצד זה היא מה שהופך את
+// הפער הזה לגלוי במקום למפתיע.
 const PLAN_LABEL = "סוג הסכם שירות במקור";
 
 // שעות ההסכם — אותו מקור אמת כמו `app.service_windows` ב-SQL.
@@ -196,9 +197,10 @@ export default function ServiceAgreement({ site, onLinked = null }) {
       await setCell(rowId, key, value);
       setBoard(await fetchBoard());
 
-      // ⚠️ שינוי ב"שירות" משנה את שעות המדידה ואת התג בכרטיס — לכן
-      // רענון גם כאן, ולא רק בחיבור.
-      if (key === kindKey) onLinked?.();
+      // ⚠️ שינוי ב"שירות" משנה את התג בכרטיס, ושינוי ב**מסלול** משנה את שעות
+      // המדידה (app.site_uptime_service מודדת לפי המסלול) — לכן רענון על שניהם.
+      // היה כאן רק השירות, ושינוי מסלול השאיר את הזמינות הישנה על הכרטיס.
+      if (key === kindKey || key === planKey) onLinked?.();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -296,6 +298,16 @@ export default function ServiceAgreement({ site, onLinked = null }) {
     // מה שיגרום למישהו לתקן.
     const known = Object.prototype.hasOwnProperty.call(HOURS, kind);
 
+    // ============================================================
+    // ⚠️ השעות המוצגות הן שעות **המדידה** — כלומר של המסלול
+    // ============================================================
+    // `app.site_uptime_service` מודדת לפי `COALESCE(מסלול, שירות)`. הפאנל הציג
+    // את שעות השירות ואמר "נמדדת רק בתוך השעות האלה" — ובזלטופולסקי (נחתם
+    // בסיסי, מטופל VIP) הוא הראה 103 שעות בשבוע בזמן שהמספר חושב על 45.
+    const plan = String(row.cells?.[planKey] ?? "").trim().toLowerCase();
+    const measured = plan || kind;
+    const measuredKnown = Object.prototype.hasOwnProperty.call(HOURS, measured);
+
     return (
       <div className="sa">
         <div className="sa-head">
@@ -307,10 +319,9 @@ export default function ServiceAgreement({ site, onLinked = null }) {
           {/* ⚠️ המסלול מוצג רק כשהוא **שונה** מהשירות. שני תגים זהים
               זה לצד זה הם רעש; שניים שונים הם בדיוק המידע. */}
           {(() => {
-            const plan = String(row.cells?.[planKey] ?? "").trim().toLowerCase();
             if (!plan || plan === kind) return null;
             return (
-              <span className="sa-plan" title="המסלול שנחתם בפועל — הזמינות מחושבת לפי השירות, לא לפיו">
+              <span className="sa-plan" title="המסלול שנחתם בפועל — הזמינות נמדדת לפיו, ולא לפי השירות">
                 מסלול: {KIND_NAMES[plan] || plan}
               </span>
             );
@@ -318,13 +329,16 @@ export default function ServiceAgreement({ site, onLinked = null }) {
         </div>
 
         <div className="sa-hours">
-          {known
-            ? HOURS[kind]
+          {measuredKnown
+            ? HOURS[measured]
             : "ההסכם בלוח אינו אחד מ-basic / ext / vip — הזמינות מחושבת 24/7"}
         </div>
 
-        {known && (
+        {measuredKnown && (
           <div className="sa-note">
+            {plan && plan !== kind && (
+              <>השעות הן של <b>המסלול שנחתם</b> ({KIND_NAMES[plan] || plan}), ולא של השירות בפועל. </>
+            )}
             הזמינות נמדדת <b>רק בתוך השעות האלה</b>. זמן מחוץ להן אינו נספר —
             לא לטובה ולא לרעה.
           </div>

@@ -28,7 +28,7 @@
 
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { siteTrend } from "../../../shared/executive.mjs";
-import { liveSystems, displayStatusFor, systemsAgeMinutes } from "../../../shared/site-systems.mjs";
+import { displayStatusFor, systemsAgeMinutes } from "../../../shared/site-systems.mjs";
 
 /**
  * רשימת האתרים עם כל המדדים, ישירות מבסיס הנתונים.
@@ -94,10 +94,6 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       ? "maintenance"
       : site.status;
 
-    // ============================================================
-    // הכלל עצמו, כולל הנימוק המלא, חי ב-shared/site-systems.mjs —
-    // כי גם מסך המפקח זקוק לו, ושני עותקים של אותו כלל סוטים.
-    const units = liveSystems(status, g.systems, g.systems_seen_at);
 
     // ============================================================
     // ⚠️ רמת השירות מגיעה מהרמזור, לא משדה נפרד על האתר
@@ -120,6 +116,10 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       ...site,
       // אתר שלא חובר לרמזור ממשיך עם הדרגה שהוגדרה לו ידנית.
       tier: agreed ?? site.tier,
+      // ⚠️ **הדרגה שבמסד, בנפרד.** טופס העריכה נזרע מ-`tier` ושלח אותו תמיד,
+      // ולכן שינוי שם של אתר מחובר **כתב את דרגת ההסכם לתוך `sites.tier`** —
+      // והדרגה הידנית אבדה לצמיתות, גם אחרי ניתוק מהרמזור.
+      manualTier: site.tier,
       status,
       inMaintenance,
       // ============================================================

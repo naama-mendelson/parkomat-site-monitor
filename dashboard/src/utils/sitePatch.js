@@ -13,6 +13,8 @@
 // בדשבורד לסטות מהמספרים ב-DB. אותם עדיין שולפים, אבל בקצב נמוך בהרבה.
 // ==========================================================
 
+import { displayStatusFor } from "../../../shared/site-systems.mjs";
+
 /**
  * מחזיר רשימת אתרים חדשה עם ההודעה מוחלת עליה.
  * אם ההודעה לא נוגעת לאף אתר מוכר — מחזיר את אותה רשימה (בלי render מיותר).
@@ -72,6 +74,10 @@ function patchFor(site, msg) {
 
     return {
       status: msg.newStatus,
+      // ⚠️ **הצ'יפ, המיון והמסננים קוראים את זה — לא את `status`.** הרשימה
+      // ממלאת `displayStatus` לכל אתר, ולכן בלי השורה הזו מעבר מוכן→בפעולה
+      // (שאינו גורר שליפה) נשאר ירוק על המסך עד הסקירה הבאה.
+      displayStatus: displayStatusFor(msg.newStatus, site.systems),
       ...faultPatch,
       // המצב התחיל עכשיו — זה בדיוק מה שהשרת היה מחזיר ב-statusSince
       statusSince: msg.occurredAt,

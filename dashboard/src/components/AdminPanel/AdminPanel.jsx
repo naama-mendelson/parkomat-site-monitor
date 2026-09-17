@@ -98,7 +98,10 @@ function AdminPanel({ sites, onClose, onChanged }) {
     setDraft({
       name: site.site_name,
       code: site.code,
-      tier: site.tier || "basic",
+      // ⚠️ מהמסד ולא מההסכם — ראה `manualTier` ב-sitesDirect. `initialTier`
+      // נשמר כדי לשלוח דרגה **רק כשהמשתמשת שינתה אותה**.
+      tier: site.manualTier ?? site.tier ?? "basic",
+      initialTier: site.manualTier ?? site.tier ?? "basic",
       plcType: site.plc_type ?? "",
       fixflowProfile: site.fixflow_profile ?? "",   // פיילוט FixFlow
     });
@@ -124,7 +127,8 @@ function AdminPanel({ sites, onClose, onChanged }) {
       await updateSite(originalCode, {
         site_name: name,
         code: newCode,
-        tier: draft.tier,
+        // undefined = "אל תיגע" (updateSiteDirect אינו שולח p_tier).
+        tier: draft.tier !== draft.initialTier ? draft.tier : undefined,
         plc_type: draft.plcType,
         // ⚠️ נשלח תמיד, גם ריק — מאותה סיבה בדיוק כמו סוג המתקן: ריק הוא
         // "חזור לגזירה האוטומטית", ובלי שליחה אי אפשר לבטל בחירה. פיילוט FixFlow.
@@ -489,7 +493,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
                         </select>
                       </label>
                       <FixFlowPicker
-                        site={site}
+                        site={s}
                         value={draft.fixflowProfile}
                         onChange={(v) => setDraft({ ...draft, fixflowProfile: v })}
                       />

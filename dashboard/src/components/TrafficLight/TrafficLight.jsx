@@ -683,7 +683,10 @@ export default function TrafficLight({ onClose }) {
                       {canEdit && editCol === c.id && (
                         <ColumnEditor
                           column={c}
-                          rows={rows}
+                          // ⚠️ **כל השורות, לא המסוננות.** העורך זורע את הרשימה מערכי
+                          // התאים; עם חיפוש פעיל הוא ראה רק את הגלויות, וכל שורה אחרת
+                          // הציגה "—" — בלי שהאזהרה על ערכים חסרים תדלק.
+                          rows={allRows}
                           onClose={() => setEditCol(null)}
                           onSave={(patch) => { setEditCol(null); run(() => updateColumn(c.id, patch)); }}
                           onDelete={() => { setEditCol(null); run(() => deleteColumn(c.id)); }}

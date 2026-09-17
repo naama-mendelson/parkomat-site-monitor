@@ -5,6 +5,7 @@
 // מרוצה תעיף את כל ה-FixFlow מהאתר".
 import React, { useState } from "react";
 import FixFlowAssign from "./FixFlowAssign.jsx";
+import { useSavedAssignment, rememberAssignment } from "./savedAssignment.js";
 import { fixflowLinkFor, fixflowSolutionFor, FIXFLOW_ENABLED } from "../../services/fixflow.js";
 import "./FixFlowLink.css";
 
@@ -16,13 +17,13 @@ const REL = "noopener noreferrer";
 export default function FixFlowLink({ site, faultText }) {
   // ⚠️ ההוק לפני כל `return` מוקדם — React אוסר קריאה מותנית להוקים.
   const [assigning, setAssigning] = useState(false);
-  // ⚠️ הבחירה שנשמרה זה עתה מוחזקת מקומית, כדי שהכפתור יתעדכן **מיד**.
+  // ⚠️ הבחירה שנשמרה זה עתה מוחזקת בחנות משותפת, כדי שהכפתור **והפאנל** יתעדכנו **מיד**.
   // בלי זה היה צריך לרענן את הדף כדי לראות שהשיוך תפס, ומי שלא רואה תוצאה
   // מניח שזה לא נשמר ומנסה שוב.
-  const [justSaved, setJustSaved] = useState(null);
+  const effective = useSavedAssignment(site);
+  const onSaved = (v) => rememberAssignment(site, v);
   if (!FIXFLOW_ENABLED) return null;
 
-  const effective = justSaved === null ? site : { ...site, fixflow_profile: justSaved };
   const link = fixflowLinkFor(effective, faultText);
   if (!link) return null;
 
@@ -36,7 +37,8 @@ export default function FixFlowLink({ site, faultText }) {
   // ⚠️ **ורק בהתאמה ודאית.** כשאין — חוזרים לרשימה המדורגת, שהיא עדיין
   // התשובה הנכונה. קפיצה ל"הכי קרוב" הייתה פותחת נוהל של תקלה אחרת, וכל
   // הצעדים בו נראים סבירים.
-  const solution = faultText ? fixflowSolutionFor(site, faultText) : null;
+  // ⚠️ `effective` ולא `site`: אחרי שיוך מחדש הכפתור פתח את נוהל הספרייה הקודמת.
+  const solution = faultText ? fixflowSolutionFor(effective, faultText) : null;
 
   // ⚠️ מצב שאינו "ok" מוצג כטקסט מושבת ולא מוסתר. הסתרה הייתה משאירה את המוקדן
   // בלי מושג למה באתר אחד יש כפתור ובאחר אין — ובמקרה של `no-type` הסיבה היא
@@ -60,7 +62,7 @@ export default function FixFlowLink({ site, faultText }) {
             site={effective}
             reason={link.reason}
             onClose={() => setAssigning(false)}
-            onSaved={setJustSaved}
+            onSaved={onSaved}
           />
         )}
       </>
@@ -89,7 +91,7 @@ export default function FixFlowLink({ site, faultText }) {
             site={effective}
             reason={`"${link.profile}" קיימת אך אין בה אף מסמך.`}
             onClose={() => setAssigning(false)}
-            onSaved={setJustSaved}
+            onSaved={onSaved}
           />
         )}
       </>
@@ -148,7 +150,7 @@ export default function FixFlowLink({ site, faultText }) {
         site={effective}
         reason={`משויך כרגע ל-${link.system} / ${link.profile}${link.docs ? ` · ${link.docs} מסמכים` : ""}.`}
         onClose={() => setAssigning(false)}
-        onSaved={setJustSaved}
+        onSaved={onSaved}
       />
     )}
     </>

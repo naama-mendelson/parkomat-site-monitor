@@ -15,7 +15,7 @@
 // **הפונקציה עצמה** ולהשוות אותה לפלט השרת. אילו הוא היה מחזיק עותק של
 // המיפוי, הוא היה בודק את העותק ולא את הקוד שרץ — וזו בדיוק צורת הכשל
 // שהפרויקט הזה כבר נשרף בה.
-import { liveSystems, worstOfSystems } from "../../../shared/site-systems.mjs";
+import { displayStatusFor } from "../../../shared/site-systems.mjs";
 
 /**
  * @returns אותו מבנה בדיוק ש-GET /api/stats/supervisor מחזיר.
@@ -59,13 +59,17 @@ export function toSupervisorShape({ siteRows, statsRows, uptimeRows, globalsRows
     // הרגע שבו עותק מתחיל לסטות: מי שיתקן במקום אחד לא ידע שיש שני.
     // ⚠️ בלי סינון גיל — אותו כלל כמו ברשימה: מערכת בתחזוקה מופיעה
     // ככזו גם אם נקראה לפני שעות. `no_comm` הוא החריג היחיד.
-    const worst = status === "no_comm" ? null : worstOfSystems(g.systems);
+    //
+    // ⚠️ **ובפונקציה המשותפת עצמה — לא בעותק.** היה כאן
+    // `worstOfSystems(g.systems) ?? status`, כלומר המערכות **החליפו** את מצב
+    // האתר: `status=error` עם פירוט ישן `[מוכן, תחזוקה]` הוצג "תחזוקה", והסינון
+    // לפי "תקלה" הסתיר שורה שהצ'יפ שלה אדום. ראה tests/supervisor-shape.test.js.
 
     return {
       code: site.code,
       name: site.site_name,
       status,
-      displayStatus: worst ?? status,
+      displayStatus: displayStatusFor(status, g.systems),
       tier: site.tier,
       // אובייקט או null — ולא אובייקט עם שדות undefined, שנראה למסך כמו
       // "יש פעולה אחרונה" ואז מרנדר ריק.

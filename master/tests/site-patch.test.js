@@ -109,3 +109,25 @@ test("אתר בחלון תחזוקה ידני — תקלה אינה הופכת �
 
   assert.equal(out.status, "maintenance");
 });
+
+// ============================================================
+// ⚠️ `displayStatus` — השדה שהכרטיס באמת קורא
+// ============================================================
+// מאז שנוסף `displayStatus` (אתר דו-מערכתי), הצ'יפ, המיון, המסננים והמונים
+// קוראים `displayStatus ?? status`. הרשימה ממלאת אותו **לכל אתר**, גם חד-
+// מערכתי — ולכן עדכון חי שנגע רק ב-`status` לא שינה דבר על המסך:
+// מעבר מוכן→בפעולה נשאר ירוק עד הסקירה הבאה, כי הוא אינו גורר שליפה.
+test("⚠️ מעבר חי מעדכן גם את displayStatus — אחרת הצ'יפ נשאר ישן", { skip: !hasModule }, () => {
+  const before = site({ displayStatus: "ready", systems: null });
+  const out = apply(before, ev({ newStatus: "operating" }));
+  assert.equal(out.status, "operating");
+  assert.equal(out.displayStatus, "operating");
+});
+
+test("⚠️ אתר דו-מערכתי — המצב המוצג נשאר הגרוע גם אחרי עדכון חי", { skip: !hasModule }, () => {
+  const systems = [{ unit: 1, state: "ready" }, { unit: 2, state: "error" }];
+  const before = site({ displayStatus: "error", systems });
+  const out = apply(before, ev({ newStatus: "operating" }));
+  assert.equal(out.status, "operating");
+  assert.equal(out.displayStatus, "error");
+});
