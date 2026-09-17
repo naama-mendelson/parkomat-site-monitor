@@ -79,7 +79,14 @@ async function main() {
     await db.pool.query(good);
   }
 
-  console.log(`\nאחרי שחזור: ${gate()}`);
+  // ⚠️ שער אדום אחרי השחזור הוא **כשל**, ולא שורת דיווח. ראה ההסבר המלא
+  // ב-`mutate-direct-drops.js`; `mutate-alert-gate.js` כבר עשה זאת נכון.
+  const after = gate();
+  console.log(`\nאחרי שחזור: ${after}`);
+  if (after !== "green") {
+    console.log("❌ הייצור נשאר מקולקל — השחזור לא החזיר את המצב הירוק");
+    bad++;
+  }
   await db.close();
   console.log(bad ? `\n❌ ${bad} בעיות` : "\n✅ כל המוטציות נתפסו");
   process.exit(bad ? 1 : 0);
