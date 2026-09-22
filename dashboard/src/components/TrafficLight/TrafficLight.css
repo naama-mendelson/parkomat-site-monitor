@@ -780,3 +780,117 @@
   align-items: start;
   text-align: start;
 }
+
+/* ==========================================================
+   תצוגת הפסים — 22/09/2026
+   ==========================================================
+   ⚠️ הצבע של כל פס מגיע **מהעמודה עצמה** (אפשרויות "להתייחס כ"), ולא
+   מרשימה כאן. דרגה חדשה בלוח מקבלת פס בצבע שלה בלי שאיש יזכור קוד. */
+.tl-bands { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 12px; }
+
+.tl-band {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  overflow: hidden;
+}
+
+.tl-band-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.tl-band-head:hover { background: var(--surface-2, #f7f8fa); }
+
+/* הצבע בקצה בלבד: הוא מספר מי זה, והרקע נשאר שקט כדי שהאתרים יהיו
+   הדבר שרואים. פס צבוע במלואו היה מתחרה בצבעי הסטטוס שבתוכו. */
+.tl-band-spine { width: 7px; align-self: stretch; min-height: 54px; background: var(--tier); flex: none; }
+
+.tl-band-title { font-weight: 700; font-size: 1.02rem; padding: 13px 0; }
+.tl-band-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--tier);
+}
+.tl-band-chev {
+  margin-inline-start: auto;
+  margin-inline-end: 14px;
+  color: var(--text-muted, #9ca3af);
+  transition: transform .18s ease;
+}
+.tl-band-chev.is-open { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .tl-band-chev { transition: none; } }
+
+.tl-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 8px;
+  padding: 2px 12px 14px;
+}
+.tl-tiles-empty { grid-column: 1 / -1; margin: 0; color: var(--text-muted, #9ca3af); font-size: .9rem; }
+
+.tl-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  min-width: 0;
+}
+.tl-tile:hover { border-color: var(--tier); }
+.tl-tile[aria-expanded="true"] { border-color: var(--tier); box-shadow: inset 0 0 0 1px var(--tier); }
+.tl-tile-name { font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.tl-tile-foot {
+  display: flex;
+  gap: 8px;
+  font-size: .78rem;
+  color: var(--text-muted, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
+.tl-tile-num { margin-inline-start: auto; }
+
+/* ⚠️ הגיליון נפרש על כל רוחב הרשת ודוחף את האריחים למטה, במקום לרחף
+   מעליהם. חלון צף מסתיר בדיוק את השורות שמנסים להשוות אליהן. */
+.tl-sheet {
+  grid-column: 1 / -1;
+  border: 1px solid var(--tier);
+  border-radius: 8px;
+  background: var(--surface-2, #f7f8fa);
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 18px;
+}
+.tl-sheet-title { grid-column: 1 / -1; margin: 0; font-size: 1rem; font-weight: 700; }
+.tl-sheet-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tl-sheet-label { font-size: .72rem; letter-spacing: .04em; color: var(--text-muted, #9ca3af); }
+
+/* בתוך הגיליון התאים אינם בטבלה, ולכן הם מקבלים גבול משלהם — אחרת
+   שדה עריכה נראה כמו טקסט רגיל ואי אפשר לדעת במה אפשר לגעת. */
+.tl-sheet-field .tl-input,
+.tl-sheet-field .tl-ro,
+.tl-sheet-field .tl-status {
+  text-align: start;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  width: 100%;
+}
+.tl-sheet-field .tl-status--ro { border: none; }
+
+.tl-view-toggle { font-variant-numeric: tabular-nums; }

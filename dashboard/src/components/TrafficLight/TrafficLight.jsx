@@ -467,7 +467,120 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ ומתחיל **מוסתר**, לא גלוי: הלוח נפתח לעיתים מול מסך משותף.
 
-export default function TrafficLight({ onClose }) {
+export default f
+// ============================================================
+// תצוגת הפסים — הלוח לפי "להתייחס כ", בלי גלילה אופקית
+// ============================================================
+// ⚠️ **מה שנכון לפורמט מאנדיי אינו נכון כאן.** שם הלוח הוא המסך כולו, וטבלה
+// של 15 עמודות נסרקת לרוחב. בדשבורד הלוח הוא מסך אחד מתוך כמה, ורוב העמודות
+// יושבות מעבר לקצה — כלומר גלילה אופקית כדי לקרוא ערך של מילה אחת.
+//
+// כאן ההיררכיה שכבר קיימת בנתונים היא המבנה: כל דרגת שירות היא פס שנפתח
+// ונסגר, ובתוכו אריח לכל אתר. אתר נפתח **במקומו** לגיליון עם כל העמודות.
+//
+// ⚠️ **הסדר אינו מיון אלא מקום.** בטבלה, שורה שמסומנת VIP יכולה לשבת בין
+// שורות בסיסיות ואיש לא יבחין; כאן היא לא יכולה להיות בפס אחר. זה מה
+// שנשאל — "שיהיה ממש לפי הסדר של להתייחס כ".
+//
+// ⚠️ **וכל שורות הלוח כאן, גם אתרים שאינם בדשבורד.** הלוח הוא רשימת
+// הלקוחות, לא רשימת המנוטרים; תצוגה שתראה רק את המנוטרים הייתה מסתירה
+// את רובו בלי לומר זאת.
+//
+// ⚠️ הטבלה **לא הוסרה.** המתג נשמר בדפדפן, כי העדפת תצוגה שמתאפסת בכל
+// רענון היא העדפה שמפסיקים להשתמש בה.
+function BandsView({ columns, rows, allRows, canEdit, busy, onSaveCell }) {
+  const [openBands, setOpenBands] = useState(null);
+  const [openRow, setOpenRow] = useState(null);
+
+  const byLabel = (needle) => columns.find((c) => String(c.label).includes(needle));
+  const kindCol = byLabel("להתייחס") || columns.find((c) => c.kind === "status");
+  const nameCol = columns[0];
+  const codeCol = byLabel("קוד");
+
+  // סדר הפסים הוא **סדר האפשרויות בעמודה**, ולא רשימה קשיחה כאן. עמודה
+  // שתקבל דרגה חדשה תקבל פס חדש בלי שאיש יזכור לעדכן קוד.
+  const options = Array.isArray(kindCol?.options) ? kindCol.options : [];
+  const groups = options.map((o) => ({
+    key: String(o.value),
+    label: o.label || String(o.value),
+    color: o.color || "var(--brand, #3d78d8)",
+    rows: rows.filter((r) => String(r.cells?.[kindCol.key] ?? "").trim() === String(o.value)),
+  }));
+  // ⚠️ שורה בלי ערך אינה נעלמת — היא מקבלת פס משלה בסוף. זו בדיוק הרשימה
+  // של מה שצריך למלא, והסתרתה הופכת חוסר נתון לחוסר קיום.
+  const known = new Set(options.map((o) => String(o.value)));
+  const rest = rows.filter((r) => !known.has(String(r.cells?.[kindCol?.key] ?? "").trim()));
+  if (rest.length) groups.push({ key: "__none__", label: "ללא דרגה", color: "var(--text-muted, #9ca3af)", rows: rest });
+
+  const isOpen = (key) => (openBands ? openBands.has(key) : true);
+  const toggleBand = (key) => setOpenBands((prev) => {
+    const next = new Set(prev ?? groups.map((g) => g.key));
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  return (
+    <div className="tl-bands">
+      {groups.map((g) => (
+        <section key={g.key} className="tl-band" style={{ "--tier": g.color }}>
+          <button
+            type="button"
+            className="tl-band-head"
+            aria-expanded={isOpen(g.key)}
+            onClick={() => toggleBand(g.key)}
+          >
+            <span className="tl-band-spine" />
+            <span className="tl-band-title">{g.label}</span>
+            <span className="tl-band-count">{g.rows.length}</span>
+            <span className={`tl-band-chev ${isOpen(g.key) ? "is-open" : ""}`} aria-hidden="true">▾</span>
+          </button>
+
+          {isOpen(g.key) && (
+            <div className="tl-tiles">
+              {g.rows.length === 0 && <p className="tl-tiles-empty">אין אתרים בדרגה הזו.</p>}
+              {g.rows.map((r) => {
+                const open = openRow === r.id;
+                return [
+                  <button
+                    key={`t${r.id}`}
+                    type="button"
+                    className="tl-tile"
+                    aria-expanded={open}
+                    onClick={() => setOpenRow(open ? null : r.id)}
+                  >
+                    <span className="tl-tile-name">{r.cells?.[nameCol?.key] || "ללא שם"}</span>
+                    <span className="tl-tile-foot">
+                      <span className="tl-tile-code">{r.cells?.[codeCol?.key] || "—"}</span>
+                      <span className="tl-tile-num">#{allRows.indexOf(r) + 1}</span>
+                    </span>
+                  </button>,
+                  open && (
+                    <div key={`s${r.id}`} className="tl-sheet">
+                      <h3 className="tl-sheet-title">{r.cells?.[nameCol?.key] || "ללא שם"}</h3>
+                      {columns.map((c) => (
+                        <div key={c.key} className="tl-sheet-field">
+                          <span className="tl-sheet-label">{c.label}</span>
+                          <Cell
+                            column={c}
+                            value={r.cells?.[c.key]}
+                            readOnly={!canEdit || busy}
+                            onSave={(v) => onSaveCell(r.id, c.key, v)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                ];
+              })}
+            </div>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function TrafficLight({ onClose }) {
   const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();
 
   // ⚠️ **דגל מקומי ולא `lock()` מה-hook.** בזרוע הישירה `lock` היא
@@ -476,6 +589,14 @@ export default function TrafficLight({ onClose }) {
   // בלעדיו כפתור "נעל" היה נראה כאילו הוא עובד ולא משנה דבר.
   const [editMode, setEditMode] = useState(false);
   const [query, setQuery] = useState("");
+
+  // ⚠️ נשמר בדפדפן: העדפת תצוגה שמתאפסת בכל רענון היא העדפה שמפסיקים
+  // להשתמש בה. ברירת המחדל היא הפסים, והטבלה במרחק לחיצה.
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem("tl-view") === "table" ? "table" : "bands"; }
+    catch { return "bands"; }
+  });
+  useEffect(() => { try { localStorage.setItem("tl-view", view); } catch { /* מצב פרטי */ } }, [view]);
 
   const [board, setBoard] = useState({ columns: [], rows: [] });
   const [loading, setLoading] = useState(true);
@@ -594,6 +715,12 @@ export default function TrafficLight({ onClose }) {
           </div>
 
           <div className="tl-head-actions">
+          <button
+            type="button"
+            className="tl-btn-ghost tl-view-toggle"
+            onClick={() => setView(view === "bands" ? "table" : "bands")}
+            title={view === "bands" ? "מעבר לטבלה המלאה" : "מעבר לתצוגת הפסים"}
+          >{view === "bands" ? "טבלה" : "פסים"}</button>
             {canEdit ? (
               <>
                 <button
@@ -674,6 +801,15 @@ export default function TrafficLight({ onClose }) {
                 ? <>הלוח ריק. התחילי ב־<strong>+ עמודה</strong>, ואז <strong>+ שורה</strong> — או הדביקי ישירות אחרי שהגדרת עמודות.</>
                 : <>הלוח ריק עדיין.</>}
             </p>
+          ) : view === "bands" ? (
+            <BandsView
+              columns={columns}
+              rows={rows}
+              allRows={allRows}
+              canEdit={canEdit}
+              busy={busy}
+              onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
+            />
           ) : (
             <table className="tl-table">
               <thead>
