@@ -1023,3 +1023,35 @@ CREATE POLICY service_commands_read ON service_commands
   USING ((SELECT app.is_active_user()) AND (SELECT app.is_manager()));
 
 GRANT SELECT ON service_commands TO authenticated;
+
+-- ============================================================
+-- ⚠️ anon — אפס, וזה נאכף ולא מונח
+-- ============================================================
+-- נמדד ב-22/09/2026, כשנשאלה השאלה "מה בדיוק יכול לראות מי שמקבל את
+-- כתובת הקליטה": לאנונימי לא היה SELECT על שום טבלה — אבל כן נשארו לו
+-- `REFERENCES`, `TRIGGER` ו-`TRUNCATE` על 29 טבלאות.
+--
+-- ⚠️ **דרך PostgREST אי אפשר לנצל אותן** — אין endpoint ל-TRUNCATE ואין
+-- דרך ליצור טריגר. כלומר זו אינה חשיפה, אלא שארית: ברירת המחדל של
+-- Supabase מעניקה, וההקשחה שלנו שללה את ארבע פעולות ה-DML בלבד.
+--
+-- ומה שנשאר עדיין מזיק בשתי דרכים: הוא הופך כל ביקורת עתידית לרועשת
+-- ("למה ל-anon יש TRUNCATE?"), וביום שייפתח נתיב SQL כלשהו — למשל
+-- פונקציית SECURITY DEFINER שמריצה דינמית — ההרשאה כבר שם.
+--
+-- ⚠️ שלילה **גורפת** ולא רשימה: רשימה היא דבר שמתיישן בכל טבלה חדשה.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+
+-- ⚠️ ופונקציה אחת: `rls_auto_enable` היא פונקציית event trigger, והיא
+-- SECURITY DEFINER. קריאה ישירה אליה נכשלת (טיפוס ההחזרה אינו ניתן
+-- להצגה), אבל פונקציה שרצה בהרשאות בעלים ופתוחה לאנונימי אינה מצב שרוצים
+-- להסתמך על כך שהוא לא מנוצל. היא נוצרה מחוץ לקוד הזה, ולכן בבדיקה.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public' AND p.proname = 'rls_auto_enable') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon';
+  END IF;
+END $$;
