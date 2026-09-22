@@ -42,6 +42,12 @@ const INTAKE_EMAIL = Deno.env.get("INTAKE_EMAIL")!;       // המשתמש הקו
 const INTAKE_PASSWORD = Deno.env.get("INTAKE_PASSWORD")!;
 const INTAKE_SECRET = Deno.env.get("INTAKE_SECRET")!;     // הסוד שבכתובת
 
+// ⚠️ **מי שלח, ולא "מאיפה הקריאה באה".** היום WIZENET מעביר אלינו את
+// הקריאות שהוא מקבל מהאפליקציה; מחר ייתכן שהאפליקציה תשלח גם ישירות.
+// בלי התיוג הזה שתי הדרכים ייראו זהות בטבלה, וספירה של קריאות כפולות
+// תהיה ניחוש. מקור חדש = סוד חדש בכתובת + ערך חדש כאן.
+const SOURCE = Deno.env.get("INTAKE_SOURCE") ?? "wizenet";
+
 const MAX_BYTES = 100_000;   // אותה תקרה כמו ב-CHECK בטבלה
 
 // ============================================================
@@ -134,7 +140,7 @@ Deno.serve(async (req) => {
     payload,
     headers,
     remote_ip: req.headers.get("x-forwarded-for") ?? null,
-    source: "app",
+    source: SOURCE,
   });
 
   if (!res.ok) {
