@@ -874,7 +874,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tl-tile-foot { display: contents; }
 .tl-tile-code {
   font-size: .76rem;
   color: var(--text-muted, #9ca3af);
@@ -883,7 +882,6 @@
 }
 /* מספר השורה ירד מהאריח: הוא נחוץ בטבלה כדי להצביע על שורה, וכאן הוא
    מספר שלישי שמתחרה על אותו רוחב. הוא נשאר בגיליון הפתוח. */
-.tl-tile-num { display: none; }
 
 .tl-sheet {
   grid-column: 1 / -1;

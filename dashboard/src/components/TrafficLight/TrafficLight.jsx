@@ -487,7 +487,7 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ הטבלה **לא הוסרה.** המתג נשמר בדפדפן, כי העדפת תצוגה שמתאפסת בכל
 // רענון היא העדפה שמפסיקים להשתמש בה.
-function BandsView({ columns, rows, allRows, canEdit, busy, searching, onSaveCell }) {
+function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
   // ⚠️ **סגור כברירת מחדל, ולא פתוח.** 151 שורות בחמישה פסים פתוחים הן
   // קיר של אריחים — נמדד על המסך: "תופס את כל המקום, תחושה דחוסה". חמישה
   // פסים סגורים עם מונה הם התמונה שאפשר לסרוק בשנייה, וזו גם הסיבה שהלוח
@@ -523,8 +523,9 @@ function BandsView({ columns, rows, allRows, canEdit, busy, searching, onSaveCel
   if (rest.length) groups.push({ key: "__none__", label: "ללא דרגה", color: "var(--text-muted, #9ca3af)", rows: rest });
 
   // ⚠️ חיפוש פותח את מה שיש בו תוצאות: פס סגור שמכיל את מה שחיפשו נראה
-  // בדיוק כמו "לא נמצא".
-  const isOpen = (key) => openBands.has(key) || Boolean(searching);
+  // בדיוק כמו "לא נמצא". ורק אותם — פס ריק שנפתח בחיפוש הוא שורת
+  // "אין אתרים" שמתחרה בתוצאה עצמה.
+  const isOpen = (g) => openBands.has(g.key) || (Boolean(searching) && g.rows.length > 0);
   const toggleBand = (key) => setOpenBands((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -538,16 +539,16 @@ function BandsView({ columns, rows, allRows, canEdit, busy, searching, onSaveCel
           <button
             type="button"
             className="tl-band-head"
-            aria-expanded={isOpen(g.key)}
+            aria-expanded={isOpen(g)}
             onClick={() => toggleBand(g.key)}
           >
             <span className="tl-band-spine" />
             <span className="tl-band-title">{g.label}</span>
             <span className="tl-band-count">{g.rows.length}</span>
-            <span className={`tl-band-chev ${isOpen(g.key) ? "is-open" : ""}`} aria-hidden="true">▾</span>
+            <span className={`tl-band-chev ${isOpen(g) ? "is-open" : ""}`} aria-hidden="true">▾</span>
           </button>
 
-          {isOpen(g.key) && (
+          {isOpen(g) && (
             <div className="tl-tiles">
               {g.rows.length === 0 && <p className="tl-tiles-empty">אין אתרים בדרגה הזו.</p>}
               {g.rows.map((r) => {
@@ -561,10 +562,7 @@ function BandsView({ columns, rows, allRows, canEdit, busy, searching, onSaveCel
                     onClick={() => setOpenRow(open ? null : r.id)}
                   >
                     <span className="tl-tile-name">{r.cells?.[nameCol?.key] || "ללא שם"}</span>
-                    <span className="tl-tile-foot">
-                      <span className="tl-tile-code">{r.cells?.[codeCol?.key] || "—"}</span>
-                      <span className="tl-tile-num">#{allRows.indexOf(r) + 1}</span>
-                    </span>
+                    <span className="tl-tile-code">{r.cells?.[codeCol?.key] || "—"}</span>
                   </button>,
                   open && (
                     <div key={`s${r.id}`} className="tl-sheet">
@@ -817,7 +815,6 @@ function TrafficLight({ onClose }) {
             <BandsView
               columns={columns}
               rows={rows}
-              allRows={allRows}
               searching={Boolean(query)}
               canEdit={canEdit}
               busy={busy}
