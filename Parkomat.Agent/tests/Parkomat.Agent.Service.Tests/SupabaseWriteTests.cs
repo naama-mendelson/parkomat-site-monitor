@@ -79,8 +79,11 @@ public class SupabaseWriteTests
             .Select(l => l.Trim())
             .FirstOrDefault(l => l.StartsWith(key + "="))?[(key.Length + 1)..].Trim();
 
-        Assert.Equal(Val("VITE_SUPABASE_URL"), SupabaseDefaults.Url);
-        Assert.Equal(Val("VITE_SUPABASE_PUBLISHABLE_KEY"), SupabaseDefaults.AnonKey);
+        // ⚠️ הצרוב הוא ה"צפוי", והקובץ הוא ה"בפועל" — וזה לא סדר שרירותי:
+        // הודעת הכישלון אומרת "ציפיתי לערך שבסוכן, קיבלתי את זה שב-.env",
+        // וזו בדיוק הקריאה הנכונה של הפער.
+        Assert.Equal(SupabaseDefaults.Url, Val("VITE_SUPABASE_URL"));
+        Assert.Equal(SupabaseDefaults.AnonKey, Val("VITE_SUPABASE_PUBLISHABLE_KEY"));
     }
 
     [Fact]
