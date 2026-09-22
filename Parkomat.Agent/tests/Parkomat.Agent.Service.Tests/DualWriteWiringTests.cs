@@ -235,6 +235,40 @@ public class DualWriteWiringTests
     }
 
     [Fact]
+    public void TheLateFaultTextGoesOutOnTheDirectPathToo()
+    {
+        // ============================================================
+        // ⚠️ התיאור של התקלה נעלם מהמסך — נמדד, ולא הוסק
+        // ============================================================
+        // הבקר כותב את תיאור התקלה **אחרי** ה-MODE, ולכן רוב התקלות
+        // משודרות בלי תיאור והוא נשלח בשידור משלים. השידור המשלים ישב על
+        // <c>TryPublishAsync(mqtt, …)</c> בלבד — כלומר MQTT ותו לא.
+        //
+        // כל עוד השרת רץ הוא קלט אותו ומילא (<c>fillFaultTextIfMissing</c>),
+        // ולכן הפער היה בלתי נראה. ב-17/09/2026 השרת כובה לצמיתות, ומאז
+        // נמדד בייצור: **1 מתוך 51 תקלות עם תיאור**, מול 135 מתוך 243 לפני.
+        // 117 הודעות תקלה ישירות בלי תיאור מול 17 עם.
+        //
+        // ⚠️ וזה בדיוק אותו כשל שכבר תועד כאן פעמיים — נתיב שמשדר דרך
+        // <c>mqtt</c> ואינו מוסיף ל-<c>mirrored</c>. לכן הבדיקה שומרת על
+        // הנתיב הזה בשמו, ולא על "איזשהו mirrored.Add בקובץ".
+        //
+        // הצד השני כבר מוכן: <c>app.ingest_state</c> ממלאת תיאור חסר
+        // למקטע הפתוח גם כשהמצב לא השתנה (ingest.postgres.sql).
+        string w = Worker();
+        int late = w.IndexOf("Fault text arrived", StringComparison.Ordinal);
+        Assert.True(late > 0, "לא נמצא השידור המשלים של תיאור התקלה");
+
+        // חלון עד תחילת הסעיף הבא (ריקון תור הפעולות) — כלומר גוף השידור המשלים בלבד.
+        int next = w.IndexOf("pendingOps.LoadAll", late, StringComparison.Ordinal);
+        Assert.True(next > late, "לא נמצא סוף הסעיף של השידור המשלים");
+
+        string block = w[late..next];
+        Assert.Contains("mirrored.Add(", block);
+        Assert.Contains("FaultText", block);
+    }
+
+    [Fact]
     public void TheObserverSeamIsGoneEntirely()
     {
         // ============================================================

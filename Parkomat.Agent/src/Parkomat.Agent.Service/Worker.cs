@@ -1225,12 +1225,29 @@ public class Worker : BackgroundService
                                     "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
                                     lateFaultTextPolls, late.Text);
 
-                                await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(new StateMessage
+                                // ⚠️ **ההודעה נבנית פעם אחת ונשלחת בשני המסלולים.**
+                                // עד 22/09/2026 היא נשלחה ל-MQTT בלבד, וכל עוד השרת
+                                // רץ הוא מילא אותה למקטע הפתוח — ולכן הפער לא נראה.
+                                // מהיום שהשרת כובה נמדד בייצור: תיאור תקלה הגיע
+                                // ב-1 מתוך 51 תקלות, מול 135 מתוך 243 לפני. זה אותו
+                                // כשל שכבר קרה בנתיב כשל ה-PLC: נתיב שמשדר דרך
+                                // `mqtt` ואינו מוסיף ל-`mirrored` פשוט אינו קיים
+                                // באתר שאין בו MQTT.
+                                var lateState = new StateMessage
                                 {
                                     Timestamp = clock.UnixNow(),
                                     State = SiteState.Error,
                                     FaultText = late.Text,
-                                }, stoppingToken), "late fault text", stoppingToken);
+                                };
+
+                                await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(lateState, stoppingToken),
+                                    "late fault text", stoppingToken);
+
+                                // ⚠️ הצד השני כבר יודע לקלוט: `app.ingest_state` ממלאת
+                                // תיאור חסר למקטע הפתוח גם כשהמצב לא השתנה, ואינה
+                                // דורסת תיאור קיים. כלומר ההודעה הזו אינה "מצב חדש"
+                                // אלא השלמה — וכך היא נרשמת.
+                                if (supabase is not null) mirrored.Add(BatchPayload.From(lateState));
                             }
                         }
                     }

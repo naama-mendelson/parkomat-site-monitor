@@ -363,3 +363,47 @@ test("מפעיל אינו רשאי לשנות מערכת", { skip }, async () =>
   await assert.rejects(h.as("authenticated", USER, (tx) =>
     tx.query(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => 'לולק')`)));
 });
+
+// ================================================================
+// תיאור התקלה שמגיע באיחור — במסלול הישיר
+// ================================================================
+// ⚠️ הבקר כותב את ה-MODE ואת הטקסט בשתי כתובות שונות ולא באותו רגע, ולכן
+// רוב התקלות משודרות בלי תיאור והוא נשלח בשידור משלים. עד 22/09/2026
+// השידור המשלים הלך ל-MQTT בלבד (Worker.cs), והשרת מילא אותו. השרת כובה,
+// ואז נמדד בייצור: תיאור הגיע ב-1 מתוך 51 תקלות מול 135 מתוך 243 לפני.
+//
+// הסוכן תוקן לשדר אותו גם ישירות, והבדיקות כאן מקבעות את הצד הקולט: אצווה
+// שנייה של "תקלה" עם טקסט **אינה** מצב חדש — היא השלמה למקטע הפתוח.
+// tests/late-fault-text.test.js בודקת את אותו כלל בשרת, שכבר אינו בשימוש.
+
+const openFaultText = async (id) => (await h.pg.query(
+  `SELECT fault_text FROM status_history WHERE site_id = $1 AND ended_at IS NULL`, [id])).rows[0]?.fault_text ?? null;
+
+test("⚠️ תיאור שהגיע אחרי התקלה ממלא את המקטע הפתוח", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ history: [["ready", now - 5 * H, null]] });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 2 * 60e3) }]);
+  assert.equal(await openFaultText(s.id), null, "התקלה נפתחה בלי תיאור — זה המצב הרגיל");
+
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 60e3), fault_text: "מעלית - רפיון שרשרת:" }]);
+  assert.equal(await statusOf(s.id), "error", "עדיין אותה תקלה, לא מקטע חדש");
+  assert.equal(await openFaultText(s.id), "מעלית - רפיון שרשרת:");
+});
+
+test("⚠️ תיאור קיים אינו נדרס על ידי השלמה מאוחרת", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ history: [["ready", now - 5 * H, null]] });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 2 * 60e3), fault_text: "הראשון" }]);
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 60e3), fault_text: "השני" }]);
+  assert.equal(await openFaultText(s.id), "הראשון");
+});
+
+test("השלמה אינה פותחת מקטע נוסף", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ history: [["ready", now - 5 * H, null]] });
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 2 * 60e3) }]);
+  await batch([{ kind: "state", status: "error", occurred_at: sec(now - 60e3), fault_text: "אחרי" }]);
+  const n = (await h.pg.query(
+    `SELECT count(*)::int n FROM status_history WHERE site_id = $1 AND status = 'error'`, [s.id])).rows[0].n;
+  assert.equal(n, 1);
+});
