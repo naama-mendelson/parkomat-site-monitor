@@ -15,9 +15,25 @@ Do not build new work on `master`, and do not suggest moving something *into* it
 | Dependency | State |
 |---|---|
 | **The AI assistant** | **Removed from the dashboard** (owner's choice over moving it to an Edge Function). `/api/chat` still exists in `master` but nothing calls it. |
-| **7 sites report over MQTT only** — 1343, 1348, 1416, 2439, 3439, 3456, 3465 | **Open — this is the blocker.** Their agent accounts were created 15/09 and have **never signed in** (`auth.users.last_sign_in_at` NULL); their MQTT payloads lack the `Systems` field every direct site sends, i.e. an older agent. Each needs the current installer plus its Supabase password entered on site. The other 30 sites already write directly. |
+| **7 sites reported over MQTT only** — 1343, 1348, 1416, 2439, 3439, 3456, 3465 | **5 done on 22/09; 1416 and 3465 remain.** The cause was **not** the agent: those PCs have Windows Firewall with `DefaultOutboundAction = Block` on all three profiles, with an exception for port 8883 only — i.e. exactly the old path through HiveMQ. The agent logged `An attempt was made to access a socket in a way forbidden by its access permissions`, and `curl` returned `000`. Fix per site: an outbound allow rule for `Parkomat.Agent.Service.exe` on TCP 443 (plus UDP 123, since NTP is blocked too and the clocks were unsynced), and at two sites also a freshly issued password — accounts recreated on 15/09 invalidated whatever was typed before. |
 | **Daily data backup** (`backup` container on DELL008) | **Stays for now.** The owner plans Supabase Pro, which includes backups. It is the only copy outside Supabase — stopping DELL008 entirely stops it. The `backup` container does not run `db.init`. |
-| **SQL is applied at `master` boot** (`db.init`) | ⚠️ **A hazard while `master` still runs old code**: a restart re-applies the SQL it was built with and overwrites newer functions in production. Stop the `parkomat` container, or redeploy it, whenever production SQL moves ahead of DELL008. |
+| **SQL is applied at `master` boot** (`db.init`) | **Replaced — `master/tools/apply-sql.js`.** Dry run compares production against what `db.init()` builds on a local Postgres (PGlite) — every function body, `SECURITY DEFINER`, grants, policies, cron — and `--apply` writes. It **refuses to write while `master` is alive**, because a running `master` overwrites it at its next boot. |
+
+⚠️ **The hazard above was not theoretical for even one day.** On 17/09, hours after the decision,
+a scheduled task on DELL008 (`Parkomat-Watchdog`, `docker compose up -d` every 5 minutes) brought
+the old container back. Its `db.init()` re-created old copies of `register_site`, `update_site`
+**and `ingest_batch`** — and two copies of a function make PostgREST refuse the call, so **every
+site stopped writing** and silence detection marked 26 of them disconnected. It also reverted
+seven function bodies, including the one that writes `events`; nothing broke loudly, the screen
+simply stopped updating by itself for five days until it was measured (50 faults, 2,138 status
+changes, **0 live events**). Both scheduled tasks are now `Disabled`; do not re-enable them, and
+do not run `deploy.ps1` on DELL008.
+
+**Dead but not yet deleted:** the "restart the server" feature (`serviceCommandsDirect`,
+`app.claim_service_command`, the `service_commands` table, `tools/check-service-commands.js`,
+`ops/command-poller.ps1`). The button is already out of the UI and the poller task is disabled.
+Removing the rest is a five-file surgery with a destructive DB step; it is left deliberately,
+not forgotten.
 
 ⚠️ **Turning `master` off before those 7 sites move silences them *and hides it*:**
 `app.mark_silent_agents` only watches sites that have an `alive` row, so an MQTT-only site

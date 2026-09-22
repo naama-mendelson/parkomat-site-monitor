@@ -692,8 +692,8 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_beat      text;
-  v_age_min   numeric;
+  -- ⚠️ `v_beat` ו-`v_age_min` נמחקו יחד עם סעיף 1 (22/09/2026). משתנה
+  -- שנשאר אחרי הקוד שהשתמש בו הוא הזמנה לשימוש חוזר שגוי בשם שמשקר.
   v_drops     integer;
   v_last      text;
   v_now       text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
@@ -754,39 +754,23 @@ DECLARE
                 'false') = 'true';
 BEGIN
   -- ============================================================
-  -- 1. השרת חדל לדווח על עצמו
+  -- 1. השרת חדל לדווח על עצמו — **הוסר, 22/09/2026**
   -- ============================================================
-  SELECT value INTO v_beat FROM settings WHERE key = 'server_heartbeat';
-
-  -- ⚠️ NULL אינו "מת": שרת שטרם נפרס עם התכונה לא כתב מעולם, והתראה עליו
-  -- הייתה מצייצת על מערכת תקינה — כלומר בדיוק ההתראה שמלמדת להתעלם.
-  IF v_beat IS NOT NULL THEN
-    v_age_min := EXTRACT(EPOCH FROM (now() - v_beat::timestamptz)) / 60;
-
-    IF v_age_min > p_heartbeat_stale_minutes THEN
-      -- ⚠️ דה-דופ: בלעדיו ההתראה חוזרת בכל הרצה, וטלפון שמצייץ כל עשר
-      -- דקות כל הלילה הוא טלפון שמשתיקים — ואז גם ההתראה הבאה תושתק.
-      SELECT value INTO v_last FROM settings WHERE key = 'alert_last_heartbeat';
-      IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 60 > 60 THEN
-        -- שליחה רק כשהדגל דלוק — ראה v_sys_on.
-        v_req := CASE WHEN v_sys_on THEN app.send_push(
-          'no_comm', 'מערכת הניטור',
-          'השרת אינו מדווח על עצמו ' || round(v_age_min) || ' דקות — ייתכן שהקליטה מושבתת') END;
-
-        -- ============================================================
-        -- ⚠️ הדה-דופ נרשם רק אם באמת נשלח משהו
-        -- ============================================================
-        -- קודם הוא נרשם תמיד. כלומר כישלון שליחה **השתיק את ההתראה
-        -- לשעה** — המנגנון שנועד למנוע רעש הפך למנגנון שמסתיר כשל.
-        -- זה מה שהפך 401 חוזר לשתיקה מוחלטת במקום לניסיון כל עשר דקות.
-        IF v_req IS NOT NULL THEN
-          INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_heartbeat', v_now, v_now)
-            ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
-        END IF;
-        RETURN QUERY SELECT 'heartbeat_stale'::text, (round(v_age_min) || ' דקות')::text;
-      END IF;
-    END IF;
-  END IF;
+  -- ⚠️ `master` יצא משימוש ב-17/09/2026 (החלטת בעלת המוצר: Supabase
+  -- והדשבורד בלבד). אות החיים שלו לא יתעדכן עוד **לעולם**, ולכן הסעיף
+  -- הזה היה מדווח `heartbeat_stale` בכל הרצה, כל עשר דקות, עד סוף הזמן.
+  --
+  -- ⚠️ **וההתראה הזו הייתה גרועה מרעש: היא הייתה שגויה.** היא אומרת
+  -- "ייתכן שהקליטה מושבתת" — בזמן שהקליטה עובדת מצוין ישירות מול
+  -- Supabase. מי שהיה מקבל אותה היה נשלח להפעיל את השרת, וזה בדיוק
+  -- מה שמשבית את כל האתרים (ראה CLAUDE.md, 17/09).
+  --
+  -- ⚠️ **ומה שמחליף אותה כבר קיים ואינו צריך סעיף חדש כאן:** סעיף 4
+  -- למטה שואל את השאלה האמיתית במסלול הישיר — אילו אתרים הפסיקו לפעום.
+  -- שם אין "השרת", יש אתרים; וזו היחידה שיש לה משמעות היום.
+  --
+  -- הפרמטר `p_heartbeat_stale_minutes` נשאר בחתימה בכוונה: שינוי חתימה
+  -- דורש DROP, והתזמון ב-pg_cron קורא לה עם שני ארגומנטים.
 
   -- ============================================================
   -- 2. הודעות נזרקו בקליטה

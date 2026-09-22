@@ -720,6 +720,14 @@ and operations are not queued for a drain that will never happen.
 - ⚠️ **And it is what makes losing the password survivable.** That bug is still open,
   and on a direct-only site it would mean a *dead* site rather than a degraded one.
   The derivation turns it into a fall back onto the path that works.
+
+  ⚠️ **That sentence stopped being true on 17/09/2026, and the change is silent.**
+  `master` was retired, so MQTT now falls back to *nobody* — the broker still accepts
+  the message and nothing reads it. A site that loses its password is dead, not degraded,
+  at **every** site rather than only the direct-only ones. What replaces the fallback is
+  recovery speed, not resilience: *Site management → זהויות אתרים → סיסמה חדשה* issues a
+  new password in one click, and it is typed once on site. Keep that in mind before
+  treating a wiped `config.json` as a minor event.
 - **No checkbox in the settings form, deliberately** — one click in the field would
   silence a site, exactly the trap the TLS checkbox was removed for. Turning it on is
   a hand edit of `config.json`.
