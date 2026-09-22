@@ -708,7 +708,10 @@ function init() {
       // `app.error_segments`). כולם אידמפוטנטיים — נבדק בהחלה כפולה על
       // Postgres 17 מקומי, 17/09/2026. וכישלון מפיל את העלייה, מאותו נימוק
       // כמו הקליטה: זה קוד שלנו, לא הרחבה שאולי חסרה.
-      for (const file of ["traffic-light.postgres.sql", "service-hours.postgres.sql", "fixflow.postgres.sql"]) {
+      // ⚠️ `service-calls` אחרון ואינו תלוי באיש מהם — הוא רק צריך את
+      // `app.is_active_user` ואת `app.current_actor` שכבר נוצרו ב-security.
+      for (const file of ["traffic-light.postgres.sql", "service-hours.postgres.sql", "fixflow.postgres.sql",
+        "service-calls.postgres.sql"]) {
         await setup.query(fs.readFileSync(path.join(__dirname, file), "utf8"));
       }
 

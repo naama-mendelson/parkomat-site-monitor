@@ -95,4 +95,8 @@ master/public/
 # קובץ טקסט גלוי עם סיסמה לכל אתר — לא נכנס לגיט לעולם.
 agent-passwords*.txt
 master/agent-passwords*.txt
+
+# סודות הקליטה של קריאות השירות — מוצגים פעם אחת ונשמרים כאן בלבד.
+intake-credentials-*.txt
+master/intake-credentials-*.txt
 master/traffic-light-backup-*.json

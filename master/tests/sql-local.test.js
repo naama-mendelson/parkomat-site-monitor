@@ -407,3 +407,98 @@ test("השלמה אינה פותחת מקטע נוסף", { skip }, async () => {
     `SELECT count(*)::int n FROM status_history WHERE site_id = $1 AND status = 'error'`, [s.id])).rows[0].n;
   assert.equal(n, 1);
 });
+
+// ================================================================
+// קליטת קריאות שירות מאפליקציית הלקוחות
+// ================================================================
+// ⚠️ הכתובת שנמסור לצוות האפליקציה קבועה לנצח, ולכן הדלת חייבת לקבל הכול
+// ולא לדחות דבר — ראה db/service-calls.postgres.sql. הבדיקות כאן מקבעות
+// את שני הצדדים: שהקולט יכול **רק** להכניס, ושגוף שאינו JSON נשמר ולא אובד.
+
+const INTAKE = "55555555-5555-5555-5555-555555555555";
+const asIntake = (sql, params) => h.as("authenticated", INTAKE, (tx) => tx.query(sql, params));
+// `setSetting` כבר מוגדר למעלה (בדיקות ההתראות) ועושה בדיוק את אותו דבר.
+
+const insertCall = (raw, payload) => asIntake(
+  `INSERT INTO service_calls (raw, payload) VALUES ($1, $2::jsonb)`, [raw, payload ?? null]);
+
+test("הקולט מכניס קריאה", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await insertCall('{"a":1}', '{"a":1}');
+  const n = (await h.pg.query(`SELECT count(*)::int n FROM service_calls`)).rows[0].n;
+  assert.ok(n > 0);
+});
+
+test("⚠️ גוף שאינו JSON נשמר ולא נדחה — ממנו לומדים מה באמת נשלח", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await insertCall("<xml>לא json</xml>", null);
+  const row = (await h.pg.query(
+    `SELECT raw, payload FROM service_calls ORDER BY id DESC LIMIT 1`)).rows[0];
+  assert.equal(row.raw, "<xml>לא json</xml>");
+  assert.equal(row.payload, null);
+});
+
+test("⚠️ הקולט אינו קורא — גם לא את מה שהכניס", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await insertCall('{"b":2}', '{"b":2}');
+  const rows = (await asIntake(`SELECT * FROM service_calls`)).rows;
+  assert.equal(rows.length, 0, "מדיניות SELECT אינה חלה עליו, ולכן הוא רואה אפס שורות");
+});
+
+test("⚠️ הקולט אינו מוחק ואינו מעדכן — וזה נדחה בהרשאה, לא במדיניות", { skip }, async () => {
+  // ההבדל חשוב: מדיניות חסרה פירושה "הפעולה רצה ואינה מוצאת שורות", כלומר
+  // DELETE שמחזיר הצלחה. כאן אין GRANT בכלל, ולכן הניסיון נופל מיד — וזה
+  // ההבדל בין "לא מחק כלום הפעם" לבין "אינו יכול למחוק".
+  await setSetting("intake_user_id", INTAKE);
+  await insertCall('{"c":3}', '{"c":3}');
+  const before = (await h.pg.query(`SELECT count(*)::int n FROM service_calls`)).rows[0].n;
+
+  await assert.rejects(asIntake(`DELETE FROM service_calls`), /permission denied/);
+  await assert.rejects(asIntake(`UPDATE service_calls SET raw = 'נדרס'`), /permission denied/);
+
+  const after = (await h.pg.query(
+    `SELECT count(*)::int n, count(*) FILTER (WHERE raw = 'נדרס')::int hurt FROM service_calls`)).rows[0];
+  assert.equal(after.n, before, "שום שורה לא נמחקה");
+  assert.equal(after.hurt, 0, "שום שורה לא שונתה");
+});
+
+test("⚠️ כיבוי הדגל סוגר את הדלת מיד", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await setSetting("intake_enabled", "false");
+  await assert.rejects(insertCall('{"d":4}', '{"d":4}'));
+  await setSetting("intake_enabled", "true");
+});
+
+test("⚠️ זהות אחרת אינה מכניסה, גם אם היא משתמש פעיל", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await assert.rejects(h.as("authenticated", USER,
+    (tx) => tx.query(`INSERT INTO service_calls (raw) VALUES ('{"e":5}')`)));
+});
+
+test("⚠️ בלי מזהה קולט ב-settings אין כניסה — ברירת המחדל סגורה", { skip }, async () => {
+  await h.pg.query(`DELETE FROM settings WHERE key = 'intake_user_id'`);
+  await assert.rejects(insertCall('{"f":6}', '{"f":6}'));
+  await setSetting("intake_user_id", INTAKE);
+});
+
+test("איש צוות קורא את הקריאות", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await insertCall('{"g":7}', '{"g":7}');
+  const rows = (await h.as("authenticated", USER, (tx) => tx.query(`SELECT * FROM service_calls`))).rows;
+  assert.ok(rows.length > 0);
+});
+
+test("anon אינו נוגע בטבלה בכלל", { skip }, async () => {
+  await assert.rejects(h.as("anon", null, (tx) => tx.query(`SELECT * FROM service_calls`)));
+  await assert.rejects(h.as("anon", null, (tx) => tx.query(`INSERT INTO service_calls (raw) VALUES ('x')`)));
+});
+
+test("גוף ענק נדחה — דלת פתוחה לאינטרנט בלי תקרה ממלאת את המסד", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await assert.rejects(insertCall("x".repeat(100001), null));
+});
+
+test("JSON שאינו אובייקט אינו נשמר כ-payload", { skip }, async () => {
+  await setSetting("intake_user_id", INTAKE);
+  await assert.rejects(insertCall("[1,2,3]", "[1,2,3]"));
+});
