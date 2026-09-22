@@ -1110,34 +1110,23 @@ screen — and production holds **zero** such buckets today, so it would have pa
 production comparison in full. That is why the field list is locked *mechanically* rather than
 argued ("this field is protected by that one" is a rule someone will break without noticing).
 
-## Fault alarms must be acknowledged — `db/fault-alarms.postgres.sql`
+## Per-fault acknowledgement was built and removed — 22/09/2026
 
-Product owner, 22/09/2026: *"I want faults to require acknowledgement."* Her three choices set the
-shape: every entry into fault waits for an ack **even if the site already recovered** (3 of that
-day's 8 faults lasted under a minute — the sound played and the card was green again before
-anyone looked); a **blocking** dialog until acked (`FaultAckModal`); and **one shared ack with a
-name** — acked once, closed on every screen, recorded.
+⚠️ **Do not re-add it without asking.** The request *"I want faults to require approval"* was
+read as "every fault must be acknowledged": a trigger on `events` raised a row in
+`fault_alarms` on each transition into `error`, `ack_fault_alarms(ids, name)` acknowledged it,
+and a blocking dialog covered every screen until someone did. It shipped for about an hour
+(commit `1584c41`), with 0 alarms raised in that time.
 
-- **Raised by a trigger on `events`, not by the browser.** Two open screens would each create
-  a row, and a fault while no screen was open would create none. `events` is written by both
-  ingestion paths, so one trigger covers both without touching ingestion code.
-- **Only a transition into `error`.** `ingest_state` writes an event with `oldStatus = newStatus
-  = error` for a no-change message; matching `newStatus` alone would raise an alarm per message.
-  Faults during maintenance never reach `events` (`suppressed` returns first).
-- ⚠️ **The trigger can never fail ingestion.** It runs inside the transaction that writes the
-  site state; the insert sits in an inner `BEGIN … EXCEPTION` block, so a failure becomes a
-  `WARNING` and ingestion continues. A missing alarm is a loss; stopped ingestion is damage.
-- **`ack_fault_alarms(ids, name)` follows `start_maintenance`:** verified account *and* a typed
-  full name (one control-room account, several operators). Re-acking returns `0`, not an error —
-  two screens ack in the same second. **Agents may not ack** — they are active `app_users` too.
-- **No write grant to anyone.** Created by the trigger, acked by the RPC; `GRANT UPDATE` would
-  let a browser write `acked_by` at will. In Realtime with `REPLICA IDENTITY FULL` so an ack
-  (UPDATE) closes the dialog on every other screen within a second.
+What was actually meant was the **sound**: enabling the audible alerts must be mandatory. The
+unlock card used to retreat to a thin bar after 25 seconds, so a screen could run all day with
+sound off and a fault would ring nowhere. That is what changed instead (`AlertUnlockBar`).
 
-`tests/fault-alarms-local.test.js` (PGlite, 12 tests) covers it; all 7 mutations fail it —
-including the one that removes the inner exception block, proven by renaming the table away and
-asserting the event insert still succeeds. Verified in production inside a rolled-back
-transaction: transition + repeated `error` → exactly one alarm, nothing left behind.
+The table, trigger and both functions were dropped from production (empty — verified before
+the drop). If per-fault acknowledgement is ever wanted, `git show 1584c41` holds the whole
+design, including two points worth keeping: the trigger must match a *transition* into `error`
+(a no-change message is written as `error → error`), and its insert must sit in an inner
+`EXCEPTION` block so an alarm can never fail ingestion.
 
 ## `public.alive` — the agent heartbeat, and why it is a table
 

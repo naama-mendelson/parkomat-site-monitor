@@ -36,7 +36,6 @@ const SCREENS = [
   ["תצוגת הפסים",       "tl-bands"],
   ["מגירת פרטי אתר",    "tl-drawer-fields"],
   ["עקבת תקלות שצלצלו", "fault-trail-item"],
-  ["חלון אישור תקלה",   "fack-btn"],
   ["ניהול אתרים",       "adm-list"],
   ["באנר נתונים ישנים", "stale-banner"],
   ["זהויות אתרים",      "si-table"],

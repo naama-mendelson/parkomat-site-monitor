@@ -75,7 +75,6 @@ import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
 import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
-import { fetchOpenAlarmsDirect, ackAlarmsDirect, subscribeAlarmsDirect } from "./faultAlarmsDirect";
 
 // ============================================================
 // ההשוואה היא למחרוזת "false", ולא בדיקת אמת
@@ -845,23 +844,3 @@ export {
   fetchBoard, addColumn, updateColumn, deleteColumn, moveColumn,
   addRow, deleteRow, moveRow, setCell, pasteRows,
 } from "./trafficLightDirect";
-
-// ============================================================
-// אישור התראות תקלה — אין זרוע שרת
-// ============================================================
-// התכונה נולדה אחרי ש-`master` יצא משימוש, והיא יושבת כולה במסד (טריגר +
-// RPC). ⚠️ **במצב שרת היא שקטה ולא זורקת:** החלון החוסם נפתח רק כשיש מה
-// לאשר, ורשימה ריקה היא בדיוק "אין מה לאשר". שגיאה כאן הייתה מפילה את
-// המסך הראשי בגלל תכונה שאינה זמינה בו.
-export async function fetchOpenFaultAlarms() {
-  if (!useDirect) return [];
-  return fetchOpenAlarmsDirect();
-}
-export async function ackFaultAlarms(ids, name) {
-  if (!useDirect) throw new Error("אישור תקלות זמין רק במצב הישיר");
-  return ackAlarmsDirect(ids, name);
-}
-export function subscribeFaultAlarms(onChange) {
-  if (!useDirect) return () => {};
-  return subscribeAlarmsDirect(onChange);
-}
