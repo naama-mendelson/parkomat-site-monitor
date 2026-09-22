@@ -100,3 +100,6 @@ master/agent-passwords*.txt
 intake-credentials-*.txt
 master/intake-credentials-*.txt
 master/traffic-light-backup-*.json
+
+# קבצי עבודה של Supabase CLI — נוצרים בכל הרצה ואינם קוד.
+supabase/.temp/
