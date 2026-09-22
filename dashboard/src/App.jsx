@@ -36,6 +36,7 @@ function App() {
   // + "דולי" = כל מתקני הדולי שמושבתים כרגע. מצב אחד משותף היה מאלץ לבחור
   // ביניהם במקום לשלב.
   const [typeFilter, setTypeFilter] = useState("");             // סינון לפי סוג מתקן ("" = הכל)
+  const [systemFilter, setSystemFilter] = useState("");         // סינון לפי מערכת הפעלה ("" = הכל)
   const [tierFilter, setTierFilter] = useState("");             // סינון לפי רמת שירות ("" = הכל)
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
@@ -219,6 +220,7 @@ function App() {
         onRetry={reload}
         activeFilters={activeFilters}
         typeFilter={typeFilter}
+        systemFilter={systemFilter}
         tierFilter={tierFilter}
         searchQuery={searchQuery}
         onSiteClick={handleSiteClick}
@@ -237,6 +239,8 @@ function App() {
         onFilterChange={setActiveFilters}
         typeFilter={typeFilter}
         onTypeFilterChange={setTypeFilter}
+        systemFilter={systemFilter}
+        onSystemFilterChange={setSystemFilter}
         tierFilter={tierFilter}
         onTierFilterChange={setTierFilter}
         searchQuery={searchQuery}

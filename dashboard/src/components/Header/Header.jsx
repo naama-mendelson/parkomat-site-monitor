@@ -28,6 +28,8 @@ function Header({
   activeFilters,
   typeFilter,
   onTypeFilterChange,
+  systemFilter,
+  onSystemFilterChange,
   tierFilter,
   onTierFilterChange,
   onFilterChange,
@@ -165,6 +167,7 @@ function Header({
   }, [filtersOpen]);
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
+    (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0);
 
   return (
@@ -289,8 +292,10 @@ function Header({
             <SiteFilterTile
               sites={sites}
               typeFilter={typeFilter}
+              systemFilter={systemFilter}
               tierFilter={tierFilter}
               onTypeChange={onTypeFilterChange}
+              onSystemChange={onSystemFilterChange}
               onTierChange={onTierFilterChange}
             />
           }

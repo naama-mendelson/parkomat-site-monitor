@@ -6,7 +6,7 @@ import { fuzzyMatch } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
 import "./OperatorView.css";
 
-function OperatorView({ sites, loading, error, onRetry, activeFilters = [], typeFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
+function OperatorView({ sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
   // ============================================================
   // ⚠️ שגיאה **אינה** מוחקת מסך שיש בו נתונים
   // ============================================================
@@ -42,7 +42,7 @@ function OperatorView({ sites, loading, error, onRetry, activeFilters = [], type
     if (activeFilters.length > 0 && !activeFilters.includes(shown)) return false;
     // ⚠️ הכלל עצמו חי ב-SiteFilterTile ומיוצא — כך הסרגל והתצוגה מסכימים על
     // מה קורה עם אתר בלי סוג, במקום להגדיר את זה פעמיים.
-    if (!matchesSiteFilters(site, typeFilter, tierFilter)) return false;
+    if (!matchesSiteFilters(site, typeFilter, tierFilter, systemFilter)) return false;
     if (searchQuery && !fuzzyMatch(`${site.site_name} ${site.code}`, searchQuery)) return false;
     return true;
   });
