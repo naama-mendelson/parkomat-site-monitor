@@ -786,116 +786,156 @@
    ==========================================================
    ⚠️ הצבע של כל פס מגיע **מהעמודה עצמה** (אפשרויות "להתייחס כ"), ולא
    מרשימה כאן. דרגה חדשה בלוח מקבלת פס בצבע שלה בלי שאיש יזכור קוד. */
-.tl-bands { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 12px; }
-
-.tl-band {
-  border: 1px solid var(--border, #e5e7eb);
-  border-radius: 10px;
-  background: var(--surface, #fff);
-  overflow: hidden;
+/* ⚠️ **RTL, ולא LTR.** `.tl-scroll` הוא LTR בכוונה — כדי שהטבלה תיראה
+   כמו Monday — והפסים ירשו את זה: כותרות עבריות בשמאל, החץ בימין,
+   והאתרים נפרשו משמאל לימין. זה היה חצי ממה ש"לא נראה טוב".
+   ⚠️ **רוחב מוגבל וממורכז.** על מסך של 1900px הרשת נמתחה ל-13 עמודות
+   של אריחים — זה היה הקיר. מדריך נקרא ברוחב של עמוד, לא של מסך. */
+.tl-bands {
+  direction: rtl;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
+/* הפס אינו כרטיס. חמישה כרטיסים עם גבול זה חמש קופסאות; כאן הוא כותרת
+   של פרק, והקו שמתחתיו נצבע בצבע הדרגה רק כשהוא פתוח. */
 .tl-band-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 0;
+  padding: 14px 6px 11px;
   border: none;
+  border-block-end: 1px solid var(--border, #e5e7eb);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: start;
   cursor: pointer;
 }
-.tl-band-head:hover { background: var(--surface-2, #f7f8fa); }
+.tl-band-head[aria-expanded="true"] { border-block-end-color: var(--tier); }
+.tl-band-head:hover .tl-band-title { color: var(--tier); }
 
-/* הצבע בקצה בלבד: הוא מספר מי זה, והרקע נשאר שקט כדי שהאתרים יהיו
-   הדבר שרואים. פס צבוע במלואו היה מתחרה בצבעי הסטטוס שבתוכו. */
-/* ⚠️ 54 → 38: הפס עצמו היה בגובה כרטיס, וחמישה כאלה מילאו מסך לפני
-   שנפתח משהו. הוא כותרת, לא תוכן. */
-.tl-band-spine { width: 5px; align-self: stretch; min-height: 38px; background: var(--tier); flex: none; }
-
-.tl-band-title { font-weight: 700; font-size: .95rem; padding: 9px 0; }
+.tl-band-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tier); flex: none; }
+.tl-band-title {
+  /* רוחב קבוע: כך כל פסי החלק מתחילים באותה נקודה וניתנים להשוואה. עם
+     רוחב לפי התוכן, "תחזוקה בלבד" דחף את הפס שלו שמאלה ביחס ל-VIP. */
+  inline-size: 8.5rem;
+  flex: none;
+  font-weight: 700;
+  font-size: 1.02rem;
+  transition: color .15s ease;
+}
+/* המונה בטקסט ניטרלי על גוון הדרגה: כתום וטורקיז כטקסט על לבן אינם קריאים. */
 .tl-band-count {
-  font-variant-numeric: tabular-nums;
+  font-size: .78rem;
   font-weight: 600;
-  color: var(--tier);
+  font-variant-numeric: tabular-nums;
+  color: var(--text, #1a1a1a);
+  background: color-mix(in srgb, var(--tier) 16%, transparent);
+  min-inline-size: 2.6rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  text-align: center;
+}
+.tl-band-share {
+  flex: 1;
+  height: 4px;
+  margin-inline: 8px 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border, #e5e7eb) 60%, transparent);
+  overflow: hidden;
+}
+.tl-band-share > span {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: var(--tier);
+  opacity: .75;
 }
 .tl-band-chev {
-  margin-inline-start: auto;
-  margin-inline-end: 14px;
+  font-size: .8rem;
   color: var(--text-muted, #9ca3af);
   transition: transform .18s ease;
 }
 .tl-band-chev.is-open { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .tl-band-chev { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .tl-band-chev, .tl-band-title { transition: none; }
+}
 
+/* ⚠️ **שורות טקסט, לא אריחים.** 151 קופסאות אפורות הן מרקם, לא רשימה.
+   כאן כל אתר הוא שורה עם קו שיער מתחתיה — כמו אינדקס בסוף ספר — ורוחב
+   עמודה של 208px, כדי ששמות לא ייחתכו ב-"…" כמו ב-132. */
 .tl-tiles {
   display: grid;
-  /* ⚠️ 184 → 132: אריח שמחזיק שם אתר ומספר אינו צריך רוחב של כרטיס.
-     נמדד על המסך — "כל משבצת גדולה מדי, תחושה דחוסה". */
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 4px;
-  padding: 2px 10px 12px;
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+  column-gap: 28px;
+  padding: 6px 6px 24px;
 }
-.tl-tiles-empty { grid-column: 1 / -1; margin: 0; color: var(--text-muted, #9ca3af); font-size: .85rem; }
+.tl-tiles-empty { grid-column: 1 / -1; margin: 8px 0 0; color: var(--text-muted, #9ca3af); font-size: .85rem; }
 
-/* ⚠️ **שורה אחת, לא כרטיס.** הגרסה הקודמת נתנה לכל אתר שתי שורות, גבול
-   וריווח של 9/11 — כלומר 151 כרטיסים שממלאים את המסך. כאן האריח הוא פריט
-   ברשימה: שם, מספר, ותו לא. הגבול יורד לטובת רקע שקט, והמסגרת חוזרת רק
-   בריחוף ובפתיחה — שם היא אומרת משהו. */
 .tl-tile {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--surface-2, #f7f8fa);
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: none;
+  border-block-end: 1px solid color-mix(in srgb, var(--border, #e5e7eb) 75%, transparent);
+  border-radius: 0;
+  background: transparent;
   color: inherit;
   font: inherit;
-  font-size: .86rem;
-  line-height: 1.35;
+  font-size: .9rem;
+  line-height: 1.4;
   text-align: start;
   cursor: pointer;
-  min-width: 0;
 }
-.tl-tile:hover { border-color: var(--tier); background: var(--surface, #fff); }
+.tl-tile:hover { background: color-mix(in srgb, var(--tier) 8%, transparent); }
+/* הפתוח מסומן בפס בקצה ההתחלה — בימין, כי זה RTL. */
 .tl-tile[aria-expanded="true"] {
-  border-color: var(--tier);
-  background: var(--surface, #fff);
-  box-shadow: inset 2px 0 0 var(--tier);
+  background: color-mix(in srgb, var(--tier) 14%, transparent);
+  box-shadow: inset -3px 0 0 var(--tier);
+  font-weight: 600;
 }
 .tl-tile-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tl-tile-code {
+  flex: none;
   font-size: .76rem;
+  font-weight: 400;
   color: var(--text-muted, #9ca3af);
   font-variant-numeric: tabular-nums;
-  flex: none;
 }
-/* מספר השורה ירד מהאריח: הוא נחוץ בטבלה כדי להצביע על שורה, וכאן הוא
-   מספר שלישי שמתחרה על אותו רוחב. הוא נשאר בגיליון הפתוח. */
 
 .tl-sheet {
   grid-column: 1 / -1;
-  border: 1px solid var(--tier);
+  margin: 10px 0 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-inline-start: 3px solid var(--tier);
   border-radius: 8px;
   background: var(--surface-2, #f7f8fa);
-  padding: 14px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 9px 14px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px 20px;
 }
-.tl-sheet-title { grid-column: 1 / -1; margin: 0; font-size: .95rem; font-weight: 700; }
-.tl-sheet-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tl-sheet-title { grid-column: 1 / -1; margin: 0; font-size: 1rem; font-weight: 700; }
+.tl-sheet-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .tl-sheet-label { font-size: .72rem; letter-spacing: .04em; color: var(--text-muted, #9ca3af); }
+
+@media (max-width: 480px) {
+  .tl-bands { padding: 10px 16px 32px; }
+}
 
 /* בתוך הגיליון התאים אינם בטבלה, ולכן הם מקבלים גבול משלהם — אחרת
    שדה עריכה נראה כמו טקסט רגיל ואי אפשר לדעת במה אפשר לגעת. */

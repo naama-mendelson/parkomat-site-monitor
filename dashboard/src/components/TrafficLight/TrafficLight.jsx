@@ -510,17 +510,21 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
   // סדר הפסים הוא **סדר האפשרויות בעמודה**, ולא רשימה קשיחה כאן. עמודה
   // שתקבל דרגה חדשה תקבל פס חדש בלי שאיש יזכור לעדכן קוד.
   const options = Array.isArray(kindCol?.options) ? kindCol.options : [];
+  // בתוך פס — לפי שם. סדר הלוח הגיע מ-Monday ואינו אומר דבר, ורשימה של
+  // 63 כתובות שאינה ממוינת היא רשימה שמחפשים בה בעיניים שורה-שורה.
+  const nameOf = (r) => String(r.cells?.[nameCol?.key] ?? "");
+  const byName = (a, b) => nameOf(a).localeCompare(nameOf(b), "he", { numeric: true });
   const groups = options.map((o) => ({
     key: String(o.value),
     label: o.label || String(o.value),
     color: o.color || "var(--brand, #3d78d8)",
-    rows: rows.filter((r) => String(r.cells?.[kindCol.key] ?? "").trim() === String(o.value)),
+    rows: rows.filter((r) => String(r.cells?.[kindCol.key] ?? "").trim() === String(o.value)).sort(byName),
   }));
   // ⚠️ שורה בלי ערך אינה נעלמת — היא מקבלת פס משלה בסוף. זו בדיוק הרשימה
   // של מה שצריך למלא, והסתרתה הופכת חוסר נתון לחוסר קיום.
   const known = new Set(options.map((o) => String(o.value)));
   const rest = rows.filter((r) => !known.has(String(r.cells?.[kindCol?.key] ?? "").trim()));
-  if (rest.length) groups.push({ key: "__none__", label: "ללא דרגה", color: "var(--text-muted, #9ca3af)", rows: rest });
+  if (rest.length) groups.push({ key: "__none__", label: "ללא דרגה", color: "var(--text-muted, #9ca3af)", rows: rest.sort(byName) });
 
   // ⚠️ חיפוש פותח את מה שיש בו תוצאות: פס סגור שמכיל את מה שחיפשו נראה
   // בדיוק כמו "לא נמצא". ורק אותם — פס ריק שנפתח בחיפוש הוא שורת
@@ -542,9 +546,14 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
             aria-expanded={isOpen(g)}
             onClick={() => toggleBand(g.key)}
           >
-            <span className="tl-band-spine" />
+            <span className="tl-band-dot" aria-hidden="true" />
             <span className="tl-band-title">{g.label}</span>
             <span className="tl-band-count">{g.rows.length}</span>
+            {/* חלקה של הדרגה מכלל השורות. הוא גם מה שמחבר את הכותרת לחץ —
+                בלעדיו החץ ישב 1,100px ממנה, בקצה השני של השורה. */}
+            <span className="tl-band-share" aria-hidden="true">
+              <span style={{ inlineSize: `${rows.length ? (g.rows.length / rows.length) * 100 : 0}%` }} />
+            </span>
             <span className={`tl-band-chev ${isOpen(g) ? "is-open" : ""}`} aria-hidden="true">▾</span>
           </button>
 
@@ -561,8 +570,12 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
                     aria-expanded={open}
                     onClick={() => setOpenRow(open ? null : r.id)}
                   >
-                    <span className="tl-tile-name">{r.cells?.[nameCol?.key] || "ללא שם"}</span>
-                    <span className="tl-tile-code">{r.cells?.[codeCol?.key] || "—"}</span>
+                    <span className="tl-tile-name" title={nameOf(r)}>{nameOf(r) || "ללא שם"}</span>
+                    {/* ⚠️ בלי "—" כשאין קוד: כמחצית מהאתרים אין להם, והמקף חזר
+                        בכל שורה שנייה כרעש שאינו אומר כלום. */}
+                    {r.cells?.[codeCol?.key] && (
+                      <span className="tl-tile-code">{r.cells[codeCol.key]}</span>
+                    )}
                   </button>,
                   open && (
                     <div key={`s${r.id}`} className="tl-sheet">
