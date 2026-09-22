@@ -25,6 +25,8 @@ import { useFaultAlerts } from "./hooks/useFaultAlerts";
 import AlertUnlockBar from "./components/AlertBell/AlertUnlockBar";
 import StaleBanner from "./components/StaleBanner/StaleBanner";
 import FaultTrail from "./components/FaultTrail/FaultTrail";
+import FaultAckModal from "./components/FaultAck/FaultAckModal";
+import { useFaultAck } from "./hooks/useFaultAck";
 import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
@@ -185,6 +187,8 @@ function App() {
   // ההשוואה, הקיבוץ לצליל אחד, וניהול ה-AudioContext עברו ל-useFaultAlerts
   // ול-useAlertAudio. כאן נשארה רק ההרכבה.
   const { trail: faultTrail, dismissTrail } = useFaultAlerts(sites);
+  // אישור תקלות — משותף לכל המסכים, במסד. ראה FaultAckModal.jsx.
+  const { alarms: openAlarms, ack: ackAlarms } = useFaultAck();
 
   // בדיקה מהירה מהקונסול: parkomatTestAlert()
   useEffect(() => {
@@ -266,6 +270,10 @@ function App() {
           שנשארו פתוחות מהפעם הקודמת. הרכיב מחזיר null כשאין מה להכריז,
           ולכן הוא עולה תמיד ואינו עולה כלום כשאין הכרזה. */}
       <Announcement />
+
+      {/* ⚠️ **מחוץ ל-main ואחרי ההכרזה** — החלון חוסם את כל המסך, כולל
+          חלוניות פתוחות. רק שחרור הקול (AlertUnlockBar, שכבה 9000) מעליו. */}
+      <FaultAckModal alarms={openAlarms} sites={sites} onAck={ackAlarms} />
 
       {/* הפאנל משותף — נפתח גם מהבקר וגם מטבלת מנהל הבקרה */}
       {/* ⚠️ **גם detail?.site ולא רק selectedCode.** השליפה אסינכרונית,

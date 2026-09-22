@@ -67,6 +67,7 @@ const BOUNDED = {
   set_user_active: "כתיבה",
   set_user_role: "כתיבה",
   delete_user: "כתיבה",
+  ack_fault_alarms: "כתיבה",
   // חסומים בפרמטר מפורש שנשלח מהדשבורד.
   site_status_history: "p_limit=10",
   recent_errors: "p_limit=10",
@@ -109,6 +110,9 @@ const TABLES = {
   announcements: "limit מפורש",
   field_reports: "limit מפורש",
   service_commands: "limit מפורש",
+  // רק ממתינות לאישור (`acked_at IS NULL`), ועוד limit מפורש — חלון שמציג
+  // מאות התראות אינו חלון שאפשר לאשר, והמונה מספר את השאר.
+  fault_alarms: "limit מפורש, ורק ממתינות לאישור",
   // ⚠️ שתי אלה חסומות ב**שימוש** ולא במבנה, וזה הבדל שכדאי לשמור עליו
   // גלוי. אין להן limit; מה שמחזיק אותן קטנות הוא שאיש אינו כותב אלף
   // תשובות לדיווח אחד. אם דיווחי השטח יהפכו לערוץ פעיל — כאן יסתכלו.
