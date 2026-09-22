@@ -154,9 +154,17 @@ function colWidth(c) {
   return Number.isFinite(w) && w > 0 ? Math.max(w, MIN_COL_WIDTH) : MIN_COL_WIDTH;
 }
 
-function Cell({ column, value, onSave, readOnly }) {
+// ⚠️ `multiline` — רק בגיליון של תצוגת הפסים. שם יש מקום, והשדות הארוכים
+// (אנשי קשר, הערות — 33 תאים מעל 60 תווים) נערכים בתיבה שרואים בה את כל
+// הערך. וגם: `<input>` **מוחק ירידות שורה** מהערך, כך שעריכה של אחד מ-3
+// התאים שיש בהם כאלה הייתה מאחדת את השורות בלי שאיש יבקש.
+function Cell({ column, value, onSave, readOnly, multiline = false }) {
   const [asDate, setAsDate] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
+  // ⚠️ **Escape מבטל — ולא שומר.** `blur()` מפעיל את onBlur מיד, כשה-`draft`
+  // שבסגירה עדיין מחזיק את מה שהוקלד (ה-`setDraft` עוד לא חל). בלי הדגל הזה
+  // "ביטול" שמר בדיוק את מה שביקשו לבטל. נמצא בבדיקת לחיצות, 22/09/2026.
+  const cancelRef = useRef(false);
   useEffect(() => { setDraft(value ?? ""); }, [value]);
 
   const opts = Array.isArray(column.options) ? column.options : [];
@@ -166,13 +174,18 @@ function Cell({ column, value, onSave, readOnly }) {
     if (column.kind === "status") {
       return hit
         ? <span className="tl-status tl-status--ro" style={{ background: hit.color }}>{hit.label}</span>
-        : <span className="tl-ro tl-ro--dim">—</span>;
+        : <span className={`tl-ro tl-ro--dim${multiline ? " tl-ro--wrap" : ""}`}>—</span>;
     }
     if (column.kind === "checkbox") {
       return <span className="tl-ro">{value === true ? "✓" : ""}</span>;
     }
     if (column.kind === "link" && value) {
       return <a className="tl-ro tl-ro--link" href={String(value)} target="_blank" rel="noreferrer">{String(value)}</a>;
+    }
+    if (multiline) {
+      return value === undefined || value === null || value === ""
+        ? <span className="tl-ro tl-ro--wrap tl-ro--dim">—</span>
+        : <span className="tl-ro tl-ro--wrap">{value}</span>;
     }
     // ⚠️ הערך המלא ב-title: מרגע שהתא נחתך, זו הדרך היחידה לראות
     // ערך ארוך בלי להיכנס למצב עריכה.
@@ -257,6 +270,35 @@ function Cell({ column, value, onSave, readOnly }) {
     );
   }
 
+  if (multiline && column.kind === "text") {
+    const text = String(draft ?? "");
+    return (
+      <span className="tl-datecell">
+        <textarea
+          className="tl-input tl-input--area"
+          rows={Math.min(6, Math.max(1, Math.ceil(text.length / 42) + (text.match(/\n/g) || []).length))}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (cancelRef.current) { cancelRef.current = false; return; }
+            if (text !== String(value ?? "")) onSave(text === "" ? null : text);
+          }}
+          // Enter שומר כמו בטבלה; Shift+Enter הוא ירידת שורה.
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); }
+            if (e.key === "Escape") { e.stopPropagation(); cancelRef.current = true; setDraft(value ?? ""); e.currentTarget.blur(); }
+          }}
+        />
+        <button
+          type="button"
+          className="tl-cal"
+          title="הזנת תאריך"
+          onMouseDown={(e) => { e.preventDefault(); setAsDate(true); }}
+        >▦</button>
+      </span>
+    );
+  }
+
   return (
     <span className="tl-datecell">
     <input
@@ -266,6 +308,7 @@ function Cell({ column, value, onSave, readOnly }) {
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
+        if (cancelRef.current) { cancelRef.current = false; return; }
         if (String(draft) === String(value ?? "")) return;
         if (column.kind === "number") {
           const n = draft === "" ? null : Number(draft);
@@ -278,7 +321,9 @@ function Cell({ column, value, onSave, readOnly }) {
       // הוא מה שמאט. Escape מחזיר את הערך המקורי.
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") { setDraft(value ?? ""); e.currentTarget.blur(); }
+        // ⚠️ `stopPropagation` — אחרת ה-Escape מגיע גם למאזין של הלוח
+        // וסוגר את כולו: מי שביקש "בטל את מה שהקלדתי" איבד את המסך.
+        if (e.key === "Escape") { e.stopPropagation(); cancelRef.current = true; setDraft(value ?? ""); e.currentTarget.blur(); }
       }}
     />
     {/* ⚠️ רק בעמודת טקסט. בעמודת date אמיתית הבורר כבר שם, ובעמודת
@@ -487,7 +532,52 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ הטבלה **לא הוסרה.** המתג נשמר בדפדפן, כי העדפת תצוגה שמתאפסת בכל
 // רענון היא העדפה שמפסיקים להשתמש בה.
-function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
+// גיליון של אתר אחד. רכיב משלו בשביל דבר אחד: כשהוא נוצר — בלחיצה, או
+// כשהאתר עבר לפס אחר אחרי שינוי דרגה — הוא נגלל אל תוך המסך. אחרת שינוי
+// "להתייחס כ" מ-VIP ל"לא בשירות" שולח אותו 1,500px למטה, מחוץ לעין.
+function RowSheet({ row, title, columns, canEdit, busy, onSaveCell, onDelete }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.scrollIntoView?.({ block: "nearest" }); }, []);
+  return (
+    <div ref={ref} className="tl-sheet">
+      <h3 className="tl-sheet-title">{title}</h3>
+      {columns.map((c) => {
+        const v = row.cells?.[c.key];
+        // ערך ארוך מקבל שתי עמודות: אנשי קשר ב-170px הם שלוש שורות שבורות.
+        const wide = c.kind === "text" && String(v ?? "").length > 40;
+        return (
+          <div key={c.key} className={`tl-sheet-field${wide ? " tl-sheet-field--wide" : ""}`}>
+            <span className="tl-sheet-label">{c.label}</span>
+            <Cell
+              column={c}
+              value={v}
+              readOnly={!canEdit}
+              multiline
+              onSave={(val) => onSaveCell(row.id, c.key, val)}
+            />
+          </div>
+        );
+      })}
+      {/* המחיקה הייתה רק בטבלה — כלומר מי שעובד בפסים היה צריך להחליף תצוגה
+          כדי למחוק שורה שהוא מסתכל עליה. */}
+      {canEdit && (
+        <div className="tl-sheet-foot">
+          <button
+            type="button"
+            className="tl-sheet-del"
+            disabled={busy}
+            onClick={() => { if (confirm(`למחוק את "${title}" מהלוח?`)) onDelete(); }}
+          >מחיקת השורה</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ⚠️ **האתר הפתוח מוחזק אצל ההורה (`openRow`), לא כאן** — כדי ש"+ שורה"
+// יוכל לפתוח את השורה שנוצרה. בלי זה היא נחתה בפס "ללא דרגה" הסגור, והלחיצה
+// נראתה כאילו לא עשתה כלום.
+function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow, onSaveCell, onDeleteRow }) {
   // ⚠️ **סגור כברירת מחדל, ולא פתוח.** 151 שורות בחמישה פסים פתוחים הן
   // קיר של אריחים — נמדד על המסך: "תופס את כל המקום, תחושה דחוסה". חמישה
   // פסים סגורים עם מונה הם התמונה שאפשר לסרוק בשנייה, וזו גם הסיבה שהלוח
@@ -496,7 +586,7 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
     try { return new Set(JSON.parse(localStorage.getItem("tl-open-bands") || "[]")); }
     catch { return new Set(); }
   });
-  const [openRow, setOpenRow] = useState(null);
+  const isOpenRow = (r) => openRow != null && String(r.id) === String(openRow);
   useEffect(() => {
     try { localStorage.setItem("tl-open-bands", JSON.stringify([...openBands])); }
     catch { /* מצב פרטי */ }
@@ -529,12 +619,23 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
   // ⚠️ חיפוש פותח את מה שיש בו תוצאות: פס סגור שמכיל את מה שחיפשו נראה
   // בדיוק כמו "לא נמצא". ורק אותם — פס ריק שנפתח בחיפוש הוא שורת
   // "אין אתרים" שמתחרה בתוצאה עצמה.
-  const isOpen = (g) => openBands.has(g.key) || (Boolean(searching) && g.rows.length > 0);
-  const toggleBand = (key) => setOpenBands((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
+  //
+  // ⚠️ **ופס שמחזיק את האתר הפתוח — פתוח.** שינוי "להתייחס כ" בגיליון מעביר
+  // את האתר לפס אחר; אם הפס הזה סגור, הגיליון שבאמצע עריכתו פשוט נעלם.
+  const isOpen = (g) => openBands.has(g.key)
+    || (Boolean(searching) && g.rows.length > 0)
+    || g.rows.some(isOpenRow);
+  const toggleBand = (g) => {
+    const closing = isOpen(g);
+    setOpenBands((prev) => {
+      const next = new Set(prev);
+      if (closing) next.delete(g.key); else next.add(g.key);
+      return next;
+    });
+    // סגירת פס סוגרת גם את האתר שבתוכו — אחרת הכלל שמעליו משאיר אותו פתוח
+    // והלחיצה נראית שבורה.
+    if (closing && g.rows.some(isOpenRow)) onOpenRow(null);
+  };
 
   return (
     <div className="tl-bands">
@@ -544,7 +645,7 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
             type="button"
             className="tl-band-head"
             aria-expanded={isOpen(g)}
-            onClick={() => toggleBand(g.key)}
+            onClick={() => toggleBand(g)}
           >
             <span className="tl-band-dot" aria-hidden="true" />
             <span className="tl-band-title">{g.label}</span>
@@ -561,14 +662,14 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
             <div className="tl-tiles">
               {g.rows.length === 0 && <p className="tl-tiles-empty">אין אתרים בדרגה הזו.</p>}
               {g.rows.map((r) => {
-                const open = openRow === r.id;
+                const open = isOpenRow(r);
                 return [
                   <button
                     key={`t${r.id}`}
                     type="button"
                     className="tl-tile"
                     aria-expanded={open}
-                    onClick={() => setOpenRow(open ? null : r.id)}
+                    onClick={() => onOpenRow(open ? null : r.id)}
                   >
                     <span className="tl-tile-name" title={nameOf(r)}>{nameOf(r) || "ללא שם"}</span>
                     {/* ⚠️ בלי "—" כשאין קוד: כמחצית מהאתרים אין להם, והמקף חזר
@@ -578,20 +679,16 @@ function BandsView({ columns, rows, canEdit, busy, searching, onSaveCell }) {
                     )}
                   </button>,
                   open && (
-                    <div key={`s${r.id}`} className="tl-sheet">
-                      <h3 className="tl-sheet-title">{r.cells?.[nameCol?.key] || "ללא שם"}</h3>
-                      {columns.map((c) => (
-                        <div key={c.key} className="tl-sheet-field">
-                          <span className="tl-sheet-label">{c.label}</span>
-                          <Cell
-                            column={c}
-                            value={r.cells?.[c.key]}
-                            readOnly={!canEdit || busy}
-                            onSave={(v) => onSaveCell(r.id, c.key, v)}
-                          />
-                        </div>
-                      ))}
-                    </div>
+                    <RowSheet
+                      key={`s${r.id}`}
+                      row={r}
+                      title={nameOf(r) || "שורה חדשה — ללא שם"}
+                      columns={columns}
+                      canEdit={canEdit}
+                      busy={busy}
+                      onSaveCell={onSaveCell}
+                      onDelete={() => onDeleteRow(r.id)}
+                    />
                   ),
                 ];
               })}
@@ -612,6 +709,7 @@ function TrafficLight({ onClose }) {
   // בלעדיו כפתור "נעל" היה נראה כאילו הוא עובד ולא משנה דבר.
   const [editMode, setEditMode] = useState(false);
   const [query, setQuery] = useState("");
+  const [openRow, setOpenRow] = useState(null);
 
   // ⚠️ נשמר בדפדפן: העדפת תצוגה שמתאפסת בכל רענון היא העדפה שמפסיקים
   // להשתמש בה. ברירת המחדל היא הפסים, והטבלה במרחק לחיצה.
@@ -760,7 +858,8 @@ function TrafficLight({ onClose }) {
                   type="button"
                   className="tl-btn"
                   disabled={busy}
-                  onClick={() => run(() => addRow(null))}
+                  // בפסים — השורה החדשה נפתחת מיד, כדי שיהיה איפה למלא אותה.
+                  onClick={() => run(async () => { setOpenRow(await addRow(null)); })}
                 >+ שורה</button>
                 <button
                   type="button"
@@ -816,7 +915,10 @@ function TrafficLight({ onClose }) {
         )}
 
         <div className="tl-scroll">
-          {loading ? (
+          {/* ⚠️ **"טוען…" רק בטעינה הראשונה.** כל שמירה טוענת את הלוח מחדש, והתנאי
+              היה `loading` לבד — כלומר אחרי כל תא הלוח כולו הוחלף ב"טוען…" וחזר:
+              המיקוד אבד באמצע מעבר בין שדות, והגלילה בטבלה קפצה לראש. */}
+          {loading && columns.length === 0 ? (
             <p className="tl-empty">טוען…</p>
           ) : columns.length === 0 ? (
             <p className="tl-empty">
@@ -831,7 +933,10 @@ function TrafficLight({ onClose }) {
               searching={Boolean(query)}
               canEdit={canEdit}
               busy={busy}
+              openRow={openRow}
+              onOpenRow={setOpenRow}
               onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
+              onDeleteRow={(id) => run(async () => { await deleteRow(id); setOpenRow(null); })}
             />
           ) : (
             <table className="tl-table">
@@ -909,7 +1014,7 @@ function TrafficLight({ onClose }) {
                         <Cell
                           column={c}
                           value={r.cells?.[c.key]}
-                          readOnly={!canEdit || busy}
+                          readOnly={!canEdit}
                           onSave={(v) => run(() => setCell(r.id, c.key, v))}
                         />
                       </td>

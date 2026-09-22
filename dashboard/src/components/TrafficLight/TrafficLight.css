@@ -951,4 +951,52 @@
 }
 .tl-sheet-field .tl-status--ro { border: none; }
 
+/* ⚠️ בגיליון הערך נקרא **במלואו**. בטבלה הוא נחתך ב-"…" כי יש 15 עמודות
+   על מסך אחד; כאן זה המקום היחיד לראות את כל אנשי הקשר של אתר. */
+.tl-sheet-field .tl-ro--wrap {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  /* טקסט, לא שדה: תיבה לבנה עם גבול נראית כמו שדה ריק שאפשר להקליד בו. */
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+}
+.tl-input--area {
+  /* בלי ידית גרירה: field-sizing גדל עם התוכן, והידית הייתה עוד סימן בכל פינה. */
+  resize: none;
+  min-block-size: 2.2em;
+  max-block-size: 12em;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  field-sizing: content;
+}
+.tl-sheet-field .tl-datecell { align-items: flex-start; gap: 2px; }
+.tl-sheet-field .tl-cal { margin-block-start: 6px; }
+@media (min-width: 640px) {
+  .tl-sheet-field--wide { grid-column: span 2; }
+}
+
+.tl-sheet-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  padding-block-start: 10px;
+  border-block-start: 1px dashed var(--border, #e5e7eb);
+}
+.tl-sheet-del {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #b42318;
+  font: inherit;
+  font-size: .85rem;
+  cursor: pointer;
+}
+.tl-sheet-del:hover:not(:disabled) { border-color: #f1b8b2; background: #fdecea; }
+.tl-sheet-del:disabled { opacity: .5; cursor: default; }
+
 .tl-view-toggle { font-variant-numeric: tabular-nums; }
