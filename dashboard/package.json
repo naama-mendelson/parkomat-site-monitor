@@ -12,7 +12,8 @@
     "check:cards": "node scripts/check-cards.mjs",
     "check:name": "node scripts/check-name-fit.mjs",
     "check:agent-ui": "node scripts/check-agent-identity-ui.mjs",
-    "check:card-metric": "node scripts/check-card-metric.mjs"
+    "check:card-metric": "node scripts/check-card-metric.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
