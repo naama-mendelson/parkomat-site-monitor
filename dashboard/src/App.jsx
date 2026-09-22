@@ -24,6 +24,7 @@ import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // להציג אתרים גם אם איש לא נגע בו.
 import AlertUnlockBar from "./components/AlertBell/AlertUnlockBar";
 import StaleBanner from "./components/StaleBanner/StaleBanner";
+import FaultTrail from "./components/FaultTrail/FaultTrail";
 import { testAlert } from "./utils/audio/alerts";
 import "./styles/global.css";
 import "./styles/theme.css";
@@ -183,7 +184,7 @@ function App() {
   //
   // ההשוואה, הקיבוץ לצליל אחד, וניהול ה-AudioContext עברו ל-useFaultAlerts
   // ול-useAlertAudio. כאן נשארה רק ההרכבה.
-  useFaultAlerts(sites);
+  const { trail: faultTrail, dismissTrail } = useFaultAlerts(sites);
 
   // בדיקה מהירה מהקונסול: parkomatTestAlert()
   useEffect(() => {
@@ -255,6 +256,9 @@ function App() {
           נקרא כשורת מערכת ומדלגים עליו. */}
       <main className="app-main">
         <StaleBanner />
+        {/* מה צלצל ואיך זה נגמר — ראה FaultTrail.jsx. בכל התפקידים, כי הצליל
+            מתנגן בכל התפקידים. */}
+        <FaultTrail items={faultTrail} onOpenSite={handleSiteClick} onDismiss={dismissTrail} />
         {renderView()}
       </main>
 

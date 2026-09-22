@@ -34,6 +34,8 @@ const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "assets
 const SCREENS = [
   ["לוח הרמזור",        "tl-table"],
   ["תצוגת הפסים",       "tl-bands"],
+  ["מגירת פרטי אתר",    "tl-drawer-fields"],
+  ["עקבת תקלות שצלצלו", "fault-trail-item"],
   ["ניהול אתרים",       "adm-list"],
   ["באנר נתונים ישנים", "stale-banner"],
   ["זהויות אתרים",      "si-table"],
