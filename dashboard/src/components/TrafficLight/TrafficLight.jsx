@@ -487,9 +487,20 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ הטבלה **לא הוסרה.** המתג נשמר בדפדפן, כי העדפת תצוגה שמתאפסת בכל
 // רענון היא העדפה שמפסיקים להשתמש בה.
-function BandsView({ columns, rows, allRows, canEdit, busy, onSaveCell }) {
-  const [openBands, setOpenBands] = useState(null);
+function BandsView({ columns, rows, allRows, canEdit, busy, searching, onSaveCell }) {
+  // ⚠️ **סגור כברירת מחדל, ולא פתוח.** 151 שורות בחמישה פסים פתוחים הן
+  // קיר של אריחים — נמדד על המסך: "תופס את כל המקום, תחושה דחוסה". חמישה
+  // פסים סגורים עם מונה הם התמונה שאפשר לסרוק בשנייה, וזו גם הסיבה שהלוח
+  // נפתח ונסגר מלכתחילה.
+  const [openBands, setOpenBands] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("tl-open-bands") || "[]")); }
+    catch { return new Set(); }
+  });
   const [openRow, setOpenRow] = useState(null);
+  useEffect(() => {
+    try { localStorage.setItem("tl-open-bands", JSON.stringify([...openBands])); }
+    catch { /* מצב פרטי */ }
+  }, [openBands]);
 
   const byLabel = (needle) => columns.find((c) => String(c.label).includes(needle));
   const kindCol = byLabel("להתייחס") || columns.find((c) => c.kind === "status");
@@ -511,9 +522,11 @@ function BandsView({ columns, rows, allRows, canEdit, busy, onSaveCell }) {
   const rest = rows.filter((r) => !known.has(String(r.cells?.[kindCol?.key] ?? "").trim()));
   if (rest.length) groups.push({ key: "__none__", label: "ללא דרגה", color: "var(--text-muted, #9ca3af)", rows: rest });
 
-  const isOpen = (key) => (openBands ? openBands.has(key) : true);
+  // ⚠️ חיפוש פותח את מה שיש בו תוצאות: פס סגור שמכיל את מה שחיפשו נראה
+  // בדיוק כמו "לא נמצא".
+  const isOpen = (key) => openBands.has(key) || Boolean(searching);
   const toggleBand = (key) => setOpenBands((prev) => {
-    const next = new Set(prev ?? groups.map((g) => g.key));
+    const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
@@ -805,6 +818,7 @@ function TrafficLight({ onClose }) {
               columns={columns}
               rows={rows}
               allRows={allRows}
+              searching={Boolean(query)}
               canEdit={canEdit}
               busy={busy}
               onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
