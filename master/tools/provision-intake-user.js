@@ -44,13 +44,34 @@ async function admin(path, init = {}) {
 async function main() {
   if (!URL_BASE || !SECRET) throw new Error("חסרים SUPABASE_URL / SUPABASE_SECRET_KEY");
 
+  const ROTATE = process.argv.includes("--rotate");
   const existing = await admin(`admin/users?filter=${encodeURIComponent(EMAIL)}`);
   const found = (existing.body?.users || []).find((u) => u.email === EMAIL);
 
-  if (found) {
+  if (found && !ROTATE) {
     console.log(`המשתמש כבר קיים: ${EMAIL}`);
     console.log(`  מזהה: ${found.id}`);
-    console.log("  ⚠️ הסיסמה אינה ניתנת לשליפה. אם אבדה — יש להנפיק חדשה (rotate) ולעדכן את הפונקציה.");
+    console.log("  ⚠️ הסיסמה אינה ניתנת לשליפה. אם אבדה או נחשפה — להריץ עם --rotate --apply.");
+    return;
+  }
+
+  // ============================================================
+  // ⚠️ החלפה — שני סודות, ולא אחד
+  // ============================================================
+  // הסיסמה פותחת את הזהות, והסוד שבכתובת פותח את הדלת. סוד שנחשף
+  // (למשל הודבק בצ'אט) מחייב את שניהם: מי שראה אותם יכול גם להתחבר וגם
+  // להזרים דרך הכתובת.
+  //
+  // ⚠️ **והחלפה משנה את הכתובת** — כלומר אחרי מסירה לצוות האפליקציה זו
+  // כבר אינה פעולה חינמית. לפני המסירה היא עולה אפס.
+  if (found && ROTATE) {
+    const password = crypto.randomBytes(32).toString("base64url");
+    const secretPath = crypto.randomBytes(24).toString("base64url");
+    if (!APPLY) { console.log("ריצה יבשה: --apply יחליף סיסמה וסוד, וייצור קובץ חדש."); return; }
+
+    const upd = await admin(`admin/users/${found.id}`, { method: "PUT", body: JSON.stringify({ password }) });
+    if (!upd.ok) throw new Error(`החלפת הסיסמה נכשלה: ${upd.status} ${JSON.stringify(upd.body)}`);
+    writeCredentials(found.id, password, secretPath, "הוחלפו");
     return;
   }
 
@@ -93,14 +114,20 @@ async function main() {
     if (back !== uid) throw new Error("המזהה לא נכתב כמצופה");
   } finally { await c.end(); }
 
+  writeCredentials(uid, password, secretPath, "נוצרו");
+}
+
+function writeCredentials(uid, password, secretPath, verb) {
   // ⚠️ **לקובץ ולא למסך.** סיסמה שנדפסת לטרמינל חיה משם והלאה בגלילה,
   // בצילום מסך ובכל העתקה של החלון. אותו דפוס בדיוק כמו
   // `agent-passwords-*.txt`, והקובץ מוחרג ב-.gitignore.
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const file = require("node:path").join(__dirname, "..", `intake-credentials-${stamp}.txt`);
   const url = `${URL_BASE}/functions/v1/service-calls/${secretPath}`;
+  // מזהה הפרויקט נגזר מהכתובת, כדי שלא יהיה ערך שני לתחזק.
+  const ref = new URL(URL_BASE).hostname.split(".")[0];
   require("node:fs").writeFileSync(file, [
-    "סודות הקליטה של קריאות השירות — נוצרו " + new Date().toISOString(),
+    `סודות הקליטה של קריאות השירות — ${verb} ` + new Date().toISOString(),
     "⚠️ הסיסמה מוצגת פעם אחת בלבד. Supabase שומר גיבוב, ואין דרך לשלוף אותה.",
     "",
     `INTAKE_EMAIL=${EMAIL}`,
@@ -110,18 +137,22 @@ async function main() {
     "הכתובת לצוות האפליקציה (הסוד הוא חלק ממנה — לשלוח בערוץ מאובטח):",
     url,
     "",
-    "פריסה, ממחשב הפיתוח בתיקיית הפרויקט:",
-    `  supabase secrets set INTAKE_EMAIL="${EMAIL}" INTAKE_PASSWORD="${password}" INTAKE_SECRET="${secretPath}"`,
-    "  supabase functions deploy service-calls --no-verify-jwt",
+    // ⚠️ דרך npx ועם --project-ref: ה-CLI אינו מותקן על מחשב הפיתוח, ו-npx
+    // מריץ אותו בלי להתקין. `--project-ref` חוסך `supabase link`, שהוא עוד
+    // מצב שצריך לזכור אם הוא נעשה או לא.
+    "פריסה, ממחשב הפיתוח בתיקיית הפרויקט (דורש SUPABASE_ACCESS_TOKEN):",
+    `  npx supabase@latest secrets set --project-ref ${ref} INTAKE_EMAIL="${EMAIL}" INTAKE_PASSWORD="${password}" INTAKE_SECRET="${secretPath}"`,
+    `  npx supabase@latest functions deploy service-calls --project-ref ${ref} --no-verify-jwt`,
     "",
   ].join("\n"), "utf8");
 
-  console.log("\n✅ נוצר.");
+  console.log(`\n✅ ${verb}.`);
   console.log(`   משתמש: ${EMAIL}`);
-  console.log(`   מזהה נכתב ל-settings.intake_user_id — מכאן ההרשאה פעילה`);
+  console.log(`   מזהה: ${uid} (settings.intake_user_id)`);
   console.log(`\n   הסיסמה, הסוד, הכתובת ושתי פקודות הפריסה נשמרו ב:`);
   console.log(`   ${file}`);
   console.log(`   ⚠️ הקובץ מוחרג מ-git. אחרי הפריסה — למחוק אותו או להעביר לכספת.`);
+
 }
 
 main().catch((e) => { console.error("⛔", e.message); process.exitCode = 1; });
