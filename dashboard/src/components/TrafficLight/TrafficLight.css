@@ -717,6 +717,15 @@
   white-space: nowrap;
 }
 
+/* ⚠️ אחרי כללי הבסיס של החיפוש ולא לפניהם — לפניהם הם דרסו אותו, והשדה
+   נשאר 260px בשורה משלו. הכותרת נשברת לשתי שורות: בשורה אחת כפתור
+   "עריכה" נדחף מעבר לקצה המסך. */
+@media (max-width: 720px) {
+  .tl-head { flex-wrap: wrap; }
+  .tl-search { order: 5; flex: 1 1 100%; margin-inline-start: 0; }
+  .tl-search-input { width: 100%; max-width: none; }
+}
+
 /* ⚠️ באייפון עם סרגל הבית, `24px` מודדים מקצה המסך — כלומר הכפתור יושב
    חלקית **מתחת** לסרגל, ולחיצה שם נתפסת על ידי המערכת ולא על ידי הדף.
    `env()` מחזיר 0 בדפדפנים שאין להם אזור בטיחות, כך שהחישוב נכון בשניהם. */
@@ -903,7 +912,9 @@
   font-weight: 600;
 }
 .tl-tile-name {
-  flex: 0 1 auto;
+  /* הקוד נדחף לקצה העמודה: צמוד לשם הוא קפץ בכל שורה למקום אחר, ובקצה
+     הקודים יוצרים טור אחד — כמו מספרי עמודים באינדקס. */
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -917,31 +928,84 @@
   font-variant-numeric: tabular-nums;
 }
 
-.tl-sheet {
-  grid-column: 1 / -1;
-  margin: 10px 0 16px;
-  padding: 16px 18px;
-  border: 1px solid var(--border, #e5e7eb);
-  border-inline-start: 3px solid var(--tier);
-  border-radius: 8px;
-  background: var(--surface-2, #f7f8fa);
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px 20px;
-}
-.tl-sheet-title { grid-column: 1 / -1; margin: 0; font-size: 1rem; font-weight: 700; }
-.tl-sheet-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.tl-sheet-label { font-size: .72rem; letter-spacing: .04em; color: var(--text-muted, #9ca3af); }
-
 @media (max-width: 480px) {
   .tl-bands { padding: 10px 16px 32px; }
 }
 
-/* בתוך הגיליון התאים אינם בטבלה, ולכן הם מקבלים גבול משלהם — אחרת
-   שדה עריכה נראה כמו טקסט רגיל ואי אפשר לדעת במה אפשר לגעת. */
-.tl-sheet-field .tl-input,
-.tl-sheet-field .tl-ro,
-.tl-sheet-field .tl-status {
+/* ==========================================================
+   המגירה — פרטי אתר לצד הרשימה
+   ==========================================================
+   ⚠️ **לצד הרשימה ולא מעליה.** המגירה לוקחת רוחב, והרשימה מצטמצמת
+   לעמודה אחת פחות — אבל אף אתר לא מוסתר מתחתיה. רק במסך צר (טלפון) היא
+   מכסה, כי שם אין רוחב לשתיהן. */
+.tl-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+.tl-body > .tl-scroll { flex: 1; min-width: 0; }
+
+.tl-drawer {
+  flex: 0 0 min(440px, 44%);
+  min-height: 0;
+  overflow: auto;
+  direction: rtl;
+  border-inline-start: 1px solid var(--border, #e5e7eb);
+  border-block-start: 3px solid var(--tier);
+  background: var(--surface, #fff);
+  box-shadow: 0 0 24px rgba(20, 24, 30, 0.06);
+  padding-block-end: 28px;
+}
+@media (max-width: 760px) {
+  .tl-drawer { position: absolute; inset: 0; z-index: 4; flex: none; }
+}
+
+.tl-drawer-head {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 22px 14px;
+  background: var(--surface, #fff);
+  border-block-end: 1px solid var(--border, #e5e7eb);
+}
+.tl-drawer-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tl-drawer-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+}
+.tl-drawer-tier .tl-band-dot { width: 8px; height: 8px; }
+.tl-drawer-title { margin: 0; font-size: 1.15rem; font-weight: 700; line-height: 1.3; }
+
+/* שדה לשורה: תווית ברוחב קבוע, ערך לצדה. כך כל התוויות בעמודה אחת וכל
+   הערכים בעמודה אחת — מה שהופך 15 שדות לרשימה שנסרקת בעין. */
+.tl-drawer-fields { margin: 0; padding: 4px 22px 0; }
+.tl-drawer-field {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 14px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-block-end: 1px solid color-mix(in srgb, var(--border, #e5e7eb) 70%, transparent);
+}
+.tl-drawer-field dt {
+  font-size: .8rem;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
+}
+.tl-drawer-field dd { margin: 0; min-width: 0; }
+
+/* במצב עריכה השדות מקבלים גבול — אחרת שדה עריכה נראה כמו טקסט רגיל ואי
+   אפשר לדעת במה אפשר לגעת. */
+.tl-drawer-field .tl-input,
+.tl-drawer-field .tl-status {
   text-align: start;
   padding: 6px 8px;
   border-radius: 6px;
@@ -949,21 +1013,28 @@
   border: 1px solid var(--border, #e5e7eb);
   width: 100%;
 }
-.tl-sheet-field .tl-status--ro { border: none; }
 
-/* ⚠️ בגיליון הערך נקרא **במלואו**. בטבלה הוא נחתך ב-"…" כי יש 15 עמודות
-   על מסך אחד; כאן זה המקום היחיד לראות את כל אנשי הקשר של אתר. */
-.tl-sheet-field .tl-ro--wrap {
+/* ⚠️ במצב צפייה הערך נקרא **במלואו**. בטבלה הוא נחתך ב-"…" כי יש 15
+   עמודות על מסך אחד; כאן זה המקום היחיד לראות את כל אנשי הקשר של אתר. */
+.tl-drawer-field .tl-ro--wrap {
+  display: block;
+  padding: 0;
   white-space: pre-wrap;
   overflow: visible;
   text-overflow: clip;
   overflow-wrap: anywhere;
   line-height: 1.45;
-  /* טקסט, לא שדה: תיבה לבנה עם גבול נראית כמו שדה ריק שאפשר להקליד בו. */
-  border-color: transparent;
-  background: transparent;
-  padding-inline: 0;
 }
+/* סטטוס בצפייה הוא תגית, לא בלוק צבע ברוחב מלא שמתחרה בכל השאר. */
+.tl-drawer-field .tl-status--ro {
+  display: inline-block;
+  width: auto;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: .82rem;
+  line-height: 1.5;
+}
+
 .tl-input--area {
   /* בלי ידית גרירה: field-sizing גדל עם התוכן, והידית הייתה עוד סימן בכל פינה. */
   resize: none;
@@ -973,20 +1044,33 @@
   line-height: 1.45;
   field-sizing: content;
 }
-.tl-sheet-field .tl-datecell { align-items: flex-start; gap: 2px; }
-.tl-sheet-field .tl-cal { margin-block-start: 6px; }
-@media (min-width: 640px) {
-  .tl-sheet-field--wide { grid-column: span 2; }
+/* ⚠️ **יישור אחד לכל הערכים — לימין.** `unicode-bidi: plaintext` מיישר כל ערך
+   לפי תוכנו, כך שבעמודת הערכים עברית ישבה מימין ומספרים ("#x", טלפונים)
+   משמאל. בטבלה זה נכון; ברשימת מאפיינים זה טור שקופץ. הטקסט עצמו עדיין
+   נקרא לפי תוכנו — רק היישור אחיד. */
+.tl-drawer-field .tl-ro--wrap,
+.tl-drawer-field .tl-input { text-align: right; }
+
+/* כפתור התאריך בתוך השדה ולא לצדו — לצדו הוא קיצר את תיבות הטקסט, והקצוות
+   שלהן לא התיישרו עם תיבות הבחירה שמעליהן. */
+.tl-drawer-field .tl-datecell { position: relative; }
+.tl-drawer-field .tl-datecell .tl-input { padding-inline-end: 30px; }
+.tl-drawer-field .tl-cal { position: absolute; inset-inline-end: 4px; inset-block-start: 6px; margin: 0; }
+
+.tl-drawer-empty {
+  margin: 14px 22px 0;
+  font-size: .8rem;
+  line-height: 1.7;
+  color: var(--text-muted, #6b7280);
 }
 
-.tl-sheet-foot {
-  grid-column: 1 / -1;
+.tl-drawer-foot {
   display: flex;
-  justify-content: flex-end;
-  padding-block-start: 10px;
+  margin: 18px 22px 0;
+  padding-block-start: 12px;
   border-block-start: 1px dashed var(--border, #e5e7eb);
 }
-.tl-sheet-del {
+.tl-drawer-del {
   padding: 6px 12px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -996,7 +1080,7 @@
   font-size: .85rem;
   cursor: pointer;
 }
-.tl-sheet-del:hover:not(:disabled) { border-color: #f1b8b2; background: #fdecea; }
-.tl-sheet-del:disabled { opacity: .5; cursor: default; }
+.tl-drawer-del:hover:not(:disabled) { border-color: #f1b8b2; background: #fdecea; }
+.tl-drawer-del:disabled { opacity: .5; cursor: default; }
 
 .tl-view-toggle { font-variant-numeric: tabular-nums; }

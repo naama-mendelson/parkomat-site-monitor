@@ -512,6 +512,17 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ ומתחיל **מוסתר**, לא גלוי: הלוח נפתח לעיתים מול מסך משותף.
 
+// אילו עמודות הן השם, הקוד והדרגה — לפי תווית ולא לפי מפתח: העמודות מוגדרות
+// על ידי המשתמש, והמפתחות שלהן הם חותמות זמן.
+function boardCols(columns) {
+  const byLabel = (needle) => columns.find((c) => String(c.label).includes(needle));
+  return {
+    nameCol: columns[0],
+    codeCol: byLabel("קוד"),
+    kindCol: byLabel("להתייחס") || columns.find((c) => c.kind === "status"),
+  };
+}
+
 // ============================================================
 // תצוגת הפסים — הלוח לפי "להתייחס כ", בלי גלילה אופקית
 // ============================================================
@@ -532,52 +543,9 @@ function ColumnEditor({ column, rows, onSave, onDelete, onClose }) {
 //
 // ⚠️ הטבלה **לא הוסרה.** המתג נשמר בדפדפן, כי העדפת תצוגה שמתאפסת בכל
 // רענון היא העדפה שמפסיקים להשתמש בה.
-// גיליון של אתר אחד. רכיב משלו בשביל דבר אחד: כשהוא נוצר — בלחיצה, או
-// כשהאתר עבר לפס אחר אחרי שינוי דרגה — הוא נגלל אל תוך המסך. אחרת שינוי
-// "להתייחס כ" מ-VIP ל"לא בשירות" שולח אותו 1,500px למטה, מחוץ לעין.
-function RowSheet({ row, title, columns, canEdit, busy, onSaveCell, onDelete }) {
-  const ref = useRef(null);
-  useEffect(() => { ref.current?.scrollIntoView?.({ block: "nearest" }); }, []);
-  return (
-    <div ref={ref} className="tl-sheet">
-      <h3 className="tl-sheet-title">{title}</h3>
-      {columns.map((c) => {
-        const v = row.cells?.[c.key];
-        // ערך ארוך מקבל שתי עמודות: אנשי קשר ב-170px הם שלוש שורות שבורות.
-        const wide = c.kind === "text" && String(v ?? "").length > 40;
-        return (
-          <div key={c.key} className={`tl-sheet-field${wide ? " tl-sheet-field--wide" : ""}`}>
-            <span className="tl-sheet-label">{c.label}</span>
-            <Cell
-              column={c}
-              value={v}
-              readOnly={!canEdit}
-              multiline
-              onSave={(val) => onSaveCell(row.id, c.key, val)}
-            />
-          </div>
-        );
-      })}
-      {/* המחיקה הייתה רק בטבלה — כלומר מי שעובד בפסים היה צריך להחליף תצוגה
-          כדי למחוק שורה שהוא מסתכל עליה. */}
-      {canEdit && (
-        <div className="tl-sheet-foot">
-          <button
-            type="button"
-            className="tl-sheet-del"
-            disabled={busy}
-            onClick={() => { if (confirm(`למחוק את "${title}" מהלוח?`)) onDelete(); }}
-          >מחיקת השורה</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ⚠️ **האתר הפתוח מוחזק אצל ההורה (`openRow`), לא כאן** — כדי ש"+ שורה"
-// יוכל לפתוח את השורה שנוצרה. בלי זה היא נחתה בפס "ללא דרגה" הסגור, והלחיצה
-// נראתה כאילו לא עשתה כלום.
-function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow, onSaveCell, onDeleteRow }) {
+// יוכל לפתוח את השורה שנוצרה, ושהמגירה, שיושבת מחוץ לרשימה, תדע מה להציג.
+function BandsView({ columns, rows, searching, openRow, onOpenRow }) {
   // ⚠️ **סגור כברירת מחדל, ולא פתוח.** 151 שורות בחמישה פסים פתוחים הן
   // קיר של אריחים — נמדד על המסך: "תופס את כל המקום, תחושה דחוסה". חמישה
   // פסים סגורים עם מונה הם התמונה שאפשר לסרוק בשנייה, וזו גם הסיבה שהלוח
@@ -586,16 +554,14 @@ function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow
     try { return new Set(JSON.parse(localStorage.getItem("tl-open-bands") || "[]")); }
     catch { return new Set(); }
   });
+  const listRef = useRef(null);
   const isOpenRow = (r) => openRow != null && String(r.id) === String(openRow);
   useEffect(() => {
     try { localStorage.setItem("tl-open-bands", JSON.stringify([...openBands])); }
     catch { /* מצב פרטי */ }
   }, [openBands]);
 
-  const byLabel = (needle) => columns.find((c) => String(c.label).includes(needle));
-  const kindCol = byLabel("להתייחס") || columns.find((c) => c.kind === "status");
-  const nameCol = columns[0];
-  const codeCol = byLabel("קוד");
+  const { kindCol, nameCol, codeCol } = boardCols(columns);
 
   // סדר הפסים הוא **סדר האפשרויות בעמודה**, ולא רשימה קשיחה כאן. עמודה
   // שתקבל דרגה חדשה תקבל פס חדש בלי שאיש יזכור לעדכן קוד.
@@ -620,8 +586,8 @@ function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow
   // בדיוק כמו "לא נמצא". ורק אותם — פס ריק שנפתח בחיפוש הוא שורת
   // "אין אתרים" שמתחרה בתוצאה עצמה.
   //
-  // ⚠️ **ופס שמחזיק את האתר הפתוח — פתוח.** שינוי "להתייחס כ" בגיליון מעביר
-  // את האתר לפס אחר; אם הפס הזה סגור, הגיליון שבאמצע עריכתו פשוט נעלם.
+  // ⚠️ **ופס שמחזיק את האתר הפתוח — פתוח.** שינוי "להתייחס כ" במגירה מעביר
+  // את האתר לפס אחר; אם הפס הזה סגור, השורה המסומנת פשוט נעלמת מהרשימה.
   const isOpen = (g) => openBands.has(g.key)
     || (Boolean(searching) && g.rows.length > 0)
     || g.rows.some(isOpenRow);
@@ -637,8 +603,15 @@ function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow
     if (closing && g.rows.some(isOpenRow)) onOpenRow(null);
   };
 
+  // כשהאתר הפתוח עובר פס, השורה שלו נגללת לעין — אחרת שינוי מ-VIP ל"לא
+  // בשירות" שולח את הסימון 1,500px למטה.
+  const openBand = groups.find((g) => g.rows.some(isOpenRow))?.key;
+  useEffect(() => {
+    listRef.current?.querySelector(".tl-tile[aria-expanded='true']")?.scrollIntoView?.({ block: "nearest" });
+  }, [openRow, openBand]);
+
   return (
-    <div className="tl-bands">
+    <div className="tl-bands" ref={listRef}>
       {groups.map((g) => (
         <section key={g.key} className="tl-band" style={{ "--tier": g.color }}>
           <button
@@ -663,9 +636,9 @@ function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow
               {g.rows.length === 0 && <p className="tl-tiles-empty">אין אתרים בדרגה הזו.</p>}
               {g.rows.map((r) => {
                 const open = isOpenRow(r);
-                return [
+                return (
                   <button
-                    key={`t${r.id}`}
+                    key={r.id}
                     type="button"
                     className="tl-tile"
                     aria-expanded={open}
@@ -677,26 +650,82 @@ function BandsView({ columns, rows, canEdit, busy, searching, openRow, onOpenRow
                     {r.cells?.[codeCol?.key] && (
                       <span className="tl-tile-code">{r.cells[codeCol.key]}</span>
                     )}
-                  </button>,
-                  open && (
-                    <RowSheet
-                      key={`s${r.id}`}
-                      row={r}
-                      title={nameOf(r) || "שורה חדשה — ללא שם"}
-                      columns={columns}
-                      canEdit={canEdit}
-                      busy={busy}
-                      onSaveCell={onSaveCell}
-                      onDelete={() => onDeleteRow(r.id)}
-                    />
-                  ),
-                ];
+                  </button>
+                );
               })}
             </div>
           )}
         </section>
       ))}
     </div>
+  );
+}
+
+// ============================================================
+// ⚠️ מגירה בצד — ולא גיליון שנפתח בתוך הרשימה
+// ============================================================
+// הגיליון נפתח **בתוך** הרשת: האתר שנלחץ נשאר לבד בשורה, והרשימה נחצתה
+// לשניים בכל לחיצה. נמדד על המסך — "לא נראה מסודר". כאן הרשימה לא זזה
+// לעולם, והפרטים נפתחים לצדה, כמו פריט ב-Monday.
+//
+// ⚠️ **שדה לשורה, תווית לצד ערך.** חמש עמודות של שדות פיזרו ערכים בחמישה
+// מקומות; רשימת מאפיינים נקראת מלמעלה למטה.
+//
+// ⚠️ **במצב צפייה, ריקים מתקבצים לשורה אחת בתחתית.** שישה "—" פזורים הם
+// רעש; "אין ערך: קוד אתר · הערות" הוא מידע. בעריכה כל השדות מוצגים — ריק
+// הוא בדיוק מה שבאים למלא.
+function SiteDrawer({ row, columns, canEdit, busy, onSaveCell, onDelete, onClose }) {
+  const { nameCol, kindCol } = boardCols(columns);
+  const title = String(row.cells?.[nameCol?.key] ?? "") || "שורה חדשה — ללא שם";
+  const tier = (kindCol?.options ?? []).find((o) => String(o.value) === String(row.cells?.[kindCol?.key] ?? ""));
+  const isEmpty = (v) => v === undefined || v === null || v === "";
+  const shown = canEdit ? columns : columns.filter((c) => c !== nameCol && !isEmpty(row.cells?.[c.key]));
+  const empty = canEdit ? [] : columns.filter((c) => c !== nameCol && isEmpty(row.cells?.[c.key]));
+
+  return (
+    <aside className="tl-drawer" style={{ "--tier": tier?.color || "var(--text-muted, #9ca3af)" }} aria-label={`פרטי ${title}`}>
+      <header className="tl-drawer-head">
+        <div className="tl-drawer-id">
+          <span className="tl-drawer-tier"><span className="tl-band-dot" aria-hidden="true" />{tier?.label || "ללא דרגה"}</span>
+          <h3 className="tl-drawer-title">{title}</h3>
+        </div>
+        <button type="button" className="tl-close" onClick={onClose} aria-label="סגירת הפרטים">✕</button>
+      </header>
+
+      <dl className="tl-drawer-fields">
+        {shown.map((c) => (
+          <div key={c.key} className="tl-drawer-field">
+            <dt>{c.label}</dt>
+            <dd>
+              <Cell
+                column={c}
+                value={row.cells?.[c.key]}
+                readOnly={!canEdit}
+                multiline
+                onSave={(v) => onSaveCell(row.id, c.key, v)}
+              />
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {empty.length > 0 && (
+        <p className="tl-drawer-empty">אין ערך: {empty.map((c) => c.label).join(" · ")}</p>
+      )}
+
+      {/* המחיקה הייתה רק בטבלה — כלומר מי שעובד בפסים היה צריך להחליף תצוגה
+          כדי למחוק שורה שהוא מסתכל עליה. */}
+      {canEdit && (
+        <div className="tl-drawer-foot">
+          <button
+            type="button"
+            className="tl-drawer-del"
+            disabled={busy}
+            onClick={() => { if (confirm(`למחוק את "${title}" מהלוח?`)) onDelete(); }}
+          >מחיקת השורה</button>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -750,11 +779,12 @@ function TrafficLight({ onClose }) {
       // הכול בבת אחת מאבד למשתמשת את מה שהיא באמצע.
       if (askCode) { setAskCode(false); return; }
       if (editCol) { setEditCol(null); return; }
+      if (openRow != null && view === "bands") { setOpenRow(null); return; }
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [askCode, editCol, onClose]);
+  }, [askCode, editCol, openRow, view, onClose]);
 
   // ⚠️ כל פעולה עוברת דרך העטיפה הזו: נועלת, מרעננת, ומציגה שגיאה.
   // בלעדיה כל אחת מעשר הפעולות הייתה חוזרת על אותן ארבע שורות — וזו
@@ -785,6 +815,8 @@ function TrafficLight({ onClose }) {
   const rows = q
     ? allRows.filter((r) => Object.values(r.cells ?? {}).some((v) => norm(v).includes(q)))
     : allRows;
+  // מכל השורות ולא מהמסוננות: חיפוש חדש אינו סוגר את האתר שפתוח במגירה.
+  const drawerRow = openRow == null ? null : allRows.find((r) => String(r.id) === String(openRow)) ?? null;
 
   // ⚠️ הדבקה מ-Excel/Monday: טאבים בין תאים, שורות חדשות בין שורות.
   // זו הדרך שבה הלוח באמת ימולא, ולכן היא קריאה אחת ולא מאות.
@@ -914,6 +946,9 @@ function TrafficLight({ onClose }) {
           </div>
         )}
 
+        {/* הרשימה והמגירה זו לצד זו: פתיחת אתר אינה מזיזה את הרשימה, רק מצמצמת
+            אותה. */}
+        <div className="tl-body">
         <div className="tl-scroll">
           {/* ⚠️ **"טוען…" רק בטעינה הראשונה.** כל שמירה טוענת את הלוח מחדש, והתנאי
               היה `loading` לבד — כלומר אחרי כל תא הלוח כולו הוחלף ב"טוען…" וחזר:
@@ -931,12 +966,8 @@ function TrafficLight({ onClose }) {
               columns={columns}
               rows={rows}
               searching={Boolean(query)}
-              canEdit={canEdit}
-              busy={busy}
               openRow={openRow}
               onOpenRow={setOpenRow}
-              onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
-              onDeleteRow={(id) => run(async () => { await deleteRow(id); setOpenRow(null); })}
             />
           ) : (
             <table className="tl-table">
@@ -1028,6 +1059,20 @@ function TrafficLight({ onClose }) {
               </tbody>
             </table>
           )}
+        </div>
+
+        {view === "bands" && drawerRow && (
+          <SiteDrawer
+            key={drawerRow.id}
+            row={drawerRow}
+            columns={columns}
+            canEdit={canEdit}
+            busy={busy}
+            onClose={() => setOpenRow(null)}
+            onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
+            onDelete={() => run(async () => { await deleteRow(drawerRow.id); setOpenRow(null); })}
+          />
+        )}
         </div>
 
         <footer className="tl-foot">
