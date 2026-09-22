@@ -226,13 +226,28 @@ public class DualWriteWiringTests
         //
         // ⚠️ ומצב הוא הדבר שהכי חשוב שיגיע כשהברוקר למטה: תקלה שנוצרה
         // בזמן נתק MQTT היא בדיוק המקרה שהמסלול השני קיים בשבילו.
-        string w = Worker();
-        Assert.Contains("mirrored.Add(BatchPayload.From(result.State))", w);
+        // ============================================================
+        // ⚠️ **התנאי נבדק, ולא רק הקריאה — וזה נמדד**
+        // ============================================================
+        // בבדיקת מוטציות (22/09/2026) הפכתי את התנאי ל-`supabase is null`.
+        // כלומר מצב לא היה מגיע ל-Supabase **לעולם** — והחבילה נשארה
+        // ירוקה, כי המחרוזת שחיפשנו עדיין שם. שלוש מוטציות מאותו סוג
+        // עברו כך: מצב, resync, ותיאור התקלה המאוחר.
+        //
+        // בדיקה מבנית שמחפשת קריאה בלבד מוכיחה שהשורה קיימת, לא שהיא
+        // רצה. לכן נבדק המשפט השלם עם השומר שלו.
+        string w = Squish(Worker());
+        Assert.Contains(Squish("if (result.State is not null && supabase is not null) mirrored.Add(BatchPayload.From(result.State));"), w);
 
         // וגם ה-resync, שנולד בתוך שלב ג' — בלי מרכוז מפורש שם הוא לא
         // היה מגיע ל-Supabase כלל, כי הצופה כבר אינו קיים.
-        Assert.Contains("mirrored.Add(BatchPayload.From(resyncMessage))", w);
+        Assert.Contains(Squish("if (supabase is not null) mirrored.Add(BatchPayload.From(resyncMessage));"), w);
     }
+
+    // ⚠️ השוואה בלי רגישות לרווחים ולשורות: הטענה היא על **הקוד**, ועימוד
+    // מחדש אינו שינוי התנהגות. בלי זה כל בדיקה כזו נשברת על עריכה תמימה,
+    // ובדיקה שנשברת סתם היא בדיקה שמוחקים.
+    private static string Squish(string s) => Regex.Replace(s, @"\s+", " ");
 
     [Fact]
     public void TheLateFaultTextGoesOutOnTheDirectPathToo()
@@ -263,9 +278,12 @@ public class DualWriteWiringTests
         int next = w.IndexOf("pendingOps.LoadAll", late, StringComparison.Ordinal);
         Assert.True(next > late, "לא נמצא סוף הסעיף של השידור המשלים");
 
-        string block = w[late..next];
-        Assert.Contains("mirrored.Add(", block);
-        Assert.Contains("FaultText", block);
+        // ⚠️ הטקסט עצמו, ולא רק השדה: מוטציה ל-`FaultText = null` השאירה את
+        // המילה "FaultText" במקומה והבדיקה נשארה ירוקה — כלומר התיקון של
+        // היום היה מתבטל בלי שאיש יראה. נמדד בבדיקת מוטציות.
+        string block = Squish(w[late..next]);
+        Assert.Contains("FaultText = late.Text", block);
+        Assert.Contains(Squish("if (supabase is not null) mirrored.Add(BatchPayload.From(lateState));"), block);
     }
 
     [Fact]
