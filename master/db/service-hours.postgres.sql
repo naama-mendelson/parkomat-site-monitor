@@ -120,6 +120,13 @@ COMMENT ON FUNCTION app.service_windows(text, timestamptz, timestamptz) IS
 -- האתרים כאלה היום. NULL פירושו "לא הוגדר הסכם", והקורא מחליט —
 -- והבחירה שנעשתה היא להשאיר אותם על 24/7 כפי שהיו, כלומר שינוי חל
 -- **רק** על אתר שמישהו חיבר במפורש.
+-- ⚠️ **`ORDER BY` ולא `LIMIT 1` חשוף, וזה נמדד.** בלי סדר מפורש
+-- התשובה היא סדר הערמה, ו-`UPDATE` כלשהו על השורה המנצחת מעביר אותה
+-- לסוף הערמה ומוסר את הניצחון לאחרת. כלומר **שינוי רוחב עמודה** —
+-- פעולת ממשק שגרתית לחלוטין שעוברת ב-`tl_update_column` — היה משנה
+-- לאיזו עמודה מתייחסים. נמדד ב-PGlite: מיד אחרי הוספת תווית כפולה
+-- הערך נשאר `basic`; אחרי עדכון רוחב אחד הוא הפך ל-NULL, כלומר 36
+-- אתרים חוזרים בשקט לחישוב 24/7 בלי שום שגיאה בשום מקום.
 CREATE OR REPLACE FUNCTION app.service_agreement(p_site_id integer)
 RETURNS text
 LANGUAGE sql
@@ -127,11 +134,13 @@ STABLE
 AS $fn$
   WITH keys AS (
     SELECT
-      (SELECT key FROM traffic_light_columns WHERE label = 'קוד אתר'  LIMIT 1) AS k_code,
+      (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'קוד אתר'
+         ORDER BY position, id LIMIT 1) AS k_code,
       -- ⚠️ "להתייחס כ" ולא "סוג הסכם שירות במקור": הראשונה היא ההחלטה
       -- התפעולית ("איך להתייחס לאתר הזה"), השנייה היא מה שנחתם. הן
       -- נבדלות היום ב-3 אתרים.
-      (SELECT key FROM traffic_light_columns WHERE label = 'להתייחס כ' LIMIT 1) AS k_kind
+      (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'להתייחס כ'
+         ORDER BY position, id LIMIT 1) AS k_kind
   )
   -- ⚠️ **התא מחזיק רשימת קודים, לא קוד יחיד.** לקוח אחד יכול להחזיק
   -- כמה חניונים תחת אותו הסכם שירות, ואותה שורה בלוח מתארת את כולם —
@@ -144,12 +153,19 @@ AS $fn$
   SELECT lower(btrim(r.cells ->> k.k_kind))
     FROM traffic_light_rows r, keys k, sites s
    WHERE s.id = p_site_id
+     -- ⚠️ **הלוח הרובוטי בלבד, וזה שומר ולא ניקיון.** מאז שיש שני
+     -- לוחות באותה טבלה, שורה בלוח המכפילים שיש בה תא תחת המפתח
+     -- של "קוד אתר" הייתה יכולה להתאים לאתר מנוטר ולשנות לו את
+     -- **חלון מדידת הזמינות** — כלומר מספר על המסך שמשתנה בלי שאיש
+     -- נגע באתר. המכפילים אינם אתרים מנוטרים ואין להם שעות שירות.
+     AND r.board = 'robotic'
      AND s.code = ANY(
            string_to_array(
              replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')),
                              chr(32), ''), chr(9), ''),
              ','))
      AND btrim(coalesce(r.cells ->> k.k_kind, '')) <> ''
+   ORDER BY r.position, r.id
    LIMIT 1;
 $fn$;
 
@@ -174,19 +190,28 @@ STABLE
 AS $fn$
   WITH keys AS (
     SELECT
-      (SELECT key FROM traffic_light_columns WHERE label = 'קוד אתר' LIMIT 1) AS k_code,
+      (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'קוד אתר'
+         ORDER BY position, id LIMIT 1) AS k_code,
       (SELECT key FROM traffic_light_columns
-        WHERE label = 'סוג הסכם שירות במקור' LIMIT 1) AS k_plan
+        WHERE board = 'robotic' AND label = 'סוג הסכם שירות במקור'
+         ORDER BY position, id LIMIT 1) AS k_plan
   )
   SELECT lower(btrim(r.cells ->> k.k_plan))
     FROM traffic_light_rows r, keys k, sites s
    WHERE s.id = p_site_id
+     -- ⚠️ **הלוח הרובוטי בלבד, וזה שומר ולא ניקיון.** מאז שיש שני
+     -- לוחות באותה טבלה, שורה בלוח המכפילים שיש בה תא תחת המפתח
+     -- של "קוד אתר" הייתה יכולה להתאים לאתר מנוטר ולשנות לו את
+     -- **חלון מדידת הזמינות** — כלומר מספר על המסך שמשתנה בלי שאיש
+     -- נגע באתר. המכפילים אינם אתרים מנוטרים ואין להם שעות שירות.
+     AND r.board = 'robotic'
      AND s.code = ANY(
            string_to_array(
              replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')),
                              chr(32), ''), chr(9), ''),
              ','))
      AND btrim(coalesce(r.cells ->> k.k_plan, '')) <> ''
+   ORDER BY r.position, r.id
    LIMIT 1;
 $fn$;
 

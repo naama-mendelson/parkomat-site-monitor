@@ -70,12 +70,26 @@ test("⚠️ '' אינו ממלא — הוא תשובה, לא היעדר תשו�
 test("⚠️ הסוכן ממשיך לחפש את התיאור ומשדר אותו כשהוא מגיע", () => {
   const W = strip(read("..", "Parkomat.Agent", "src", "Parkomat.Agent.Service", "Worker.cs"));
 
-  assert.match(W, /awaitingLateFaultText/, "אין מעקב אחרי תקלה ששודרה בלי תיאור");
-  assert.match(W, /LateFaultTextMaxPolls/,
+  // ⚠️ **ההחלטה עברה מ-`Worker.cs` למחלקה, ולכן גם השער.** עד 1.0.56 ישבו
+  // כאן שלושה משתנים בתוך לולאה של 1,500 שורות שאף בדיקה אינה מריצה —
+  // וכך נשלחו 1.0.53 ו-1.0.55 עם הבאג חי וכל 587 הבדיקות ירוקות. עכשיו
+  // ההחלטה ב-`LateFaultTextTracker`, ויש לה 14 בדיקות שמריצות אותה.
+  //
+  // מה שנשאר לשער הזה — שהוא שער **של השרת** — הוא השאלה שהשרת באמת
+  // תלוי בה: האם הסוכן עדיין דוגם ושולח. הפרטים נבדקים בצד הסוכן.
+  assert.match(W, /lateFaultText\.Next\(/, "אין מעקב אחרי תקלה ששודרה בלי תיאור");
+  assert.match(W, /lateFaultText\.OnStateProduced\(/,
+    "אין דריכה — תקלה בלי תיאור אינה מתחילה חיפוש");
+
+  const T = strip(read("..", "Parkomat.Agent", "src", "Parkomat.Agent.Core",
+                       "Protocol", "LateFaultTextTracker.cs"));
+  assert.match(T, /DefaultMaxPolls/,
     "אין תקרה — דגימת 80 רגיסטרים לנצח היא עומס מיותר על הבקר");
 
   // ⚠️ **רק כשהמצב עדיין תקלה.** אם הבקר התאושש, הטקסט שייקרא עכשיו הוא
   // של תקלה שנגמרה — ושליחתו הייתה מדביקה תיאור שגוי למקטע הבא.
-  assert.match(W, /FromMode\(reading\.Mode\)\s*!=\s*SiteState\.Error/,
+  assert.match(T, /currentState\s*!=\s*SiteState\.Error/,
     "אין בדיקה שהמצב עדיין תקלה לפני השידור המשלים");
+  assert.match(W, /FromMode\(reading\.Mode\)/,
+    "המצב הנוכחי אינו מועבר לבודק — הדגימה תימשך גם אחרי התאוששות");
 });

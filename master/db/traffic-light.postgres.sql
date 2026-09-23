@@ -46,8 +46,55 @@ CREATE TABLE IF NOT EXISTS traffic_light_rows (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_tl_rows_position ON traffic_light_rows (position, id);
-CREATE INDEX IF NOT EXISTS idx_tl_cols_position ON traffic_light_columns (position, id);
+-- ============================================================
+-- ⚠️ שני לוחות באותן טבלאות — ולא שתי טבלאות
+-- ============================================================
+-- ‏"רמזור רובוטי" ו"רמזור מכפילים" הם שני דשבורדים נפרדים לחלוטין:
+-- עמודות שונות, שורות שונות, ואין ביניהם שום קשר תוכני. ובכל זאת הם
+-- חולקים טבלה, כי **כל המכניקה זהה** — עריכת תא, הוספת שורה, הדבקה
+-- מאקסל, הרשאת מנהל, RLS. טבלאות נפרדות היו מכפילות עשר פונקציות,
+-- שתי מדיניות ושמונה־עשרה הרשאות, וכל תיקון עתידי היה צריך להיכתב
+-- פעמיים — ומי ששוכח את השני מקבל לוח אחד שמתנהג אחרת מהשני.
+--
+-- ⚠️ **ו-`ADD COLUMN IF NOT EXISTS` ולא שינוי ב-`CREATE TABLE`.** הטבלאות
+-- קיימות בייצור עם 153 שורות; `CREATE TABLE IF NOT EXISTS` פשוט לא היה
+-- רץ, והעמודה לא הייתה נוספת לעולם.
+--
+-- ⚠️ **ברירת המחדל היא `robotic`, וזה מה שממלא את 153 השורות הקיימות.**
+-- בלי ברירת מחדל הן היו מקבלות NULL, וכל שאילתה שמסננת לפי לוח הייתה
+-- מחזירה לוח ריק — כלומר הלוח הקיים נעלם מהמסך ברגע ההחלה.
+--
+-- ⚠️ **ו-CHECK ולא טקסט חופשי.** שגיאת כתיב בשם הלוח יוצרת לוח שלישי
+-- בלתי־נראה: השורות נכתבות, אף אחד לא רואה אותן, ואין שגיאה. הוספת לוח
+-- בעתיד היא שורה אחת כאן, וזה המחיר הנכון מול כישלון שקט.
+ALTER TABLE traffic_light_columns
+  ADD COLUMN IF NOT EXISTS board TEXT NOT NULL DEFAULT 'robotic';
+ALTER TABLE traffic_light_rows
+  ADD COLUMN IF NOT EXISTS board TEXT NOT NULL DEFAULT 'robotic';
+
+-- ⚠️ `DROP IF EXISTS` ואז `ADD`, ולא `DO $$ … EXCEPTION`. בלוק כזה כבר
+-- נמחץ פעם אחת בפרויקט הזה — `DO $$` הפך ל-`DO $` בדרך, וכל
+-- `cron.postgres.sql` נכשל להחלה **בשקט**. שתי שורות בלי ציטוט־דולר
+-- עושות את אותו דבר ואי אפשר למחוץ אותן.
+ALTER TABLE traffic_light_columns DROP CONSTRAINT IF EXISTS tl_cols_board_known;
+ALTER TABLE traffic_light_columns
+  ADD CONSTRAINT tl_cols_board_known CHECK (board IN ('robotic','multipliers'));
+
+ALTER TABLE traffic_light_rows DROP CONSTRAINT IF EXISTS tl_rows_board_known;
+ALTER TABLE traffic_light_rows
+  ADD CONSTRAINT tl_rows_board_known CHECK (board IN ('robotic','multipliers'));
+
+-- ⚠️ הלוח קודם למיקום באינדקס: כל שליפה מתחילה ב"איזה לוח", ואינדקס
+-- שמתחיל ב-position היה נסרק במלואו כדי לסנן אחר כך.
+--
+-- ⚠️ **ו-DROP לפני CREATE, ולא `IF NOT EXISTS` לבדו.** שני האינדקסים
+-- כבר קיימים בייצור בהגדרה הישנה `(position, id)`; `CREATE INDEX IF NOT
+-- EXISTS` רואה את השם, מדלג, ומחזיר הצלחה — כלומר ההגדרה החדשה לא
+-- הייתה נכנסת לעולם ואף שגיאה לא הייתה מופיעה.
+DROP INDEX IF EXISTS idx_tl_rows_position;
+DROP INDEX IF EXISTS idx_tl_cols_position;
+CREATE INDEX IF NOT EXISTS idx_tl_rows_position ON traffic_light_rows (board, position, id);
+CREATE INDEX IF NOT EXISTS idx_tl_cols_position ON traffic_light_columns (board, position, id);
 
 -- ============================================================
 -- RLS — קריאה לכל מחובר, כתיבה רק דרך הפונקציות
@@ -86,7 +133,21 @@ GRANT SELECT ON traffic_light_rows    TO authenticated;
 -- שכל מי שמחזיק את המפתח הפומבי (הוא בכל דפדפן) קרא את הלוח כולו בלי להתחבר.
 -- כקריאה בלבד אין לה שום צורך בהרשאות הבעלים: INVOKER מפעיל את מדיניות
 -- הקריאה שלמעלה, ומשתמש מושבת מקבל לוח ריק.
-CREATE OR REPLACE FUNCTION public.tl_board()
+-- ============================================================
+-- ⚠️ DROP לפני CREATE — ולא `CREATE OR REPLACE` לבדו
+-- ============================================================
+-- הוספת פרמטר **אינה** מחליפה פונקציה, היא יוצרת **עומס יתר שני**.
+-- ושתי גרסאות של אותה פונקציה גורמות ל-PostgREST לסרב לקריאה כולה —
+-- זה בדיוק מה שקרה ב-17/09/2026, כשעותק ישן של `ingest_batch` חזר לחיים
+-- ו**כל האתרים הפסיקו לכתוב**. לכן כל אחת מארבע הפונקציות שמקבלות
+-- `p_board` נמחקת מפורשות קודם.
+DROP FUNCTION IF EXISTS public.tl_board();
+
+-- ⚠️ `DEFAULT 'robotic'` הוא מה שמאפשר לדשבורד ישן לעבוד מול SQL חדש:
+-- קריאה בלי ארגומנט ממשיכה להחזיר את הלוח הרובוטי בדיוק כמו קודם.
+-- הכיוון ההפוך — דשבורד חדש מול SQL ישן — נשבר, ולכן **ה-SQL מוחל
+-- לפני שהדשבורד נדחף**. ראה ההערה בראש הקובץ הזה.
+CREATE OR REPLACE FUNCTION public.tl_board(p_board text DEFAULT 'robotic')
 RETURNS jsonb
 LANGUAGE sql
 STABLE
@@ -94,30 +155,36 @@ SECURITY INVOKER
 SET search_path = public, app, pg_temp
 AS $fn$
   SELECT jsonb_build_object(
+    'board', COALESCE(NULLIF(btrim(p_board), ''), 'robotic'),
     'columns', COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
                'id', c.id, 'key', c.key, 'label', c.label, 'kind', c.kind,
                'options', c.options, 'width', c.width, 'position', c.position)
              ORDER BY c.position, c.id)
-        FROM traffic_light_columns c), '[]'::jsonb),
+        FROM traffic_light_columns c
+       WHERE c.board = COALESCE(NULLIF(btrim(p_board), ''), 'robotic')), '[]'::jsonb),
     'rows', COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
                'id', r.id, 'cells', r.cells, 'position', r.position)
              ORDER BY r.position, r.id)
-        FROM traffic_light_rows r), '[]'::jsonb)
+        FROM traffic_light_rows r
+       WHERE r.board = COALESCE(NULLIF(btrim(p_board), ''), 'robotic')), '[]'::jsonb)
   );
 $fn$;
 
-REVOKE ALL ON FUNCTION public.tl_board() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.tl_board() TO authenticated;
+REVOKE ALL ON FUNCTION public.tl_board(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tl_board(text) TO authenticated;
 
 -- ============================================================
 -- עמודות — הוספה, שינוי, מחיקה
 -- ============================================================
+DROP FUNCTION IF EXISTS public.tl_add_column(text, text, jsonb);
+
 CREATE OR REPLACE FUNCTION public.tl_add_column(
   p_label   text,
   p_kind    text DEFAULT 'text',
-  p_options jsonb DEFAULT '[]'::jsonb
+  p_options jsonb DEFAULT '[]'::jsonb,
+  p_board   text  DEFAULT 'robotic'
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -128,6 +195,9 @@ DECLARE
   v_key text;
   v_pos double precision;
   v_id  integer;
+  -- ⚠️ הלוח מנורמל פעם אחת: מחרוזת ריקה או NULL היא הלוח הרובוטי,
+  -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
+  v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
   PERFORM app.require_manager();
 
@@ -140,11 +210,15 @@ BEGIN
   -- ("הערות" פעמיים) הן מצב לגיטימי לגמרי בלוח כזה.
   v_key := 'c' || to_char(clock_timestamp(), 'YYYYMMDDHH24MISSMS');
 
-  SELECT COALESCE(MAX(position), 0) + 1 INTO v_pos FROM traffic_light_columns;
+  -- ⚠️ המיקום נספר **בתוך הלוח**. בלי הסינון, עמודה ראשונה בלוח חדש
+  -- הייתה מקבלת את המיקום שאחרי העמודה האחרונה של הלוח השני — כלומר
+  -- לוח ריק שמתחיל במיקום 16, ומיזוג עתידי של סדרים הופך לבלתי אפשרי.
+  SELECT COALESCE(MAX(position), 0) + 1 INTO v_pos
+    FROM traffic_light_columns WHERE board = v_board;
 
-  INSERT INTO traffic_light_columns (key, label, kind, options, position)
+  INSERT INTO traffic_light_columns (key, label, kind, options, position, board)
   VALUES (v_key, btrim(p_label), COALESCE(p_kind, 'text'),
-          COALESCE(p_options, '[]'::jsonb), v_pos)
+          COALESCE(p_options, '[]'::jsonb), v_pos, v_board)
   RETURNING id INTO v_id;
 
   RETURN jsonb_build_object('id', v_id, 'key', v_key);
@@ -215,7 +289,12 @@ $fn$;
 -- ============================================================
 -- שורות
 -- ============================================================
-CREATE OR REPLACE FUNCTION public.tl_add_row(p_after double precision DEFAULT NULL)
+DROP FUNCTION IF EXISTS public.tl_add_row(double precision);
+
+CREATE OR REPLACE FUNCTION public.tl_add_row(
+  p_after double precision DEFAULT NULL,
+  p_board text             DEFAULT 'robotic'
+)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -224,20 +303,24 @@ AS $fn$
 DECLARE
   v_pos double precision;
   v_id  bigint;
+  -- ⚠️ הלוח מנורמל פעם אחת: מחרוזת ריקה או NULL היא הלוח הרובוטי,
+  -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
+  v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
   PERFORM app.require_manager();
 
   IF p_after IS NULL THEN
-    SELECT COALESCE(MAX(position), 0) + 1 INTO v_pos FROM traffic_light_rows;
+    SELECT COALESCE(MAX(position), 0) + 1 INTO v_pos
+      FROM traffic_light_rows WHERE board = v_board;
   ELSE
     -- ⚠️ הממוצע בין השורה שאחריה למי שבא אחריה — כך הוספה באמצע
     -- מעדכנת **שורה אחת** ולא את כל מה שמתחתיה.
     SELECT COALESCE(MIN(position), p_after + 2) INTO v_pos
-      FROM traffic_light_rows WHERE position > p_after;
+      FROM traffic_light_rows WHERE board = v_board AND position > p_after;
     v_pos := (p_after + v_pos) / 2;
   END IF;
 
-  INSERT INTO traffic_light_rows (position) VALUES (v_pos) RETURNING id INTO v_id;
+  INSERT INTO traffic_light_rows (position, board) VALUES (v_pos, v_board) RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $fn$;
@@ -314,7 +397,12 @@ $fn$;
 -- ⚠️ מילוי לוח של 40 שורות ידרוש מאות קריאות `tl_set_cell`. פונקציה
 -- אחת שמקבלת מערך שורות היא ההבדל בין הדבקה שעובדת להדבקה שנתקעת.
 -- אותו נימוק בדיוק שבגללו `ingest_batch` מקבלת אצווה ולא הודעה.
-CREATE OR REPLACE FUNCTION public.tl_paste_rows(p_rows jsonb)
+DROP FUNCTION IF EXISTS public.tl_paste_rows(jsonb);
+
+CREATE OR REPLACE FUNCTION public.tl_paste_rows(
+  p_rows  jsonb,
+  p_board text DEFAULT 'robotic'
+)
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -324,6 +412,9 @@ DECLARE
   v_item  jsonb;
   v_pos   double precision;
   v_count integer := 0;
+  -- ⚠️ הלוח מנורמל פעם אחת: מחרוזת ריקה או NULL היא הלוח הרובוטי,
+  -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
+  v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
   PERFORM app.require_manager();
 
@@ -336,12 +427,12 @@ BEGIN
     RAISE EXCEPTION 'יותר מ-500 שורות בהדבקה אחת';
   END IF;
 
-  SELECT COALESCE(MAX(position), 0) INTO v_pos FROM traffic_light_rows;
+  SELECT COALESCE(MAX(position), 0) INTO v_pos FROM traffic_light_rows WHERE board = v_board;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_rows)
   LOOP
     v_pos := v_pos + 1;
-    INSERT INTO traffic_light_rows (cells, position) VALUES (v_item, v_pos);
+    INSERT INTO traffic_light_rows (cells, position, board) VALUES (v_item, v_pos, v_board);
     v_count := v_count + 1;
   END LOOP;
 
@@ -352,22 +443,22 @@ $fn$;
 -- ⚠️ REVOKE לפני GRANT, כמו ב-writes.postgres.sql. הכתיבות בודקות
 -- `require_manager()` ולכן אנונימי נדחה ממילא — אבל "נדחה בתוך הפונקציה" אינו
 -- "אינו רשאי להריץ", והשני הוא מה ש-`check-security` יכול לאמת בלי לנחש.
-REVOKE ALL ON FUNCTION public.tl_add_column(text, text, jsonb)             FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_add_column(text, text, jsonb, text)       FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_update_column(integer, text, text, jsonb, integer) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_delete_column(integer)                    FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_move_column(integer, double precision)    FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.tl_add_row(double precision)                 FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_add_row(double precision, text)           FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_delete_row(bigint)                        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_move_row(bigint, double precision)        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.tl_set_cell(bigint, text, jsonb)             FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.tl_paste_rows(jsonb)                         FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tl_paste_rows(jsonb, text)                   FROM PUBLIC, anon;
 
-GRANT EXECUTE ON FUNCTION public.tl_add_column(text, text, jsonb)             TO authenticated;
+GRANT EXECUTE ON FUNCTION public.tl_add_column(text, text, jsonb, text)       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_update_column(integer, text, text, jsonb, integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_delete_column(integer)                    TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_move_column(integer, double precision)    TO authenticated;
-GRANT EXECUTE ON FUNCTION public.tl_add_row(double precision)                 TO authenticated;
+GRANT EXECUTE ON FUNCTION public.tl_add_row(double precision, text)           TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_delete_row(bigint)                        TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_move_row(bigint, double precision)        TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_set_cell(bigint, text, jsonb)             TO authenticated;
-GRANT EXECUTE ON FUNCTION public.tl_paste_rows(jsonb)                         TO authenticated;
+GRANT EXECUTE ON FUNCTION public.tl_paste_rows(jsonb, text)                   TO authenticated;
