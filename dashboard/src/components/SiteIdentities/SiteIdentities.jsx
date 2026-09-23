@@ -36,11 +36,13 @@ function beatLabel(seenAt) {
   return { text: min < 60 ? `לפני ${min} דק׳` : `לפני ${Math.round(min / 60)} שעות`, fresh: false };
 }
 
-export default function SiteIdentities() {
+export default function SiteIdentities({ onSecretShown }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [issued, setIssued] = useState(null);
+  // ההורה צריך לדעת שסיסמה על המסך, כדי שהרקע וה-✕ שלו לא ימחקו אותה.
+  useEffect(() => { onSecretShown?.(Boolean(issued)); }, [issued, onSecretShown]);
   const [confirmOff, setConfirmOff] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(null);
 

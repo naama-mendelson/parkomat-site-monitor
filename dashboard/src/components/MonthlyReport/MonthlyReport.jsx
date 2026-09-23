@@ -19,7 +19,10 @@ function monthLabel(ym) {
   return `${MONTHS[m - 1] ?? ym} ${y}`;
 }
 
-const iso = (d) => d.toISOString().slice(0, 10);
+// ⚠️ תאריך **מקומי**, לא UTC. `toISOString` בישראל הפך את חצות 1.1 ל-31.12
+// של השנה הקודמת, ובין 00:00 ל-02:00/03:00 "עד" ו-`max` נפלו על אתמול —
+// כלומר את היום עצמו אי אפשר היה לבחור. אותו תיקון כמו ב-SiteFacts.
+const iso = (d) => d.toLocaleDateString("sv");
 
 function MonthlyReport({ site = null, onClose }) {
   // ברירת מחדל: מתחילת השנה עד היום. טווח שימושי מיד, בלי למלא כלום.

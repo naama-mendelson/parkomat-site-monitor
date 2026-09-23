@@ -61,7 +61,14 @@ function App() {
 
   // ===== Hooks =====
   const { sites, loading, error, reload, patch } = useSites();
-  const { detail, maintenance, refresh: refreshDetail } = useSiteDetail(selectedCode);
+  const { detail, maintenance, error: detailError, refresh: refreshDetail } = useSiteDetail(selectedCode);
+  // ⚠️ כרטיס שנלחץ ולא נפתח חייב לומר למה. רק כשאין פרטים בכלל: כשל
+  // ברענון של פאנל פתוח משאיר את הנתונים האחרונים, כמו קודם.
+  useEffect(() => {
+    if (!selectedCode || !detailError || detail?.site) return;
+    alert("טעינת פרטי האתר נכשלה: " + detailError);
+    setSelectedCode(null);
+  }, [selectedCode, detailError, detail]);
 
   const handleRefresh = useCallback(() => {
     reload();

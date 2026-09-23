@@ -48,6 +48,8 @@ export function exportJSON(data, filename) {
 
 /** שם קובץ שכולל את הטווח: parkomat_2026-06-01_2026-07-12.csv */
 export function reportFilename(range, ext) {
-  const day = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : "");
+  // ⚠️ מקומי ולא UTC: תחילת טווח היא חצות בישראל = 21:00Z של יום קודם,
+  // ולכן ייצוא של 1.9–30.9 נקרא parkomat_2026-08-31_…
+  const day = (iso) => (iso ? new Date(iso).toLocaleDateString("sv") : "");
   return `parkomat_${day(range?.from)}_${day(range?.to)}.${ext}`;
 }

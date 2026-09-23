@@ -6,6 +6,10 @@ export function useSiteDetail(code) {
   const [detail, setDetail] = useState(null);
   const [maintenance, setMaintenance] = useState(null);
   const [loading, setLoading] = useState(false);
+  // ⚠️ השגיאה נחשפת לקורא. קודם היא נכתבה רק ל-console, ו-App מציג את
+  // הפאנל רק כש-`detail?.site` קיים — כלומר לחיצה על כרטיס בזמן תקלת רשת
+  // או סשן שפג **לא עשתה כלום**, בלי שום סימן למה.
+  const [error, setError] = useState(null);
   const [tick, setTick] = useState(0); // מאלץ רענון ידני (אחרי שינוי תחזוקה)
 
   // רענון יזום של פרטי האתר (נקרא אחרי הפעלת/ביטול תחזוקה)
@@ -17,6 +21,7 @@ export function useSiteDetail(code) {
   useEffect(() => {
     setDetail(null);
     setMaintenance(null);
+    setError(null);
   }, [code]);
 
   useEffect(() => {
@@ -36,8 +41,8 @@ export function useSiteDetail(code) {
 
       if (cancelled) return;
 
-      if (d.status === "fulfilled") setDetail(d.value);
-      else console.error("Error loading site detail:", d.reason);
+      if (d.status === "fulfilled") { setDetail(d.value); setError(null); }
+      else { console.error("Error loading site detail:", d.reason); setError(d.reason?.message || "שגיאה"); }
       if (m.status === "fulfilled") setMaintenance(m.value);
       else console.error("Error loading maintenance:", m.reason);
 
@@ -48,5 +53,5 @@ export function useSiteDetail(code) {
     return () => { cancelled = true; };
   }, [code, tick]);
 
-  return { detail, maintenance, loading, refresh };
+  return { detail, maintenance, loading, error, refresh };
 }

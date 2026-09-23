@@ -130,7 +130,7 @@ export async function fetchSupervisor(period) {
 
   // המסך קורא גם את period/label/range — ובלעדיהם כותרת התקופה נעלמת בשקט
   // במצב הישיר. זה בדיוק סוג ההבדל שהופך "מתג" ל"שני מסכים שונים".
-  return { period: period || "week", ...PERIOD_META[period] || PERIOD_META.week, range: { from, to }, ...body };
+  return { period: period || "week", ...periodMeta(period), range: { from, to }, ...body };
 }
 
 /**
@@ -172,7 +172,7 @@ export async function fetchInsights(code, period) {
 
   return {
     period: period || "week",
-    ...(PERIOD_META[period] || PERIOD_META.week),
+    ...periodMeta(period),
     range: { from, to },
     ...insights,
     log,
@@ -296,7 +296,7 @@ export async function fetchExecutive(params = {}) {
 
   return {
     period,
-    ...(PERIOD_META[period] || PERIOD_META.week),
+    ...periodMeta(period, explicit ? params : null),
     daysCount: null,
     hasComparison,
     granularity,
@@ -375,7 +375,7 @@ export async function fetchAnalytics(code, period) {
 
   return {
     period: period || "week",
-    ...(PERIOD_META[period] || PERIOD_META.week),
+    ...periodMeta(period),
     hasComparison,
     range: b.range,
     stats,
@@ -587,9 +587,26 @@ export function fetchMonthlyReport(code, from, to) {
 const PERIOD_META = {
   week:  { label: "7 הימים האחרונים",  comparisonLabel: "לעומת השבוע הקודם" },
   month: { label: "30 הימים האחרונים", comparisonLabel: "לעומת 30 הימים הקודמים" },
-  year:  { label: String(new Date().getFullYear()),
-           comparisonLabel: `לעומת ${new Date().getFullYear() - 1}` },
 };
+
+// ⚠️ **טווח מפורש מקבל תווית משלו.** קודם `PERIOD_META[null]` נפל לשבוע,
+// ולכן "היום", "הרבעון" ו"שנה שעברה" במסך המנהלים הוצגו כ"7 הימים
+// האחרונים" ו"לעומת השבוע הקודם" — המספרים של הטווח הנכון, הכותרת של אחר.
+//
+// ⚠️ **והשנה מחושבת בכל קריאה, לא בטעינת המודול.** מסך קיר שנשאר פתוח
+// מעבר לראש השנה הציג "2026" ו"לעומת 2025" מעל נתונים של 2027.
+function periodMeta(period, range) {
+  if (range) {
+    const d = (iso) => { const [y, m, day] = String(iso).slice(0, 10).split("-"); return `${+day}.${+m}.${y}`; };
+    const a = d(range.from), b = d(range.to);
+    return { label: a === b ? a : `${a} – ${b}`, comparisonLabel: "לעומת התקופה הקודמת" };
+  }
+  if (period === "year") {
+    const y = new Date().getFullYear();
+    return { label: String(y), comparisonLabel: `לעומת ${y - 1}` };
+  }
+  return PERIOD_META[period] || PERIOD_META.week;
+}
 
 // ============================================================
 // גבולות התקופה — הכפילות המודעת היחידה בקובץ הזה

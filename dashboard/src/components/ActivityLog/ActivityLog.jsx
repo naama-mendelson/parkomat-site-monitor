@@ -1,6 +1,6 @@
 // components/ActivityLog/ActivityLog.jsx — לוג פעילות מלא: ציר זמן מאוחד
 // (פעולות · שינויי מצב · תחזוקה), מקובץ לפי ימים, עם סינון.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 // דרך המתג: במצב ישיר הדשבורד שולף שורות גולמיות מ-Supabase ומריץ עליהן
 // את **אותה** buildActivityLog שהשרת מריץ (shared/timeline.mjs).
 import { fetchActivity, markAsTest, unmarkTest, reclassifyStatus } from "../../services/dataSource";
@@ -373,7 +373,16 @@ const PAGE = 300;
  * @param code    קוד האתר, או null ללוג המצרף (כל האתרים)
  * @param period  week | month | year — נדרש כדי שהדפדוף ישאל על אותה תקופה
  */
+// מפתח יציב לרשומה — להסרת כפילויות בין עמודים של "טען עוד".
+const entryKey = (e) => (e.id != null
+  ? `${e.kind}:${e.id}`
+  : `${e.kind}:${e.at}:${e.faultText ?? ""}:${e.siteName ?? ""}`);
+
 function ActivityLog({ log, code = null, period = "week", onChanged }) {
+  // ⚠️ עולה אחרי כל סימון/סיווג. `onChanged` מרענן את `log` אצל ההורה —
+  // אבל רשימה מסוננת או ממוספרת יושבת ב-`page`, שלא נשלפה מחדש, ולכן
+  // השורה לא הראתה את התג ולחיצה שנייה החזירה "כבר הוצא מהסטטיסטיקה".
+  const [version, setVersion] = useState(0);
   // ============================================================
   // סימון שורה כניסוי — "הקפצנו את הדלת כדי לבדוק"
   // ============================================================
@@ -428,6 +437,7 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
       await reclassifyStatus(e.id, e.reclassifiedTo ? null : "maintenance");
       setPending(null);
       setTestBusy(false);
+      setVersion((v) => v + 1);
       onChanged?.();
     } catch (err) {
       setTestError(err.message || "הפעולה נכשלה");
@@ -464,6 +474,7 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
       // שהתג יופיע בלי להמתין לרשת.
       setPending(null);
       setTestBusy(false);
+      setVersion((v) => v + 1);
       onChanged?.();
     } catch (err) {
       // ⚠️ השגיאה נשארת **בתוך** הדיאלוג ולא סוגרת אותו: מי שקיבל "מותר
@@ -490,37 +501,57 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
   // ⚠️ הבקשות עלולות לחזור מחוץ לסדר: לחיצה מהירה על שני צ'יפים יכולה
   // להחזיר את התשובה של הראשון *אחרי* של השני, והמסך היה מציג רשימה שאינה
   // תואמת לצ'יפ המסומן. `stale` מבטל תשובה שכבר אינה רלוונטית.
+  // ⚠️ **מונה שאילתות, ולא רק `stale` מקומי.** "טען עוד" רץ מחוץ לאפקט,
+  // ובלי מונה משותף תשובה שלו שהגיעה אחרי החלפת צ'יפ צורפה לרשימה החדשה.
+  const reqRef = useRef(0);
+
   useEffect(() => {
-    // ברירת המחדל כבר בידינו מה-insights — אין טעם לשאול עליה שוב בפתיחה.
-    if (filter === "all" && !card) { setPage(null); setError(null); return; }
-
-    let stale = false;
-    setBusy(true);
+    const my = ++reqRef.current;
+    // ⚠️ `busy` מתאפס **בכל** מעבר, גם זה שחוזר מוקדם. קודם: "תקלות" ואז
+    // "הכל" לפני שנטען — הניקוי סימן את הראשונה כ-stale ולכן ה-finally שלה
+    // לא איפס, והענף של "הכל" חזר בלי לאפס. "טוען…" נשאר לתמיד.
+    setBusy(false);
+    // ⚠️ והעמוד הקודם מתרוקן מיד: שגיאה במעבר ל"תקלות" השאירה את כל
+    // האירועים מתחת לצ'יפ "תקלות".
+    setPage(null);
     setError(null);
+    // ברירת המחדל כבר בידינו מה-insights — אין טעם לשאול עליה שוב בפתיחה.
+    // (אחרי סימון הורה מרענן את `log`, ולכן גם אז אין צורך.)
+    if (filter === "all" && !card) return;
+
+    setBusy(true);
     fetchActivity(code, { period, filter, card, offset: 0, limit: PAGE })
-      .then((r) => { if (!stale) setPage(r); })
-      .catch((e) => { if (!stale) setError(e.message || "שגיאה בטעינת הלוג"); })
-      .finally(() => { if (!stale) setBusy(false); });
-    return () => { stale = true; };
-  }, [code, period, filter, card]);
+      .then((r) => { if (my === reqRef.current) setPage(r); })
+      .catch((e) => { if (my === reqRef.current) setError(e.message || "שגיאה בטעינת הלוג"); })
+      .finally(() => { if (my === reqRef.current) setBusy(false); });
+  }, [code, period, filter, card, version]);
 
-  // התקופה או האתר התחלפו — העמוד שנטען שייך לשאלה הקודמת.
-  useEffect(() => { setPage(null); }, [code, period]);
 
-  const view = page || log;
+  // ⚠️ `log` שייך ל"הכל" בלבד. במסנן אחר, כל עוד העמוד שלו לא הגיע —
+  // בטעינה או אחרי שגיאה — אין מה להציג, ולא את רשימת "הכל" מתחת לצ'יפ
+  // אחר. המונים נשארים משל `log`: הם סופרים כל צ'יפ, לא רק את הפעיל.
+  const view = page || (filter === "all" && !card ? log : null);
   const entries = view?.entries || NO_ENTRIES;
-  const counts = view?.counts || {};
+  const counts = (view || log)?.counts || {};
 
   const loadMore = () => {
+    const my = reqRef.current;   // לא מקדם: זו המשכה של אותה שאילתה
     setBusy(true);
     setError(null);
     fetchActivity(code, { period, filter, card, offset: entries.length, limit: PAGE })
-      .then((r) =>
+      .then((r) => {
+        if (my !== reqRef.current) return;
         // מצרפים לרשימה הקיימת במקום להחליף — "טען עוד" הוא המשך, לא עמוד נפרד.
-        setPage((prev) => ({ ...r, entries: [...(prev?.entries || log?.entries || []), ...r.entries] }))
-      )
-      .catch((e) => setError(e.message || "שגיאה בטעינת הלוג"))
-      .finally(() => setBusy(false));
+        // ⚠️ ובלי כפילויות: `to` נקבע מחדש בכל קריאה, ואירוע שנוסף בינתיים
+        // מזיז את ה-offset — השורה האחרונה של העמוד הקודם חוזרת שוב.
+        setPage((prev) => {
+          const base = prev?.entries || log?.entries || [];
+          const seen = new Set(base.map(entryKey));
+          return { ...r, entries: [...base, ...r.entries.filter((e) => !seen.has(entryKey(e)))] };
+        });
+      })
+      .catch((e) => { if (my === reqRef.current) setError(e.message || "שגיאה בטעינת הלוג"); })
+      .finally(() => { if (my === reqRef.current) setBusy(false); });
   };
 
   // קיבוץ לימים, תוך שמירה על הסדר (מהחדש לישן)

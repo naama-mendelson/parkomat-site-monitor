@@ -18,7 +18,16 @@ import Logo from "../Logo/Logo";
 
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-function AdminPanel({ sites, onClose, onChanged }) {
+function AdminPanel({ sites, onClose: closePanel, onChanged }) {
+  // ============================================================
+  // ⚠️ סגירה בזמן שסיסמה חד-פעמית על המסך — רק באישור מפורש
+  // ============================================================
+  // Supabase שומרת hash בלבד, ולכן סיסמת סוכן שנמחקה מהמסך אובדת. הרקע,
+  // ה-✕ ו"חזרה לאתרים" כולם הרסו אותה בלחיצה אחת — ו-AddSiteModal, שמרונדר
+  // בתוך השכבה הזו, העביר לחיצה על הרקע שלו עד לכאן וסגר את כל הפאנל.
+  const [secretShown, setSecretShown] = useState(false);
+  const mayLeave = () => !secretShown || window.confirm("הסיסמה שמוצגת תאבד ואי אפשר לשחזר אותה. לסגור בכל זאת?");
+  const onClose = () => { if (mayLeave()) closePanel(); };
   const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();
   // ⚠️ במצב ישיר אין קוד מנהל — פותחים בסיסמת החשבון. הטקסט חייב לומר
   // את זה: מסך שמבקש "קוד מנהל" ממי שאין לו קוד הוא מסך שאי אפשר לעבור.
@@ -340,7 +349,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
             {/* ⚠️ מסך נפרד, ולא עוד עמודה בטבלת האתרים. זהות היא נושא בפני
                 עצמו — היא נוצרת, מושבתת ומוחלפת בסיסמה — והמקום היחיד שבו
                 היא הופיעה עד 15/09 היה רשימת המשתמשים, בין בני אדם. */}
-            <button className="adm-btn-ghost" onClick={() => setShowIdentities((v) => !v)}>
+            <button className="adm-btn-ghost" onClick={() => { if (mayLeave()) { setSecretShown(false); setShowIdentities((v) => !v); } }}>
               {showIdentities ? "← חזרה לאתרים" : "זהויות אתרים"}
             </button>
             {/* ⚠️ מוסתר במצב ישיר, כי הוא משנה סוד שאף כתיבה כאן אינה
@@ -365,7 +374,7 @@ function AdminPanel({ sites, onClose, onChanged }) {
         {/* ⚠️ החלפה מלאה ולא הצגה זו לצד זו: זהויות ואתרים הם שני נושאים,
             ושתי טבלאות באותו מסך היו מחזירות בדיוק את הבלבול שהמסך הזה נולד
             כדי לפתור — שורה שנראית כמו שורה אחרת ומזמינה את אותה פעולה. */}
-        {showIdentities ? <SiteIdentities /> : (<>
+        {showIdentities ? <SiteIdentities onSecretShown={setSecretShown} /> : (<>
 
         {/* ==========================================================
             הזהות שהונפקה — נשארת עד סגירה ידנית
@@ -624,11 +633,15 @@ function AdminPanel({ sites, onClose, onChanged }) {
         </>)}
       </div>
 
+      {/* ⚠️ עטיפה שעוצרת את הבעבוע: המודאל יושב בתוך `adm-overlay`, ולחיצה
+          על הרקע שלו — גם במסך הסיסמה — הגיעה ל-onClose של הפאנל כולו. */}
       {addOpen && (
-        <AddSiteModal
-          onClose={() => setAddOpen(false)}
-          onSuccess={() => { setAddOpen(false); onChanged(); flash("האתר נוסף"); }}
-        />
+        <div onClick={(e) => e.stopPropagation()}>
+          <AddSiteModal
+            onClose={() => setAddOpen(false)}
+            onSuccess={() => { setAddOpen(false); onChanged(); flash("האתר נוסף"); }}
+          />
+        </div>
       )}
     </div>
   );

@@ -475,7 +475,8 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
   // הפתרון: מקבצים כל מקטע המשך אל האירוע שהוא ממשיך. המונה נשאר מספר
   // האירועים המקופלים; המשך נספר בזמן, לא באירועים.
   const rawOf = (status) => (allRows
-    ? allRows.filter((r) => r.status === status)
+    // ⚠️ אפקטיבי — ראה effectiveStatus. שורה שסווגה מחדש נספרת לפי הסיווג.
+    ? allRows.filter((r) => (r.reclassified_to || r.status) === status)
     : (status === "error" ? errorRows : maintRows));
 
   // כל מקטע גולמי מקבל את העוגן (המקטע המקופל) שהוא שייך לו: העוגן

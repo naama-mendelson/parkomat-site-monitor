@@ -85,9 +85,14 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
   }
 
   async function handleCancelMaintenance(code) {
+    // ⚠️ **שם חובה, כמו ב-SiteFacts.** `cancel_maintenance` דוחה ביטול
+    // בלי שם, והקריאה כאן לא העבירה אותו — כלומר הכפתור נכשל **תמיד**,
+    // ואי אפשר היה לסגור חלון תחזוקה מהטבלה הזו בכלל.
+    const who = (window.prompt("מי מבטל את התחזוקה? (שם מלא)") || "").trim();
+    if (who.length < 2) return alert("יש להזין שם מלא כדי לבטל תחזוקה");
     setBusy(code);
     try {
-      await cancelMaintenance(code);
+      await cancelMaintenance(code, who);
       refresh();
     } catch (err) {
       alert("שגיאה: " + err.message);

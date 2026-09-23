@@ -33,18 +33,29 @@ self.addEventListener("push", (event) => {
   try { d = event.data ? event.data.json() : {}; } catch { d = {}; }
 
   const siteName = d.siteName || d.code || "אתר";
-  const fault = d.faultText || "לא התקבל תיאור מהבקר";
+  // ⚠️ **הכותרת והסוג מגיעים מהשולח.** `notify-fault` שולח `kind` ו-`title`
+  // (תקלה / ניתוק תקשורת / תחזוקה), והקוד הזה התעלם משניהם — כל התראה
+  // נקראה "תקלה", כולל ניתוק ותחזוקה.
+  const kind = d.kind || "fault";
+  const title = d.title || "תקלה";
+  const body = d.faultText || (kind === "fault" ? "לא התקבל תיאור מהבקר" : "");
+  // ⚠️ **קוד אמיתי בלבד.** `app.send_push` שולח `site_code: '—'` לכל
+  // התראת מערכת (השבתה כללית, "אתר מנותק N שעות"). tag משותף גרם לשלוש
+  // התראות ניתוק להחליף זו את זו — נשארה רק האחרונה.
+  const code = d.code && d.code !== "—" ? d.code : null;
 
   event.waitUntil(
-    self.registration.showNotification(`תקלה · ${siteName}`, {
-      body: fault,
+    self.registration.showNotification(`${title} · ${siteName}`, {
+      body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
       dir: "rtl",
       lang: "he",
       // ⚠️ tag לפי קוד האתר: התראה חדשה על אותו אתר **מחליפה** את הקודמת
       // במקום להצטבר. אתר שמהבהב היה מייצר ערימה שצריך לנקות ידנית.
-      tag: d.code ? `fault-${d.code}` : "fault",
+      // ⚠️ והסוג בתוך ה-tag: ניתוק של אתר X החליף התראת תקלה לא-מטופלת
+      // של אותו אתר, שנשאה requireInteraction בדיוק כדי שלא תיעלם.
+      tag: code ? `${kind}-${code}` : `${kind}-${Date.now()}`,
       // ⚠️ renotify עם tag: בלעדיו ההחלפה שקטה לגמרי — בלי צליל ובלי
       // רטט — ותקלה חדשה הייתה מתחלפת בלי שאיש ישים לב.
       renotify: true,
@@ -54,20 +65,18 @@ self.addEventListener("push", (event) => {
       // הצליל הוא של מערכת ההפעלה — Web Push אינו יכול לשאת קובץ צליל.
       // silent: false מוודא שלא נשתיק אותו בטעות.
       silent: false,
-      data: { url: d.code ? `/?site=${encodeURIComponent(d.code)}` : "/" },
+      data: { url: "/" },
     }),
   );
 });
 
 // ============================================================
-// לחיצה — פותחת את כרטיס האתר
+// לחיצה — מביאה את הדשבורד לחזית
 // ============================================================
 // ⚠️ מחפש חלון פתוח לפני שפותח חדש. בלי זה כל לחיצה הייתה פותחת עוד
 // לשונית, ואחרי יום עמוס נשארות עשר עותקים של אותו דשבורד.
 //
-// ⚠️ ו-navigate() על חלון קיים ולא רק focus(): החלון עשוי לעמוד על אתר
-// אחר לגמרי, ולהתמקד בו בלי לנווט היה נראה כאילו ההתראה הובילה למקום
-// השגוי.
+// (כאן היה navigate() על החלון הקיים — ראה למטה למה הוסר.)
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = event.notification.data?.url || "/";
@@ -79,8 +88,11 @@ self.addEventListener("notificationclick", (event) => {
       // ⚠️ **לא לשונית FixFlow.** היא באותו origin ובתוך ה-scope של `/`, ולכן
       // נמצאה כאן — ולשונית שהתמקדו בה לאחרונה חוזרת ראשונה. טכנאי באמצע
       // נוהל שלחץ על התראה איבד את הצעד שלו: הלשונית נווטה לדשבורד.
+      // ⚠️ **focus בלבד, בלי navigate.** מאז ש-FixFlow נפתח בתוך הדשבורד
+      // (FixFlowFrame), ניווט טוען מחדש את כל הדף — ונוהל שטכנאי באמצעו
+      // אבד שוב, יחד עם כרטיס פתוח וטיוטת תשובה. וה-`?site=` שאליו ניווטנו
+      // לא נקרא בשום מקום בדשבורד: הטעינה לא פתחה שום כרטיס.
       if (at.origin === self.location.origin && !at.pathname.startsWith("/fixflow/")) {
-        await c.navigate(url).catch(() => {});
         return c.focus();
       }
     }

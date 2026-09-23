@@ -121,8 +121,12 @@ export async function fetchInsightsDirect(code, { from, to }) {
   return {
     ...computeInsights({
       ops: opsPage.rows,
-      errorRows: counted.filter((s) => s.status === "error"),
-      maintRows: counted.filter((s) => s.status === "maintenance"),
+      // ⚠️ **הסטטוס האפקטיבי.** `collapseSegmentsBySite` מחזיר את המקטע
+      // המקורי בכוונה, ולכן `s.status` כאן הוא הגולמי: תקלה שמנהל סיווג
+      // מחדש כתחזוקה נספרה בלשונית האמינות כתקלה, ושעותיה כ"בתקלה". הזרוע
+      // דרך השרת עשתה `COALESCE(reclassified_to, status)` ב-SQL.
+      errorRows: counted.filter((s) => (s.reclassified_to || s.status) === "error"),
+      maintRows: counted.filter((s) => (s.reclassified_to || s.status) === "maintenance"),
       windows: winPage.rows,
       from, to,
       // ראה computeInsights: הזמן נסכם על המקטעים הגולמיים, לא המקופלים.

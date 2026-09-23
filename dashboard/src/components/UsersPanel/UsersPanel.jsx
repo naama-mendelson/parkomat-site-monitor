@@ -28,6 +28,12 @@ function UsersPanel({ onClose }) {
   // הסיסמה הזמנית של ההזמנה האחרונה. מוצגת עד שסוגרים אותה — היא מוחזרת
   // פעם אחת בלבד ולא נשמרת בשום מקום, ולכן רענון מאבד אותה לתמיד.
   const [invited, setInvited] = useState(null);
+  // ⚠️ הסיסמה הזמנית מוצגת פעם אחת. לחיצה על הרקע או ה-✕ מחקה אותה בלי
+  // אזהרה, ולמשתמש שהוזמן לא הייתה שום דרך להיכנס.
+  const closeGuarded = () => {
+    if (invited && !window.confirm("הסיסמה שמוצגת תאבד ואי אפשר לשחזר אותה. לסגור בכל זאת?")) return;
+    onClose();
+  };
   // איזה משתמש בתהליך עדכון — כדי לחסום לחיצה כפולה על אותה שורה בלבד,
   // ולא על כל הרשימה.
   const [updatingId, setUpdatingId] = useState(null);
@@ -174,11 +180,11 @@ function UsersPanel({ onClose }) {
   }
 
   return (
-    <div className="users-overlay" onClick={onClose}>
+    <div className="users-overlay" onClick={closeGuarded}>
       <div className="users-panel" onClick={(e) => e.stopPropagation()}>
         <header className="users-head">
           <h2>משתמשים</h2>
-          <button className="users-close" onClick={onClose} aria-label="סגירה">✕</button>
+          <button className="users-close" onClick={closeGuarded} aria-label="סגירה">✕</button>
         </header>
 
         <p className="users-hint">
