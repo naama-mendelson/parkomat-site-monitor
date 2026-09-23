@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Parkomat.Agent.Core.Protocol;
 using Parkomat.Agent.Core.Queue;
 
@@ -270,5 +270,88 @@ public sealed class PendingQueueTests : IDisposable
         Assert.Equal("4271", m.User);
         Assert.Equal(65535, m.CycleCounter);
         Assert.Equal(SiteState.Operating, m.State);
+    }
+
+    // ============================================================
+    // ⚠️ הריקון עצר להיות ריבועי
+    // ============================================================
+    // הקורא בלולאה החמה עשה `LoadAll().Take(100)` — קריאה של **כל** התור
+    // מהדיסק כדי להשתמש במאה הודעות. עם התקרה של 1.0.54 (1,000 → 10,000)
+    // ריקון תור מלא הפך ל-505,000 קריאות קובץ ו-316 שניות במדידה, מול סף
+    // watchdog של 30 שניות. הבדיקות כאן מוכיחות שהעצירה אמיתית.
+
+    [Fact]
+    public void LoadFirstStopsAfterTheCountAsked()
+    {
+        var q = new PendingQueue(_dir);
+        for (int i = 0; i < 250; i++) q.Enqueue(Op(1000 + i, "c" + i));
+
+        Assert.Equal(100, q.LoadFirst<OperationMessage>(100).Count);
+    }
+
+    [Fact]
+    public void LoadFirstDoesNotEvenOpenTheFilesBeyondTheCount()
+    {
+        // ⚠️ **הוכחה נצפית לעצירה, ולא מדידת זמן.** הקבצים שמעבר לתקרה
+        // הם JSON פגום: `LoadAll` היה קורא אותם ומוחק אותם כפגומים, ולכן
+        // עצם הישרדותם היא הראיה שהם לא נקראו כלל.
+        var q = new PendingQueue(_dir);
+        for (int i = 0; i < 20; i++) q.Enqueue(Op(1000 + i, "c" + i));
+
+        var junk = new List<string>();
+        for (int i = 0; i < 10; i++)
+        {
+            // שמות אחרי כל הקיימים במיון אורדינלי, כדי שיהיו בזנב התור.
+            string path = Path.Combine(_dir, "zzz-junk-" + i + ".json");
+            File.WriteAllText(path, "{ not json at all");
+            junk.Add(path);
+        }
+
+        Assert.Equal(5, q.LoadFirst<OperationMessage>(5).Count);
+        Assert.All(junk, p => Assert.True(File.Exists(p),
+            "קובץ פגום מעבר לתקרה נמחק — כלומר הקריאה לא עצרה"));
+
+        // ולשם השוואה: הקריאה המלאה כן מגיעה אליהם ומנקה אותם.
+        q.LoadAll<OperationMessage>();
+        Assert.All(junk, p => Assert.False(File.Exists(p)));
+    }
+
+    [Fact]
+    public void LoadFirstKeepsTheOldestFirst()
+    {
+        // ⚠️ הסדר הוא כל העניין: מי שמקצר את הקריאה חייב לקצר מהזנב,
+        // אחרת הודעה ישנה נשארת מאחור לנצח בזמן שהחדשות עוברות לפניה.
+        var q = new PendingQueue(_dir);
+        for (int i = 0; i < 30; i++) q.Enqueue(Op(1000 + i, "c" + i));
+
+        var got = q.LoadFirst<OperationMessage>(3);
+        Assert.Equal(["c0", "c1", "c2"], got.Select(x => x.Message.User).ToArray());
+    }
+
+    [Fact]
+    public void LoadFirstOfZeroTouchesNothing()
+    {
+        var q = new PendingQueue(_dir);
+        q.Enqueue(Op(1000, "a"));
+        Assert.Empty(q.LoadFirst<OperationMessage>(0));
+        Assert.Single(q.LoadAll<OperationMessage>());
+    }
+
+    [Fact]
+    public void TheHotLoopAsksForAHundredAndNotForEverything()
+    {
+        // ⚠️ בדיקה מבנית, ובמפורש — אי אפשר להריץ את הלולאה של Worker.
+        // בלעדיה החזרה לצורה הישנה היא שינוי של מילה אחת, שאף בדיקה
+        // התנהגותית לא תרגיש בו: התוצאה זהה, רק הדיסק נקרא פי מאה.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        string worker = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Parkomat.Agent.Service", "Worker.cs"));
+
+        Assert.Contains("supaQueue.LoadFirst<BatchItem>(100)", worker);
+        Assert.DoesNotContain("supaQueue.LoadAll<BatchItem>()", worker);
     }
 }

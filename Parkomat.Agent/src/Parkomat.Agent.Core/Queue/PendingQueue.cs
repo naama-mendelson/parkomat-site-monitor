@@ -124,11 +124,36 @@ public sealed class PendingQueue
     /// כלומר הודעה תקינה שטרם נמסרה נמחקה כי מישהו החזיק אותה באותה
     /// מילישנייה. קובץ שלא נקרא <b>מדולג ונשאר</b>, ויילקח בסבב הבא.
     /// </summary>
-    public List<(string Path, T Message)> LoadAll<T>()
+    public List<(string Path, T Message)> LoadAll<T>() => LoadFirst<T>(int.MaxValue);
+
+    /// <summary>
+    /// ‏<paramref name="max"/> ההודעות הישנות ביותר, ותו לא.
+    ///
+    /// <para>⚠️ <b>נמדד, ולא נוחות קריאה.</b> הקורא היחיד בלולאה החמה עשה
+    /// <c>LoadAll().Take(100)</c> — כלומר קרא את <b>כל</b> התור מהדיסק כדי
+    /// להשתמש במאה הודעות. עם התקרה של 1.0.54 (1,000 → 10,000) זה הפך את
+    /// הריקון לריבועי: תור מלא נפרק ב-100 סבבים, וכל סבב קורא 10,000
+    /// קבצים — <b>505,000 קריאות קובץ</b>. נמדד על NVMe של מחשב פיתוח, בלי
+    /// אנטי־וירוס: <b>316 שניות</b>. מחשב אתר הוא ההפך הגמור — דיסק איטי
+    /// ו-Defender שסורק תיקייה של 10,000 קבצי JSON קטנים — ושם הסבב חוצה
+    /// את סף ה-30 שניות, ה-watchdog הורג את הסוכן, והוא מתחיל מחדש
+    /// **מקריאת כל התור שוב**.</para>
+    ///
+    /// <para>עם עצירה ב-<paramref name="max"/> אותו ריקון הוא 10,000
+    /// קריאות במקום 505,000, והוא אינו תלוי עוד בחומרת האתר.</para>
+    ///
+    /// <para>⚠️ הקבצים ממוינים אורדינלית (<c>Files</c>), ולכן "הראשונות"
+    /// הן באמת הישנות ביותר — הסדר נשמר.</para>
+    /// </summary>
+    public List<(string Path, T Message)> LoadFirst<T>(int max)
     {
         var outp = new List<(string, T)>();
+        if (max <= 0) return outp;
+
         foreach (string path in Files())
         {
+            if (outp.Count >= max) break;
+
             string text;
             try
             {

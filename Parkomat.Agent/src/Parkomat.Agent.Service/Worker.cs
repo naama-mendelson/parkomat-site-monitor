@@ -473,9 +473,11 @@ public class Worker : BackgroundService
         //
         // ⚠️ תקרה של 120 דגימות ולא לנצח: אחריה ברור שהבקר לא יכתוב,
         // והמשך דגימה של 80 רגיסטרים לכל סבב הוא עומס מיותר על הבקר.
-        const int LateFaultTextMaxPolls = 120;
-        bool awaitingLateFaultText = false;
-        int lateFaultTextPolls = 0;
+        // ⚠️ **המצב עבר למחלקה, ולא נשאר שלושה משתנים בלולאה.** שני באגים
+        // רצופים — 1.0.53 ו-1.0.55 — נשלחו לשטח כשכל 587 הבדיקות ירוקות,
+        // כי ההחלטה הזו ישבה בתוך לולאה שאף בדיקה אינה מריצה. ב-
+        // `LateFaultTextTracker` היא נבדקת בהרצה, ולא בקריאת טקסט מקור.
+        var lateFaultText = new LateFaultTextTracker();
 
         // ============================================================
         // תיאור התקלה — נקרא בשני מקומות, ולכן יושב בפונקציה אחת
@@ -989,10 +991,66 @@ public class Worker : BackgroundService
             // הקריאה עצמה מוגנת: `ReadFaultTextOrNullAsync` מחזירה null מיד כשהמצב
             // אינו תקלה, כך שאין כאן קריאת רגיסטרים נוספת בסבב רגיל.
             if (result.State is not null)
+            {
                 result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
+
+                // ⚠️ **הדריכה כאן ולא בשלב ג'.** היא תלויה ב-`result.State`,
+                // שקיים רק כשהמוח הפיק שינוי מצב, ולכן מקומה בנקודת ההפקה —
+                // ראה הבלוק "התיאור שהגיע באיחור" מיד למטה.
+                lateFaultText.OnStateProduced(result.State.State, result.State.FaultText);
+            }
 
             if (result.State is not null && supabase is not null)
                 mirrored.Add(BatchPayload.From(result.State));
+
+            // ============================================================
+            // ⚠️ התיאור שהגיע באיחור — בנקודת ההפקה, לא בשלב ג'
+            // ============================================================
+            // הבקר כותב את טקסט התקלה **אחרי** ה-MODE, ולכן כמחצית מהודעות
+            // ה-error יוצאות בלי תיאור כלל. המנגנון הזה ממשיך לדגום אחריהן
+            // ומשלים אותו בשידור נפרד.
+            //
+            // ⚠️ **וכל המנגנון ישב עד היום בתוך `if (config.MqttEnabled)`.**
+            // באתר שה-MQTT כבוי בו — 2438 היום, וכל אתר שיעבור אחריו — הוא
+            // פשוט **אינו קיים**, והמחצית הזו אובדת בשתיקה. 1.0.55 הוציא
+            // החוצה את הקריאה המיידית בלבד, כלומר סגר כשליש מהפער ולא את
+            // כולו. זו אותה תנועה בדיוק שנעשתה ב-1.0.36 להודעת הלידה: מה
+            // שאינו תלוי בברוקר אינו אמור לחיות בתוך השלב שלו.
+            //
+            // ⚠️ **והדגימה חייבת לרוץ בכל סבב**, לא רק בסבב שבו השתנה מצב —
+            // התיאור מגיע סבבים אחדים אחרי השינוי, ושם בדיוק `result.State`
+            // כבר null.
+            // ⚠️ דרך ModeTranslator ולא `== 5`: מיפוי ה-MODE הוא הגדרה אחת
+            // במערכת, ומספר קשיח כאן היה נשאר מאחור ביום שהיא תשתנה.
+            if (lateFaultText.Next(ModeTranslator.FromMode(reading.Mode)) == LateFaultTextStep.ReadNow)
+            {
+                FaultText late = plc.ReadFaultText();
+                if (!string.IsNullOrEmpty(late.Text))
+                {
+                    lateFaultText.OnTextFound();
+                    _logger.LogInformation(
+                        "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
+                        lateFaultText.Polls, late.Text);
+
+                    var lateState = new StateMessage
+                    {
+                        Timestamp = clock.UnixNow(),
+                        State = SiteState.Error,
+                        FaultText = late.Text,
+                    };
+
+                    // ⚠️ **המירור ראשון, השידור אחריו.** הצד השני כבר יודע
+                    // לקלוט: `app.ingest_state` ממלאת תיאור חסר למקטע הפתוח
+                    // גם כשהמצב לא השתנה, ואינה דורסת תיאור קיים — כלומר זו
+                    // השלמה ולא "מצב חדש". וסדר כזה מבטיח שמה שנכנס לכאן
+                    // מגיע ליעדו גם כשהברוקר מת.
+                    if (supabase is not null) mirrored.Add(BatchPayload.From(lateState));
+
+                    if (config.MqttEnabled)
+                        await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(lateState, stoppingToken),
+                                              "late fault text", stoppingToken);
+                }
+            }
 
             // לוכדים את הפעולות שהמוח זיהה *מיד* לתוך תור השידור — לפני כל ניסיון
             // שידור (שעלול לזרוק). כך אף כניסה/יציאה לא אובדת גם אם הברוקר נופל כאן.
@@ -1212,65 +1270,15 @@ public class Worker : BackgroundService
                         await mqtt.PublishStateAsync(result.State, stoppingToken);
                         _logger.LogInformation("-> Published STATE: {State}", result.State.State);
 
-                        // תקלה ששודרה בלי תיאור — ממשיכים לחפש (ראה למעלה).
-                        awaitingLateFaultText =
-                            result.State.State == SiteState.Error &&
-                            string.IsNullOrEmpty(result.State.FaultText);
-                        lateFaultTextPolls = 0;
+                        // ⚠️ הדריכה לחיפוש התיאור המאוחר **אינה כאן יותר** —
+                        // היא עברה לנקודת ההפקה, כי כאן היא לא הייתה רצה כלל
+                        // באתר שה-MQTT כבוי בו.
                     }
 
-                    // ============================================================
-                    // התיאור שהגיע באיחור — שידור משלים אחד
-                    // ============================================================
-                    // ⚠️ **רק כשהמצב עדיין תקלה.** אם הבקר כבר התאושש, הטקסט
-                    // שנקרא עכשיו הוא של תקלה שנגמרה — ושליחתו הייתה מדביקה
-                    // תיאור שגוי למקטע הבא.
-                    if (awaitingLateFaultText)
-                    {
-                        // ⚠️ דרך ModeTranslator ולא `== 5`: מיפוי ה-MODE הוא
-                        // הגדרה אחת במערכת, ומספר קשיח כאן היה נשאר מאחור
-                        // ביום שהיא תשתנה.
-                        if (ModeTranslator.FromMode(reading.Mode) != SiteState.Error
-                            || ++lateFaultTextPolls > LateFaultTextMaxPolls)
-                        {
-                            awaitingLateFaultText = false;
-                        }
-                        else
-                        {
-                            FaultText late = plc.ReadFaultText();
-                            if (!string.IsNullOrEmpty(late.Text))
-                            {
-                                awaitingLateFaultText = false;
-                                _logger.LogInformation(
-                                    "Fault text arrived {Polls} polls late — publishing it: '{Text}'",
-                                    lateFaultTextPolls, late.Text);
-
-                                // ⚠️ **ההודעה נבנית פעם אחת ונשלחת בשני המסלולים.**
-                                // עד 22/09/2026 היא נשלחה ל-MQTT בלבד, וכל עוד השרת
-                                // רץ הוא מילא אותה למקטע הפתוח — ולכן הפער לא נראה.
-                                // מהיום שהשרת כובה נמדד בייצור: תיאור תקלה הגיע
-                                // ב-1 מתוך 51 תקלות, מול 135 מתוך 243 לפני. זה אותו
-                                // כשל שכבר קרה בנתיב כשל ה-PLC: נתיב שמשדר דרך
-                                // `mqtt` ואינו מוסיף ל-`mirrored` פשוט אינו קיים
-                                // באתר שאין בו MQTT.
-                                var lateState = new StateMessage
-                                {
-                                    Timestamp = clock.UnixNow(),
-                                    State = SiteState.Error,
-                                    FaultText = late.Text,
-                                };
-
-                                await TryPublishAsync(mqtt, () => mqtt.PublishStateAsync(lateState, stoppingToken),
-                                    "late fault text", stoppingToken);
-
-                                // ⚠️ הצד השני כבר יודע לקלוט: `app.ingest_state` ממלאת
-                                // תיאור חסר למקטע הפתוח גם כשהמצב לא השתנה, ואינה
-                                // דורסת תיאור קיים. כלומר ההודעה הזו אינה "מצב חדש"
-                                // אלא השלמה — וכך היא נרשמת.
-                                if (supabase is not null) mirrored.Add(BatchPayload.From(lateState));
-                            }
-                        }
-                    }
+                    // ⚠️ **בלוק "התיאור שהגיע באיחור" עבר מכאן לנקודת ההפקה.**
+                    // כל עוד הוא ישב כאן, באתר עם `Mqtt.Disabled = true` הוא לא
+                    // רץ מעולם — כלומר כמחצית מהתקלות שם נשארו בלי תיאור, בלי
+                    // שדבר על המסך יבדיל בין "הבקר לא כתב" לבין "אף אחד לא שאל".
 
                     // מרוקנים את תור הפעולות בסדר. הודעה מתפרסמת → יורדת מהתור. אם אחת
                     // זורקת, יוצאים ל-catch כשהיא עדיין ראש התור — כך היא (וכל מה שאחריה)
@@ -1441,11 +1449,16 @@ public class Worker : BackgroundService
                 if (supabase is not null && DateTimeOffset.UtcNow >= supaNextAttempt
                     && (mirrored.Count > 0 || supaWaiting > 0 || beatDue))
                 {
-                    var retry = supaQueue.LoadAll<BatchItem>()
-                        // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה
-                        // נדחית **כולה**. חצי מהתקרה משאיר מקום להודעות
-                        // החדשות של הסבב הזה בלי לחשב הרכבות.
-                        .Take(100).ToList();
+                    // ⚠️ תקרת האצווה בשרת היא 200, ואצווה גדולה ממנה נדחית
+                    // **כולה**. חצי מהתקרה משאיר מקום להודעות החדשות של הסבב
+                    // הזה בלי לחשב הרכבות.
+                    //
+                    // ⚠️ **`LoadFirst` ולא `LoadAll().Take(100)`.** ההבדל אינו
+                    // סגנוני: הצורה הישנה קראה את כל התור מהדיסק כדי להשתמש
+                    // במאה הודעות, ומאז שהתקרה עלתה ל-10,000 (1.0.54) הריקון
+                    // הפך לריבועי — 505,000 קריאות קובץ ו-316 שניות במדידה,
+                    // מול סף watchdog של 30. ראה `PendingQueue.LoadFirst`.
+                    var retry = supaQueue.LoadFirst<BatchItem>(100);
 
                     var outgoing = new List<BatchItem>(retry.Count + mirrored.Count);
                     foreach (var (_, m) in retry) outgoing.Add(m);
