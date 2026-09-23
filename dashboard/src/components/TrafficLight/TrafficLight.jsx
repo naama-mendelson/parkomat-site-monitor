@@ -601,7 +601,7 @@ function BandsView({ columns, rows, searching, openRow, onOpenRow, boardKey = "r
   useEffect(() => {
     try { localStorage.setItem(`tl-open-bands:${boardKey}`, JSON.stringify([...openBands])); }
     catch { /* מצב פרטי */ }
-  }, [openBands]);
+  }, [openBands, boardKey]);
 
   const { kindCol, nameCol, codeCol } = boardCols(columns);
 
@@ -827,6 +827,10 @@ function TrafficLight({ onClose }) {
   // יקבל כתיבה מהמשתמש הזה בשום מקרה, ואז הקוד חסר משמעות.
   const canEdit = unlocked && editMode;
 
+  // הלוח שמוצג *עכשיו* — לא זה שנלכד ב-closure של השליפה.
+  const boardKeyRef = useRef(boardKey);
+  boardKeyRef.current = boardKey;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -834,7 +838,11 @@ function TrafficLight({ onClose }) {
       // ⚠️ **תשובה שאיחרה נזרקת.** החלפת טאב בזמן שליפה משאירה בקשה
       // באוויר; בלי הבדיקה הזו היא נוחתת אחרי החדשה ומציגה את הלוח
       // הקודם תחת הטאב החדש — מצב שנראה כמו נתונים שהתערבבו.
-      if (next.board && next.board !== boardKey) return;
+      // ⚠️ **ההשוואה מול ה-ref, לא מול `boardKey`.** הגרסה הראשונה
+      // השוותה ל-`boardKey` של אותו closure — כלומר ללוח שהבקשה עצמה
+      // ביקשה — ולכן תמיד יצאה שווה והשומר לא זרק דבר. נמדד בדפדפן:
+      // מכפילים → רובוטי בזמן שליפה, והמכפילים דרסו את הרובוטי.
+      if ((next.board ?? boardKey) !== boardKeyRef.current) return;
       setBoard(next);
       setErr(null);
     }
@@ -917,7 +925,7 @@ function TrafficLight({ onClose }) {
     });
 
     await run(() => pasteRows(payload, boardKey));
-  }, [columns, run]);
+  }, [columns, run, boardKey]);
 
   return (
     <div className="tl-overlay" onClick={onClose}>
@@ -950,6 +958,10 @@ function TrafficLight({ onClose }) {
                 setQuery("");
                 setOpenRow(null);
                 setEditCol(null);
+                // ⚠️ והלוח הקודם מתרוקן מיד. אחרת עד שהשליפה חוזרת הטאב
+                // החדש מציג את השורות של הישן — והדבקה באותו רגע נכתבת
+                // ללוח אחד כשהמסך מראה אחר.
+                setBoard({ columns: [], rows: [] });
                 setBoardKey(b.key);
               }}
             >{b.label}</button>
@@ -1078,6 +1090,10 @@ function TrafficLight({ onClose }) {
             </p>
           ) : view === "bands" ? (
             <BandsView
+              // ⚠️ key לפי לוח: מצב הפסים הפתוחים נקרא מ-localStorage רק
+              // באתחול. בלי הרכבה מחדש הלוח השני יורש את הפסים של הראשון,
+              // ולחיצה הבאה כותבת אותם למפתח שלו.
+              key={boardKey}
               columns={columns}
               rows={rows}
               searching={Boolean(query)}
