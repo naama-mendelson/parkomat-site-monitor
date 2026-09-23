@@ -5,18 +5,23 @@
 // מרוצה תעיף את כל ה-FixFlow מהאתר".
 import React, { useState } from "react";
 import FixFlowAssign from "./FixFlowAssign.jsx";
+import FixFlowFrame from "./FixFlowFrame.jsx";
 import { useSavedAssignment, rememberAssignment } from "./savedAssignment.js";
 import { fixflowLinkFor, fixflowSolutionFor, FIXFLOW_ENABLED } from "../../services/fixflow.js";
 import "./FixFlowLink.css";
 
-// ⚠️ הכפתור נפתח בלשונית חדשה, ותמיד. הדשבורד הוא PWA שמוקדן מחזיק פתוח באמצע
-// אירוע; ניווט באותה לשונית היה מאבד את מצב המסך — הסינון, הכרטיס הפתוח,
-// ההיסטוריה — בדיוק ברגע שבו הוא צריך את שניהם זה לצד זה.
-const REL = "noopener noreferrer";
+// ⚠️ **הכפתור פתח לשונית חדשה, וזה הוחלף** (23/09/2026). הנימוק המקורי נשאר
+// נכון — ניווט באותה לשונית היה מאבד את מצב המסך, והמוקדן צריך את שניהם זה
+// לצד זה — אבל המחיר התגלה בשטח: "מפריע לי שהטיפול בתקלות נפתח בטאב חדש ואי
+// אפשר לחזור ממנו לעמוד הבית". ל-FixFlow אין כפתור חזרה, והקוד שלה אינו כאן.
+//
+// `FixFlowFrame` נותן את שניהם: הדשבורד נשאר חי מאחור על כל מצבו, ויש דרך
+// חזרה אחת ברורה. מי שרוצה מסך שני מקבל "פתיחה בלשונית" בכותרת.
 
 export default function FixFlowLink({ site, faultText }) {
   // ⚠️ ההוק לפני כל `return` מוקדם — React אוסר קריאה מותנית להוקים.
   const [assigning, setAssigning] = useState(false);
+  const [open, setOpen] = useState(false);
   // ⚠️ הבחירה שנשמרה זה עתה מוחזקת בחנות משותפת, כדי שהכפתור **והפאנל** יתעדכנו **מיד**.
   // בלי זה היה צריך לרענן את הדף כדי לראות שהשיוך תפס, ומי שלא רואה תוצאה
   // מניח שזה לא נשמר ומנסה שוב.
@@ -100,14 +105,12 @@ export default function FixFlowLink({ site, faultText }) {
 
   return (
     <>
-    <a
+    <button
+      type="button"
       className="ffl"
-      href={solution ? solution.url : link.url}
-      target="_blank"
-      rel={REL}
       // ⚠️ עצירת ההתפשטות: הכרטיס כולו לחיץ ופותח את חלון פרטי האתר. בלי זה
-      // לחיצה על הכפתור הייתה גם פותחת לשונית וגם את החלון — ונראית כמו באג.
-      onClick={(e) => e.stopPropagation()}
+      // לחיצה על הכפתור הייתה גם פותחת את הספרייה וגם את החלון — ונראית כמו באג.
+      onClick={(e) => { e.stopPropagation(); setOpen(true); }}
       // ⚠️ ה-title אומר **לאן** הקישור מוביל ולפי מה. ההבדל בין קישור לאתר
       // (עם חריגות האתר) לבין קישור לספריית סוג מכונה (בלעדיהן) הוא הבדל
       // בתוכן שהמוקדן יראה, ולכן הוא חייב להיות גלוי ולא רק נכון.
@@ -125,7 +128,15 @@ export default function FixFlowLink({ site, faultText }) {
       {/* ⚠️ "פתרון לתקלה" על כפתור שפותח רשימה הוא הבטחה שאינה מתקיימת,
           והמוקדן לומד לא להאמין לה. הכיתוב אומר בדיוק לאן זה מוביל. */}
       <span className="ffl-text">{solution ? "הנוהל לתקלה הזו" : "תקלות ופתרונות"}</span>
-    </a>
+    </button>
+
+    {open && (
+      <FixFlowFrame
+        url={solution ? solution.url : link.url}
+        title={solution ? "נוהל: " + solution.title : "תקלות ופתרונות — " + (link.scope || link.profile)}
+        onClose={() => setOpen(false)}
+      />
+    )}
 
     {/* ============================================================
         ⚠️ שינוי שיוך זמין **תמיד**, גם כשהקישור עובד

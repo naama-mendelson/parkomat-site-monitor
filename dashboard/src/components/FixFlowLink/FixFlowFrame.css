@@ -1,0 +1,72 @@
+/* components/FixFlowLink/FixFlowFrame.css
+   מסך מלא: ספרייה של נהלים היא מסמך, ומסמך ברוחב חלונית אינו נקרא.
+   ⚠️ מעל הרמזור (1300) ומתחת לחלון הפעלת הקול (9000) — צליל תקלה קודם לכל. */
+.fff {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+
+.fff-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  padding-block-start: calc(10px + env(safe-area-inset-top, 0px));
+  border-block-end: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+/* הכפתור הראשון בכותרת, ובגודל שאפשר לפגוע בו באצבע: זו הדרך חזרה. */
+.fff-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  min-height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: var(--brand-on, #fff);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.fff-back:hover { background: var(--brand-strong); }
+
+.fff-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.fff-tab {
+  flex: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+.fff-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.fff-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+}
+
+@media (max-width: 600px) {
+  /* בטלפון הכותרת מוותרת על הלשונית — שם אין "מסך שני", ויש מקום לדרך חזרה. */
+  .fff-tab { display: none; }
+  .fff-head { padding: 8px 10px; padding-block-start: calc(8px + env(safe-area-inset-top, 0px)); }
+}
