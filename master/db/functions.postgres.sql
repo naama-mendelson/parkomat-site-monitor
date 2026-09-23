@@ -1121,6 +1121,16 @@ ALTER TABLE public.events REPLICA IDENTITY FULL;
 --
 -- החודשים נגזרים מהנתונים עצמם (substr על TEXT), ולכן חודש בלי פעילות פשוט
 -- אינו מופיע — ולא מוצג כשורת אפס מטעה.
+-- ============================================================
+-- ⚠️ שלוש פונקציות הדוח — אותם כללים, אחרת הטבלאות לא מסתכמות
+-- ============================================================
+-- report_monthly, report_by_site ו-report_site_months מוצגות באותו מסך.
+-- עד 23/09/2026 הן נבדלו בארבעה דברים, ונמצאו בסקירה:
+--   • `excluded_at` לא סונן באף אחת — "ניסוי" נעלם מהדשבורד ונשאר בדוח;
+--   • `app.op_served` (חלון ידני) הוחל רק בטבלה לפי אתר;
+--   • תקלה נספרה "חופפת לטווח" בטבלה לפי אתר ו"התחילה בטווח" בשתיים האחרות;
+--   • החודש נחתך לפי UTC, והגבולות מהדשבורד הם חצות **בישראל**.
+-- tests/report-consistency.test.js בודק את ארבעתם, וכל אחד נכשל על הגרסה הישנה.
 CREATE OR REPLACE FUNCTION public.report_monthly(
   p_site_ids integer[],
   p_from     text,
@@ -1139,7 +1149,7 @@ LANGUAGE sql
 STABLE
 AS $$
 WITH ops AS (
-  SELECT substr(o.occurred_at, 1, 7) AS ym,
+  SELECT to_char(o.occurred_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym,
          COUNT(*)::int AS operations,
          COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
          COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits,
@@ -1152,32 +1162,39 @@ WITH ops AS (
      -- לקסיקוגרפי על TEXT — האינדקס נשאר בשימוש
      AND o.occurred_at >= p_from
      AND o.occurred_at <  p_to
+     AND o.excluded_at IS NULL
+     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served. כמו report_by_site.
+     AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY 1
 ),
 errs AS (
-  SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
+  SELECT to_char(h.started_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym, COUNT(*)::int AS errors
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      AND COALESCE(h.reclassified_to, h.status) = 'error'
+     AND h.excluded_at IS NULL
      AND h.started_at >= p_from
      AND h.started_at <  p_to
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
         WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
+          AND m.excluded_at IS NULL
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
        SELECT 1 FROM maintenance_windows w
         WHERE w.site_id = h.site_id
+          AND w.excluded_at IS NULL
           AND w.started_at <= h.started_at
           AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
    GROUP BY 1
 ),
 maint AS (
-  SELECT substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS maintenance
+  SELECT to_char(h.started_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym, COUNT(*)::int AS maintenance
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      AND COALESCE(h.reclassified_to, h.status) = 'maintenance'
+     AND h.excluded_at IS NULL
      AND h.started_at >= p_from
      AND h.started_at <  p_to
    GROUP BY 1
@@ -1263,6 +1280,7 @@ ops AS (
     FROM operations o
    WHERE o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
      AND o.occurred_at >= p_from AND o.occurred_at < p_to
+     AND o.excluded_at IS NULL
      -- ⚠️ חלון תחזוקה ידני — ראה app.op_served
      AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY o.site_id
@@ -1293,17 +1311,20 @@ err_rows AS (
   SELECT h.site_id, h.fault_text, h.started_at, h.ended_at
     FROM status_history h
    WHERE COALESCE(h.reclassified_to, h.status) = 'error'
+     AND h.excluded_at IS NULL
      AND h.started_at < p_to
      AND (h.ended_at IS NULL OR h.ended_at > p_from)
      -- "תחזוקה גוברת" — אותו כלל בדיוק כמו בכל מדד אחר.
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
         WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
+          AND m.excluded_at IS NULL
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
        SELECT 1 FROM maintenance_windows w
         WHERE w.site_id = h.site_id
+          AND w.excluded_at IS NULL
           AND w.started_at <= h.started_at
           AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
 ),
@@ -1324,6 +1345,8 @@ fault_kinds AS (
              COALESCE(NULLIF(TRIM(fault_text), ''), 'ללא תיאור') AS kind,
              COUNT(*)::int AS n
         FROM err_rows
+       -- ⚠️ רק מה שהתחיל בטווח — אותה קבוצה בדיוק כמו `errors` למטה.
+       WHERE started_at >= p_from
        GROUP BY site_id, COALESCE(NULLIF(TRIM(fault_text), ''), 'ללא תיאור')
     ) k
    GROUP BY site_id
@@ -1332,7 +1355,12 @@ errs AS (
   -- ⚠️ מ-err_rows ולא מ-status_history: הספירה והפילוח **חייבים** לתאר
   -- את אותן שורות. זו הנקודה היחידה שמבטיחה שהם יסתכמו זה לזה.
   SELECT h.site_id,
-         COUNT(*)::int AS errors,
+         -- ⚠️ **נספרת תקלה שהתחילה בטווח**, כמו ב-report_monthly וב-
+         -- report_site_months. קודם נספרה כל תקלה שחופפת לטווח, ולכן תקלה
+         -- שהתחילה ב-31.8 נספרה גם בספטמבר, וסכום השורות לפי אתר לא הסתכם
+         -- לסך החודשי שלידו. **שעות** ההשבתה כן כוללות אותה — הן נחתכות
+         -- לגבולות הטווח, וזה הזמן שהאתר באמת היה מושבת בו.
+         COUNT(*) FILTER (WHERE h.started_at >= p_from)::int AS errors,
          -- שעות ההשבתה נחתכות לגבולות הטווח; מקטע פתוח נמשך עד סופו.
          (SUM(EXTRACT(EPOCH FROM (
             LEAST(COALESCE(h.ended_at, p_to)::timestamptz, p_to::timestamptz)
@@ -1345,6 +1373,7 @@ mnt AS (
   SELECT h.site_id, COUNT(*)::int AS maintenance
     FROM status_history h
    WHERE COALESCE(h.reclassified_to, h.status) = 'maintenance'
+     AND h.excluded_at IS NULL
      AND h.started_at >= p_from AND h.started_at < p_to
    GROUP BY h.site_id
 )
@@ -1400,7 +1429,7 @@ LANGUAGE sql
 STABLE
 AS $$
 WITH ops AS (
-  SELECT o.site_id, substr(o.occurred_at, 1, 7) AS ym,
+  SELECT o.site_id, to_char(o.occurred_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym,
          COUNT(*)::int AS operations,
          COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
          COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits
@@ -1408,11 +1437,13 @@ WITH ops AS (
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
      AND o.occurred_at >= p_from AND o.occurred_at < p_to
+     AND o.excluded_at IS NULL
+     AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY 1, 2
 ),
 -- המונה נמדד על כל הפעולות (בלאי מכני), ודורש שתי קריאות לפחות באותו חודש.
 cyc AS (
-  SELECT o.site_id, substr(o.occurred_at, 1, 7) AS ym,
+  SELECT o.site_id, to_char(o.occurred_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym,
          (MAX(o.cycle_counter) - MIN(o.cycle_counter))::int AS cycles
     FROM operations o
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
@@ -1422,19 +1453,22 @@ cyc AS (
   HAVING COUNT(*) >= 2
 ),
 errs AS (
-  SELECT h.site_id, substr(h.started_at, 1, 7) AS ym, COUNT(*)::int AS errors
+  SELECT h.site_id, to_char(h.started_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'YYYY-MM') AS ym, COUNT(*)::int AS errors
     FROM status_history h
    WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
      AND COALESCE(h.reclassified_to, h.status) = 'error'
+     AND h.excluded_at IS NULL
      AND h.started_at >= p_from AND h.started_at < p_to
      AND NOT EXISTS (
        SELECT 1 FROM status_history m
         WHERE m.site_id = h.site_id AND COALESCE(m.reclassified_to, m.status) = 'maintenance'
+          AND m.excluded_at IS NULL
           AND m.started_at <= h.started_at
           AND (m.ended_at IS NULL OR m.ended_at >= h.started_at))
      AND NOT EXISTS (
        SELECT 1 FROM maintenance_windows w
         WHERE w.site_id = h.site_id
+          AND w.excluded_at IS NULL
           AND w.started_at <= h.started_at
           AND COALESCE(w.cancelled_at, w.expires_at) >= h.started_at)
    GROUP BY 1, 2
