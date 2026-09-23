@@ -9,25 +9,43 @@
 // הלוח הזה, ולכן אין למה ליפול חזרה.
 import { supabase } from "./supabase";
 
+// ============================================================
+// ⚠️ הלוח הוא ארגומנט, וברירת המחדל היא הרובוטי
+// ============================================================
+// יש שני דשבורדים באותן טבלאות — "רמזור רובוטי" ו"רמזור מכפילים" —
+// והם מוחלפים בטאב בתוך אותו מסך. ברירת המחדל כאן אינה נוחות: היא מה
+// שמאפשר לקוד ישן שאינו מעביר לוח להמשיך לעבוד בדיוק כמו קודם, בדיוק
+// כמו `DEFAULT 'robotic'` בצד ה-SQL.
+//
+// ⚠️ **ולכן הסדר הבטוח הוא SQL קודם ואז הדשבורד.** דשבורד חדש שמעביר
+// ‏`p_board` אל SQL ישן מקבל שגיאה על ארגומנט שאינו קיים; הכיוון ההפוך
+// עובד. פריסה בסדר ההפוך פירושה לוח ריק לכל מי שפתח את המסך.
+const ROBOTIC = "robotic";
+
+
 function fail(error, what) {
   if (error) throw new Error(`${what}: ${error.message}`);
 }
 
 /** הלוח כולו — עמודות ושורות בקריאה אחת. */
-export async function fetchBoard() {
-  const { data, error } = await supabase.rpc("tl_board");
+export async function fetchBoard(board = ROBOTIC) {
+  const { data, error } = await supabase.rpc("tl_board", { p_board: board });
   fail(error, "טעינת הלוח נכשלה");
   return {
+    // ⚠️ הלוח חוזר מהשרת ולא נלקח מהבקשה: כך מסך שהחליף טאב באמצע
+    // שליפה יכול לזהות תשובה שהגיעה מאוחר ושייכת ללוח הקודם.
+    board: data?.board ?? board,
     columns: data?.columns ?? [],
     rows: data?.rows ?? [],
   };
 }
 
-export async function addColumn(label, kind = "text", options = []) {
+export async function addColumn(label, kind = "text", options = [], board = ROBOTIC) {
   const { data, error } = await supabase.rpc("tl_add_column", {
     p_label: label,
     p_kind: kind,
     p_options: options,
+    p_board: board,
   });
   fail(error, "הוספת עמודה נכשלה");
   return data;
@@ -58,8 +76,8 @@ export async function moveColumn(id, position) {
   fail(error, "הזזת העמודה נכשלה");
 }
 
-export async function addRow(after = null) {
-  const { data, error } = await supabase.rpc("tl_add_row", { p_after: after });
+export async function addRow(after = null, board = ROBOTIC) {
+  const { data, error } = await supabase.rpc("tl_add_row", { p_after: after, p_board: board });
   fail(error, "הוספת שורה נכשלה");
   return data;
 }
@@ -97,8 +115,8 @@ export async function setCell(rowId, key, value) {
  * ⚠️ מילוי לוח של 40 שורות דרך `setCell` הוא מאות קריאות רשת. זו הדרך
  * שבה הלוח באמת ימולא, ולכן היא קריאה אחת.
  */
-export async function pasteRows(rows) {
-  const { data, error } = await supabase.rpc("tl_paste_rows", { p_rows: rows });
+export async function pasteRows(rows, board = ROBOTIC) {
+  const { data, error } = await supabase.rpc("tl_paste_rows", { p_rows: rows, p_board: board });
   fail(error, "ההדבקה נכשלה");
   return data;
 }

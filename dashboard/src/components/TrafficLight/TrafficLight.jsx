@@ -585,19 +585,21 @@ function boardCols(columns) {
 // רענון היא העדפה שמפסיקים להשתמש בה.
 // ⚠️ **האתר הפתוח מוחזק אצל ההורה (`openRow`), לא כאן** — כדי ש"+ שורה"
 // יוכל לפתוח את השורה שנוצרה, ושהמגירה, שיושבת מחוץ לרשימה, תדע מה להציג.
-function BandsView({ columns, rows, searching, openRow, onOpenRow }) {
+function BandsView({ columns, rows, searching, openRow, onOpenRow, boardKey = "robotic" }) {
   // ⚠️ **סגור כברירת מחדל, ולא פתוח.** 151 שורות בחמישה פסים פתוחים הן
   // קיר של אריחים — נמדד על המסך: "תופס את כל המקום, תחושה דחוסה". חמישה
   // פסים סגורים עם מונה הם התמונה שאפשר לסרוק בשנייה, וזו גם הסיבה שהלוח
   // נפתח ונסגר מלכתחילה.
   const [openBands, setOpenBands] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem("tl-open-bands") || "[]")); }
+    // ⚠️ מפתח לכל לוח: שמות הפסים שונים לגמרי בין השניים, ומצב
+    // פתיחה משותף פירושו פסים שנפתחים "מעצמם" בלוח השני.
+    try { return new Set(JSON.parse(localStorage.getItem(`tl-open-bands:${boardKey}`) || "[]")); }
     catch { return new Set(); }
   });
   const listRef = useRef(null);
   const isOpenRow = (r) => openRow != null && String(r.id) === String(openRow);
   useEffect(() => {
-    try { localStorage.setItem("tl-open-bands", JSON.stringify([...openBands])); }
+    try { localStorage.setItem(`tl-open-bands:${boardKey}`, JSON.stringify([...openBands])); }
     catch { /* מצב פרטי */ }
   }, [openBands]);
 
@@ -781,6 +783,30 @@ function TrafficLight({ onClose }) {
   const [query, setQuery] = useState("");
   const [openRow, setOpenRow] = useState(null);
 
+  // ============================================================
+  // ⚠️ שני לוחות, טאב אחד — ולא שני מסכים
+  // ============================================================
+  // "רמזור רובוטי" ו"רמזור מכפילים" הם שני דשבורדים נפרדים לחלוטין:
+  // עמודות שונות, שורות שונות, אין ביניהם קשר תוכני. הם חולקים את
+  // **המסך הזה** כי כל המכניקה זהה — חיפוש, עריכת תא, הוספת שורה,
+  // הדבקה מאקסל, תצוגת פסים/טבלה. כפתור נפרד בדשבורד הראשי היה מכפיל
+  // את כל זה.
+  //
+  // ⚠️ **והטאבים בשורה משלהם, מעל הסרגל.** הסרגל כבר מחזיק חיפוש, מתג
+  // תצוגה, עריכה, נעילה, + שורה, + עמודה וסגירה; תוספת שם הייתה דוחפת
+  // משהו מהקצה ברוחב טלפון.
+  const [boardKey, setBoardKey] = useState(() => {
+    // ⚠️ נשמר בין כניסות, כמו `tl-view`: מי שעובד על המכפילים חוזר
+    // אליהם. וערך לא מוכר נופל לרובוטי — קובץ ישן או ערך שנערך ביד
+    // לא יפתח מסך ריק בלי הסבר.
+    try {
+      return localStorage.getItem("tl-board") === "multipliers" ? "multipliers" : "robotic";
+    } catch { return "robotic"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("tl-board", boardKey); } catch { /* מצב פרטי */ }
+  }, [boardKey]);
+
   // ⚠️ נשמר בדפדפן: העדפת תצוגה שמתאפסת בכל רענון היא העדפה שמפסיקים
   // להשתמש בה. ברירת המחדל היא הפסים, והטבלה במרחק לחיצה.
   const [view, setView] = useState(() => {
@@ -803,10 +829,18 @@ function TrafficLight({ onClose }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setBoard(await fetchBoard()); setErr(null); }
+    try {
+      const next = await fetchBoard(boardKey);
+      // ⚠️ **תשובה שאיחרה נזרקת.** החלפת טאב בזמן שליפה משאירה בקשה
+      // באוויר; בלי הבדיקה הזו היא נוחתת אחרי החדשה ומציגה את הלוח
+      // הקודם תחת הטאב החדש — מצב שנראה כמו נתונים שהתערבבו.
+      if (next.board && next.board !== boardKey) return;
+      setBoard(next);
+      setErr(null);
+    }
     catch (e) { setErr(e.message); }
     finally { setLoading(false); }
-  }, []);
+  }, [boardKey]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -882,12 +916,46 @@ function TrafficLight({ onClose }) {
       return cells;
     });
 
-    await run(() => pasteRows(payload));
+    await run(() => pasteRows(payload, boardKey));
   }, [columns, run]);
 
   return (
     <div className="tl-overlay" onClick={onClose}>
       <div className="tl-panel" onClick={(e) => { setEditCol(null); e.stopPropagation(); }}>
+        {/* ============================================================
+            ⚠️ הטאבים בשורה משלהם, מעל הסרגל
+            ============================================================
+            הסרגל שמתחת כבר מחזיק שבעה פקדים — חיפוש, מצב, מתג תצוגה,
+            עריכה, נעילה, + שורה, + עמודה וסגירה. תוספת שם הייתה דוחפת
+            משהו מהקצה ברוחב טלפון, וזה נמדד שם בעבר.
+
+            ⚠️ ו-`aria-selected` ולא רק מחלקה: מי שמנווט במקלדת צריך
+            לדעת איזה לוח פעיל, וצבע לבדו אינו אומר זאת. */}
+        <nav className="tl-tabs" role="tablist" aria-label="בחירת לוח">
+          {[
+            { key: "robotic", label: "רובוטיים" },
+            { key: "multipliers", label: "מכפילים" },
+          ].map((b) => (
+            <button
+              key={b.key}
+              type="button"
+              role="tab"
+              aria-selected={boardKey === b.key}
+              className={`tl-tab${boardKey === b.key ? " is-on" : ""}`}
+              onClick={() => {
+                if (boardKey === b.key) return;
+                // ⚠️ החיפוש, השורה הפתוחה ועורך העמודה מתאפסים: כולם
+                // מצביעים על דברים שאינם קיימים בלוח השני. שורה פתוחה
+                // שנשארת פירושה מגירה שמציגה שדות של לוח אחר.
+                setQuery("");
+                setOpenRow(null);
+                setEditCol(null);
+                setBoardKey(b.key);
+              }}
+            >{b.label}</button>
+          ))}
+        </nav>
+
         <header className="tl-head">
           <h2>רמזור</h2>
 
@@ -930,7 +998,7 @@ function TrafficLight({ onClose }) {
                   onClick={() => run(async () => {
                     const label = prompt("שם העמודה החדשה:");
                     if (!label) throw new Error("בוטל");
-                    await addColumn(label, "text", []);
+                    await addColumn(label, "text", [], boardKey);
                   })}
                 >+ עמודה</button>
                 <button
@@ -938,7 +1006,7 @@ function TrafficLight({ onClose }) {
                   className="tl-btn"
                   disabled={busy}
                   // בפסים — השורה החדשה נפתחת מיד, כדי שיהיה איפה למלא אותה.
-                  onClick={() => run(async () => { setOpenRow(await addRow(null)); })}
+                  onClick={() => run(async () => { setOpenRow(await addRow(null, boardKey)); })}
                 >+ שורה</button>
                 <button
                   type="button"
@@ -1015,6 +1083,7 @@ function TrafficLight({ onClose }) {
               searching={Boolean(query)}
               openRow={openRow}
               onOpenRow={setOpenRow}
+              boardKey={boardKey}
             />
           ) : (
             <table className="tl-table">

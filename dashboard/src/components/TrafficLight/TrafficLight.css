@@ -1084,3 +1084,48 @@
 .tl-drawer-del:disabled { opacity: .5; cursor: default; }
 
 .tl-view-toggle { font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   טאבים — שני לוחות באותו מסך
+   ============================================================
+   ⚠️ **שורה נפרדת מעל הסרגל, ולא עוד כפתור בתוכו.** הסרגל מחזיק כבר
+   שמונה פקדים; תוספת שם הייתה דוחפת משהו מהקצה ברוחב טלפון — וזה כבר
+   נמדד שם פעם אחת.
+
+   ⚠️ והטאב הפעיל מסומן **גם בקו וגם במשקל**, לא רק בצבע: הבדל שנשען
+   על צבע בלבד נעלם במסך בהיר, בהדפסה, ואצל מי שרואה צבעים אחרת. */
+.tl-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.tl-tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.tl-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.tl-tab.is-on {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .tl-tabs { padding-inline: 10px; }
+  .tl-tab  { padding: 8px 10px; font-size: 0.9rem; }
+}
