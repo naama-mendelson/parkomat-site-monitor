@@ -972,6 +972,25 @@ public class Worker : BackgroundService
             // אושר בשלב הישיר — שער סגור, כשל, חריגה — נכנס לתור בסוף הלולאה.
             // "מתקן את עצמו" נכון רק לעלייה הבאה; באתר ישיר-בלבד שלא עולה מחדש
             // מצב שנזרק פשוט אינו מגיע, עד השינוי הבא — שעלול לא לבוא שעות.
+            // ============================================================
+            // ⚠️ תיאור התקלה נקרא **לפני** המירור, ולא אחריו
+            // ============================================================
+            // נמדד בייצור 23/09/2026: **אפס תיאורי תקלה מאז 17/09** — היום שבו
+            // `master` כובה — מול 165 מתוך 348 בחודש שלפניו. הסיבה כאן:
+            // `BatchPayload.From` מעתיק את השדות **ברגע הקריאה**, והתיאור הוצמד
+            // להודעה רק בשלב ג' (אחרי `EnsureConnectedAsync`). כלומר MQTT קיבל
+            // טקסט והמסלול הישיר קיבל עותק ריק — ולכן זה נראה תקין כל עוד השרת
+            // רץ, והתגלה רק כשהוא כובה.
+            //
+            // ⚠️ **והמירור נשאר כאן ולא זז לשלב ג'.** הוא ממורכז בנקודת ההפקה
+            // בכוונה — ברוקר מת אסור שיבלע מצב (נמדד באתר 2438). לכן מה שזז הוא
+            // הקריאה מהבקר, לא המירור.
+            //
+            // הקריאה עצמה מוגנת: `ReadFaultTextOrNullAsync` מחזירה null מיד כשהמצב
+            // אינו תקלה, כך שאין כאן קריאת רגיסטרים נוספת בסבב רגיל.
+            if (result.State is not null)
+                result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
+
             if (result.State is not null && supabase is not null)
                 mirrored.Add(BatchPayload.From(result.State));
 
@@ -1186,8 +1205,9 @@ public class Worker : BackgroundService
                         // ריק, והתקלה משודרת בלי תיאור. **התקלה עצמה חשובה יותר
                         // מהתיאור שלה**, ובקר ישן שאין בו את הכתובת הזו חייב
                         // להמשיך לעבוד בדיוק כמו קודם.
-                        result.State.FaultText = await ReadFaultTextOrNullAsync(result.State.State, stoppingToken);
-
+                        // ⚠️ התיאור כבר הוצמד להודעה בנקודת ההפקה, לפני המירור —
+                        // ראה שם. קריאה חוזרת כאן הייתה מיותרת, והחזרה שלה לכאן
+                        // בלבד היא בדיוק הבאג שהחזיר "תקלה בלי תיאור" במסלול הישיר.
                         _logger.LogInformation("State changed -> {State}; publishing...", result.State.State);
                         await mqtt.PublishStateAsync(result.State, stoppingToken);
                         _logger.LogInformation("-> Published STATE: {State}", result.State.State);

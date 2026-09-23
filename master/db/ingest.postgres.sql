@@ -473,7 +473,13 @@ RETURNS TABLE (
   -- ואז ON CONFLICT (site_id, occurred_at) למטה אינו יודע אם הכוונה
   -- לעמודה או למשתנה — 42702, ומ-PostgREST זה חוזר כ-400. אותה מלכודת
   -- בדיוק שתועדה על uid=4096(AzureAD+נעמהמנדלסון) gid=4096 groups=4096 ב-writes.postgres.sql.
-  at_used     text
+  at_used     text,
+  -- ⚠️ **האם הדחייה כבר נרשמה כאן.** שתי השכבות רשמו את אותה הודעה:
+  -- הפנימית בשם המפורט (state_late_vs_open_segment) והחיצונית בשם התוצאה
+  -- (state_backfill) — נמדד 23/09/2026: 590 מול 590 באותו יום, כלומר כל
+  -- מי שסופר דחיות קיבל מספר כפול מהאמת. הדגל מחליף רשימת outcomes,
+  -- שהייתה צריכה להתעדכן בכל תוצאה חדשה.
+  recorded    boolean
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -495,7 +501,7 @@ BEGIN
     FROM sites s WHERE s.id = p_site_id FOR UPDATE;
 
   IF v_site.id IS NULL THEN
-    RETURN QUERY SELECT false, 'no_site'::text, v_at;
+    RETURN QUERY SELECT false, 'no_site'::text, v_at, false;
     RETURN;
   END IF;
 
@@ -508,7 +514,7 @@ BEGIN
         PERFORM app.record_ingest_drop(p_site_id, 'state', 'no_comm_rejected',
           format('האתר נשמע לפני %ss (< %ss) — הצוואה מאוחרת ואינה מתארת את המצב הנוכחי', v_silence, LWT_MIN_SILENCE),
           jsonb_build_object('status', p_status, 'occurred_at', p_occurred_at));
-        RETURN QUERY SELECT false, 'lwt_late'::text, v_at;
+        RETURN QUERY SELECT false, 'lwt_late'::text, v_at, true;
         RETURN;
       END IF;
     END IF;
@@ -537,7 +543,7 @@ BEGIN
               CASE WHEN v_site.status = 'maintenance' THEN 'plc' ELSE 'window' END, v_now)
       ON CONFLICT (site_id, occurred_at) DO NOTHING;
 
-      RETURN QUERY SELECT false, 'suppressed'::text, v_at;
+      RETURN QUERY SELECT false, 'suppressed'::text, v_at, false;
       RETURN;
     END IF;
   END IF;
@@ -552,7 +558,7 @@ BEGIN
     PERFORM app.record_ingest_drop(p_site_id, 'state', 'state_late_vs_open_segment',
       format('occurredAt=%s < openStartedAt=%s', v_at, v_open.started_at),
       jsonb_build_object('status', p_status, 'occurred_at', p_occurred_at));
-    RETURN QUERY SELECT false, 'backfill'::text, v_at;
+    RETURN QUERY SELECT false, 'backfill'::text, v_at, true;
     RETURN;
   END IF;
 
@@ -560,7 +566,7 @@ BEGIN
   IF p_status = v_site.status THEN
     IF p_status = 'no_comm' THEN
       -- ⚠️ נתק אינו סימן חיים — last_seen אינו זז.
-      RETURN QUERY SELECT false, 'no_change'::text, v_at;
+      RETURN QUERY SELECT false, 'no_change'::text, v_at, false;
       RETURN;
     END IF;
 
@@ -576,7 +582,7 @@ BEGIN
          AND fault_text IS NULL;
     END IF;
 
-    RETURN QUERY SELECT false, 'no_change'::text, v_at;
+    RETURN QUERY SELECT false, 'no_change'::text, v_at, false;
     RETURN;
   END IF;
 
@@ -584,7 +590,7 @@ BEGIN
   -- ⚠️ שכפול מכוון של הבדיקה למעלה: `sites.status` ו-`status_history` הם
   -- שני מקורות, והם יכולים להיפרד. applyStateChange בודקת את המקטע.
   IF v_open.status IS NOT NULL AND v_open.status = p_status THEN
-    RETURN QUERY SELECT false, 'no_change'::text, v_at;
+    RETURN QUERY SELECT false, 'no_change'::text, v_at, false;
     RETURN;
   END IF;
 
@@ -636,7 +642,7 @@ BEGIN
          v_now
     FROM sites s WHERE s.id = p_site_id;
 
-  RETURN QUERY SELECT true, 'applied'::text, v_at;
+  RETURN QUERY SELECT true, 'applied'::text, v_at, false;
 END;
 $fn$;
 
@@ -1130,7 +1136,7 @@ BEGIN
       -- הסיבה נשמרת בשם `state_<outcome>` כדי ש-`state_no_change` ייצא
       -- **זהה** לשם שהמסלול הקיים כותב — אחרת אותה תופעה תיספר פעמיים
       -- תחת שני שמות, וכל שאילתה היסטורית תפספס את החצי החדש.
-      IF NOT v_res.applied THEN
+      IF NOT v_res.applied AND NOT v_res.recorded THEN
         PERFORM app.record_ingest_drop(v_site, 'state',
           'state_' || v_res.outcome,
           format('outcome=%s · status=%s · occurredAt=%s',

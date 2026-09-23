@@ -11,7 +11,6 @@ import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
-import { useDirect } from "../../services/dataSource";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
 import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AdminPanel.css";
@@ -20,7 +19,7 @@ import Logo from "../Logo/Logo";
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function AdminPanel({ sites, onClose, onChanged }) {
-  const { unlocked, unlock, lock, checking, error: unlockError, roleGated, role } = useAdmin();
+  const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();
   // ⚠️ במצב ישיר אין קוד מנהל — פותחים בסיסמת החשבון. הטקסט חייב לומר
   // את זה: מסך שמבקש "קוד מנהל" ממי שאין לו קוד הוא מסך שאי אפשר לעבור.
   // ⚠️ שתי הזרועות מבקשות עכשיו את **קוד המנהל**, ולכן אין יותר טקסט מותנה.

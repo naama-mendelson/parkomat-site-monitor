@@ -314,4 +314,34 @@ public class DualWriteWiringTests
             Assert.DoesNotContain("bool notifyObserver", src);
         }
     }
+
+    // ============================================================
+    // ⚠️ תיאור התקלה נקרא לפני המירור — אחרת המסלול הישיר מקבל עותק ריק
+    // ============================================================
+    // נמדד בייצור 23/09/2026: **אפס תיאורי תקלה מאז 17/09**, היום שבו `master`
+    // כובה, מול 165 מתוך 348 בחודש שלפניו. `BatchPayload.From` מעתיק את השדות
+    // ברגע הקריאה, והתיאור הוצמד להודעה רק בשלב ג' — כלומר MQTT קיבל טקסט
+    // והמסלול הישיר קיבל עותק בלי. כל עוד השרת רץ הוא מילא את החסר, ולכן זה
+    // נראה תקין ונחשף רק כשהוא כובה.
+    //
+    // ⚠️ הבדיקה היא על **סדר** ולא על קיום: שתי השורות היו קיימות גם כשהבאג
+    // היה חי, ובדיקה שמחפשת מחרוזת הייתה ירוקה לאורך כל התקופה.
+    [Fact]
+    public void FaultTextIsAttachedBeforeTheDirectPathCopiesTheMessage()
+    {
+        string src = Worker();
+
+        int read = src.IndexOf("result.State.FaultText = await ReadFaultTextOrNullAsync", StringComparison.Ordinal);
+        int mirror = src.IndexOf("mirrored.Add(BatchPayload.From(result.State))", StringComparison.Ordinal);
+
+        Assert.True(read > 0, "הקריאה של תיאור התקלה נעלמה");
+        Assert.True(mirror > 0, "המירור למסלול הישיר נעלם");
+        Assert.True(read < mirror,
+            "תיאור התקלה מוצמד אחרי שההודעה הועתקה למסלול הישיר — העותק ייצא בלי טקסט");
+
+        // ואין הצמדה נוספת אחרי המירור: היא הייתה מועילה ל-MQTT בלבד ומחזירה
+        // בדיוק את הפער שנמדד.
+        int later = src.IndexOf("result.State.FaultText = ", mirror, StringComparison.Ordinal);
+        Assert.True(later < 0, "יש הצמדת תיאור נוספת אחרי המירור — המסלול הישיר יישאר בלעדיה");
+    }
 }
