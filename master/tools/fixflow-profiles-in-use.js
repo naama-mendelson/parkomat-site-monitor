@@ -58,8 +58,12 @@ async function main() {
 
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   const { rows: monitored } = await pool.query(`SELECT code, site_name, plc_type, control_system FROM sites ORDER BY code`);
-  const { rows: tlCols } = await pool.query(`SELECT key, label FROM traffic_light_columns`);
-  const { rows: tlRows } = await pool.query(`SELECT cells FROM traffic_light_rows`);
+  // ⚠️ **הלוח הרובוטי בלבד.** מאז 23/09/2026 אותן טבלאות מחזיקות גם את
+  // לוח המכפילים, וארבע תוויות משותפות לשניהם ("אתר", "סוג הסכם שירות",
+  // "אחריות", "איש קשר נוסף") — באותו position. בלי הסינון `find` לפי
+  // תווית עלול להחזיר את המפתח של המכפילים, והתוצאה ריקה בשקט.
+  const { rows: tlCols } = await pool.query(`SELECT key, label FROM traffic_light_columns WHERE board = 'robotic'`);
+  const { rows: tlRows } = await pool.query(`SELECT cells FROM traffic_light_rows WHERE board = 'robotic'`);
   await pool.end();
 
   const colId = (label) => tlCols.find((c) => c.label === label)?.key;

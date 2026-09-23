@@ -158,9 +158,9 @@ async function main() {
   const dupes = names.filter((n, i) => names.indexOf(n) !== i);
   console.log(dupes.length
     ? `⚠️ שמות כפולים (זהות לא ייחודית!): ${[...new Set(dupes)].join(" · ")}`
-    : "זהות: שם האתר — ייחודי בכל 130 השורות ✅");
+    : `זהות: שם האתר — ייחודי בכל ${built.length} השורות ✅`);
 
-  console.log("\nעמודות שייווצרו:");
+  console.log("\nעמודות בגיליון:");
   for (const m of MAP) {
     if (!m.to) continue;
     const filled = built.filter((b) => b.cells[m.to] !== undefined).length;
@@ -203,6 +203,40 @@ async function main() {
   }
 
   if (!APPLY) {
+    // ⚠️ **ההרצה היבשה משווה למסד — קריאה בלבד.** הגרסה הראשונה לא פתחה
+    // חיבור בכלל, והדפיסה "עמודות שייווצרו: 10" גם כשכל העשר כבר היו
+    // בייצור. ההערה בראש הקובץ מבטיחה ש"שורות חדשות" מדווחות כדי שמי
+    // שרואה מספר גדול מהצפוי יעצור — והמספר הזה פשוט לא הודפס.
+    if (process.env.DATABASE_URL) {
+      const db = require("../db/db");
+      try {
+        const have = new Map((await db.pool.query(
+          `SELECT key, label FROM traffic_light_columns WHERE board = $1`, [BOARD]))
+          .rows.map((r) => [r.label, r.key]));
+        const existing = (await db.pool.query(
+          `SELECT id, cells FROM traffic_light_rows WHERE board = $1`, [BOARD])).rows;
+        const kName = have.get("אתר");
+        const byLetters = new Map(existing.map((r) => [letters(r.cells?.[kName]), r]));
+        const missingCols = columns.filter((c) => !have.has(c.label)).map((c) => c.label);
+        let added = 0, changedRows = 0, changedCells = 0;
+        for (const b of built) {
+          const hit = byLetters.get(letters(b.name));
+          if (!hit) { added++; continue; }
+          let n = 0;
+          for (const [label, v] of Object.entries(b.cells)) {
+            const k = have.get(label);
+            if (!k || String(hit.cells?.[k] ?? "") !== String(v)) n++;
+          }
+          if (n) { changedRows++; changedCells += n; }
+        }
+        console.log(`\n=== מול המסד (לוח ${BOARD}: ${have.size} עמודות, ${existing.length} שורות) ===`);
+        console.log(`עמודות חסרות שייווצרו: ${missingCols.length ? missingCols.join(" · ") : "0"}`);
+        console.log(`שורות חדשות: ${added}`);
+        console.log(`שורות שיתעדכנו: ${changedRows} (${changedCells} תאים) · בלי שינוי: ${built.length - added - changedRows}`);
+      } finally {
+        await db.pool.end();
+      }
+    }
     console.log("\n— הרצה יבשה. שום דבר לא נכתב. להרצה אמיתית: --apply");
     return;
   }
@@ -251,7 +285,7 @@ async function main() {
         // בעמודה שאינה בגיליון אינו נמחק בייבוא חוזר.
         await client.query(
           `UPDATE traffic_light_rows SET cells = cells || $2::jsonb, updated_at = now()
-            WHERE id = $1`, [hit.id, JSON.stringify(cells)]);
+            WHERE id = $1 AND board = $3`, [hit.id, JSON.stringify(cells), BOARD]);
         updated++;
       } else {
         await client.query(

@@ -149,10 +149,24 @@ async function main() {
     records.push({ row: r, group });
   }
 
+  // ============================================================
+  // ⚠️ הלוח הרובוטי בלבד — בכל שאילתה, קריאה וכתיבה
+  // ============================================================
+  // מאז 23/09/2026 אותן טבלאות מחזיקות גם את לוח המכפילים. בלי הסינון
+  // הכלי הזה היה הורס את שני הלוחות בהרצה אחת:
+  //   • `cols[0]` הוא עמודת השם, ושתי עמודות "אתר" יושבות שתיהן ב-position 1.
+  //     אם של המכפילים יוצאת ראשונה, אף שורה רובוטית לא מזוהה — וכל 153
+  //     השורות נכנסות מחדש ככפילות.
+  //   • `byLabel` לפי תווית: "אחריות" ו"איש קשר נוסף" קיימות בשני הלוחות
+  //     באותו position, ותאים רובוטיים היו נכתבים תחת מפתח של המכפילים —
+  //     שם אין להם עמודה, כלומר נעלמים מהמסך.
+  //   • `UPDATE … WHERE label` על "סוג הסכם שירות" דורס את רשימת
+  //     האפשרויות של העמודה בעלת אותו שם בלוח המכפילים.
   const { rows: cols } = await db.pool.query(
-    `SELECT id, key, label, kind, options, position FROM traffic_light_columns ORDER BY position`);
+    `SELECT id, key, label, kind, options, position FROM traffic_light_columns
+      WHERE board = 'robotic' ORDER BY position, id`);
   const { rows: existing } = await db.pool.query(
-    `SELECT id, cells FROM traffic_light_rows`);
+    `SELECT id, cells FROM traffic_light_rows WHERE board = 'robotic'`);
 
   const byLabel = new Map(cols.map((c) => [c.label, c]));
   const codeCol = byLabel.get("קוד אתר");
@@ -256,7 +270,7 @@ async function main() {
     for (const c of plan.newCols) {
       const key = newKey();
       await client.query(
-        `INSERT INTO traffic_light_columns (key,label,kind,width,position) VALUES ($1,$2,$3,$4,$5)`,
+        `INSERT INTO traffic_light_columns (key,label,kind,width,position,board) VALUES ($1,$2,$3,$4,$5,'robotic')`,
         [key, c.label, c.kind, 200, pos++]);
       byLabel.set(c.label, { key, label: c.label, kind: c.kind, options: [] });
     }
@@ -269,7 +283,7 @@ async function main() {
         if (!have.has(String(o.value)))
           have.set(String(o.value), { ...o, color: o.color ?? PALETTE[i++ % PALETTE.length] });
       await client.query(
-        `UPDATE traffic_light_columns SET options = $2::jsonb WHERE label = $1`,
+        `UPDATE traffic_light_columns SET options = $2::jsonb WHERE board = 'robotic' AND label = $1`,
         [label, JSON.stringify([...have.values()])]);
     }
 
@@ -285,15 +299,15 @@ async function main() {
     for (const u of plan.updates) {
       // ⚠️ מיזוג ולא דריסה — ובפרט `קוד אתר` נשאר כפי שהוא.
       await client.query(
-        `UPDATE traffic_light_rows SET cells = cells || $2::jsonb WHERE id = $1`,
+        `UPDATE traffic_light_rows SET cells = cells || $2::jsonb WHERE id = $1 AND board = 'robotic'`,
         [u.id, JSON.stringify(put(u.cells))]);
     }
 
     let rpos = Number((await client.query(
-      `SELECT COALESCE(MAX(position),0)+1 p FROM traffic_light_rows`)).rows[0].p);
+      `SELECT COALESCE(MAX(position),0)+1 p FROM traffic_light_rows WHERE board = 'robotic'`)).rows[0].p);
     for (const n of plan.newRows) {
       await client.query(
-        `INSERT INTO traffic_light_rows (cells, position) VALUES ($1::jsonb, $2)`,
+        `INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, $2, 'robotic')`,
         [JSON.stringify(put(n.cells)), rpos++]);
     }
 

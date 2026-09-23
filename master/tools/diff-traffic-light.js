@@ -71,10 +71,10 @@ async function main() {
   }
 
   const { rows: cols } = await db.pool.query(
-    `SELECT key, label FROM traffic_light_columns ORDER BY position`);
+    `SELECT key, label FROM traffic_light_columns WHERE board = 'robotic' ORDER BY position, id`);
   const byLabel = new Map(cols.map((c) => [c.label, c.key]));
   const kMid = byLabel.get("Monday ID");
-  const { rows: ours } = await db.pool.query(`SELECT id, cells FROM traffic_light_rows`);
+  const { rows: ours } = await db.pool.query(`SELECT id, cells FROM traffic_light_rows WHERE board = 'robotic'`);
 
   const mine = new Map();
   const noId = [];
