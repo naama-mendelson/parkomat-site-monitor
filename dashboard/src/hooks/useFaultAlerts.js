@@ -21,30 +21,11 @@
 // בונוס מהשרת: הסטטוס כאן הוא ה*אפקטיבי* (תחזוקה כבר גוברת), ולכן אתר
 // בחלון תחזוקה לעולם לא יגיע ל-error ולא יצלצל — בלי תנאי מיוחד כאן.
 
-//
-// ==========================================================
-// ⚠️ ועקבה על המסך — כי צליל לבד אי אפשר לשחזר
-// ==========================================================
-// נמדד 22/09/2026: שלוש מתוך שמונה התקלות של היום נמשכו פחות מדקה (2438:
-// ‏33 שניות). הצליל התנגן, הכרטיס חזר לירוק לפני שמישהו הרים את הראש,
-// ולא נשאר על המסך דבר שאומר **איזה** אתר צלצל. "צליל של תקלה בלי תקלה
-// על המסך" — והצליל דווקא צדק.
-//
-// לכן כל כניסה לתקלה נרשמת, וגם **איך היא נגמרה ומתי**. הרשימה נשארת עד
-// שסוגרים אותה: היא נועדה בדיוק למי שלא הסתכל ברגע הנכון.
-//
-// ⚠️ **הצליל עצמו לא השתנה** — מיידי, כמו קודם. השהיית הצליל עד שהתקלה
-// "מתייצבת" הייתה משתיקה את הקצרות, אבל גם מאחרת כל תקלה אמיתית.
-
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { notifyFaults } from "../utils/audio/alerts";
-
-/** כמה רשומות נשמרות. סערה של עשר תקלות אינה צריכה עשר שורות על המסך. */
-const TRAIL_MAX = 5;
 
 export function useFaultAlerts(sites) {
   const previousRef = useRef(null);
-  const [trail, setTrail] = useState([]);
 
   useEffect(() => {
     if (!sites || sites.length === 0) return;
@@ -62,36 +43,6 @@ export function useFaultAlerts(sites) {
       if (status === "error") entered.push(code);
     }
 
-    // ⚠️ **גם כשאין כניסה חדשה.** רשומה פתוחה נסגרת ברגע שהאתר יוצא
-    // מתקלה — וזה קורה בדיוק בעדכונים שבהם אף אתר לא נכנס לתקלה.
-    const now = Date.now();
-    const byCode = new Map(sites.map((s) => [s.code, s]));
-    setTrail((prev) => {
-      let changed = false;
-      let next = prev.map((e) => {
-        if (e.endedAt) return e;
-        const status = byCode.get(e.code)?.status;
-        if (!status || status === "error") return e;
-        changed = true;
-        return { ...e, endedAt: now, endedTo: status };
-      });
-      if (entered.length) {
-        changed = true;
-        const fresh = entered.map((code) => ({
-          id: `${code}-${now}`,
-          code,
-          name: byCode.get(code)?.site_name || code,
-          // זמן הזיהוי בדפדפן, לא חותמת האירוע מהאתר: זה הרגע שבו הצליל
-          // התנגן, וזה מה שמי ששמע אותו צריך להתאים אליו.
-          at: now,
-          endedAt: null,
-          endedTo: null,
-        }));
-        next = [...fresh, ...next].slice(0, TRAIL_MAX);
-      }
-      return changed ? next : prev;
-    });
-
     if (entered.length === 0) return;
 
     // הקיבוץ עצמו הוא באחריות המנוע: כאן מדווחים את כל מה שהשתנה בבת אחת,
@@ -101,7 +52,4 @@ export function useFaultAlerts(sites) {
       `[alert] ${entered.length} אתר/ים נכנסו לתקלה (${entered.join(", ")}) — ${outcome}`
     );
   }, [sites]);
-
-  const dismissTrail = useCallback(() => setTrail([]), []);
-  return { trail, dismissTrail };
 }
