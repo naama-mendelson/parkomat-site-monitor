@@ -18,7 +18,7 @@
 // ⚠️ **וההגנה אינה הקוד.** `app.require_manager()` בתוך כל פונקציה קורא
 // את התפקיד **מהטבלה**; בקר שינסה לשמור יקבל 403 מהמסד גם אם הקוד
 // בידיו. הקוד הוא צעד אישור לפני עריכה, בדיוק כמו בניהול האתרים.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
 import CodePrompt from "./CodePrompt";
 import {
@@ -154,11 +154,48 @@ function colWidth(c) {
   return Number.isFinite(w) && w > 0 ? Math.max(w, MIN_COL_WIDTH) : MIN_COL_WIDTH;
 }
 
+// ============================================================
+// ⚠️ בורר התאריך מופיע רק בעמודה שיש בה תאריכים
+// ============================================================
+// הבורר נולד בשביל "אחריות": 50 תאריכים מול 70 ערכים אחרים, כלומר
+// העמודה אינה יכולה להיות `date` אבל התאים שבה כן. הוא נתלה אז על
+// **כל** עמודת טקסט — הכללה שמעולם לא נמדדה. התוצאה על המסך היא סמל
+// לוח־שנה ליד "איש קשר נוסף", שערכו "מוטי 054-5565552"; ליד "קיל",
+// שערכו `#x`; וליד "מרחב מוגן", שערכו משפט שלם. כפתור שהופך שדה
+// לבורר תאריך בשדה שלעולם לא יחזיק תאריך הוא הזמנה לטעות, ולא קיצור.
+//
+// ⚠️ **ההחלטה נגזרת מהנתונים ולא מרשימת שמות.** נמדד על הלוח החי,
+// 23/09/2026: מבין 9 עמודות הטקסט יש ל"אחריות" 50 תאריכים (42%)
+// ולכל **שאר השמונה אפס**. ההפרדה מוחלטת, ולכן אין כאן סף לכייל —
+// כל ערך בין 1 ל-50 מחזיר אותה תשובה. רשימת שמות קבועה לעומת זאת
+// הייתה מפספסת את העמודה הבאה שתתמלא תאריכים, ודורשת שינוי קוד.
+//
+// שלושה ולא אחד: ערך בודד בצורת תאריך — "1/2/3" שהוקלד בטעות בעמודת
+// אנשי קשר — לא יזמן את הכפתור לעמודה שלמה.
+const DATE_CELL = /^(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})$/;
+const MIN_DATE_CELLS = 3;
+
+function dateBearingKeys(columns, rows) {
+  const keys = new Set();
+  for (const c of columns) {
+    if (c.kind !== "text") continue;
+    let n = 0;
+    for (const r of rows) {
+      if (DATE_CELL.test(String(r.cells?.[c.key] ?? "").trim()) && ++n >= MIN_DATE_CELLS) break;
+    }
+    if (n >= MIN_DATE_CELLS) keys.add(c.key);
+  }
+  return keys;
+}
+
 // ⚠️ `multiline` — רק בגיליון של תצוגת הפסים. שם יש מקום, והשדות הארוכים
 // (אנשי קשר, הערות — 33 תאים מעל 60 תווים) נערכים בתיבה שרואים בה את כל
 // הערך. וגם: `<input>` **מוחק ירידות שורה** מהערך, כך שעריכה של אחד מ-3
 // התאים שיש בהם כאלה הייתה מאחדת את השורות בלי שאיש יבקש.
-function Cell({ column, value, onSave, readOnly, multiline = false }) {
+//
+// ⚠️ `dateHint` — האם להציע כאן בורר תאריך. ברירת המחדל היא **לא**:
+// מי ששוכח להעביר אותו מקבל שדה טקסט, ולא לוח־שנה על שם של איש קשר.
+function Cell({ column, value, onSave, readOnly, multiline = false, dateHint = false }) {
   const [asDate, setAsDate] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
   // ⚠️ **Escape מבטל — ולא שומר.** `blur()` מפעיל את onBlur מיד, כשה-`draft`
@@ -289,12 +326,14 @@ function Cell({ column, value, onSave, readOnly, multiline = false }) {
             if (e.key === "Escape") { e.stopPropagation(); cancelRef.current = true; setDraft(value ?? ""); e.currentTarget.blur(); }
           }}
         />
-        <button
-          type="button"
-          className="tl-cal"
-          title="הזנת תאריך"
-          onMouseDown={(e) => { e.preventDefault(); setAsDate(true); }}
-        >▦</button>
+        {dateHint && (
+          <button
+            type="button"
+            className="tl-cal"
+            title="הזנת תאריך"
+            onMouseDown={(e) => { e.preventDefault(); setAsDate(true); }}
+          >▦</button>
+        )}
       </span>
     );
   }
@@ -326,9 +365,10 @@ function Cell({ column, value, onSave, readOnly, multiline = false }) {
         if (e.key === "Escape") { e.stopPropagation(); cancelRef.current = true; setDraft(value ?? ""); e.currentTarget.blur(); }
       }}
     />
-    {/* ⚠️ רק בעמודת טקסט. בעמודת date אמיתית הבורר כבר שם, ובעמודת
-        מספר תאריך אינו רלוונטי. */}
-    {column.kind === "text" && (
+    {/* ⚠️ רק בעמודת טקסט **שיש בה תאריכים**. בעמודת date אמיתית הבורר
+        כבר שם, בעמודת מספר תאריך אינו רלוונטי, ובעמודת טקסט שאין בה
+        אף תאריך הוא רעש שמזמין טעות. */}
+    {column.kind === "text" && dateHint && (
       <button
         type="button"
         className="tl-cal"
@@ -674,7 +714,7 @@ function BandsView({ columns, rows, searching, openRow, onOpenRow }) {
 // ⚠️ **במצב צפייה, ריקים מתקבצים לשורה אחת בתחתית.** שישה "—" פזורים הם
 // רעש; "אין ערך: קוד אתר · הערות" הוא מידע. בעריכה כל השדות מוצגים — ריק
 // הוא בדיוק מה שבאים למלא.
-function SiteDrawer({ row, columns, canEdit, busy, onSaveCell, onDelete, onClose }) {
+function SiteDrawer({ row, columns, canEdit, busy, dateCols, onSaveCell, onDelete, onClose }) {
   const { nameCol, kindCol } = boardCols(columns);
   const title = String(row.cells?.[nameCol?.key] ?? "") || "שורה חדשה — ללא שם";
   const tier = (kindCol?.options ?? []).find((o) => String(o.value) === String(row.cells?.[kindCol?.key] ?? ""));
@@ -702,6 +742,7 @@ function SiteDrawer({ row, columns, canEdit, busy, onSaveCell, onDelete, onClose
                 value={row.cells?.[c.key]}
                 readOnly={!canEdit}
                 multiline
+                dateHint={dateCols?.has(c.key) ?? false}
                 onSave={(v) => onSaveCell(row.id, c.key, v)}
               />
             </dd>
@@ -811,6 +852,12 @@ function TrafficLight({ onClose }) {
   const norm = (v) => String(v ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCase();
 
   const allRows = board.rows;
+
+  // ⚠️ נגזר מ-`allRows` ולא מהשורות המסוננות. חיפוש שמצמצם ל-3 שורות היה
+  // מעלים את בורר התאריך מ"אחריות" — ובמקרה ההפוך, חיפוש שמחזיר שלוש
+  // שורות שבמקרה יש בהן תאריך היה מצמיח אותו בעמודה שאין בה אף תאריך.
+  const dateCols = useMemo(() => dateBearingKeys(columns, allRows), [columns, allRows]);
+
   const q = norm(query);
   const rows = q
     ? allRows.filter((r) => Object.values(r.cells ?? {}).some((v) => norm(v).includes(q)))
@@ -1046,6 +1093,7 @@ function TrafficLight({ onClose }) {
                           column={c}
                           value={r.cells?.[c.key]}
                           readOnly={!canEdit}
+                          dateHint={dateCols.has(c.key)}
                           onSave={(v) => run(() => setCell(r.id, c.key, v))}
                         />
                       </td>
@@ -1068,6 +1116,7 @@ function TrafficLight({ onClose }) {
             columns={columns}
             canEdit={canEdit}
             busy={busy}
+            dateCols={dateCols}
             onClose={() => setOpenRow(null)}
             onSaveCell={(rowId, key, value) => run(() => setCell(rowId, key, value))}
             onDelete={() => run(async () => { await deleteRow(drawerRow.id); setOpenRow(null); })}
