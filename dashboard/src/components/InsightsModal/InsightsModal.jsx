@@ -352,7 +352,10 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
 
                 <section className="insights-card">
                   <h3>פעילות לפי יום בשבוע</h3>
-                  <p className="insights-sub">אילו ימים עמוסים יותר</p>
+                  {/* ⚠️ "סך הכול לאורך התקופה", ולא "אילו ימים עמוסים יותר": בתצוגת
+                      שנה שלישי הוביל בגרף, ובאריח למטה "היום העמוס ביותר" היה
+                      רביעי 16.9 — שני נתונים נכונים שנקראו כסתירה (24/09/2026). */}
+                  <p className="insights-sub">סך הפעולות בכל יום בשבוע, לאורך כל התקופה</p>
                   {/* ⚠️ ההדגשה נגזרת מהמקסימום של הסדרה עצמה, ולא מ-busiestDay.
                       busiestDay הוא **תאריך** ספציפי (למשל 30.7), והגרף הזה
                       מקבץ לפי יום בשבוע — הצבעה לפיו הייתה מדגישה את היום
@@ -390,15 +393,16 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                       if (!days.length) return null;
                       return (
                         <MetricCard
-                          label={days.length > 1 ? "הימים העמוסים ביותר" : "היום העמוס ביותר"}
+                          // ⚠️ **תאריך**, לא יום בשבוע — ראה ההערה בגרף שמעל.
+                          label={days.length > 1 ? "התאריכים העמוסים ביותר" : "התאריך העמוס ביותר"}
                           value={String(days[0].operations)}
-                          hint={`${days.map((d) => d.label).join(" · ")} — פעולות ביום`}
+                          hint={`${days.map((d) => d.label).join(" · ")} — פעולות באותו יום`}
                           peak
                         />
                       );
                     })()}
                     {!data.activity.busiestDay && (
-                      <MetricCard label="היום העמוס ביותר" value="—" hint="אין פעילות בתקופה" peak />
+                      <MetricCard label="התאריך העמוס ביותר" value="—" hint="אין פעילות בתקופה" peak />
                     )}
                     <MetricCard label="ממוצע יומי" value={String(data.activity.dailyAverage)} hint="פעולות בממוצע ליום פעילות" />
                     {/* ⚠️ גם כאן שוויון אפשרי, ואותה סתירה: כרטיס שמראה שעה
