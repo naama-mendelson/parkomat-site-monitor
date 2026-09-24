@@ -60,7 +60,19 @@ function App() {
   const [period, setPeriod] = useState("week");
 
   // ===== Hooks =====
-  const { sites, loading, error, reload, patch } = useSites();
+  // ⚠️ במסך ההנהלה — הרשימה הכבדה מחכה עד שהמסך קיבל את הנתונים שלו
+  // (ראה hold ב-useSites). רשת ביטחון של 8 שניות: אם המסך נכשל בשקט,
+  // התראות התקלה אינן נשארות בלי רשימה.
+  const [execReady, setExecReady] = useState(false);
+  const markExecReady = useCallback(() => setExecReady(true), []);
+  // יציאה ממסך ההנהלה מאפסת: חזרה אליו מקבלת שוב עדיפות.
+  useEffect(() => { if (role !== "executive") setExecReady(false); }, [role]);
+  useEffect(() => {
+    if (role !== "executive" || execReady) return undefined;
+    const t = setTimeout(() => setExecReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [role, execReady]);
+  const { sites, loading, error, reload, patch } = useSites({ hold: role === "executive" && !execReady });
   const { detail, maintenance, error: detailError, refresh: refreshDetail } = useSiteDetail(selectedCode);
   // ⚠️ כרטיס שנלחץ ולא נפתח חייב לומר למה. רק כשאין פרטים בכלל: כשל
   // ברענון של פאנל פתוח משאיר את הנתונים האחרונים, כמו קודם.
@@ -217,7 +229,7 @@ function App() {
       return <SupervisorView onSiteClick={handleSiteClick} dataVersion={dataVersion} sites={sites} />;
     }
     if (role === "executive") {
-      return <ExecutiveView dataVersion={dataVersion} />;
+      return <ExecutiveView dataVersion={dataVersion} onFirstData={markExecReady} />;
     }
     return (
       <OperatorView

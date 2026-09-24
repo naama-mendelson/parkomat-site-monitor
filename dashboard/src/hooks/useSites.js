@@ -26,7 +26,7 @@ function humanError(err) {
   return msg;
 }
 
-export function useSites() {
+export function useSites({ hold = false } = {}) {
   const [sites, setSites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -102,9 +102,28 @@ export function useSites() {
   }, []);
 
   // טעינה ראשונית
+  // ============================================================
+  // ⚠️ `hold` — מסך אחר קודם, והטעינה הזו מחכה לו
+  // ============================================================
+  // נמדד (24/09/2026): במסך ההנהלה הטעינה הזו רצה **במקביל** ל-11 השאילתות
+  // של המסך עצמו — site_stats ×2, site_uptime, site_globals, והכבדה מכולן
+  // site_uptime_service (≈1.1s) — על מסד חינמי שכבר עמוס ברענוני הכרטיסים.
+  // כ-17 שאילתות כבדות ברגע הפתיחה, בשביל מסך שאינו מוצג.
+  //
+  // ⚠️ **נדחית ולא מבוטלת.** useFaultAlerts נשען על הרשימה הזו בכל תצוגה,
+  // ומסך ההנהלה אינו פוטר מהתראות תקלה. בזמן ההמתנה patch ממשיך לעבוד;
+  // reload שנקרא נרשם ורץ ברגע השחרור.
+  const pendingLoad = useRef(true);
   useEffect(() => {
+    if (hold || !pendingLoad.current) return;
+    pendingLoad.current = false;
     loadSites();
-  }, [loadSites]);
+  }, [hold, loadSites]);
+
+  const reload = useCallback(() => {
+    if (hold) { pendingLoad.current = true; return; }
+    loadSites();
+  }, [hold, loadSites]);
 
   // ============================================================
   // ⚠️ חזרה מנתק — שולפים מיד, ולא ממתינים לשליפה הבאה
@@ -138,5 +157,5 @@ export function useSites() {
     };
   }, [hasError, loadSites]);
 
-  return { sites, loading, error, reload: loadSites, patch };
+  return { sites, loading, error, reload, patch };
 }

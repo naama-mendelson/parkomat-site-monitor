@@ -1,7 +1,7 @@
 // views/ExecutiveView/ExecutiveView.jsx — מנהל כללי: רשת bento יוקרתית.
 // לכל חלונית גודל ותוכן משלה. הצבעוניות אחידה: כחול המותג להדגשה,
 // וצבעי מצב סמנטיים בלבד היכן שיש להם משמעות.
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   STATUS_COLORS, STATUS_LABELS, STATUSES, DIRECTION_COLORS, METRICS, METRIC_COLORS,
 } from "../../utils/constants";
@@ -54,7 +54,7 @@ function failureSentence(operations, errors) {
   return `תקלה אחת לכל ${Math.round(operations / errors).toLocaleString()} פעולות`;
 }
 
-function ExecutiveView({ dataVersion }) {
+function ExecutiveView({ dataVersion, onFirstData }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [display, setDisplay] = useState(DEFAULT_DISPLAY);
   const [reportOpen, setReportOpen] = useState(false);
@@ -84,6 +84,15 @@ function ExecutiveView({ dataVersion }) {
   }, [filters]);
 
   const { data, loading, error } = useExecutiveStats(query, dataVersion);
+
+  // מודיע ל-App שהמסך קיבל את שלו — ורק אז רשימת האתרים הכבדה יוצאת
+  // (ראה hold ב-useSites). גם שגיאה משחררת: אין סיבה לעכב אחריה.
+  const told = useRef(false);
+  useEffect(() => {
+    if (told.current || (!data && !error)) return;
+    told.current = true;
+    onFirstData?.();
+  }, [data, error, onFirstData]);
 
   const series = useMemo(
     () => display.metrics.map((key) => ({
