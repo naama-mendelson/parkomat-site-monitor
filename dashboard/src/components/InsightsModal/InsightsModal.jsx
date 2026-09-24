@@ -395,14 +395,18 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                         <MetricCard
                           // ⚠️ **תאריך**, לא יום בשבוע — ראה ההערה בגרף שמעל.
                           label={days.length > 1 ? "התאריכים העמוסים ביותר" : "התאריך העמוס ביותר"}
-                          value={String(days[0].operations)}
-                          hint={`${days.map((d) => d.label).join(" · ")} — פעולות באותו יום`}
-                          peak
+                          // ⚠️ **התאריך הוא הערך, והאריח אינו ירוק.** קודם הערך היה
+                          // 405 בירוק — אותו צבע כמו שיא הגרף "לפי יום בשבוע" שמעליו —
+                          // ובתצוגת שנה הגרף סימן שלישי והאריח אמר רביעי 16.9. שני
+                          // נתונים נכונים (סך ימי השלישי מול יום בודד), אבל הצבע
+                          // המשותף אמר שהם אמורים להתאים. נשאל פעמיים (24/09/2026).
+                          value={days.map((d) => d.label.split(" ")[0]).join(" · ")}
+                          hint={`${days[0].operations} פעולות באותו יום · ${days.map((d) => d.label.split(" ").slice(1).join(" ").replace(/[()]/g, "")).join(" · ")}`}
                         />
                       );
                     })()}
                     {!data.activity.busiestDay && (
-                      <MetricCard label="התאריך העמוס ביותר" value="—" hint="אין פעילות בתקופה" peak />
+                      <MetricCard label="התאריך העמוס ביותר" value="—" hint="אין פעילות בתקופה" />
                     )}
                     <MetricCard label="ממוצע יומי" value={String(data.activity.dailyAverage)} hint="פעולות בממוצע ליום פעילות" />
                     {/* ⚠️ גם כאן שוויון אפשרי, ואותה סתירה: כרטיס שמראה שעה
