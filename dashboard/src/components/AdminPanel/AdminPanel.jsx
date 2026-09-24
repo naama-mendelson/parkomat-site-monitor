@@ -540,7 +540,13 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                     </div>
                   )}
 
-                  <div className="adm-actions">
+                  {/* ⚠️ במצב אישור — שורה משלה. המשפט ("הסיסמה הקודמת תתבטל מיד…")
+                      ארוך, ו-adm-actions אינו מתכווץ: הוא תפס את כל הרוחב, שם
+                      האתר נמעך לעמודה של מילה אחת, והטקסט עלה על הנקודה ו"ביטול"
+                      נחתך בקצה. נראה בצילום מסך, 24/09/2026. */}
+                  <div className={`adm-actions${
+                    confirmRotate === s.code || confirmController === s.code || isConfirming
+                      ? " is-confirming" : ""}`}>
                     {isEditing ? (
                       <>
                         <button className="adm-btn" disabled={busy}

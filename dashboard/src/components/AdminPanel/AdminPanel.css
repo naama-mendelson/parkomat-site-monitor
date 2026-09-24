@@ -354,6 +354,22 @@
   font-weight: 700;
 }
 
+/* ⚠️ אישור — יורד לשורה משלו, מתחת לפרטי האתר, והטקסט נשבר לשורות.
+   ראה ההערה ב-AdminPanel.jsx. */
+.adm-row { flex-wrap: wrap; }
+.adm-actions.is-confirming {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+}
+.adm-actions.is-confirming .adm-confirm-text {
+  flex: 1 1 220px;
+  min-width: 0;
+  line-height: 1.45;
+}
+
 .adm-empty,
 .adm-note {
   color: var(--text-muted);
