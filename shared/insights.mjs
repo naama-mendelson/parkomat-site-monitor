@@ -23,7 +23,10 @@
 export const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 // חישוב טהור — מקבל שורות שכבר נשלפו, ולכן משרת גם אתר בודד וגם מצרף כלל-אתרי.
-export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, from, to, siteNames, allRows }) {
+// ⚠️ `coverWindows` — החלונות שמכסים את התקופה, כולל כאלה שהתחילו לפניה
+// (insights_rows.cover). `windows` נשאר "חלונות שהופעלו בתקופה" — הוא מונה
+// את כניסות התחזוקה. בלי coverWindows (זרוע השרת) — נופלים ל-windows.
+export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, coverWindows, from, to, siteNames, allRows }) {
   let ops = opsIn;
 
   // ⚠️ גבולות הטווח מוגדרים כאן ולא למטה: coverBySite נבנה מיד אחריהם
@@ -41,7 +44,7 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
   // רצה הרבה לפניו, ולכן הסינון היה מגיע **אחרי** שהכול כבר נספר —
   // כלומר לא עושה כלום, בשקט, ובלי שאף בדיקה תיפול.
   const coverBySite = new Map();
-  for (const w of windows) {
+  for (const w of (coverWindows ?? windows)) {
     if (w.excluded_at) continue;
     if (!coverBySite.has(w.site_id)) coverBySite.set(w.site_id, []);
     coverBySite.get(w.site_id).push(w);
@@ -52,7 +55,8 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
         started_at: w.started_at,
         cancelled_at: w.cancelled_at,
         // חלונות מגיעים לכאן עם duration_hours ולא עם expires_at.
-        expires_at: new Date(
+        // expires_at כשיש (cover), אחרת נגזר ממשך החלון — כמו קודם.
+        expires_at: w.expires_at ?? new Date(
           Date.parse(w.started_at) + (Number(w.duration_hours) || 0) * 3600000,
         ).toISOString(),
       })),
@@ -173,6 +177,10 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
   // קיים. הבדיקה נשמרת בצורה מדויקת יותר למטה: שני כרטיסים **שונים
   // ולא-ריקים** הם שיוך שגוי ואינם נמדדים.
   for (const op of ops) {
+    // ⚠️ **פעולה שסומנה ניסוי אינה קיימת לצורך המדדים** — כמו ב-site_stats
+    // ובכרטיס. נמצא בבדיקת התקופות (24/09/2026): החלון ספר אותן — דיזנגוף
+    // 135 הראה 497 פעולות מול 496 בכרטיס, אוסישקין 58 302 מול 300.
+    if (op.excluded_at) continue;
     const when = new Date(op.occurred_at);
     const key = `${op.site_id}|${op.entry_exit}`;
 
@@ -637,8 +645,21 @@ export function computeInsights({ ops: opsIn, errorRows, maintRows, windows, fro
   // נחסמים בקליטה (state-handler); כאן בדיקת ה-PLC מכסה את המקרה ההיסטורי השכיח.
   // חפיפה לתחזוקה *של אותו אתר* (site_id) — כדי שבמצב המצרף תקלה באתר א' לא
   // תושתק בגלל תחזוקה באתר ב'. לאתר בודד זה זהה להתנהגות הקודמת (הכול אותו אתר).
+  // ⚠️ "תחזוקה גוברת" — **גם חלון ידני**, בדיוק כמו app.error_segments
+  // (in_maintenance) שמאחורי הכרטיס: מקטע PLC מכסה, או חלון שלא סומן ניסוי
+  // ושבו started_at <= ts <= COALESCE(cancelled_at, expires_at). עד 24/09/2026
+  // נבדק כאן רק ה-PLC — נמל דולי הראה 27 תקלות מול 26 בכרטיס, בגלל תקלה
+  // שהתחילה בתוך חלון ידני ב-25/08.
+  const inWindow = (ts, siteId) =>
+    (coverWindows ?? windows).some((w) => {
+      if (w.site_id !== siteId || w.excluded_at) return false;
+      const end = w.cancelled_at ?? w.expires_at ?? new Date(
+        Date.parse(w.started_at) + (Number(w.duration_hours) || 0) * 3600000).toISOString();
+      return w.started_at <= ts && end >= ts;
+    });
   const inMaint = (ts, siteId) =>
-    maintRows.some((s) => s.site_id === siteId && s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts));
+    maintRows.some((s) => s.site_id === siteId && s.started_at <= ts && (s.ended_at === null || s.ended_at >= ts))
+    || inWindow(ts, siteId);
   const errorsStarted = errorRows.filter(
     (r) => r.started_at >= from && !inMaint(r.started_at, r.site_id)
   ).length;

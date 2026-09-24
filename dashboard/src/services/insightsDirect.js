@@ -51,6 +51,7 @@ export async function fetchInsightsDirect(code, { from, to }) {
   // עמודות ואותם תנאים כמו השליפה המדופדפת שהייתה כאן, ובלי תקרה.
   const rows = await fetchRowsChunked("insights_rows", siteId, from, to);
   const opsPage = { rows: rows.ops }, segPage = { rows: rows.segs }, winPage = { rows: rows.wins };
+  const coverWindows = rows.cover;
 
   const counted = collapseSegmentsBySite(segPage.rows).filter((s) => !s.excluded_at);
   const kept = segPage.rows;
@@ -71,6 +72,7 @@ export async function fetchInsightsDirect(code, { from, to }) {
       errorRows: counted.filter((s) => (s.reclassified_to || s.status) === "error"),
       maintRows: counted.filter((s) => (s.reclassified_to || s.status) === "maintenance"),
       windows: winPage.rows,
+      coverWindows,
       from, to,
       // ראה computeInsights: הזמן נסכם על המקטעים הגולמיים, לא המקופלים.
       allRows: kept,

@@ -1819,6 +1819,21 @@ AS $$
           FROM maintenance_windows w
          WHERE (p_site_id IS NULL OR w.site_id = p_site_id)
            AND w.started_at >= p_from AND w.started_at < p_to
+           AND w.started_at >= p_part_from AND w.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    -- ⚠️ **החלונות שמכסים את התקופה — ולא רק אלה שהתחילו בה.** `wins` למעלה
+    -- הוא "כמה פעמים הופעלה תחזוקה בתקופה" ונשאר כך. אבל חלון שהתחיל לפני
+    -- התקופה ונמשך לתוכה עדיין מכסה פעולות ותקלות שבה — כך סופרים site_stats
+    -- ו-app.op_served, ובלעדיו החלון היה סופר אותן והכרטיס לא. אותה חלוקה
+    -- לפי started_at, ולכן כל חלון נופל בחלק אחד בדיוק.
+    'cover', jsonb_build_object(
+      'cols', '["site_id","started_at","expires_at","cancelled_at","excluded_at"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(w.site_id, w.started_at, w.expires_at, w.cancelled_at, w.excluded_at)
+                         ORDER BY w.started_at, w.id)
+          FROM maintenance_windows w
+         WHERE (p_site_id IS NULL OR w.site_id = p_site_id)
+           AND w.started_at < p_to
+           AND COALESCE(w.cancelled_at, w.expires_at) > p_from
            AND w.started_at >= p_part_from AND w.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb))
   );
 $$;

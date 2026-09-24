@@ -59,7 +59,7 @@ test("insights_rows — אותן שורות כמו השליפה הישירה", {
 test("⚠️ חלוקה לחודשים — שרשור החלקים זהה לקריאה אחת, בלי כפילות ובלי השמטה", { skip }, async () => {
   const whole = await call("insights_rows", null, FROM, TO, "", null);
   const parts = await Promise.all(PARTS.map(([pf, pt]) => call("insights_rows", null, FROM, TO, pf, pt)));
-  for (const k of ["ops", "segs", "wins"]) {
+  for (const k of ["ops", "segs", "wins", "cover"]) {
     const joined = parts.flatMap((p) => expand(p[k]));
     assert.deepEqual(joined, expand(whole[k]), k);
   }
