@@ -25,22 +25,11 @@
 
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { computeInsights, collapseSegmentsBySite } from "../../../shared/insights.mjs";
-// ⚠️ Supabase חוסם כל בקשה ב-1,000 שורות ומתעלם מ-limit. חובה לדפדף — ראה
-// pageAll.js. הגרסה הראשונה כאן ביקשה limit(20000) וקיבלה 1,000 **בשקט**.
-import { pageAll } from "./pageAll";
+import { fetchRowsChunked } from "./rowsChunked";
 
-// ============================================================
-// ⚠️ 60,000 — ועד מתי זה מספיק
-// ============================================================
-// 24/09/2026: "כל האתרים" בתצוגת שנה עבר את 20,000 — 20,373 פעולות ו-
-// 22,171 מקטעי מצב מאז 21/07 — והמסך הציג "התקופה גדולה מכדי לטעון
-// במלואה". הקצב ≈330 שורות ליום מכל סוג, כלומר ≈50–55 אלף עד 31/12.
-// "שנה" כאן היא קלנדרית, ולכן 60,000 מחזיק את 2026 ומתאפס בינואר.
-//
-// ⚠️ **זו דחייה, לא פתרון.** בסוף 2027 יהיו ≈115 אלף שורות לסוג, ושליפת
-// שורות גולמיות לדפדפן לא תחזיק. הפתרון הוא צבירה במסד — הוחלט באותו
-// יום שלא לגעת ב-SQL. התקרה עדיין מסומנת (capped) ואינה מושתקת.
-const FETCH_CAP = 60000;
+// ⚠️ **אין תקרה.** עד 24/09/2026 השורות נשלפו בדפדוף (PostgREST חותך כל
+// תשובה ב-1,000) עם תקרת ביטחון, ו"כל האתרים" בתצוגת שנה עבר אותה. עכשיו
+// הן מגיעות מפונקציית SQL לפי חודש — ראה rowsChunked.js.
 
 /**
  * @param code קוד אתר, או null למצרף על כל האתרים
@@ -57,78 +46,21 @@ export async function fetchInsightsDirect(code, { from, to }) {
     if (error) throw new Error(error.message);
     siteId = data.id;
   }
-  const scoped = (q) => (siteId ? q.eq("site_id", siteId) : q);
 
-  const [opsPage, segPage, winPage] = await Promise.all([
-    pageAll((a, b) => scoped(
-      supabase
-        .from("operations")
-        .select("site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, occurred_at, excluded_at")
-        .gte("occurred_at", from).lt("occurred_at", to)
-        // ⚠️ **שובר שוויון ב-id, בדיוק כמו בזרוע השרת.** החותמים הם שניות
-        // שלמות, ולכן `end` של פעולה אחת ו-`start` של הבאה יכולים ליפול על
-        // אותה שנייה. נמדד: 4 מקרים ב-30 יום, ובאחד מהם שתי ההודעות באותו
-        // כיוון — כלומר הן מתחרות על אותו מפתח זיווג.
-        //
-        // בלי שובר שוויון הסדר תלוי במסד, ושתי הזרועות עלולות לזווג אחרת
-        // ולהחזיר מספרים שונים לאותם נתונים. השרת כבר עושה `ORDER BY
-        // occurred_at ASC, id ASC`; זו ההשלמה לצד השני.
-        //
-        // ⚠️ והחשיפה הזו נוצרה כאן: כשמפתח הזיווג כלל את מספר הכרטיס, שתי
-        // ההודעות האלה היו במפתחות נפרדים ולא נגעו זו בזו כלל.
-        .order("occurred_at", { ascending: true })
-        .order("id", { ascending: true })
-        .range(a, b)
-    ), FETCH_CAP),
+  // ⚠️ השורות מ-public.insights_rows, לפי חודש — ראה rowsChunked.js. אותן
+  // עמודות ואותם תנאים כמו השליפה המדופדפת שהייתה כאן, ובלי תקרה.
+  const rows = await fetchRowsChunked("insights_rows", siteId, from, to);
+  const opsPage = { rows: rows.ops }, segPage = { rows: rows.segs }, winPage = { rows: rows.wins };
 
-    pageAll((a, b) => scoped(
-      supabase
-        .from("status_history")
-        // ⚠️ **COALESCE ועמודות הסימון — שניהם חסרו.** זרוע השרת
-        // (queries.js:1146) עושה COALESCE(reclassified_to, status);
-        // כאן נשלף status גולמי, ולכן תקלה שסווגה מחדש כתחזוקה עדיין
-        // נספרת כתקלה בדפדפן ולא נספרת בשרת. אותה מחלקה בדיוק שתוקנה
-        // ב-executiveDirect — התובנות פשוט לא תוקנו יחד איתה.
-        .select("site_id, status, started_at, ended_at, excluded_at, reclassified_to")
-        // חפיפה, לא הכלה — ראה ההסבר למעלה.
-        .lt("started_at", to)
-        .or(`ended_at.is.null,ended_at.gt.${from}`)
-        .order("started_at", { ascending: true })
-        .range(a, b)
-    ), FETCH_CAP),
-
-    pageAll((a, b) => scoped(
-      supabase
-        .from("maintenance_windows")
-        // ⚠️ site_id ו-excluded_at דרושים ל-computeInsights: הכיסוי נבנה לכל אתר
-        // בנפרד, וחלון שסומן כניסוי אינו מכסה דבר.
-        .select("site_id, set_by_name, reason, started_at, duration_hours, cancelled_at, excluded_at")
-        .gte("started_at", from).lt("started_at", to)
-        .order("started_at", { ascending: true })
-        .range(a, b)
-    ), FETCH_CAP),
-  ]);
-
-  // מקפלים ריצוד לפני הספירה, ולכל אתר בנפרד: רשימה מעורבת הייתה מקפלת
-  // מקטעים של אתרים שונים זה לתוך זה.
-  // ⚠️ **הקיפול קודם, הסינון אחריו.** מקטע שסומן כניסוי עדיין משתתף
-  // בקיפול הריצוד — `excluded_at` אומר "אל תספור את זה", לא "זה לא קרה",
-  // והבקר באמת שינה מצב. הסרתו מוקדם מזיזה את גבולות המקטעים של שכניו,
-  // כלומר הוצאה של תקלה אחת משנה את הספירה של אחרת. אותו סדר בדיוק כמו
-  // ב-statsFromData וב-site_stats.
   const counted = collapseSegmentsBySite(segPage.rows).filter((s) => !s.excluded_at);
   const kept = segPage.rows;
 
   // ==========================================================
   // קטיעה חייבת להיאמר, לא להיבלע
   // ==========================================================
-  // ⚠️ pageAll מחזיר capped כשהוא הגיע לתקרה ועדיין נשארו שורות — והערך
-  // הזה **נזרק כאן**. תובנות שחושבו על חלק מהתקופה נראות בדיוק כמו תובנות
-  // מלאות: "היום העמוס ביותר" עדיין מספר, "ממוצע יומי" עדיין מספר, ואין
-  // שום סימן שהחישוב נעצר באמצע.
-  //
-  // זה גרוע יותר משגיאה. שגיאה עוצרת ומודיעה; מספר חלקי שנראה שלם מתגלה
-  // רק כשמישהו משווה אותו למקור אחר, ואז שני המספרים מאבדים אמון.
+  // ⚠️ capped נשאר בתשובה (המסך קורא אותו), אבל אינו יכול להיות true עוד:
+  // אין תקרה. הכלל שהיה כאן נשאר נכון — תובנות על חלק מהתקופה שנראות
+  // שלמות גרועות משגיאה — ולכן נפילה של חודש אחד מפילה את כל השליפה.
   return {
     ...computeInsights({
       ops: opsPage.rows,
@@ -143,6 +75,7 @@ export async function fetchInsightsDirect(code, { from, to }) {
       // ראה computeInsights: הזמן נסכם על המקטעים הגולמיים, לא המקופלים.
       allRows: kept,
     }),
-    capped: opsPage.capped || segPage.capped || winPage.capped,
+    // אין יותר תקרה — כל השורות מגיעות. השדה נשאר כי המסך קורא אותו.
+    capped: false,
   };
 }

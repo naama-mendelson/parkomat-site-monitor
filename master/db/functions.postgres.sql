@@ -1742,3 +1742,152 @@ $$;
 
 COMMENT ON FUNCTION public.executive_series_json(integer[], text, text, jsonb) IS
   'executive_series בשורה אחת — עוקף את תקרת 1,000 השורות של PostgREST, שחתכה בשקט כל טווח מעל 62 ימים ברזולוציה יומית.';
+
+-- ============================================================
+-- public.insights_rows / public.activity_rows — השורות הגולמיות, בקריאה אחת
+-- ============================================================
+-- ⚠️ **אלה אינן פונקציות מדד, ובכוונה.** CLAUDE.md קובע ש-computeInsights
+-- ו-buildActivityLog **נשארים ב-JS** (ספי תצוגה, לא הגדרת מדד). הפונקציות
+-- כאן מחזירות **בדיוק** את השורות שהדפדפן שלף עד כה דרך PostgREST — אותן
+-- עמודות, אותם תנאים — ולכן המספרים על המסך זהים מעצם ההגדרה.
+--
+-- מה שהן פותרות (24/09/2026): "כל האתרים" בתצוגת שנה עבר את תקרת השליפה
+-- (20,000 שורות לסוג) והציג "התקופה גדולה מכדי לטעון במלואה". PostgREST
+-- חותך כל תשובה ב-1,000 שורות, ולכן השליפה דפדפה — ≈45 בקשות לשנה אחת,
+-- והקצב (≈330 שורות ליום לסוג) היה שובר כל תקרה תוך שנה.
+--
+-- ⚠️ **מערכים ולא אובייקטים.** שורה היא `[v1, v2, …]` בסדר `cols`, ולא
+-- `{"site_id":…}` — שמות השדות חזרו על עצמם בכל שורה והיו רוב הנפח. הדפדפן
+-- מרכיב אותם בחזרה לאותם אובייקטים בדיוק.
+--
+-- ⚠️ SECURITY INVOKER — אותה RLS כמו השליפה הישירה.
+--
+-- ============================================================
+-- ⚠️ p_part_from / p_part_to — חלוקה לשבועות, בגלל statement_timeout
+-- ============================================================
+-- ל-authenticated יש statement_timeout=8s. נמדד על השנה המלאה, כל האתרים:
+-- activity_rows 2.5–4.8s כבר היום, והנתונים גדלים ≈330 שורות ליום לסוג —
+-- כלומר קריאה אחת לשנה הייתה נופלת לפני סוף השנה, **וכל המסך איתה**.
+-- הדפדפן מחלק את התקופה לשבועות וקורא (עד 6 במקביל); כל קריאה קטנה, והחלוקה
+-- מחזיקה כמה שהנתונים יגדלו.
+--
+-- החלוקה היא לפי עמודת הזמן של כל שורה — occurred_at / started_at — ולכן
+-- כל שורה נופלת בחלק אחד בדיוק. ⚠️ מקטע מצב שהתחיל **לפני** התקופה ונמשך
+-- לתוכה נכלל רק בחלק הראשון, שבו p_part_from = '' (הקטן מכל מחרוזת).
+-- תנאי התקופה עצמה (p_from/p_to) נשאר כפי שהיה — החלוקה רק מצמצמת.
+CREATE OR REPLACE FUNCTION public.insights_rows(
+  p_site_id   integer,
+  p_from      text,
+  p_to        text,
+  p_part_from text DEFAULT '',
+  p_part_to   text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'ops', jsonb_build_object(
+      'cols', '["site_id","start_end","entry_exit","card_number","is_anomaly","superseded_by","occurred_at","excluded_at"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(o.site_id, o.start_end, o.entry_exit, o.card_number,
+                                           o.is_anomaly, o.superseded_by, o.occurred_at, o.excluded_at)
+                         ORDER BY o.occurred_at, o.id)
+          FROM operations o
+         WHERE (p_site_id IS NULL OR o.site_id = p_site_id)
+           AND o.occurred_at >= p_from AND o.occurred_at < p_to
+           AND o.occurred_at >= p_part_from AND o.occurred_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    'segs', jsonb_build_object(
+      'cols', '["site_id","status","started_at","ended_at","excluded_at","reclassified_to"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(h.site_id, h.status, h.started_at, h.ended_at,
+                                           h.excluded_at, h.reclassified_to)
+                         ORDER BY h.started_at, h.id)
+          FROM status_history h
+         WHERE (p_site_id IS NULL OR h.site_id = p_site_id)
+           AND h.started_at < p_to
+           AND (h.ended_at IS NULL OR h.ended_at > p_from)
+           AND h.started_at >= p_part_from AND h.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    'wins', jsonb_build_object(
+      'cols', '["site_id","set_by_name","reason","started_at","duration_hours","cancelled_at","excluded_at"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(w.site_id, w.set_by_name, w.reason, w.started_at,
+                                           w.duration_hours, w.cancelled_at, w.excluded_at)
+                         ORDER BY w.started_at, w.id)
+          FROM maintenance_windows w
+         WHERE (p_site_id IS NULL OR w.site_id = p_site_id)
+           AND w.started_at >= p_from AND w.started_at < p_to
+           AND w.started_at >= p_part_from AND w.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb))
+  );
+$$;
+
+COMMENT ON FUNCTION public.insights_rows(integer, text, text, text, text) IS
+  'השורות הגולמיות של חלון התובנות, בקריאה אחת ובמערכים. לא מדד — computeInsights נשאר ב-JS.';
+
+-- ⚠️ יומן הפעילות — אותו רעיון, עמודות אחרות. הסדר **יורד** כמו בשליפה
+-- הישירה, ועם id כשובר שוויון (השליפה המדופדפת מיינה רק לפי הזמן, ושורות
+-- באותה שנייה יכלו להופיע פעמיים או להיעלם על גבול עמוד).
+CREATE OR REPLACE FUNCTION public.activity_rows(
+  p_site_id   integer,
+  p_from      text,
+  p_to        text,
+  p_part_from text DEFAULT '',
+  p_part_to   text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'ops', jsonb_build_object(
+      'cols', '["id","site_id","start_end","entry_exit","card_number","is_anomaly","superseded_by","state","occurred_at","excluded_at","excluded_by","site_name"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(o.id, o.site_id, o.start_end, o.entry_exit, o.card_number,
+                                           o.is_anomaly, o.superseded_by, o.state, o.occurred_at,
+                                           o.excluded_at, o.excluded_by, s.site_name)
+                         ORDER BY o.occurred_at DESC, o.id DESC)
+          FROM operations o LEFT JOIN sites s ON s.id = o.site_id
+         WHERE (p_site_id IS NULL OR o.site_id = p_site_id)
+           AND o.occurred_at >= p_from AND o.occurred_at < p_to
+           AND o.occurred_at >= p_part_from AND o.occurred_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    'states', jsonb_build_object(
+      'cols', '["id","site_id","status","started_at","ended_at","fault_text","excluded_at","excluded_by","reclassified_to","reclassified_by","reclassified_at","site_name"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(h.id, h.site_id, h.status, h.started_at, h.ended_at,
+                                           h.fault_text, h.excluded_at, h.excluded_by, h.reclassified_to,
+                                           h.reclassified_by, h.reclassified_at, s.site_name)
+                         ORDER BY h.started_at DESC, h.id DESC)
+          FROM status_history h LEFT JOIN sites s ON s.id = h.site_id
+         WHERE (p_site_id IS NULL OR h.site_id = p_site_id)
+           AND h.started_at >= p_from AND h.started_at < p_to
+           AND h.started_at >= p_part_from AND h.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    'maint', jsonb_build_object(
+      'cols', '["id","site_id","set_by_name","set_by_role","reason","started_at","duration_hours","expires_at","cancelled_at","excluded_at","excluded_by","performed_by","cancelled_by","site_name"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(w.id, w.site_id, w.set_by_name, w.set_by_role, w.reason,
+                                           w.started_at, w.duration_hours, w.expires_at, w.cancelled_at,
+                                           w.excluded_at, w.excluded_by, w.performed_by, w.cancelled_by,
+                                           s.site_name)
+                         ORDER BY w.started_at DESC, w.id DESC)
+          FROM maintenance_windows w LEFT JOIN sites s ON s.id = w.site_id
+         WHERE (p_site_id IS NULL OR w.site_id = p_site_id)
+           AND w.started_at >= p_from AND w.started_at < p_to
+           AND w.started_at >= p_part_from AND w.started_at < COALESCE(p_part_to, p_to)), '[]'::jsonb)),
+    'suppressed', jsonb_build_object(
+      'cols', '["site_id","occurred_at","fault_text","reason","site_name"]'::jsonb,
+      'rows', COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(f.site_id, f.occurred_at, f.fault_text, f.reason, s.site_name)
+                         ORDER BY f.occurred_at DESC, f.id DESC)
+          FROM suppressed_faults f LEFT JOIN sites s ON s.id = f.site_id
+         WHERE (p_site_id IS NULL OR f.site_id = p_site_id)
+           AND f.occurred_at >= p_from AND f.occurred_at < p_to
+           AND f.occurred_at >= p_part_from AND f.occurred_at < COALESCE(p_part_to, p_to)), '[]'::jsonb))
+  );
+$$;
+
+COMMENT ON FUNCTION public.activity_rows(integer, text, text, text, text) IS
+  'השורות הגולמיות של יומן הפעילות, בקריאה אחת ובמערכים. לא מדד — buildActivityLog נשאר ב-JS.';

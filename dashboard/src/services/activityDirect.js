@@ -29,23 +29,11 @@
 
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { buildActivityLog } from "../../../shared/timeline.mjs";
-// ⚠️ Supabase חוסם כל בקשה ב-1,000 שורות ומתעלם מ-limit. חובה לדפדף.
-import { pageAll } from "./pageAll";
+import { fetchRowsChunked } from "./rowsChunked";
 
-// אותה תקרה כמו LOG_FETCH_CAP בשרת. משוכפלת במכוון ולא מיובאת: היא מאפיין
-// של מגבלת התעבורה בכל צד, ולצד הדפדפן יש מגבלה אחרת מזו של השרת.
-// ============================================================
-// ⚠️ 60,000 — ועד מתי זה מספיק
-// ============================================================
-// 24/09/2026: "כל האתרים" בתצוגת שנה עבר את 20,000 — 20,373 פעולות ו-
-// 22,171 מקטעי מצב מאז 21/07 — והמסך הציג "התקופה גדולה מכדי לטעון
-// במלואה". הקצב ≈330 שורות ליום מכל סוג, כלומר ≈50–55 אלף עד 31/12.
-// "שנה" כאן היא קלנדרית, ולכן 60,000 מחזיק את 2026 ומתאפס בינואר.
-//
-// ⚠️ **זו דחייה, לא פתרון.** בסוף 2027 יהיו ≈115 אלף שורות לסוג, ושליפת
-// שורות גולמיות לדפדפן לא תחזיק. הפתרון הוא צבירה במסד — הוחלט באותו
-// יום שלא לגעת ב-SQL. התקרה עדיין מסומנת (capped) ואינה מושתקת.
-const FETCH_CAP = 60000;
+// ⚠️ **אין תקרה.** עד 24/09/2026 השורות נשלפו בדפדוף (PostgREST חותך כל
+// תשובה ב-1,000) עם תקרת ביטחון, ו"כל האתרים" בתצוגת שנה עבר אותה. עכשיו
+// הן מגיעות מפונקציית SQL לפי חודש — ראה rowsChunked.js.
 
 /**
  * @param code    קוד אתר, או null ללוג המצרף
@@ -65,62 +53,17 @@ export async function fetchActivityDirect(code, { from, to, limit = 300, offset 
     siteId = data.id;
   }
 
-  const scoped = (q) => (siteId ? q.eq("site_id", siteId) : q);
 
-  const [opsPage, statesPage, maintPage, supPage] = await Promise.all([
-    pageAll((a, b) => scoped(
-      supabase
-        .from("operations")
-        // id נשלף כי superseded_by מצביע עליו — ראה getActivityLog ב-queries.js.
-        .select("id, site_id, start_end, entry_exit, card_number, is_anomaly, superseded_by, state, occurred_at, excluded_at, excluded_by, sites(site_name)")
-        .gte("occurred_at", from).lt("occurred_at", to)
-        .order("occurred_at", { ascending: false })
-        .range(a, b)
-    ), FETCH_CAP),
-
-    pageAll((a, b) => scoped(
-      supabase
-        .from("status_history")
-        .select("id, site_id, status, started_at, ended_at, fault_text, excluded_at, excluded_by, reclassified_to, reclassified_by, reclassified_at, sites(site_name)")
-        .gte("started_at", from).lt("started_at", to)
-        .order("started_at", { ascending: false })
-        .range(a, b)
-    ), FETCH_CAP),
-
-    pageAll((a, b) => scoped(
-      supabase
-        .from("maintenance_windows")
-        .select("id, site_id, set_by_name, set_by_role, reason, started_at, duration_hours, expires_at, cancelled_at, excluded_at, excluded_by, performed_by, cancelled_by, sites(site_name)")
-        .gte("started_at", from).lt("started_at", to)
-        .order("started_at", { ascending: false })
-        .range(a, b)
-    ), FETCH_CAP),
-
-    // ⚠️ תקלות שהושמטו מהמדדים בזמן תחזוקה. הן **חייבות** להיטען גם כאן:
-    // שתי הזרועות מריצות את אותה buildActivityLog, ולכן זרוע שאינה טוענת
-    // אותן הייתה מציגה לוג קצר יותר — בלי שום שגיאה, ורק כשהמתג מוחלף.
-    pageAll((a, b) => scoped(
-      supabase
-        .from("suppressed_faults")
-        .select("site_id, occurred_at, fault_text, reason, sites(site_name)")
-        .gte("occurred_at", from).lt("occurred_at", to)
-        .order("occurred_at", { ascending: false })
-        .range(a, b)
-    ), FETCH_CAP),
-  ]);
-
-  // ⚠️ PostgREST מחזיר את הטבלה המקושרת כאובייקט מקונן (sites.site_name),
-  // בעוד שהשרת שולף אותו כעמודה שטוחה (site_name) ב-JOIN. buildTimeline קורא
-  // את השטוח, ולכן ההשטחה חייבת לקרות **כאן** — בלעדיה שם האתר נעלם מהלוג
-  // המצרף בשקט, בלי שום שגיאה.
-  const flat = (rows) => rows.map((r) => ({ ...r, site_name: r.sites?.site_name ?? null }));
+  // ⚠️ השורות מ-public.activity_rows, לפי חודש, בסדר יורד — ראה
+  // rowsChunked.js. site_name מגיע כעמודה, ולא כ-sites(site_name) מקונן.
+  const rows = await fetchRowsChunked("activity_rows", siteId, from, to, { desc: true });
 
   return buildActivityLog({
-    ops: flat(opsPage.rows),
-    states: flat(statesPage.rows),
-    maint: flat(maintPage.rows),
-    suppressed: flat(supPage.rows),
+    ops: rows.ops,
+    states: rows.states,
+    maint: rows.maint,
+    suppressed: rows.suppressed,
     limit, offset, filter, card,
-    capped: opsPage.capped || statesPage.capped || maintPage.capped || supPage.capped,
+    capped: false,
   });
 }

@@ -655,6 +655,12 @@ GRANT SELECT ON sites, status_history, operations,
 GRANT EXECUTE ON FUNCTION public.site_uptime(integer[], text, text)             TO authenticated;
 GRANT EXECUTE ON FUNCTION public.site_segments_collapsed(integer[], text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.site_stats(integer[], text, text)              TO authenticated;
+-- השורות הגולמיות של התובנות והלוג (24/09/2026) — SECURITY INVOKER, כלומר
+-- אותה RLS כמו השליפה הישירה שהן מחליפות. אנונימי — לא.
+REVOKE ALL ON FUNCTION public.insights_rows(integer, text, text, text, text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.activity_rows(integer, text, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.insights_rows(integer, text, text, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.activity_rows(integer, text, text, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_actor()                                   TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_role()                                    TO authenticated;
 
