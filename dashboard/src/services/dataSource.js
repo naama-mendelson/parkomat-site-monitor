@@ -277,7 +277,8 @@ export async function fetchExecutive(params = {}) {
 
   const [current, old] = await Promise.all([
     fetchExecutiveDirect({ from, to, ...filters }),
-    fetchExecutiveDirect({ ...prev, ...filters }),
+    // ⚠️ בלי הסדרה — ראה withSeries ב-executiveDirect. רק 4 KPI נקראים מכאן.
+    fetchExecutiveDirect({ ...prev, ...filters, withSeries: false }),
   ]);
 
   // ⚠️ תקופה קודמת ריקה לגמרי אינה "ירידה של 100%" אלא **אין נתון**. אתר

@@ -91,7 +91,18 @@ export async function fetchExecutiveDirect(params) {
   return lastPromise;
 }
 
-async function runExecutive({ from, to, ...filters }) {
+// ============================================================
+// ⚠️ `withSeries: false` — לתקופת ההשוואה בלבד
+// ============================================================
+// המסך קרא לכל זה **פעמיים במקביל**: פעם לתקופה, ופעם מלאה לתקופה הקודמת
+// — כולל executive_series, השאילתה הכבדה (≈1.4s חם, 2–4s קר, נמדד 24/09/2026).
+// מהתקופה הקודמת נקראים רק ארבעה KPI — פעולות, תקלות, זמינות, אחוז כשל —
+// וכולם נגזרים מ-allRows (site_stats/site_uptime), לא מהסדרה. כלומר חצי
+// מהעומס על המסד, בכל טעינה, חושב גרף שאיש לא ראה.
+//
+// ⚠️ computeExecutive עצמה רצה כרגיל, עם סדרה ריקה: אותו סינון, אותם
+// KPI. מה שנגזר מהסדרה (כניסות/יציאות, הגרף) יוצא אפס — ואינו נקרא.
+async function runExecutive({ from, to, withSeries = true, ...filters }) {
 
   // ⚠️ הדליים נחתכים **כאן** באותה getBucketRanges ש-computeExecutive
   // תשתמש בה מיד אחר כך. מקור אמת אחד לגבולות התקופה — שכפול החיתוך
@@ -105,6 +116,7 @@ async function runExecutive({ from, to, ...filters }) {
 
   const [supervisor, seriesRes, sitesRes] = await Promise.all([
     fetchSupervisorDirect(from, to),
+    !withSeries ? Promise.resolve({ data: [], error: null }) :
     // ⚠️ p_site_ids = null (כל האתרים). הסינון לפי פילטרים קורה ב-
     // computeExecutive על allRows, ו-foldSeries מסננת לפי selectedIds.
     // שליחת רשימה מסוננת לכאן הייתה מפצלת את הסינון לשני מקומות.

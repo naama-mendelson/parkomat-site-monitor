@@ -46,23 +46,23 @@ import { toSupervisorShape } from "./supervisorShape";
  * @returns {Promise<{sites: Array, summary: object}>} אותו מבנה שהשרת מחזיר
  * @throws {Error} כדי להתנהג כמו הזרוע דרך השרת
  */
-export async function fetchSupervisorDirect(fromIso, toIso = new Date().toISOString()) {
-  if (!isSupabaseConfigured) {
-    throw new Error("Supabase אינו מוגדר בדשבורד");
-  }
-
+// ============================================================
+// ⚠️ ארבע שאילתות שאינן תלויות בתקופה — פעם אחת לכל גל טעינה
+// ============================================================
+// מסך ההנהלה קורא לפונקציה הזו **פעמיים במקביל** — לתקופה ולתקופת
+// ההשוואה — ובכל פעם נשלפו מחדש האתרים, site_globals, התקלות האחרונות
+// והחלונות הפתוחים: אותה תשובה בדיוק, פעמיים, על מסד שכבר עמוס ברגע הזה.
+//
+// ⚠️ **משותף רק כל עוד הבקשה בדרך** — ברגע שחזרה, הקורא הבא שולף מחדש.
+// חלון זמן אחרי התשובה היה מטמון: ביטול תחזוקה ורענון מיד אחריו היו
+// מקבלים את החלון שכבר בוטל, וזה כשל שקט. שתי הקריאות של מסך ההנהלה
+// יוצאות באותו רגע, ולכן זה כל מה שנדרש כדי לאחד אותן.
+let shared = null;
+function sharedQueries() {
+  if (shared) return shared.promise;
   const nowIso = new Date().toISOString();
-
-  // p_site_ids = null פירושו "כל האתרים" — בדיוק הסיבה שהפונקציות מקבלות
-  // null. אחרת היה צריך לשלוף קודם את המזהים ורק אז לקרוא, סיבוב רשת שלם
-  // בטור לפני שאפשר להתחיל.
-  //
-  // שש קריאות **במקביל**. בשרת המקבילה הזו קיימת חלקית בלבד: recentErrors
-  // ו-activeMaintenances רצות שם בטור, אחרי שכל השאר כבר הסתיים.
-  const [sitesRes, statsRes, uptimeRes, globalsRes, errorsRes, maintRes] = await Promise.all([
+  const promise = Promise.all([
     supabase.from("sites").select("*"),
-    supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
-    supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_globals", { p_site_ids: null }),
     supabase.rpc("recent_errors", { p_limit: 10 }),
     supabase
@@ -75,6 +75,28 @@ export async function fetchSupervisorDirect(fromIso, toIso = new Date().toISOStr
       .lte("started_at", nowIso)
       .gt("expires_at", nowIso)
       .order("expires_at", { ascending: true }),
+  ]);
+  const entry = { promise };
+  shared = entry;
+  const drop = () => { if (shared === entry) shared = null; };
+  promise.then(drop, drop);
+  return promise;
+}
+
+export async function fetchSupervisorDirect(fromIso, toIso = new Date().toISOString()) {
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase אינו מוגדר בדשבורד");
+  }
+
+  // p_site_ids = null פירושו "כל האתרים" — בדיוק הסיבה שהפונקציות מקבלות
+  // null. אחרת היה צריך לשלוף קודם את המזהים ורק אז לקרוא, סיבוב רשת שלם
+  // בטור לפני שאפשר להתחיל.
+  //
+  // שש קריאות **במקביל**; ארבע מהן משותפות לכל הקוראים בגל — ראה sharedQueries.
+  const [[sitesRes, globalsRes, errorsRes, maintRes], statsRes, uptimeRes] = await Promise.all([
+    sharedQueries(),
+    supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
   ]);
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error
