@@ -11,6 +11,7 @@ import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
+import { copyText } from "../../utils/clipboard";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
 import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AdminPanel.css";
@@ -400,14 +401,14 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
             </div>
             <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
               <button className="adm-btn" onClick={async () => {
-                // ⚠️ try/catch: בהקשר לא-מאובטח clipboard נכשל ומחזיר Promise
-                // דחוי, כלומר שגיאה לא-מטופלת והמשתמשת חושבת שהעתיקה.
-                try {
-                  await navigator.clipboard.writeText(
-                    `${agentIssued.email}\n${agentIssued.password}`);
-                  flash("הועתק");
-                } catch { setErr("ההעתקה נכשלה — יש להעתיק ידנית"); }
-              }}>העתק</button>
+                // ⚠️ **הסיסמה בלבד, בלי המייל** (בקשת בעלת המוצר, 24/09/2026).
+                // בטופס הסוכן יש שדה אחד — "סיסמת האתר"; המייל נגזר מקוד האתר
+                // (SupabaseDefaults.EmailFor), ולכן העתקת שניהם חייבה למחוק שורה
+                // לפני ההדבקה. copyText ולא navigator.clipboard: הוא עובד גם
+                // בהקשר לא-מאובטח, ואינו זורק.
+                if (await copyText(agentIssued.password)) flash("הסיסמה הועתקה");
+                else setErr("ההעתקה נכשלה — יש להעתיק ידנית");
+              }}>העתק סיסמה</button>
               <button className="adm-btn-ghost"
                 onClick={() => setAgentIssued(null)}>העתקתי, סגור</button>
             </div>

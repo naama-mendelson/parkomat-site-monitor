@@ -3,6 +3,7 @@ import { useState } from "react";
 // ⚠️ דרך dataSource ולא api: הרישום עובר ל-Supabase ישירות, והמתג הוא זה
 // שקובע. הכלל בפרויקט הוא שקומפוננטה אינה בוחרת מסלול נתונים.
 import { registerSite } from "../../services/dataSource";
+import { copyText } from "../../utils/clipboard";
 import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
@@ -130,16 +131,12 @@ function AddSiteModal({ onClose, onSuccess }) {
 
                 <button type="button" className="btn btn-ghost"
                         onClick={async () => {
-                          // ⚠️ navigator.clipboard נכשל בהקשר לא-מאובטח ומחזיר
-                          // Promise דחוי. בלי catch זו שגיאה לא-מטופלת שמפילה
-                          // את הלחיצה בשקט, והמשתמשת חושבת שהעתיקה.
-                          try {
-                            await navigator.clipboard.writeText(
-                              `${agent.email}\n${agent.password}`);
-                            setCopied(true);
-                          } catch { setCopied(false); }
+                          // ⚠️ **הסיסמה בלבד, בלי המייל** (24/09/2026) — בטופס
+                          // הסוכן יש רק "סיסמת האתר"; המייל נגזר מקוד האתר.
+                          // copyText עובד גם בהקשר לא-מאובטח, ואינו זורק.
+                          setCopied(await copyText(agent.password));
                         }}>
-                  {copied ? "✓ הועתק" : "העתק שם משתמש וסיסמה"}
+                  {copied ? "✓ הועתק" : "העתק סיסמה"}
                 </button>
               </>
             )}
