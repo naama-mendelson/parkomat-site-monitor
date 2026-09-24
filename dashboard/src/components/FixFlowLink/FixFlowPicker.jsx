@@ -39,9 +39,15 @@ const norm = (v) => String(v ?? "").replace(/[^0-9א-תA-Za-z]/g, "").toLowerCas
 
 // ⚠️ ספריות ממוינות לפי מספר מסמכים, הגדולה ראשונה. מיון אלפביתי היה שם
 // ספרייה ריקה בראש, וזו בדיוק הבחירה השגויה שקל ללחוץ עליה בטעות.
+// ⚠️ **ספרייה ריקה אינה מוצעת כלל** (דרישת מוצר, 24/09/2026: "אסור שיוצגו
+// תיקיות ריקות"). resolveLink ממילא מדלג עליה, כך שבחירה בה הייתה נשמרת
+// ולא עושה כלום — אפשרות שאין לה תוצאה היא מלכודת.
+const hasContent = (t) => t.docs !== 0 || t.overrides > 0;
+
 function profileGroups(q) {
   const bySystem = new Map();
   for (const [key, p] of Object.entries(MAP.profiles ?? {})) {
+    if (!hasContent(p)) continue;
     if (q && !norm(p.profile).includes(q) && !norm(p.system).includes(q)) continue;
     if (!bySystem.has(p.system)) bySystem.set(p.system, []);
     bySystem.get(p.system).push({ key, ...p });
@@ -53,6 +59,7 @@ function profileGroups(q) {
 // ⚠️ 117 אתרים — הרשימה כבר ממוינת לפי שם בקובץ, וזו הדרך שבה מחפשים אתר.
 function siteOptions(q) {
   return Object.entries(MAP.ffSites ?? {})
+    .filter(([, s]) => hasContent(s))
     .filter(([, s]) => !q || norm(s.name).includes(q))
     .map(([id, s]) => ({ id, ...s }));
 }
@@ -161,12 +168,24 @@ function Outcome({ value, chosenSite, chosenProfile, auto, chosenLink }) {
   if (value && chosenLink?.status === "system-mismatch") {
     return <small className="ffp-note ffp-warn">⚠️ {chosenLink.reason}</small>;
   }
+  // ⚠️ בחירה קודמת ביעד ריק — אינה בשימוש. אומרים לאן האתר מגיע בפועל,
+  // ובלי לחזור על שם התיקייה הריקה: שמירה כאן (עם "אוטומטי") מנקה אותה.
+  if (value && chosenLink?.ignoredChoice) {
+    return (
+      <small className="ffp-note ffp-warn">
+        {chosenLink.status === "ok"
+          ? `הבחירה הקודמת אינה בשימוש כי אין בה תוכן — מקושר אוטומטית ל: ${chosenLink.system} / ${chosenLink.profile}` +
+            (chosenLink.docs ? ` · ${chosenLink.docs} מסמכים` : "")
+          : `⚠️ הבחירה הקודמת אינה בשימוש כי אין בה תוכן. ${chosenLink.reason}`}
+      </small>
+    );
+  }
   if (!value) {
     return (
       <small className={auto.status === "ok" ? "ffp-note" : "ffp-note ffp-warn"}>
         {auto.status === "ok"
           ? `אוטומטי מוביל ל: ${auto.system} / ${auto.profile}` +
-            (auto.docs === 0 ? " — ⚠️ ריקה" : auto.docs ? ` · ${auto.docs} מסמכים` : "")
+            (auto.docs ? ` · ${auto.docs} מסמכים` : "")
           : `⚠️ אוטומטי אינו מצליח: ${auto.reason}`}
       </small>
     );
@@ -179,7 +198,7 @@ function Outcome({ value, chosenSite, chosenProfile, auto, chosenLink }) {
         {chosenSite.docs > 0
           ? `נבחר האתר ${chosenSite.name} · ${chosenSite.profile} · ${chosenSite.docs} מסמכים` +
             (chosenSite.overrides ? ` · ${chosenSite.overrides} חריגות אתר` : " · אין חריגות אתר")
-          : `⚠️ "${chosenSite.name}" משויך ל-${chosenSite.profile}, שאין בה מסמכים`}
+          : "⚠️ לאתר הזה אין תוכן ב-FixFlow"}
       </small>
     );
   }
@@ -189,7 +208,7 @@ function Outcome({ value, chosenSite, chosenProfile, auto, chosenLink }) {
     <small className={chosenProfile.docs > 0 ? "ffp-note" : "ffp-note ffp-warn"}>
       {chosenProfile.docs > 0
         ? `נבחרה הספרייה ${chosenProfile.system} / ${chosenProfile.profile} · ${chosenProfile.docs} מסמכים · ללא חריגות אתר`
-        : `⚠️ "${chosenProfile.profile}" קיימת אך ריקה — הכפתור בכרטיס יאמר "ספרייה ריקה"`}
+        : "⚠️ בספרייה הזו אין תוכן"}
     </small>
   );
 }

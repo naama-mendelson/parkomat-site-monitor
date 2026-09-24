@@ -18,24 +18,33 @@ import { systemForType, SYSTEM_BY_TYPE } from "../../shared/fixflow-profiles.mjs
 
 const link = (system, profile) => ({ status: "ok", system, profile });
 
+// ⚠️ עד 24/09/2026 `matzbet-x` היה בלתי-מוכרע ברמת הפרופיל, ושלוש הבדיקות
+// כאן נשענו על זה. מאז הוא ממופה לספרייה הקומתית — ולכן יש לו ציפייה בשתי
+// הרמות, והבדיקות מוודאות ששתיהן נבדקות **בנפרד**: סתירת יצרן היא הערה
+// משלה, ואינה נבלעת בתוך סתירת הפרופיל.
 test("סוג לולק שקושר לספריית ביטנקם — נופל ברמת היצרן", () => {
   const v = judge(link("ביטנקם", "ביטנקם xy"), "matzbet-x", { ok: false });
   assert.equal(v.sysV, "✗");
-  assert.equal(v.notes.length, 1);
-  assert.match(v.notes[0], /לולק/);
+  assert.ok(v.notes.some((n) => /לולק/.test(n)), "הערת היצרן קיימת");
 });
 
-test("⚠️ אותו מקרה בדיוק היה ירוק כשהציפייה נגזרה מהפרופיל בלבד", () => {
-  // `matzbet-x` בלתי-מוכרע ברמת הפרופיל — וזה נכון ואינו הבאג.
+test("⚠️ סתירת יצרן נאמרת גם כשגם הפרופיל שגוי — שתי הערות, לא אחת", () => {
   const v = judge(link("ביטנקם", "ביטנקם xy"), "matzbet-x", { ok: false });
-  assert.equal(v.profV, "—", "הפרופיל אכן אינו קובע");
-  assert.notEqual(v.notes.length, 0, "ובכל זאת חייבת להיות סתירה — היצרן קובע");
+  assert.equal(v.profV, "✗");
+  assert.equal(v.notes.length, 2);
 });
 
-test("סוג לולק שקושר לספריית לולק — עובר", () => {
+test("מצבט X שקושר לספרייה הקומתית — עובר", () => {
+  const v = judge(link("לולק", "שאטל מצבט x קומתי (מצבטון על המעלית)"), "matzbet-x", { ok: false });
+  assert.equal(v.sysV, "✓");
+  assert.equal(v.profV, "✓");
+  assert.deepEqual(v.notes, []);
+});
+
+test("מצבט X שקושר לספריית מצבט אחרת של לולק — היצרן תקין, הפרופיל לא", () => {
   const v = judge(link("לולק", "שאטל מצבט שמסובבת במעלית"), "matzbet-x", { ok: false });
   assert.equal(v.sysV, "✓");
-  assert.deepEqual(v.notes, []);
+  assert.equal(v.profV, "✗");
 });
 
 // ⚠️ הדוגמאות כאן היו `doli`, ועברו ל-`matzbet-y`: מאז 17/09/2026 דולי אינו

@@ -299,3 +299,73 @@ test("אתר בלי מערכת — קישור ידני והתאמת שם ממש�
   assert.equal(resolveLink({ code: "3458", plc_type: "xy" }, MAP3).status, "ok");
   assert.equal(resolveLink({ code: "1", fixflow_profile: "site:b38" }, MAP3).status, "ok");
 });
+
+// ============================================================
+// ⚠️ ספרייה ריקה אינה יעד (24/09/2026)
+// ============================================================
+// דרישת מוצר: "אסור שיוצגו תיקיות ריקות". סוקולוב 10 ישב על בחירה ידנית של
+// `שאטל מצבט x` (0 מסמכים) וז'בוטינסקי 6 על קישור לאתר שמתויק שם — ושניהם
+// הציגו "ספרייה ריקה". יעד ריק מדולג עכשיו לטובת הבא בתור.
+const KOMATI = "שאטל מצבט x קומתי (מצבטון על המעלית)";
+const EMAP = {
+  profiles: {
+    "לולק|שאטל מצבט x": { system: "לולק", profile: "שאטל מצבט x", docs: 0 },
+    [`לולק|${KOMATI}`]: { system: "לולק", profile: KOMATI, docs: 31 },
+    "לולק|ריקה": { system: "לולק", profile: "ריקה", docs: 0 },
+  },
+  ffSites: {
+    EMPTY: { name: "אתר ריק", system: "לולק", profile: "שאטל מצבט x", docs: 0, overrides: 0 },
+    OVR: { name: "אתר עם חריגות", system: "לולק", profile: "שאטל מצבט x", docs: 0, overrides: 3 },
+  },
+  sites: {
+    "2441": { by: "name", siteId: "EMPTY", siteName: "סוקולוב", system: "לולק", profile: "שאטל מצבט x", docs: 0 },
+  },
+};
+const mx = (extra = {}) => ({ code: "9999", plc_type: "matzbet-x", control_system: "לולק", ...extra });
+
+test("מצבט X של לולק מגיע לספרייה הקומתית", () => {
+  const r = resolveProfile("matzbet-x", "לולק");
+  assert.equal(r.status, "ok");
+  assert.equal(r.profile, KOMATI);
+});
+
+test("⚠️ בחירה ידנית בספרייה ריקה מדולגת — והבחירה נמסרת כמדולגת", () => {
+  const r = resolveLink(mx({ fixflow_profile: "לולק|שאטל מצבט x" }), EMAP);
+  assert.equal(r.status, "ok");
+  assert.equal(r.profile, KOMATI);
+  assert.equal(r.by, "type");
+  assert.equal(r.ignoredChoice?.value, "לולק|שאטל מצבט x");
+});
+
+test("⚠️ קישור לאתר ריק מדולג; אתר עם חריגות אינו ריק", () => {
+  const empty = resolveLink(mx({ fixflow_profile: "site:EMPTY" }), EMAP);
+  assert.equal(empty.profile, KOMATI);
+  assert.ok(empty.ignoredChoice);
+  const ovr = resolveLink(mx({ fixflow_profile: "site:OVR" }), EMAP);
+  assert.equal(ovr.by, "chosen-site", "חריגות האתר הן תוכן");
+  assert.equal(ovr.ignoredChoice, undefined);
+});
+
+test("⚠️ התאמת שם שמובילה לספרייה ריקה מדולגת לטובת הסוג", () => {
+  const r = resolveLink(mx({ code: "2441" }), EMAP);
+  assert.equal(r.by, "type");
+  assert.equal(r.profile, KOMATI);
+});
+
+test("⚠️ כשכל האפשרויות ריקות — סירוב עם סיבה, לא קישור לתיקייה ריקה", () => {
+  const map = { ...EMAP, profiles: { ...EMAP.profiles, [`לולק|${KOMATI}`]: { system: "לולק", profile: KOMATI, docs: 0 } } };
+  const r = resolveLink(mx({ code: "2441", fixflow_profile: "לולק|ריקה" }), map);
+  assert.notEqual(r.status, "ok");
+  assert.match(r.reason, /ריקה|תוכן/);
+});
+
+test("בחירה פגומה עדיין נדחית במפורש, ואינה מדולגת בשקט", () => {
+  const r = resolveLink(mx({ fixflow_profile: "site:" }), EMAP);
+  assert.equal(r.status, "bad-choice");
+});
+
+test("ספרייה שבחרו ויש בה תוכן — נשארת, בלי ignoredChoice", () => {
+  const r = resolveLink(mx({ fixflow_profile: `לולק|${KOMATI}` }), EMAP);
+  assert.equal(r.by, "chosen");
+  assert.equal(r.ignoredChoice, undefined);
+});

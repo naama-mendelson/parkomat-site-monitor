@@ -85,16 +85,16 @@ export default function FixFlowLink({ site, faultText }) {
       <>
         <button
           className="ffl ffl-off ffl-fix"
-          title={`הספרייה "${link.profile}" קיימת אך ריקה — לחצי כדי לבחור אחרת`}
+          title="אין ספריית תקלות עם תוכן לאתר הזה — לחצי כדי לשייך"
           onClick={(e) => { e.stopPropagation(); setAssigning(true); }}
         >
           <span className="ffl-icon" aria-hidden="true">📚</span>
-          <span className="ffl-text">ספרייה ריקה</span>
+          <span className="ffl-text">שייכי ספריית תקלות</span>
         </button>
         {assigning && (
           <FixFlowAssign
             site={effective}
-            reason={`"${link.profile}" קיימת אך אין בה אף מסמך.`}
+            reason="אין ספריית תקלות עם תוכן לאתר הזה."
             onClose={() => setAssigning(false)}
             onSaved={onSaved}
           />
