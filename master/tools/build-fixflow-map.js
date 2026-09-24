@@ -47,6 +47,29 @@ const WRITE = process.argv.includes("--write");
 
 // ⚠️ הנרמול עבר ל-lib/site-names.mjs — אותו מימוש משמש גם את backfill-control-system.
 
+// ============================================================
+// ⚠️ "הדגש לאתר" — אותו כלל בדיוק כמו FixFlow
+// ============================================================
+// מסמך שיושב בכונן בתיקיית אתר (`<מערכת><פרופיל><אתר>…<קובץ>`) נכתב לאתר
+// ההוא, והסנכרון מכניס אותו לספריית הסוג כולו — הכרעת מוצר (FixFlow 307b51e):
+// ממשיכים להציג, אבל אומרים למי נכתב. FixFlow אומר זאת ברשימה ובראש הנוהל;
+// הכרטיס בדשבורד הציע את אותו מסמך **בלי שום סימן**.
+//
+// ⚠️ זהה ל-`siteFolderOf` (FixFlow/server/src/scripts/syncFromSource.js) ול-
+// `siteEmphasisOf` (FixFlow/web/src/siteEmphasis.js). כלל אחר כאן היה מסמן
+// כ"הדגש" מסמך שהסנכרון התייחס אליו ככללי, או להפך.
+const GENERIC_FOLDER = /שאר האתרים|קבצי מקור|^OLD$/i;
+const BACKSLASH = String.fromCharCode(92);
+function emphasisOf(sourcePath) {
+  if (!sourcePath) return null;
+  const parts = String(sourcePath).split(BACKSLASH).join("/").split("/");
+  if (parts.length < 4) return null;
+  const folder = parts[2].trim();
+  if (!folder || GENERIC_FOLDER.test(folder)) return null;
+  // Windows אינו מתיר `"` בשם תיקייה, ולכן `ת"א` נשמר כ-`ת_א`.
+  return folder.replace(/_/g, '"');
+}
+
 async function main() {
   const ff = new DatabaseSync(FIXFLOW_DB, { readOnly: true });
   // ⚠️ **חריגות חיות בלבד** (`deleted_at IS NULL`). הספירה כללה גם מחוקות:
@@ -122,7 +145,7 @@ async function main() {
   const faultsByProfile = {};
   for (const r of ff
     .prepare(
-      `SELECT f.id, f.title, f.warning, sy.name AS system, p.name AS profile
+      `SELECT f.id, f.title, f.warning, f.source_path, sy.name AS system, p.name AS profile
          FROM faults f
          JOIN profiles p ON p.id = f.profile_id
          JOIN systems sy ON sy.id = p.system_id
@@ -130,10 +153,14 @@ async function main() {
         ORDER BY sy.name, p.name, f.sort_order`)
     .all()) {
     const key = `${r.system}|${r.profile}`;
-    (faultsByProfile[key] ??= []).push(
-      // ⚠️ מפתחות קצרים: `id/title/warning` על 319 שורות מוסיפים ~6KB של שמות
-      // שדות בלבד. הקובץ הזה נטען בכל פתיחה של הדשבורד.
-      r.warning ? { i: r.id, t: r.title, w: r.warning } : { i: r.id, t: r.title });
+    // ⚠️ מפתחות קצרים: `id/title/warning` על 319 שורות מוסיפים ~6KB של שמות
+    // שדות בלבד. הקובץ הזה נטען בכל פתיחה של הדשבורד.
+    const f = { i: r.id, t: r.title };
+    if (r.warning) f.w = r.warning;
+    // `e` — "הדגש לאתר": האתר שהמסמך נכתב בשבילו (ראה emphasisOf).
+    const e = emphasisOf(r.source_path);
+    if (e) f.e = e;
+    (faultsByProfile[key] ??= []).push(f);
   }
 
   const profileList = {};

@@ -129,3 +129,54 @@ test("⚠️ שאילתה קצרה שנבלעת בכותרת ארוכה אינה
 test("הסף הוא זה שנמדד בשטח", () => {
   assert.equal(MIN_SCORE, 0.55);
 });
+
+// ============================================================
+// ⚠️ שקולים — הכרעה לפי מקור המסמך (24/09/2026)
+// ============================================================
+// 6 זוגות בספריות הם אותה כותרת בפיסוק אחר, ובכל אחד התוכן שונה: כללי מול
+// "הדגש לאתר", או שני אתרים. בלי `rank` — מסרבים (ההתנהגות הקודמת נשמרת).
+const TIE = [
+  { id: "G", title: "מעלית שער לא סגור", emphasis: null },
+  { id: "K", title: "מעלית- שער לא סגור", emphasis: "קינג גורג" },
+  { id: "X", title: "גלישת מגש", emphasis: null },
+];
+const rankFor = (mySite) => (f) => (f.emphasis && f.emphasis === mySite ? 0 : f.emphasis ? 2 : 1);
+
+test("שקולים בלי rank — מסרב, כמו קודם", () => {
+  assert.equal(matchFault("מעלית - שער לא סגור:", TIE), null);
+});
+
+test("⚠️ כללי מול הדגש של אתר אחר — הכללי", () => {
+  const r = matchFault("מעלית - שער לא סגור:", TIE, null, { rank: rankFor("גולדברג 5") });
+  assert.equal(r?.fault.id, "G");
+});
+
+test("⚠️ באתר שהמסמך נכתב בשבילו — ההדגש שלו גובר על הכללי", () => {
+  const r = matchFault("מעלית - שער לא סגור:", TIE, null, { rank: rankFor("קינג גורג") });
+  assert.equal(r?.fault.id, "K");
+});
+
+test("⚠️ שני הדגשים של אתרים זרים — עדיין מסרב", () => {
+  const two = [
+    { id: "A", title: "מעלית מגש לא ממוקם", emphasis: "אנטיגונוס" },
+    { id: "N", title: "מעלית -מגש לא ממוקם", emphasis: "נמל מגשים" },
+  ];
+  assert.equal(matchFault("מעלית - מגש לא ממוקם", two, null, { rank: rankFor("ויצמן 93") }), null);
+  assert.equal(matchFault("מעלית - מגש לא ממוקם", two, null, { rank: rankFor("נמל מגשים") })?.fault.id, "N");
+});
+
+test("rank אינו מכשיר מועמד שמתחת לסף", () => {
+  const r = matchFault("משהו אחר לגמרי", TIE, null, { rank: rankFor("קינג גורג") });
+  assert.equal(r, null);
+});
+
+test("⚠️ שתי תקלות שונות בציון קרוב — rank אינו מכריע ביניהן (המקרה האמיתי)", async () => {
+  // נמדד על ספריית מצבט Y (גולדברג 5, 24/09/2026): 0.61 מול 0.58, כותרות שונות
+  // במילים. בלי ההגבלה rank בחר את הכללי — תקלה אחרת — רק משום שהוא כללי.
+  const { readFileSync } = await import("node:fs");
+  const MAP = JSON.parse(readFileSync(new URL("../../dashboard/src/components/FixFlowLink/fixflow-sites.json", import.meta.url), "utf8"));
+  const lib = MAP.faults["לולק|שאטל מצבט y שמסובבת בשאטל"].map((f) => ({ id: f.i, title: f.t, emphasis: f.e ?? null }));
+  const q = "מסובבת שאטל 1 - זמן מקסימלי לתנועה:";
+  assert.equal(matchFault(q, lib), null, "בלי rank — מסרב");
+  assert.equal(matchFault(q, lib, null, { rank: rankFor("גולדברג 5") }), null, "וגם עם rank");
+});

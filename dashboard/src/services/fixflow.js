@@ -149,6 +149,9 @@ function modelFor(key, faults) {
  * ⚠️ החיפוש הוא **בתוך הספרייה של האתר בלבד**. חיפוש על כל 319 הנהלים היה
  * מוצא כותרת דומה מספרייה של מתקן אחר — וכל הצעדים בה נראים סבירים.
  */
+// גרשיים שקולים בלבד — אותו nameKey כמו ב-FixFlow/web/src/siteEmphasis.js.
+const nameKey = (s) => String(s ?? "").trim().replace(/''|״/g, '"');
+
 export function fixflowSolutionFor(site, faultText) {
   if (!FIXFLOW_ENABLED || !FIXFLOW_BASE_URL || !faultText) return null;
 
@@ -160,8 +163,24 @@ export function fixflowSolutionFor(site, faultText) {
   if (!raw?.length) return null;
 
   // מפתחות קצרים בקובץ (i/t/w) — נפרשים כאן, כדי שהמתאם יישאר קריא.
-  const faults = raw.map((f) => ({ id: f.i, title: f.t, warning: f.w ?? null }));
-  const hit = matchFault(faultText, faults, modelFor(key, faults));
+  const faults = raw.map((f) => ({ id: f.i, title: f.t, warning: f.w ?? null, emphasis: f.e ?? null }));
+
+  // ============================================================
+  // ⚠️ "הדגש לאתר" — מי נכתב בשביל מי
+  // ============================================================
+  // מסמך מתיקיית אתר בכונן מוצג לכל הסוג (הכרעת מוצר, FixFlow 307b51e), ו-
+  // FixFlow אומר למי הוא נכתב. הכרטיס כאן הציע אותו **בלי סימן**, ובין שני
+  // מסמכים באותה כותרת — כללי מול הדגש של אתר אחר — פשוט ויתר.
+  //
+  // שם האתר ב-FixFlow ידוע רק בקישור ברמת אתר (`scope`). ⚠️ התאמה **מדויקת**
+  // בלבד, כמו isEmphasisForSite ב-FixFlow: "אנטיגונוס" אינו "אנטיגונוס 13".
+  const siteLevel = link.by === "name" || link.by === "chosen-site";
+  const mySite = siteLevel ? nameKey(link.scope) : null;
+  const forMe = (f) => Boolean(f.emphasis && mySite && nameKey(f.emphasis) === mySite);
+  // עדיף: נכתב לאתר הזה (0) · כללי (1) · הדגש של אתר אחר (2).
+  const rank = (f) => (forMe(f) ? 0 : f.emphasis ? 2 : 1);
+
+  const hit = matchFault(faultText, faults, modelFor(key, faults), { rank });
   if (!hit) return null;
 
   const base =
@@ -172,6 +191,8 @@ export function fixflowSolutionFor(site, faultText) {
   return {
     title: hit.fault.title,
     warning: hit.fault.warning,
+    // null כשהמסמך כללי או נכתב לאתר הזה — אז אין ממה להזהיר.
+    emphasis: hit.fault.emphasis && !forMe(hit.fault) ? hit.fault.emphasis : null,
     score: hit.score,
     url: `${FIXFLOW_BASE_URL}/${base}/fault/${encodeURIComponent(hit.fault.id)}`,
   };

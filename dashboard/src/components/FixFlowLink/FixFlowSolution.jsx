@@ -48,6 +48,15 @@ export default function FixFlowSolution({ site, faultText }) {
       {/* ⚠️ האזהרה לפני הכפתור, ולא אחריו. מי שילחץ ויעבור ל-FixFlow יקרא
           אותה שם ממילא; מי שלא ילחץ — וזה הרוב באירוע לחוץ — צריך לראות
           אותה **כאן**, לפני שהוא ניגש למתקן. */}
+      {/* ⚠️ אותו ניסוח כמו בראש הנוהל ב-FixFlow: מסמך מתיקיית אתר אחר מוצג
+          לכל הסוג (הכרעת מוצר), ולכן חייב לומר למי נכתב — ערך כיול, מספר תא
+          או רכיב שקיים רק שם נראים אחרת כמו הוראה כללית. */}
+      {hit.emphasis && (
+        <p className="ffs-emphasis">
+          נוהל זה נכתב כהדגש לאתר {hit.emphasis} — ייתכן שבאתר שלך הטיפול שונה
+        </p>
+      )}
+
       {hit.warning && (
         <p className="ffs-warning">
           <span aria-hidden="true">⚠️</span> {hit.warning}

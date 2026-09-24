@@ -94,6 +94,13 @@
   white-space: pre-line;
 }
 
+/* "הדגש לאתר" — מידע, לא אזהרת בטיחות: שקט יותר מ-.ffs-warning. */
+.ffs-emphasis {
+  margin: 6px 0 0;
+  font-size: 0.9em;
+  color: #475569;
+}
+
 .ffs-open {
   display: inline-block;
   margin-top: 6px;
@@ -107,6 +114,7 @@
   .ffs { background: rgba(96, 165, 250, 0.10); border-inline-start-color: #60a5fa; }
   .ffs-warn { background: rgba(251, 146, 60, 0.12); border-inline-start-color: #fb923c; }
   .ffs-warning { color: #fdba74; }
+  .ffs-emphasis { color: #cbd5e1; }
   .ffs-open { color: #93c5fd; }
 }
 

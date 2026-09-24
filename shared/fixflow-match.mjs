@@ -102,7 +102,7 @@ export const MIN_MARGIN = 0.03;
  * @param {Array<{id,title,warning}>} faults  הנהלים של **הספרייה של האתר בלבד**
  * @returns {{fault, score, runnerUp}|null}
  */
-export function matchFault(faultText, faults, model = null) {
+export function matchFault(faultText, faults, model = null, { rank = null } = {}) {
   if (!faultText || !Array.isArray(faults) || faults.length === 0) return null;
   const m = model ?? buildWeights(faults);
   const q = tokens(faultText);
@@ -121,7 +121,34 @@ export function matchFault(faultText, faults, model = null) {
 
   // ⚠️ כותרת **זהה** שחוזרת פעמיים אינה עמימות — זו אותה תקלה שמתויקת פעמיים,
   // ובחירת הראשונה נכונה. עמימות היא שתי כותרות **שונות** באותו ציון.
-  if (secondTitle && secondTitle !== best.title && bestScore - second < MIN_MARGIN) return null;
+  if (secondTitle && secondTitle !== best.title && bestScore - second < MIN_MARGIN) {
+    // ============================================================
+    // ⚠️ שקולים — הכרעה לפי **מקור** המסמך, ורק אם היא חד-משמעית
+    // ============================================================
+    // נמדד (24/09/2026): 6 זוגות בספריות הם אותה כותרת בפיסוק אחר, ובכל
+    // אחד **התוכן שונה** — מסמך כללי מול "הדגש לאתר" אחר, או שני אתרים.
+    // לכן הסירוב נכון כשאין דרך להבחין. אבל כשאחד המועמדים נכתב **לאתר
+    // הזה**, או שהוא הכללי מול הדגשים של אתרים אחרים — יש.
+    // `rank` נמוך = עדיף. שני אתרים זרים באותה דרגה — ממשיכים לסרב.
+    if (!rank) return null;
+    const contenders = faults.filter((f) => {
+      const s = similarity(q, m.tokensOf(f), m.weight);
+      return s >= MIN_SCORE && s > bestScore - MIN_MARGIN;
+    });
+    // ⚠️ **רק כשכולם אותה כותרת** (אותן מילים — פיסוק וספרות אינם מילים).
+    // מקור המסמך מכריע בין שתי **גרסאות** של אותה תקלה; הוא אינו אומר דבר על
+    // איזו מבין שתי תקלות **שונות** נכונה. נמדד: בלי ההגבלה "מסובבת שאטל 1 -
+    // זמן מקסימלי לתנועה" הוצמד ל"מסובבת - זמן מקסימלי **להפסקת** מסובבת"
+    // רק משום שהוא כללי והשני הדגש של אתר אחר.
+    const sig = (f) => [...m.tokensOf(f)].sort().join(" ");
+    if (new Set(contenders.map(sig)).size !== 1) return null;
+    const top = Math.min(...contenders.map(rank));
+    const winners = contenders.filter((f) => rank(f) === top);
+    if (new Set(winners.map((f) => f.title)).size !== 1) return null;
+    const w = winners.reduce((a, b) =>
+      similarity(q, m.tokensOf(b), m.weight) > similarity(q, m.tokensOf(a), m.weight) ? b : a);
+    return { fault: w, score: similarity(q, m.tokensOf(w), m.weight), runnerUp: second, byRank: true };
+  }
 
   return { fault: best, score: bestScore, runnerUp: second };
 }
