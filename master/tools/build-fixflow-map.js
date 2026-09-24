@@ -49,10 +49,16 @@ const WRITE = process.argv.includes("--write");
 
 async function main() {
   const ff = new DatabaseSync(FIXFLOW_DB, { readOnly: true });
+  // ⚠️ **חריגות חיות בלבד** (`deleted_at IS NULL`). הספירה כללה גם מחוקות:
+  // גרוזנברג 7 הוצג עם 31 חריגות כשהחיות הן 16 (הייבוא של 16/09 הוחלף
+  // בסנכרון מהכונן), וארבעה אתרים עם 0 חיות הוצגו כבעלי חריגות. מאז
+  // 24/09/2026 זה גם משנה החלטה: resolveLink מדלג על יעד ריק, וקישור לאתר
+  // עם חריגות אינו נחשב ריק — כלומר חריגה מחוקה הייתה מחזיקה יעד ריק בחיים.
   const ffSites = ff
     .prepare(
       `SELECT s.id, s.name, p.id AS profile_id, p.name AS profile, sy.name AS system,
-              (SELECT COUNT(*) FROM site_fault_overrides o WHERE o.site_id = s.id) AS overrides
+              (SELECT COUNT(*) FROM site_fault_overrides o
+                WHERE o.site_id = s.id AND o.deleted_at IS NULL) AS overrides
          FROM sites s
          JOIN profiles p ON p.id = s.profile_id
          JOIN systems sy ON sy.id = p.system_id

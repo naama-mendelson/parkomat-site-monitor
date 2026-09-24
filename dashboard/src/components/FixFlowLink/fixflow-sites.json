@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T12:15:39.910Z",
+  "generatedAt": "2026-09-24T06:10:17.202Z",
   "profiles": {
     "ביטנקם|אקסטרקטור": {
       "system": "ביטנקם",
@@ -331,7 +331,7 @@
       "system": "ביטנקם",
       "profile": "ביטנקם xy",
       "docs": 20,
-      "overrides": 31
+      "overrides": 16
     },
     "01KXMQJ7A2B5WJDD6KQGY6R7AD": {
       "name": "דה האז 3 ת\"א",
@@ -464,7 +464,7 @@
       "system": "ביטנקם",
       "profile": "שאטל מסילה ביטנקם",
       "docs": 21,
-      "overrides": 4
+      "overrides": 0
     },
     "01KXMQJ7BVV901BHK66G4S5B71": {
       "name": "ז'בוטינסקי 6 ת''א",
@@ -667,7 +667,7 @@
       "system": "ביטנקם",
       "profile": "מערכת cam",
       "docs": 21,
-      "overrides": 1
+      "overrides": 0
     },
     "01KXMQJ77ZMZ8E3ZNQZW80EWSD": {
       "name": "מעפילי אגוז 38 ת''א",
@@ -702,7 +702,7 @@
       "system": "לולק",
       "profile": "שאטל מסילה",
       "docs": 27,
-      "overrides": 1
+      "overrides": 0
     },
     "01KXMQJ78CJAB4G7KN5AD32KKY": {
       "name": "נמל סילומט",
@@ -716,7 +716,7 @@
       "system": "ביטנקם",
       "profile": "שאטל מסילה ביטנקם",
       "docs": 21,
-      "overrides": 1
+      "overrides": 0
     },
     "01KXMQJ7C2A8DQEC2Z4KTBQP46": {
       "name": "סוקולוב 10 בת ים",
@@ -2629,12 +2629,10 @@
       "docs": 58
     },
     "2441": {
-      "by": "name",
-      "siteId": "01KXMQJ7C2A8DQEC2Z4KTBQP46",
-      "siteName": "סוקולוב 10 בת ים",
+      "by": "type",
       "system": "לולק",
-      "profile": "שאטל מצבט x",
-      "docs": 0
+      "profile": "שאטל מצבט x קומתי (מצבטון על המעלית)",
+      "docs": 31
     },
     "3439": {
       "by": "type",
@@ -2656,13 +2654,17 @@
       "profile": "xy לולק",
       "docs": 58
     },
-    "3461": {
-      "by": "name",
-      "siteId": "01KXMQJ7BVV901BHK66G4S5B71",
-      "siteName": "ז'בוטינסקי 6 ת''א",
+    "3458": {
+      "by": "type",
       "system": "לולק",
-      "profile": "שאטל מצבט x",
-      "docs": 0
+      "profile": "שאטל מצבט x קומתי (מצבטון על המעלית)",
+      "docs": 31
+    },
+    "3461": {
+      "by": "type",
+      "system": "לולק",
+      "profile": "שאטל מצבט x קומתי (מצבטון על המעלית)",
+      "docs": 31
     },
     "3465": {
       "by": "type",
