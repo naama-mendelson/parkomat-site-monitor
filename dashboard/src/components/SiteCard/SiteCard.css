@@ -490,12 +490,19 @@
   font-size: 0.74rem;
   font-weight: 600;
   line-height: 1.35;
-  white-space: nowrap;
+  /* ⚠️ לעולם לא רחבה מהכרטיס: שורה אחת כשיש מקום, ושתיים כשאין. היא הייתה
+     nowrap בלי תקרה, ובכרטיס צר ("בפעולה 30 דקות — ייתכן תקוע") גלשה מעבר
+     לקצה ונחתכה — דווקא החלק שאומר מה הבעיה. (בקשת בעלת המוצר, 04/10/2026) */
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .card-stuck-icon {
   font-size: 0.82rem;
   line-height: 1;
+  flex-shrink: 0;   /* האייקון לא נמחץ כשהטקסט עובר שורה */
 }
 
 /* עמעום עדין של הכרטיס כולו: מסיר ממנו את המראה ה"מוגמר" בלי להסתיר מידע.
