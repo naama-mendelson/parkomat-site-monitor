@@ -765,9 +765,23 @@ the *only* power-loss detector, and deleting it leaves a dead site looking healt
 
 **Add this to the cut-over procedure for every future site.**
 
+⚠️ **No longer needed since `master` was retired (17/09/2026).** It was `master` that
+subscribed and turned the retained `"0"` into `no_comm`. With nothing reading HiveMQ, a
+stale will harms nobody, and agent 1.0.57 turns MQTT off at every site with a password
+anyway.
+
 ### The switch, and why it is derived
 
-`Mqtt.Disabled` in `config.json`, and `SiteConfig.MqttEnabled` is
+⚠️ **Since agent 1.0.57 (04/10/2026) the switch is the Supabase password alone:
+`MqttEnabled = !Supabase.Enabled`.** Every site with a password drops MQTT and Mosquitto
+with no hand edit, and `Mqtt.Disabled` is kept in the file but decides nothing. Why:
+`master`, HiveMQ's only reader, has been off since 17/09. At site 2431 the connection test
+showed a red HiveMQ DNS error while the Supabase check was cut off below a fixed-height
+window. The test no longer checks HiveMQ, and a site without a password shows red. Details
+are in [`Parkomat.Agent/CLAUDE.md`](Parkomat.Agent/CLAUDE.md), *Direct only*. The paragraph
+below records the 06/09 design; the principle in it still holds.
+
+`Mqtt.Disabled` in `config.json`, and `SiteConfig.MqttEnabled` was
 `!(Mqtt.Disabled && Supabase.Enabled)`. A site with no Supabase password stays on MQTT
 whatever the file says, because *"reports nowhere"* is the worst state in this system:
 the agent runs, the PLC is read, the tray icon is green, and nothing anywhere says the
@@ -775,8 +789,8 @@ data reaches no one. Same principle as `SupabaseConfig.Enabled` — **a state th
 not exist should not be expressible.**
 
 ⚠️ **No checkbox in the settings form, deliberately.** One click in the field would
-silence a site — the same trap the TLS checkbox was removed for. Turning it on is a
-hand edit.
+silence a site — the same trap the TLS checkbox was removed for. ~~Turning it on is a
+hand edit.~~ Since 1.0.57, entering the password *is* the switch.
 
 ### Still open
 

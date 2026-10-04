@@ -14,8 +14,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.9" />
-		<!-- לבדיקת חיבור על-פי דרישה מתוך ה-Tray: PLC (Modbus/TCP) ו-HiveMQ (MQTT+TLS) -->
-		<PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+		<!-- בדיקת PLC (Modbus/TCP) מתוך ה-Tray. MQTTnet הוסרה ב-1.0.57 יחד עם בדיקת HiveMQ. -->
 		<PackageReference Include="NModbus" Version="3.0.83" />
 	</ItemGroup>
 

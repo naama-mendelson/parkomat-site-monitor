@@ -28,22 +28,34 @@ public class DirectOnlyTests
         Assert.False(new SiteConfig().Mqtt.Disabled);
     }
 
+    // ============================================================
+    // ⚠️ מ-1.0.57: יש סיסמה ⟸ MQTT כבוי, בלי Mqtt.Disabled
+    // ============================================================
+    // master כבוי מ-17/09/2026, כך ש-MQTT באתר עם סיסמה מגיע לאיש — ובאתר
+    // 2431 (04/10) הוא רק הוסיף שגיאת DNS אדומה למסך הבדיקה.
     [Fact]
-    public void DisablingMqttWorksOnlyWhenTheDirectPathIsConfigured()
+    public void WithAPasswordMqttIsOffEvenWithoutTheManualSwitch()
     {
         var c = Configured();
         Assert.True(c.Supabase.Enabled, "התנאי המקדים לא מתקיים — הבדיקה חסרת ערך");
+        Assert.False(c.Mqtt.Disabled, "הבדיקה הזו היא בדיוק על אתר שאיש לא ערך בו את הקובץ");
 
+        Assert.False(c.MqttEnabled);
+    }
+
+    [Fact]
+    public void TheOldManualSwitchNoLongerDecides()
+    {
+        var c = Configured();
         c.Mqtt.Disabled = true;
         Assert.False(c.MqttEnabled);
+        c.Mqtt.Disabled = false;
+        Assert.False(c.MqttEnabled, "Disabled=false החזיר את MQTT באתר עם סיסמה");
     }
 
     [Fact]
     public void ASiteWithNoDirectPathStaysOnMqttEvenIfAskedToStop()
     {
-        // ⚠️ **זה הלב.** מי שיערוך את config.json ידנית באתר שאין בו סיסמה
-        // מקבל אתר שאינו מדווח לשום מקום — וזה כשל שקט לחלוטין. המצב הזה
-        // פשוט אינו ניתן לביטוי, אותו עיקרון בדיוק כמו SupabaseConfig.Enabled.
         var c = new SiteConfig { SiteId = "1358" };
         c.Supabase.SiteId = "1358";      // בלי סיסמה
         c.Mqtt.Disabled = true;
@@ -55,11 +67,7 @@ public class DirectOnlyTests
     [Fact]
     public void LosingTheSupabasePasswordBringsMqttBack()
     {
-        // ⚠️ והתרחיש שנמדד בשטח כל היום: הסיסמה נמחקת בשדרוג. באתר שכובה
-        // מ-MQTT זה היה משאיר אותו **מת**, ולא "מדווח בערוץ הישן".
-        // הגזירה הופכת את זה לנפילה חזרה למסלול שעובד.
         var c = Configured();
-        c.Mqtt.Disabled = true;
         Assert.False(c.MqttEnabled);
 
         c.Supabase.Password = "";        // מה שההתקנה עשתה

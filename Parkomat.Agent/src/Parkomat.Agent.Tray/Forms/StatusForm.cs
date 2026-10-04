@@ -6,15 +6,18 @@ using Parkomat.Agent.Tray.Services;
 namespace Parkomat.Agent.Tray.Forms;
 
 /// <summary>
-/// חלון "בדוק חיבור": מריץ על-פי דרישה שתי בדיקות — PLC ו-HiveMQ —
-/// ומציג לכל אחת "מתחבר..." ואז ✓/✗ עם הסיבה בעברית (RTL).
-/// כולל כפתור "בדוק שוב". הבדיקות עטופות ב-try/catch ולא מפילות את החלון.
+/// חלון "בדוק חיבור": מריץ על-פי דרישה שלוש בדיקות — זהות האתר, PLC,
+/// ודיווח לדשבורד (Supabase) — ומציג לכל אחת "מתחבר..." ואז ✓/✗ עם הסיבה
+/// בעברית (RTL). כולל כפתור "בדוק שוב". הבדיקות לא מפילות את החלון.
+///
+/// ⚠️ **אין כאן HiveMQ (1.0.57).** ‏master כבוי מ-17/09/2026, ו-MQTT כבוי
+/// בכל אתר עם סיסמת Supabase. באתר 2431 (04/10) הבדיקה הציגה שגיאת DNS
+/// באדום על מסלול שאיש אינו קורא — ובאותו חלון בדיקת Supabase נחתכה.
 /// </summary>
 public class StatusForm : Form
 {
     private readonly Label _siteResult = new();
     private readonly Label _plcResult = new();
-    private readonly Label _hiveResult = new();
     private readonly Label _supaResult = new();
     private readonly Button _checkAgain = new();
 
@@ -29,7 +32,17 @@ public class StatusForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(520, 280);
+        // ============================================================
+        // ⚠️ גודל לפי התוכן — לא גובה קבוע
+        // ============================================================
+        // כאן היה `ClientSize = new Size(520, 280)` — מקום לשלוש קבוצות מתוך
+        // ארבע. הרביעית, "מסלול ישיר (Supabase)", נחתכה מתחתית החלון, וזו
+        // בדיוק הבדיקה שקובעת אם האתר מגיע לדשבורד. נצפה באתר 2431 (04/10):
+        // הטכנאי ראה רק את HiveMQ האדום. והודעה שגולשת לשתי שורות מגדילה
+        // קבוצה — גובה קבוע היה חותך שוב, רק במקום אחר.
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        MinimumSize = new Size(540, 0);
 
         // --- כפתורים (למטה, תמיד גלויים) ---
         var buttons = new FlowLayoutPanel
@@ -50,12 +63,14 @@ public class StatusForm : Form
         buttons.Controls.Add(_checkAgain);
         buttons.Controls.Add(close);
 
-        // --- תוכן: שתי קבוצות בדיקה ---
+        // --- תוכן: שלוש קבוצות בדיקה ---
         var content = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
-            RowCount = 4,
+            RowCount = 3,
             Padding = new Padding(12)
         };
         // ⚠️ **זהות האתר ראשונה, ובכוונה.** היא התנאי המקדים לשתי האחרות:
@@ -63,8 +78,7 @@ public class StatusForm : Form
         // מי שקורא מלמעלה למטה צריך לפגוש קודם את מה שמבטל את השאר.
         content.Controls.Add(BuildCheckGroup("זהות האתר", _siteResult), 0, 0);
         content.Controls.Add(BuildCheckGroup("בדיקת PLC (בקר)", _plcResult), 0, 1);
-        content.Controls.Add(BuildCheckGroup("בדיקת HiveMQ (ענן)", _hiveResult), 0, 2);
-        content.Controls.Add(BuildCheckGroup("בדיקת מסלול ישיר (Supabase)", _supaResult), 0, 3);
+        content.Controls.Add(BuildCheckGroup("דיווח לדשבורד (Supabase)", _supaResult), 0, 2);
 
         Controls.Add(content);
         Controls.Add(buttons);
@@ -101,7 +115,6 @@ public class StatusForm : Form
 
         SetPending(_siteResult);
         SetPending(_plcResult);
-        SetPending(_hiveResult);
         SetPending(_supaResult);
 
         SiteConfig config;
@@ -113,7 +126,6 @@ public class StatusForm : Form
         {
             SetResult(_siteResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_plcResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
-            SetResult(_hiveResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             SetResult(_supaResult, false, "שגיאה בטעינת ההגדרות: " + ex.Message);
             _checkAgain.Enabled = true;
             return;
@@ -129,35 +141,12 @@ public class StatusForm : Form
         // כל בדיקה מעדכנת את התווית שלה ברגע שהיא מסתיימת — עצמאית מהשנייה.
         Task plc = ShowWhenDone(ConnectionTester.TestPlcAsync(config.Plc), _plcResult);
 
-        // ============================================================
-        // ⚠️ HiveMQ נבדק רק אם הוא בכלל בשימוש באתר הזה
-        // ============================================================
-        // הבדיקה רצה תמיד, ולכן אתר שכובה ממנו בכוונה הציג לנצח
-        // "החיבור ל-HiveMQ נכשל". **אזהרה שקרית גרועה מאזהרה חסרה** —
-        // היא שולחת מישהו לתקן ברוקר שתקין, וזה בדיוק הנימוק שבגללו
-        // שלב הברוקר ב-Worker מדולג במקום לזרוק.
-        //
-        // `MqttEnabled` נגזר (`!(Disabled && Supabase.Enabled)`), ולכן
-        // אתר בלי סיסמת Supabase נשאר על MQTT ויבדק — גם אם מישהו כתב
-        // `Disabled: true` בקובץ.
-        Task hive = config.MqttEnabled
-            ? ShowWhenDone(ConnectionTester.TestHiveMqAsync(config.Mqtt), _hiveResult)
-            : SetSkipped(_hiveResult, "MQTT כבוי באתר הזה — האתר מדווח ישירות ל-Supabase.");
-
         Task supa = ShowWhenDone(ConnectionTester.TestSupabaseAsync(config), _supaResult);
 
-        try { await Task.WhenAll(plc, hive, supa); }
+        try { await Task.WhenAll(plc, supa); }
         catch { /* כל בדיקה כבר טופלה בנפרד ב-ShowWhenDone */ }
 
         _checkAgain.Enabled = true;
-    }
-
-    // ⚠️ **"מדולג" אינו "נכשל" ואינו "הצליח".** תווית ירוקה על בדיקה
-    // שלא רצה היא שקר, ואדומה שולחת לתקן משהו תקין. הטקסט אומר למה.
-    private static Task SetSkipped(Label target, string why)
-    {
-        SetNeutral(target, why);
-        return Task.CompletedTask;
     }
 
     // ממתין לתוצאת בדיקה ומעדכן את התווית — לעולם לא זורק אל ה-UI.
@@ -184,14 +173,5 @@ public class StatusForm : Form
     {
         label.ForeColor = success ? Color.Green : Color.Firebrick;
         label.Text = (success ? "✓ " : "✗ ") + message;
-    }
-
-    // ⚠️ **צבע שלישי, ולא ירוק ולא אדום.** בדיקה שדולגה אינה הצלחה
-    // ואינה כישלון; שני הצבעים הקיימים היו משקרים — ירוק על משהו שלא
-    // נבדק, או אדום ששולח לתקן דבר תקין.
-    private static void SetNeutral(Label label, string message)
-    {
-        label.ForeColor = Color.DimGray;
-        label.Text = "– " + message;
     }
 }

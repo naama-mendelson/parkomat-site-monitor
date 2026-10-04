@@ -23,9 +23,13 @@ public class SettingsForm : Form
     private readonly TextBox _mqttUser = new();
     private readonly TextBox _mqttPass = new();
 
-    // ⚠️ הכתיבה הישירה ל-Supabase. ריק = כבוי, וזה המצב בכל 16 האתרים
-    // עד שממלאים אותם אחד-אחד.
+    // ⚠️ הכתיבה הישירה ל-Supabase — מאז ש-master כבוי (17/09/2026) המסלול
+    // היחיד שמגיע לדשבורד. ריק = האתר אינו מדווח לשום מקום.
     private readonly TextBox _sbPass = new();
+
+    // ⚠️ מושבתת כשהוזנה סיסמת Supabase (1.0.57): אז MQTT כבוי ממילא
+    // (SiteConfig.MqttEnabled), ושדות פעילים היו מזמינים "לתקן" מסלול שאינו בשימוש.
+    private GroupBox _mqttGroup = new();
 
     // ============================================================
     // ⚠️ ה-config שנטען — ו-"שמור" עורך **אותו**, לא בונה חדש
@@ -55,25 +59,35 @@ public class SettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(520, 620);
+        // ============================================================
+        // ⚠️ גודל לפי התוכן — לא 520×620
+        // ============================================================
+        // הגובה הקבוע הסתיר את כפתור "שמור" ואת שדה סיסמת Supabase (נמדד
+        // ב-04/10 בצילום של הטופס עצמו בהגדלת תצוגה של מחשב הפיתוח), והרוחב
+        // חתך את ההסבר ואת "הגדר כתובות...". אותו כשל כמו ב-StatusForm.
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        MinimumSize = new Size(540, 0);
 
         // פריסה אנכית: כל הקבוצות זו מתחת לזו.
+        // ⚠️ **לא מעוגנת (Dock), ובכוונה.** פאנל מעוגן מקבל את רוחב החלון
+        // במקום לקבוע אותו — והחלון נשאר ברוחב המינימום וחותך את התוכן.
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Location = Point.Empty,
             Padding = new Padding(12),
             ColumnCount = 1,
-            AutoSize = true
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
 
         // --- קבוצת "כללי" ---
         layout.Controls.Add(BuildGeneralGroup());
         // --- קבוצת "PLC" ---
         layout.Controls.Add(BuildPlcGroup());
-        // --- קבוצת "MQTT" ---
-        layout.Controls.Add(BuildMqttGroup());
-
+        // ⚠️ Supabase לפני HiveMQ (1.0.57): זה המסלול היחיד שמגיע לדשבורד.
         layout.Controls.Add(BuildSupabaseGroup());
+        layout.Controls.Add(_mqttGroup = BuildMqttGroup());
         // --- כפתורים ---
         layout.Controls.Add(BuildButtons());
 
@@ -81,7 +95,16 @@ public class SettingsForm : Form
 
         // טוענים את ההגדרות הקיימות אל השדות.
         LoadIntoFields();
+
+        // הסיסמה היא המתג — הקבוצה מתעדכנת תוך כדי הקלדה, לא רק בטעינה.
+        _sbPass.TextChanged += (s, e) => SyncMqttGroup();
+        SyncMqttGroup();
     }
+
+    // ⚠️ מושבתת ולא מוסתרת: הערכים נשארים גלויים ונשמרים כמו שהם
+    // (OnSave קורא אותם גם מפקד מושבת), ומחיקת הסיסמה מחזירה אותם לחיים.
+    private void SyncMqttGroup() =>
+        _mqttGroup.Enabled = string.IsNullOrWhiteSpace(_sbPass.Text);
 
     // ===== בניית הקבוצות =====
 
@@ -134,7 +157,7 @@ public class SettingsForm : Form
 
     private GroupBox BuildMqttGroup()
     {
-        var g = NewGroup("פרטי HiveMQ (ענן)");
+        var g = NewGroup("HiveMQ — בשימוש רק באתר בלי סיסמת Supabase");
         var t = NewTable(5);
         AddRow(t, 0, "כתובת HiveMQ:", _mqttHost);
 
@@ -182,7 +205,8 @@ public class SettingsForm : Form
     // אחד בכל פעם — אותו דפוס כמו מתג VITE_SUPABASE_DIRECT בדשבורד.
     private GroupBox BuildSupabaseGroup()
     {
-        var g = NewGroup("כתיבה ישירה ל-Supabase (רשות)");
+        // ⚠️ לא "(רשות)" עוד: מאז ש-master כבוי זה המסלול היחיד לדשבורד.
+        var g = NewGroup("דיווח לדשבורד (Supabase)");
         // ⚠️ שלוש שורות, לא שש. הטבלה נבנתה ל-6 כשהיו כאן ארבעה שדות;
         // אחרי הצמצום לשדה אחד נשארו שלוש שורות ריקות באמצע — רווח לבן
         // שנראה כמו שדות שלא נטענו.
@@ -382,12 +406,16 @@ public class SettingsForm : Form
         }
 
         // הצלחה — ההגדרות נשמרו *והוחלו* מיד, בלי restart ידני.
-        string message = canBridge
-            ? "ההגדרות נשמרו והוחלו.\nהשירותים הופעלו מחדש עם ההגדרות החדשות."
-            : "ההגדרות נשמרו והוחלו.\nשים לב: חסרים פרטי HiveMQ (כתובת/שם משתמש), " +
-              "ולכן שירות Mosquitto לא הופעל — נתונים לא יישלחו לענן עד להשלמתם.";
+        // ⚠️ **האזהרה היא על Supabase, לא על HiveMQ (1.0.57).** "חסרים פרטי
+        // HiveMQ" הטריד טכנאי על מסלול שאיש אינו קורא (master כבוי מ-17/09),
+        // ושתק על הדבר היחיד שקובע אם האתר מגיע לדשבורד.
+        bool reports = c.Supabase.Enabled;
+        string message = reports
+            ? "ההגדרות נשמרו והוחלו.\nהאתר מדווח ישירות לדשבורד (Supabase). HiveMQ אינו בשימוש."
+            : "ההגדרות נשמרו והוחלו.\n⚠️ לא הוזנה סיסמת Supabase — האתר אינו מדווח לדשבורד. " +
+              "יש להזין אותה בקבוצה \"דיווח לדשבורד (Supabase)\".";
         MessageBox.Show(message, "Parkomat Agent",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBoxButtons.OK, reports ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         Close();
     }
 
@@ -407,9 +435,11 @@ public class SettingsForm : Form
 
         // 2. יצירת bridge.conf מההגדרות החדשות — כדי ש-Mosquitto יקבל username תקין
         //    כבר עכשיו (עוד לפני שה-Agent יכתוב אותו מחדש בעלייתו). מונע race.
+        //    ⚠️ רק כש-MQTT דלוק: אחרת הסוכן מוחק אותו בעלייה, ואין מה לכתוב.
         try
         {
-            BridgeConfigWriter.Write(c);
+            if (c.MqttEnabled)
+                BridgeConfigWriter.Write(c);
         }
         catch (Exception ex)
         {

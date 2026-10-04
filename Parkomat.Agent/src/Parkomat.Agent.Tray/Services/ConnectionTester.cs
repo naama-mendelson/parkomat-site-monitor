@@ -2,10 +2,10 @@ using System.Text.Json;
 using System.Text;
 using System.Net.Http;
 using System.Net.Sockets;
-using MQTTnet;
 using NModbus;
 using Parkomat.Agent.Core.Modbus;
 using Parkomat.Agent.Core.Configuration;
+using Parkomat.Agent.Core.Supabase;
 
 namespace Parkomat.Agent.Tray.Services;
 
@@ -19,22 +19,26 @@ public class TestResult
 }
 
 /// <summary>
-/// בודק על-פי דרישה, מתוך ה-Tray, את שני החיבורים שחשובים לטכנאי:
-///  1. ה-PLC (Modbus/TCP) — האם הבקר בכלל נגיש וקורא.
-///  2. ה-HiveMQ (MQTT + TLS) — חיבור *ישיר* לענן, כי זה מה שהטכנאי צריך לאמת
-///     (ה-Agent עצמו עובד דרך Mosquitto מקומי, אז נתק ל-HiveMQ לא נראה משם).
-/// שתי הבדיקות אף פעם לא זורקות — הן תמיד מחזירות TestResult.
+/// בודק על-פי דרישה, מתוך ה-Tray, את מה שחשוב לטכנאי:
+///  1. מזהה האתר.
+///  2. ה-PLC (Modbus) — האם הבקר בכלל נגיש וקורא.
+///  3. הדיווח לדשבורד (Supabase) — הזדהות אמיתית, בלי לכתוב דבר.
+/// הבדיקות אף פעם לא זורקות — הן תמיד מחזירות TestResult.
+///
+/// ⚠️ **בדיקת HiveMQ הוסרה (1.0.57).** ‏master — השרת היחיד שקרא מ-HiveMQ —
+/// כבוי מ-17/09/2026, ו-MQTT כבוי ממילא בכל אתר עם סיסמת Supabase. באתר
+/// 2431 (04/10) היא הציגה שגיאת DNS באדום על מסלול שאיש אינו קורא, ובאותו
+/// חלון בדיקת Supabase — החשובה — נחתכה מתחתית המסך.
 /// </summary>
 public static class ConnectionTester
 {
     private const int PlcTimeoutSeconds = 5;
-    private const int HiveTimeoutSeconds = 10;
 
     // ============================================================
     // מזהה האתר — הבדיקה שהייתה חסרה, וזו שעלתה הכי ביוקר
     // ============================================================
     // ⚠️ שתי הבדיקות האחרות ירוקות **גם כשהמזהה ריק.** הן בודקות רשת:
-    // האם הבקר עונה, והאם יש חיבור מוצפן ל-HiveMQ. אף אחת מהן אינה נוגעת
+    // האם הבקר עונה, והאם יש חיבור לענן (אז HiveMQ). אף אחת מהן אינה נוגעת
     // בנושא (topic) שאליו ההודעות ישודרו — ולכן שתיהן מצליחות בכנות בזמן
     // שההודעות הולכות ל-`sites//state` ואיש אינו מקשיב שם.
     //
@@ -189,11 +193,15 @@ public static class ConnectionTester
     {
         SupabaseConfig sb = config.Supabase;
 
+        // ⚠️ **אדום, ולא "מדולג".** מאז ש-master כבוי (17/09/2026) זה המסלול
+        // היחיד שמגיע לדשבורד — אתר בלי סיסמה אינו מדווח לשום מקום, וזה
+        // בדיוק מה שהטכנאי צריך לגלות כשהוא עוד עומד באתר.
         if (!sb.Enabled)
             return new TestResult
             {
                 Success = false,
-                Message = "המסלול הישיר כבוי — לא הוזנה סיסמת Supabase בהגדרות."
+                Message = "לא הוזנה סיסמת Supabase — האתר אינו מדווח לדשבורד. " +
+                          "יש להזין אותה בהגדרות → Supabase."
             };
 
         try
@@ -232,85 +240,12 @@ public static class ConnectionTester
         }
         catch (TaskCanceledException)
         {
-            return new TestResult { Success = false, Message = "פסק זמן: אין תגובה מ-Supabase תוך 15 שניות." };
+            return new TestResult { Success = false, Message = "פסק זמן: אין תגובה מ-Supabase תוך 15 שניות — ייתכן שהרשת חוסמת יציאה ב-443." };
         }
         catch (Exception ex)
         {
-            return new TestResult { Success = false, Message = $"החיבור ל-Supabase נכשל: {Describe(ex)}" };
-        }
-    }
-
-    /// <summary>בודק חיבור *ישיר* ל-HiveMQ עם TLS ופרטי ההתחברות מההגדרות, timeout ~10 שניות.</summary>
-    public static async Task<TestResult> TestHiveMqAsync(MqttConfig mqtt)
-    {
-        if (string.IsNullOrWhiteSpace(mqtt.Host))
-            return new TestResult { Success = false, Message = "לא הוגדרה כתובת HiveMQ בהגדרות." };
-
-        IMqttClient? client = null;
-        try
-        {
-            client = new MqttClientFactory().CreateMqttClient();
-
-            var optionsBuilder = new MqttClientOptionsBuilder()
-                .WithTcpServer(mqtt.Host, mqtt.Port)
-                .WithCredentials(mqtt.Username, mqtt.Password)
-                .WithClientId("parkomat-connection-tester")
-                .WithTimeout(TimeSpan.FromSeconds(HiveTimeoutSeconds));
-
-            // TLS תמיד — הבדיקה חייבת לבדוק את אותו חיבור שהמערכת באמת עושה.
-            // אילו הייתה בודקת חיבור לא מוצפן, היא הייתה מדווחת "הצליח" על נתיב
-            // שאינו הנתיב האמיתי — והטכנאי היה עוזב את האתר בטוח שהכול תקין.
-            optionsBuilder = optionsBuilder.WithTlsOptions(o =>
-            {
-                o.UseTls(true);
-
-                // זו בדיקת אבחון (נגישות + פרטי-התחברות), לא גבול אבטחה.
-                // הנתיב האמיתי מאמת את תעודת HiveMQ דרך cacert.pem של Mosquitto;
-                // כאן אין לנו את שרשרת התעודות, אז לא נכשלים *רק* על אימות התעודה —
-                // אחרת הבדיקה מציגה "נכשל" בזמן שהמערכת עובדת (false negative).
-                // שאר הכשלים האמיתיים (host שגוי, סיסמה שגויה, אין רשת, סירוב חיבור)
-                // עדיין נכשלים כרגיל: הם אינם קשורים לאימות התעודה.
-                o.WithCertificateValidationHandler(_ => true);
-            });
-
-            var options = optionsBuilder.Build();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(HiveTimeoutSeconds));
-            var response = await client.ConnectAsync(options, cts.Token);
-
-            if (response.ResultCode == MqttClientConnectResultCode.Success)
-            {
-                return new TestResult
-                {
-                    Success = true,
-                    Message = $"החיבור ל-HiveMQ בכתובת {mqtt.Host}:{mqtt.Port} הצליח (TLS)."
-                };
-            }
-
-            return new TestResult
-            {
-                Success = false,
-                Message = $"HiveMQ דחה את החיבור: {response.ResultCode}" +
-                          (string.IsNullOrEmpty(response.ReasonString) ? "" : $" ({response.ReasonString})")
-            };
-        }
-        catch (OperationCanceledException)
-        {
-            return new TestResult
-            {
-                Success = false,
-                Message = $"פסק זמן: אין תגובה מ-HiveMQ תוך {HiveTimeoutSeconds} שניות."
-            };
-        }
-        catch (Exception ex)
-        {
-            return new TestResult { Success = false, Message = $"החיבור ל-HiveMQ נכשל: {Describe(ex)}" };
-        }
-        finally
-        {
-            try { if (client is { IsConnected: true }) await client.DisconnectAsync(); }
-            catch { /* ניתוק שקט */ }
-            client?.Dispose();
+            // ⚠️ הסבר לפי קוד ה-Socket (DNS / חומת אש / חסימה), ולא משפט של Winsock.
+            return new TestResult { Success = false, Message = $"החיבור ל-Supabase נכשל: {NetworkFailure.Describe(ex)}" };
         }
     }
 

@@ -707,12 +707,40 @@ HiveMQ is switched off.
 
 ### Direct only — turning MQTT off at a single site
 
+⚠️ **Since 1.0.57 (04/10/2026) this is automatic: a Supabase password means MQTT is off.**
+`SiteConfig.MqttEnabled` is now `!Supabase.Enabled`; `Mqtt.Disabled` is still read, written
+and carried through a reset, so old `config.json` files load unchanged, but it **decides
+nothing**. The trigger was site 2431: its connection test showed HiveMQ in red with a DNS
+error (`11004`), and the Supabase check, the one that matters, was cut off the bottom of a
+fixed-height window. `master`, the only reader of HiveMQ, has been off since 17/09, so MQTT
+at a site with a password was pure cost: Mosquitto running and the bridge retrying for
+nobody. The product owner's call: *"I don't want HiveMQ holding anything up; it doesn't
+matter anyway."*
+
+What changed with it:
+
+- **The connection test has no HiveMQ check at all**: site identity, PLC, and
+  "דיווח לדשבורד (Supabase)". The window sizes to its content. A site with no password is
+  **red** ("אינו מדווח לדשבורד"), not neutral. Network failures are explained by
+  `NetworkFailure.Describe`: DNS, firewall (naming **both** the Service and the Tray rule,
+  since the test runs in the Tray), or a 443 block. **The OS code stays in the message**,
+  because the bare `10013` is what made the 1326 diagnosis take minutes.
+- **The settings form sizes to its content too.** At the dev machine's display scaling, the
+  old 520×620 hid the **"שמור" button** and the Supabase password field, and its docked
+  panel clipped the right-to-left text. Supabase is now above HiveMQ. The HiveMQ group is
+  **disabled** (not hidden, so its values are still saved) while a password is entered. The
+  save message warns about a missing Supabase password, not missing HiveMQ details.
+- **The Tray no longer references MQTTnet.** The only code that used it was the removed test.
+
+The bullets below describe the mechanism as it was built at 2438 (06/09). The derivation
+principle in the first one still holds; only the input changed.
+
 `Mqtt.Disabled` in `config.json` removes the MQTT path entirely: no broker
 connection, `bridge.conf` is **deleted** (so the Tray does not bring Mosquitto up),
 and operations are not queued for a drain that will never happen.
 
-- ⚠️ **The switch is derived, not read.** `SiteConfig.MqttEnabled` is
-  `!(Mqtt.Disabled && Supabase.Enabled)`. A site with no Supabase password stays on
+- ⚠️ **The switch is derived, not read.** `SiteConfig.MqttEnabled` was
+  `!(Mqtt.Disabled && Supabase.Enabled)` (now `!Supabase.Enabled`, see above). A site with no Supabase password stays on
   MQTT no matter what the file says — because *"reports nowhere"* is the worst
   failure in this system: the agent runs, the PLC is read, the tray icon is green,
   and no line anywhere says the data reaches nobody. Same principle as
@@ -729,8 +757,9 @@ and operations are not queued for a drain that will never happen.
   new password in one click, and it is typed once on site. Keep that in mind before
   treating a wiped `config.json` as a minor event.
 - **No checkbox in the settings form, deliberately** — one click in the field would
-  silence a site, exactly the trap the TLS checkbox was removed for. Turning it on is
-  a hand edit of `config.json`.
+  silence a site, exactly the trap the TLS checkbox was removed for. ~~Turning it on is
+  a hand edit of `config.json`.~~ Since 1.0.57 there is nothing to turn on: entering the
+  Supabase password *is* the switch.
 - **The choice survives a reset** (`BuildResetConfig`), or every upgrade would switch
   MQTT back on at a site that was deliberately taken off it.
 - ⚠️ **The stage is skipped, not thrown out of.** The first version left the broker
@@ -841,9 +870,9 @@ Rules are per-program, and the traffic does not all come from one:
 
 | Program | Why |
 |---|---|
-| `mosquitto\mosquitto.exe` | the bridge to HiveMQ, 8883 — **this is the data path** |
-| `service\Parkomat.Agent.Service.exe` | Supabase over 443, when the direct path is on |
-| `tray\Parkomat.Agent.Tray.exe` | ⚠️ **the connection test itself** |
+| `mosquitto\mosquitto.exe` | the bridge to HiveMQ, 8883. ⚠️ Since 1.0.57, **only** at a site without a Supabase password, since Mosquitto does not run anywhere else |
+| `service\Parkomat.Agent.Service.exe` | Supabase over 443. **This is the data path now** |
+| `tray\Parkomat.Agent.Tray.exe` | ⚠️ **the connection test itself** (443 to Supabase since 1.0.57) |
 | UDP 123 (any program) | time sync — see below |
 
 ⚠️ **The Tray rule is the one that is forgotten**, and forgetting it is expensive: the data

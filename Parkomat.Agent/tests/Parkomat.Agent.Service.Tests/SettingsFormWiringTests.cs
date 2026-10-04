@@ -134,4 +134,77 @@ public class SettingsFormWiringTests
         foreach (string field in new[] { "_sbUrl", "_sbKey", "_sbEmail" })
             Assert.DoesNotContain(field, src);
     }
+
+    // ============================================================
+    // ⚠️ 1.0.57 — HiveMQ משני, Supabase הוא המסלול
+    // ============================================================
+    // ‏master כבוי מ-17/09/2026, ו-MQTT כבוי בכל אתר עם סיסמה. הטופס הציג
+    // את HiveMQ לפני Supabase, סימן את Supabase "(רשות)", והזהיר בשמירה על
+    // "חסרים פרטי HiveMQ" — כלומר הטריד על מה שאינו בשימוש ושתק על מה שכן.
+
+    // ⚠️ ההערות מוסרות: הן מצטטות את הנוסח הישן כדי להסביר אותו, והיו
+    // צובעות ירוק בדיקה ש"הנוסח איננו".
+    private static string CodeOnly() => string.Join("\n",
+        Form().Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+    [Fact]
+    public void TheHiveMqGroupIsDisabledWhileAPasswordIsEntered()
+    {
+        string src = CodeOnly();
+        Assert.Matches(new Regex(@"_mqttGroup\.Enabled\s*=\s*string\.IsNullOrWhiteSpace\(_sbPass\.Text\)"), src);
+
+        // ⚠️ **תוך כדי הקלדה, לא רק בטעינה.** טכנאי שמדביק סיסמה צריך לראות
+        // מיד ש-HiveMQ יצא מהתמונה — ושמחיקתה מחזירה אותו.
+        Assert.Matches(new Regex(@"_sbPass\.TextChanged\s*\+=[^;]*SyncMqttGroup\(\)"), src);
+
+        // ⚠️ והקבוצה שמושבתת היא זו שבלייאאוט — לא עותק שנבנה בצד.
+        Assert.Matches(new Regex(@"layout\.Controls\.Add\(_mqttGroup\s*=\s*BuildMqttGroup\(\)\)"), src);
+    }
+
+    [Fact]
+    public void SupabaseComesBeforeHiveMq()
+    {
+        string src = CodeOnly();
+        int supa = src.IndexOf("layout.Controls.Add(BuildSupabaseGroup())", StringComparison.Ordinal);
+        int hive = src.IndexOf("BuildMqttGroup())", StringComparison.Ordinal);
+        Assert.True(supa >= 0 && hive >= 0, "אחת הקבוצות אינה בלייאאוט");
+        Assert.True(supa < hive, "HiveMQ מוצג לפני המסלול היחיד שמגיע לדשבורד");
+        Assert.DoesNotContain("(רשות)", src);
+    }
+
+    [Fact]
+    public void SavingWarnsAboutSupabaseNotHiveMq()
+    {
+        string src = CodeOnly();
+        Assert.DoesNotContain("חסרים פרטי HiveMQ", src);
+
+        // ⚠️ **ההחלטה לפי Supabase.Enabled — לא לפי canBridge.** אחרת אתר בלי
+        // סיסמה ועם פרטי HiveMQ מלאים מקבל "נשמר" נקי, ואינו מדווח לאיש.
+        Assert.Matches(new Regex(@"bool reports\s*=\s*c\.Supabase\.Enabled\s*;"), src);
+        Assert.Matches(new Regex(@"reports\s*\?[\s\S]{0,200}?:[\s\S]{0,120}?האתר אינו מדווח לדשבורד"), src);
+        Assert.Matches(new Regex(@"reports\s*\?\s*MessageBoxIcon\.Information\s*:\s*MessageBoxIcon\.Warning"), src);
+    }
+
+    [Fact]
+    public void TheBridgeConfigIsWrittenOnlyWhenMqttIsOn()
+    {
+        Assert.Matches(new Regex(@"if\s*\(c\.MqttEnabled\)\s*BridgeConfigWriter\.Write\(c\)\s*;"), CodeOnly());
+    }
+
+    [Fact]
+    public void TheWindowSizesToItsContent()
+    {
+        // ⚠️ הגובה הקבוע (520×620) הוא בדיוק מה שחתך את Supabase ב-StatusForm.
+        string src = CodeOnly();
+        Assert.DoesNotMatch(new Regex(@"\bClientSize\s*="), src);
+        Assert.Matches(new Regex(@"(?m)^\s*AutoSize\s*=\s*true\s*;"), src);
+        Assert.Matches(new Regex(@"(?m)^\s*AutoSizeMode\s*=\s*AutoSizeMode\.GrowAndShrink\s*;"), src);
+
+        // ⚠️ **והפאנל אינו מעוגן.** עם Dock הוא מקבל את רוחב החלון במקום
+        // לקבוע אותו — החלון נשאר ב-540 וחותך את "הגדר כתובות..." ואת ההסבר.
+        // נמדד בצילום הטופס, לא הוסק: AutoSize לבדו לא תיקן את הרוחב.
+        Match layout = Regex.Match(src, @"var layout = new TableLayoutPanel\s*\{([^}]*)\}");
+        Assert.True(layout.Success, "הפאנל הראשי איננו");
+        Assert.DoesNotContain("Dock", layout.Groups[1].Value);
+    }
 }
