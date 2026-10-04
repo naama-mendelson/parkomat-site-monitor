@@ -697,21 +697,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       style={{ borderInlineStartColor: colors.dot }}
       onClick={() => onToggle(site.code)}
       onMouseEnter={() => onHover?.(site.code)}
-      // בצפיפות mini אין מקום לתג, ולכן ההסבר עובר ל-title — שם הוא כל מה שיש.
-      //
-      // ==========================================================
-      // סוג המתקן — שורה נפרדת, ותמיד
-      // ==========================================================
-      // ⚠️ **מצורף ולא מחליף.** התוכן הקיים כאן תלוי-מצב (אזהרת תקוע, רמז
-      // ריחוף, שם+מצב), והדבקת הסוג לתוכו הייתה משנה שלושה טקסטים שונים.
-      // שורה שנייה נשארת קבועה במקומה בכל מצב, וזה מה שהופך אותה לניתנת
-      // לסריקה כשעוברים על כמה כרטיסים ברצף.
-      //
-      // ⚠️ ומוצג גם כשאין סוג ("לא הוגדר"). היעדר שורה נקרא כמו באג בטעינה,
-      // בעוד "לא הוגדר" אומר את האמת ומזמין להשלים.
-      title={`${stuck ? stuck.title
-        : isNormal ? "רחפו להרחבה · לחצו לנעילה"
-        : `${site.site_name} — ${label}`}\nסוג: ${siteTypeFullLabel(site.plc_type)} · מערכת: ${controlSystemLabel(site.control_system)}`}
+      // ⚠️ **אין title על הכרטיס כולו — החלטת בעלת המוצר (04/10/2026).** חלונית
+      // הדפדפן (שם · מצב · סוג · מערכת) נפתחה מתחת לכרטיס בכל ריחוף וכיסתה את
+      // הכרטיס שמתחתיו. המידע נמצא בכרטיס עצמו: המצב בתג, הסוג בתג (normal),
+      // והכול בחלונית הריחוף של compact/mini ובכרטיס המורחב.
     >
       <div className="card-header">
         <span className="card-name">
@@ -720,12 +709,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               והיא נכשלה על המסך: היא הניחה שרק קוד האתר יושב לצד השם,
               בזמן שב-normal יש שם גם תג סוג ותג דרגה שרוחבם משתנה.
 
-              title נשאר: אם שם חורג גם ברצפת ההקטנה, זו הדרך לראות
-              אותו במלואו בלי לפתוח את הכרטיס. */}
+              title — **רק כשהשם קוצר** (useFitName.trimmed): אז זו הדרך לראות
+              אותו במלואו בלי לפתוח את הכרטיס. שם שמוצג במלואו אינו צריך חלונית,
+              ובעלת המוצר לא רוצה חלוניות שנפתחות מתחת לכרטיס בכל ריחוף. */}
           <span
             ref={name.ref}
             className="card-name-text"
-            title={site.site_name}
+            title={name.trimmed ? site.site_name : undefined}
           >{name.text}</span>
 
           {/* ============================================================
@@ -755,7 +745,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         <span
           className={`mini-dot${stuck ? " mini-dot--stuck" : ""}`}
           style={{ background: colors.dot, "--stuck": STUCK_COLOR.dot }}
-          title={stuck ? stuck.text : label}
+          aria-label={stuck ? stuck.text : label}
+          role="img"
         />
       ) : (
         statusTag
