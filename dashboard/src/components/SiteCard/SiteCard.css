@@ -304,55 +304,8 @@
   flex-shrink: 0;
 }
 
-/* ============================================================
-   Popover ב-hover עבור compact/mini — חושף את הפרטים (PRD 12.1)
-   ============================================================ */
-.card-hover-panel {
-  position: absolute;
-  top: 100%;
-  inset-inline-start: 0;
-  z-index: 50;
-  min-width: 100%;
-  /* ⚠️ תקרה, כי `min-width: 100%` בלי גבול עליון מותח את הפאנל לפי תוכנו
-     והוא יוצא מגבול המסך. `90vw` מבטיח שהוא נשאר נראה בכל רוחב. */
-  max-width: min(90vw, 340px);
-  margin-top: 6px;
-  padding: 12px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  box-shadow: 0 8px 22px var(--shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-
-  /* מוסתר עד hover */
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
-}
-
-/* ============================================================
-   ⚠️ hover בלבד במכשיר שיש לו hover — ובטלפון אין
-   ============================================================
-   ‏iOS **מדמה** hover בנגיעה: לחיצה על כרטיס פתחה את הפאנל, והוא נשאר
-   תקוע עד שנוגעים במקום אחר. נראה באייפון — פאנל שמרחף מעל הרשת ומסתיר
-   כרטיסים שכנים, בלי דרך מובנת לסגור אותו.
-   ⚠️ ובמסך צר הוא גם גולש: `inset-inline-start: 0` עם `min-width: 100%`
-   מותח אותו החוצה מגבול המסך, ובעברית זה קורה שמאלה — כלומר אל מחוץ
-   לתחום הנראה.
-
-   במגע אין בו צורך מלכתחילה: נגיעה בכרטיס פותחת את חלון הפרטים המלא,
-   שהוא הגרסה הטובה יותר של אותו מידע. */
-@media (hover: hover) and (pointer: fine) {
-  .site-card:hover .card-hover-panel {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-  }
-}
+/* ⚠️ חלונית הריחוף של compact/mini (.card-hover-panel) הוסרה לבקשת בעלת
+   המוצר (04/10/2026): היא נפתחה מתחת לכרטיס בכל מעבר עכבר. הפרטים — בלחיצה. */
 
 /* ==========================================================
    כרטיס מורחב — לחיצה מגדילה את הריבוע ומבהירה אותו

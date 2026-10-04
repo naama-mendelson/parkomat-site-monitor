@@ -700,7 +700,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       // ⚠️ **אין title על הכרטיס כולו — החלטת בעלת המוצר (04/10/2026).** חלונית
       // הדפדפן (שם · מצב · סוג · מערכת) נפתחה מתחת לכרטיס בכל ריחוף וכיסתה את
       // הכרטיס שמתחתיו. המידע נמצא בכרטיס עצמו: המצב בתג, הסוג בתג (normal),
-      // והכול בחלונית הריחוף של compact/mini ובכרטיס המורחב.
+      // והכול בכרטיס המורחב (לחיצה).
     >
       <div className="card-header">
         <span className="card-name">
@@ -758,17 +758,11 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
       {!isMini && opView}
 
-      {isNormal ? (
-        details
-      ) : (
-        <div className="card-hover-panel">
-          {isMini && statusTag}
-          {isMini && degradedTag}
-          {isMini && stuckBadge}
-          {isMini && faultLine}
-          {details}
-        </div>
-      )}
+      {/* ⚠️ **אין חלונית ריחוף מתחת לכרטיס — החלטת בעלת המוצר (04/10/2026).**
+          ב-compact/mini נפתחה כאן חלונית עם הפרטים (פעולות, זמינות, ובמיני גם
+          המצב) בכל מעבר עכבר, ונחה על הכרטיס שמתחתיו. הפרטים זמינים בלחיצה —
+          הכרטיס המורחב מציג את כולם. ב-normal הם חלק מהכרטיס עצמו. */}
+      {isNormal && details}
     </div>
   );
 }
