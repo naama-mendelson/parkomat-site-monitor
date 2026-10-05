@@ -312,3 +312,24 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ⚠️ בטלפון השורה נשברת: המייל בשורה משלו, והפרטים והכפתורים מתחתיו.
+   נמדד (05/10/2026): התפקיד, "נכנס", שינוי התפקיד, "השבת" ו"מחק" הם nowrap
+   ותפסו את כל הרוחב — למייל נשארו פיקסלים, והוא נשבר לעמודה של תו אחד בשורה,
+   כל משתמש בגובה מסך כמעט. ובשורת הצירוף בורר התפקיד נחתך מחוץ לחלון. */
+@media (max-width: 560px) {
+  .users-panel { padding: 18px 16px; }
+  .users-list li { flex-wrap: wrap; row-gap: 8px; }
+  .users-email { flex: 1 1 100%; }
+  .users-invite { flex-wrap: wrap; }
+  .users-invite input { flex: 1 1 100%; }
+  .users-invite button { flex: 1; }
+}
+
+/* ⚠️ במגע — נמדד בטלפון: סגירה 30×31, ו"השבת" / "מחק" / שינוי תפקיד בגובה 24px,
+   צמודים זה לזה. לחיצה שפוגעת בשכן כאן היא השבתה או מחיקה של משתמש. */
+@media (max-width: 760px), (pointer: coarse) {
+  .users-close { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+  .users-toggle,
+  .users-delete { min-height: 36px; padding: 6px 14px; }
+}

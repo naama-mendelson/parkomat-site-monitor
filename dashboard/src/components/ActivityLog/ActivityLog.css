@@ -543,3 +543,10 @@
 
 .alog-modal-alt:hover:not(:disabled) { filter: brightness(1.1); }
 .alog-modal-alt:disabled { opacity: 0.55; cursor: progress; }
+
+/* ⚠️ במגע — 40px לפחות. נמדד בטלפון (05/10/2026): שדה החיפוש בלוג 32px
+   וכפתור "חפש" 54×31. */
+@media (max-width: 760px), (pointer: coarse) {
+  .alog-search-input,
+  .alog-search-btn { min-height: 40px; }
+}

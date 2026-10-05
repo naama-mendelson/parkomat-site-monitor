@@ -41,8 +41,10 @@
   flex-shrink: 0;
 }
 
-/* מסך צר — רק אייקונים */
+/* מסך צר — רק אייקונים.
+   ⚠️ ובגובה 40px לפחות: נמדד 36×32 בטלפון — מתחת לגודל שאצבע פוגעת בו
+   בביטחון, ודווקא בבורר שמחליף את כל המסך. */
 @media (max-width: 760px) {
   .rs-label { display: none; }
-  .rs-tab { padding: 8px 10px; }
+  .rs-tab { padding: 8px 10px; min-height: 40px; min-width: 44px; justify-content: center; }
 }

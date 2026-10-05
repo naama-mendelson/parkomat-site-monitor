@@ -459,3 +459,10 @@
   color: var(--muted, #77778a);
   white-space: nowrap;
 }
+
+/* ⚠️ במגע — 40px לפחות. נמדד בטלפון (05/10/2026): "כניסה" / "ביטול" בגובה 33px,
+   ודווקא כאן לחיצה שפוגעת בשכן היא ביטול במקום כניסה. */
+@media (max-width: 760px), (pointer: coarse) {
+  .adm-btn,
+  .adm-btn-ghost { min-height: 40px; }
+}

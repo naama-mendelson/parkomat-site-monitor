@@ -30,6 +30,13 @@
   width: 100%;
 }
 
+/* ⚠️ במגע — השדה עצמו הוא שטח הלחיצה, לא המסגרת: נמדד 312×21 בטלפון, כי
+   הריפוד של .search-bar אינו ממקד את השדה. השדה גבוה, הריפוד קטן — אותו גובה כולל. */
+@media (max-width: 760px), (pointer: coarse) {
+  .search-bar { padding-block: 0; }
+  .search-input { min-height: 38px; }
+}
+
 .search-input::placeholder {
   color: var(--text-muted);
 }

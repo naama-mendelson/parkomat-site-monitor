@@ -116,6 +116,11 @@
   border-radius: 50%;
 }
 
+/* ⚠️ במגע — נמדד בטלפון: שבבי הסינון בגובה 33px, צמודים זה לזה בשורה. */
+@media (max-width: 760px), (pointer: coarse) {
+  .sv-chip { min-height: 38px; }
+}
+
 .sv-chip:hover:not(.is-active) {
   background: var(--bg-hover);
   color: var(--text-primary);

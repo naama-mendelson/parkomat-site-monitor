@@ -9,7 +9,10 @@
   position: fixed;
   inset-block-end: 24px;
   inset-inline-end: 24px;
-  z-index: 1200;
+  /* ⚠️ מעל הדף (סינון 30, כרטיס מורחב 2) ו**מתחת לכל חלון** (משתמשים/דיווח 60,
+     עזרה 70, חלון האתר 400…). ב-1200 הוא צף מעל כל חלון פתוח וכיסה את
+     התוכן שבפינה — נמדד בטלפון על חלונות המשתמשים והעזרה (05/10/2026). */
+  z-index: 55;
 
   display: flex;
   align-items: center;
@@ -97,6 +100,10 @@
   border-radius: 6px;
 }
 .tl-close:hover { background: var(--surface-2, #f3f4f6); }
+/* במגע — 40×40 לפחות (נמדד 30×31 בטלפון) */
+@media (max-width: 760px), (pointer: coarse) {
+  .tl-close { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+}
 
 /* ⚠️ דביקה בראש הגלילה. הודעת שגיאה שדורשת לגלול אליה נקראת כמו
    "לא קרה כלום" — זה כבר נמדד בפאנל הניהול. */
