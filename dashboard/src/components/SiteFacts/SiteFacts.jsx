@@ -14,7 +14,7 @@
 // היחידה במסך, ובלעדיו אי אפשר להכניס אתר לתחזוקה. הוא הועבר כמות שהוא,
 // כולל שתי הבדיקות שלפני השליחה.
 import { useState } from "react";
-import { TIER_LABELS } from "../../utils/constants";
+import { TIER_LABELS, TIER_UNLINKED } from "../../utils/constants";
 import { siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { formatDate } from "../../utils/helpers";
 // ⚠️ מ-dataSource ולא מ-api: הכתיבה עוברת במתג — ישירות ל-Supabase
@@ -117,7 +117,11 @@ function SiteFacts({ site, maintenance, onRefresh }) {
           </div>
           <div className="facts-row">
             <span className="facts-label">דרגת שירות</span>
-            <span>{TIER_LABELS[site.tier] || TIER_LABELS.basic}</span>
+            <span>
+              {TIER_LABELS[site.tier] || TIER_LABELS.basic}
+              {/* ⚠️ אומר מה מחושב בפועל — ראה TierBadge בכרטיס. */}
+              {site.tier === TIER_UNLINKED && " — אין לאתר שורה ברמזור, או שבשורה שלו לא מולא סוג השירות, ולכן בינתיים הזמינות מחושבת על כל שעות היממה (24/7)"}
+            </span>
           </div>
           <div className="facts-row">
             <span className="facts-label">נשמע לאחרונה</span>

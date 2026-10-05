@@ -1,7 +1,7 @@
 // components/SiteCard/SiteCard.jsx — כרטיס אתר.
 // לחיצה על הכרטיס *מרחיבה* אותו במקום — גדל, ברור יותר, עם פירוט מלא —
 // ומתוכו אפשר לפתוח את פאנל הפירוט המלא.
-import { siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
+import { siteStatusLabel, STATUS_COLORS, STUCK_COLOR, TIER_LABELS, TIER_COLORS, TIER_UNLINKED, TIER_BOARD_STATES, DIRECTION_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
@@ -53,15 +53,32 @@ function availabilityColor(pct) {
   return STATUS_COLORS.error.dot;                         // אדום
 }
 
-// תג דרגת האתר (VIP / מורחב / בסיסי) — מוצג ליד שם האתר.
+// תג דרגת האתר (VIP / מורחב / בסיסי / לא חובר / מצב מהרמזור) — ליד שם האתר.
+//
+// ⚠️ **"לא חובר" אומר בריחוף מה מחושב בפועל — 24/7**, ולא "כמו בסיסי".
+// אתר בלי שורה ברמזור אין לו חלון שירות, והזמינות ואחוז הכשל שלו נמדדים
+// על כל שעות היממה (`site_uptime` / `site_stats`). תווית שמתארת חישוב אחר
+// מזה שרץ היא בדיוק הסתירה שהתג הזה הוחלף כדי להסיר.
+//
+// ⚠️ **"אין שורה, או שבשורה לא מולא סוג השירות" — ולא רק "אין שורה".** שורה
+// שמכילה את הקוד אבל ששני תאי הסוג בה ריקים נותנת בדיוק אותו מצב, ומי שקרא
+// "אין שורה" היה פותח את הרמזור, מוצא את השורה, ומסיק שהמסך שגוי.
+const UNLINKED_TITLE =
+  "לא חובר לרמזור — אין לאתר שורה בלוח, או שבשורה שלו לא מולא סוג השירות (\"להתייחס כ\" / \"סוג הסכם שירות במקור\"). עד שיחובר, הזמינות ואחוז הכשל מחושבים על כל שעות היממה (24/7).";
+
 function TierBadge({ tier }) {
   const t = tier || "basic";
   const c = TIER_COLORS[t] || TIER_COLORS.basic;
+  const unlinked = t === TIER_UNLINKED;
   return (
     <span
-      className="tier-badge"
+      className={`tier-badge${unlinked ? " tier-badge--unlinked" : ""}`}
       style={{ background: c.bg, color: c.text, borderColor: c.border }}
-      title={`דרגה: ${TIER_LABELS[t]}`}
+      title={unlinked
+        ? UNLINKED_TITLE
+        : TIER_BOARD_STATES.includes(t)
+          ? `לפי הרמזור: ${TIER_LABELS[t]}`
+          : `דרגה: ${TIER_LABELS[t]}`}
     >
       {TIER_LABELS[t]}
     </span>

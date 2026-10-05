@@ -136,16 +136,39 @@ export const STUCK_COLOR = {
 // שנקבע ברישום ונערך בניהול. מוצגת כתג קטן ליד שם האתר על הכרטיס.
 export const TIER_OPTIONS = ["vip", "extended", "basic"];   // מהגבוה לבסיסי — סדר הבורר
 
+// ⚠️ **"לא חובר" אינו דרגה, ולכן אינו ב-TIER_OPTIONS.** זה מצב של אתר
+// שאין לו שורה בלוח הרמזור (ראה `effectiveTier`). TIER_OPTIONS מזין את
+// הבוררים שבהם *קובעים* דרגה — ברישום ובניהול — ואין לבחור שם "לא חובר".
+export const TIER_UNLINKED = "unlinked";
+
+// ⚠️ **מצבים שהרמזור עצמו מציע, ואינם דרגה** — הערכים מהתפריט של "להתייחס כ"
+// ("לא בשירות", "תחזוקה בלבד") ושל "במקור" ("אין"). אתר שסומן כך הוצג "בסיסי"
+// מברירת המחדל במסד. גם הם אינם ב-TIER_OPTIONS, מאותה סיבה כמו "לא חובר".
+export const TIER_BOARD_STATES = ["no_service", "maintenance_only", "none"];
+
 export const TIER_LABELS = {
   vip: "VIP",
   extended: "מורחב",
   basic: "בסיסי",
+  [TIER_UNLINKED]: "לא חובר",
+  no_service: "לא בשירות",
+  maintenance_only: "תחזוקה בלבד",
+  none: "ללא הסכם",
 };
+
+// שקוף, בצבע דיו שמתאים לערכה (משתנה CSS ולא hex: אפור בהיר על רקע שקוף
+// נעלם בערכה הבהירה). "לא חובר" מקווקו (ב-CSS) — אותה שפה כמו מנורת "?" של
+// הציות: חסר נתון. מצבי הרמזור במסגרת רציפה — הם נתון, רק לא דרגה.
+const TIER_NEUTRAL = { bg: "transparent", text: "var(--tier-unlinked-ink)", border: "var(--tier-unlinked-ink)" };
 
 export const TIER_COLORS = {
   vip:      { bg: "rgba(212,175,55,0.18)",  text: "#d4af37", border: "#d4af37" },   // זהב — פרימיום
   extended: { bg: "rgba(139,92,246,0.16)",  text: "#a78bfa", border: "#8b5cf6" },   // סגול
   basic:    { bg: "rgba(148,163,184,0.16)", text: "#94a3b8", border: "#94a3b8" },   // אפור נייטרלי
+  [TIER_UNLINKED]: TIER_NEUTRAL,
+  no_service: TIER_NEUTRAL,
+  maintenance_only: TIER_NEUTRAL,
+  none: TIER_NEUTRAL,
 };
 
 // כיוון התנועה — שני צבעי הלוגו, וזהו. זה זוג הצבעים המרכזי של כל הגרפים.

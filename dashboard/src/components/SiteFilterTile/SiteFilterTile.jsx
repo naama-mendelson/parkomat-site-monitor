@@ -22,8 +22,13 @@ import {
   SITE_TYPE_GROUPS, SITE_TYPES, GROUP_PREFIX, siteTypeGroup, matchesTypeValue,
 } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
-import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
+import { TIER_OPTIONS, TIER_LABELS, TIER_UNLINKED, TIER_BOARD_STATES } from "../../utils/constants";
 import "./SiteFilterTile.css";
+
+// ⚠️ "לא חובר" ומצבי הרמזור נספרים ונבחרים כאן, אף שאינם דרגה: בלעדיהם אתר
+// כזה לא היה נספר תחת אף רמה — סכום המונים היה קטן ממספר האתרים — ולא הייתה
+// דרך למצוא את האתרים שעוד צריך לחבר לרמזור.
+const TIER_FILTER = [...TIER_OPTIONS, TIER_UNLINKED, ...TIER_BOARD_STATES];
 
 // ⚠️ המפתח לאתרים בלי סוג. לא מחרוזת ריקה — היא כבר תפוסה ל"הכל", ומיזוגן
 // היה הופך "אין סוג" ל"לא מסונן" בשקט.
@@ -44,7 +49,7 @@ function SiteFilterTile({
   // מונה לכל משפחה — סכום הדגמים שלה.
   const groupCounts = Object.fromEntries(SITE_TYPE_GROUPS.map((g) => [g.key, 0]));
   const tierCounts = {};
-  for (const t of TIER_OPTIONS) tierCounts[t] = 0;
+  for (const t of TIER_FILTER) tierCounts[t] = 0;
   const systemCounts = { [NO_SYSTEM]: 0 };
   for (const s of CONTROL_SYSTEMS) systemCounts[s.key] = 0;
 
@@ -146,8 +151,14 @@ function SiteFilterTile({
         aria-label="סינון לפי רמת שירות"
       >
         <option value="">כל הרמות</option>
-        {TIER_OPTIONS.map((t) => (
-          <option key={t} value={t}>{TIER_LABELS[t]} ({tierCounts[t] || 0})</option>
+        {TIER_FILTER.map((t) => (
+          // ⚠️ מה שאינו דרגה מוצג רק כשיש כאלה — אותו כלל כמו "לא הוגדר" של
+          // המערכת. **אבל תמיד כשהוא הנבחר:** אחרי שחיברו את האתר האחרון
+          // האפשרות הייתה נעלמת, הבורר היה מציג "כל הרמות", והרשת — שעדיין
+          // מסוננת לפיה — הייתה ריקה בלי שום סיבה גלויה.
+          (TIER_OPTIONS.includes(t) || tierCounts[t] > 0 || tierFilter === t) && (
+            <option key={t} value={t}>{TIER_LABELS[t]} ({tierCounts[t] || 0})</option>
+          )
         ))}
       </select>
 

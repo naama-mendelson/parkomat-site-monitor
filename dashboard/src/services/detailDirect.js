@@ -27,6 +27,7 @@
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { computeAnalytics } from "../../../shared/executive.mjs";
 import { pageAll } from "./pageAll";
+import { effectiveTier } from "../utils/tier";
 
 const FETCH_CAP = 20000;
 
@@ -46,7 +47,7 @@ export async function fetchSiteDetailDirect(code, weekFromIso, toIso = new Date(
   if (siteRes.error) fail(siteRes.error);
   const site = siteRes.data;
 
-  const [statsRes, uptimeRes, globalsRes, historyRes, opsRes, maintRes] = await Promise.all([
+  const [statsRes, uptimeRes, globalsRes, historyRes, opsRes, maintRes, svcRes] = await Promise.all([
     supabase.rpc("site_stats", { p_site_ids: [site.id], p_from: weekFromIso, p_to: toIso }),
     supabase.rpc("site_uptime", { p_site_ids: [site.id], p_from: weekFromIso, p_to: toIso }),
     supabase.rpc("site_globals", { p_site_ids: [site.id] }),
@@ -56,6 +57,12 @@ export async function fetchSiteDetailDirect(code, weekFromIso, toIso = new Date(
     supabase.from("maintenance_windows")
       .select("set_by_name, reason, started_at, duration_hours, expires_at, cancelled_at")
       .eq("site_id", site.id).order("started_at", { ascending: false }).limit(10),
+    // ⚠️ **רק בשביל הדרגה.** "דרגת שירות" בפרטי האתר הוצגה מ-`sites.tier`
+    // הגולמי, בזמן שהכרטיס כבר הציג את הרמזור — נמדד 05/10/2026: ב-45 מתוך
+    // 56 אתרים שני המסכים אמרו דרגה שונה לאותו אתר (מגדל 1: VIP בכרטיס,
+    // "בסיסי" בחלון). ⚠️ ואינה קטלנית, בדיוק כמו ב-sitesDirect: לכן מחוץ
+    // ללולאה שלמטה.
+    supabase.rpc("site_uptime_service", { p_site_ids: [site.id], p_from: weekFromIso, p_to: toIso }),
   ]);
 
   for (const r of [statsRes, uptimeRes, globalsRes, historyRes, opsRes, maintRes]) {
@@ -74,6 +81,7 @@ export async function fetchSiteDetailDirect(code, weekFromIso, toIso = new Date(
   return {
     site: {
       ...site,
+      tier: effectiveTier(svcRes.data?.[0] ?? null, Boolean(svcRes.error), site.tier),
       status,
       inMaintenance,
       // השרת מחזיר את חלון התחזוקה הפעיל כאובייקט מקונן; site_globals מחזירה
