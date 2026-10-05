@@ -97,9 +97,17 @@ if (m) {
   // מה שנשאר — ולכן `clientWidth` שלו הוא הרוחב האמיתי שיש לו.
   // בלעדיהם האלמנט מתרחב לפי התוכן, `clientWidth === scrollWidth`,
   // והמדידה ב-useFitName אף פעם לא תמצא שצריך להקטין.
-  if (/flex:\s*1/.test(rule) && /min-width:\s*0/.test(rule))
-    ok.push("‏flex מקצה לשם את הרוחב שנשאר — המדידה משמעותית");
-  else problems.push("‎.card-name-text בלי flex:1 + min-width:0 — המדידה תמיד תראה שהכול נכנס");
+  //
+  // ⚠️ מה שאסור הוא `min-width: auto` (ברירת המחדל של flex = רוחב התוכן),
+  // לא דווקא כל ערך שאינו 0. מ-359c4f8 (23/09/2026) הכלל הוא
+  // `min-width: min(6rem, 100%)` — רצפה שבה השם גובר על תג הסוג — והשער
+  // הזה נשאר אדום על "0" שבע-עשרה יום, כלומר הפסיק להבחין בין אדום לאדום.
+  // כל אורך מפורש מאפשר להתכווץ מתחת לתוכן, ולכן המדידה עדיין משמעותית.
+  const minW = rule.match(/min-width:\s*([^;]+);/);
+  const shrinks = minW && !/^(auto|min-content|max-content|fit-content)\b/.test(minW[1].trim());
+  if (/flex:\s*1/.test(rule) && shrinks)
+    ok.push(`‏flex מקצה לשם את הרוחב שנשאר (min-width: ${minW[1].trim()}) — המדידה משמעותית`);
+  else problems.push("‎.card-name-text בלי flex:1 + min-width מפורש — המדידה תמיד תראה שהכול נכנס");
 }
 
 // ============================================================
