@@ -322,6 +322,30 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   );
 
   // ==========================================================
+  // שתי המערכות — גם בכרטיס המוקטן (compact)
+  // ==========================================================
+  // ⚠️ בקשת בעלת המוצר (05/10/2026): "לפלורנטין יש שתי מערכות — גם בתצוגה
+  // מוקטנת אני רוצה שיראו את שתיהן בקטן". שורות המערכות יושבות ב-details,
+  // שמוצג רק ב-normal; ב-compact נשאר רק "בתחזוקה" — "הטוב מבין השתיים",
+  // כלומר בדיוק המצב שמסתיר מה קורה בכל מערכת.
+  // אותן מילים ואותם צבעים כמו בשורות המלאות, בשבב אחד לכל מערכת.
+  const systemsCompact = systems && (
+    <div className="card-systems-compact" aria-label="מצב המערכות">
+      {systems.map((u) => {
+        const c = STATUS_COLORS[u.state] || STATUS_COLORS.no_comm;
+        const word = SYSTEM_LABELS[u.state] || "לא ידוע";
+        return (
+          <span key={u.unit} className="sys-chip" title={`מערכת ${u.unit}: ${word}`}
+            style={{ background: c.bg, borderColor: c.dot, color: c.text }}>
+            <span className="sys-chip-num" style={{ color: c.dot }}>{u.unit}</span>
+            {word}
+          </span>
+        );
+      })}
+    </div>
+  );
+
+  // ==========================================================
   // "ייתכן תקוע" — תצוגה בלבד, אפס נגיעה בחשבון
   // ==========================================================
   // שער לא יכול להיות "בפעולה" שעות. עד עכשיו אתר כזה נראה תקין לגמרי בכרטיס,
@@ -769,6 +793,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         statusTag
       )}
 
+      {density === "compact" && systemsCompact}
       {!isMini && degradedTag}
       {!isMini && stuckBadge}
       {!isMini && faultLine}

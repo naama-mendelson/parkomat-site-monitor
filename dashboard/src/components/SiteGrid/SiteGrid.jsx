@@ -1,8 +1,92 @@
 // components/SiteGrid/SiteGrid.jsx — רשת כרטיסי אתרים עם צפיפות דינמית (PRD 12.1)
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import SiteCard from "../SiteCard/SiteCard";
-import { densityFor } from "../../utils/constants";
+import { densityFor, DENSITY } from "../../utils/constants";
 import "./SiteGrid.css";
+
+// ⚠️ רוחב מזערי לכרטיס הפתוח, ולא מספר עמודות קבוע: עמודה היא 260px ומעלה
+// ב-normal אבל 140px ב-mini, ו"שתי עמודות" ב-mini היו כרטיס של 290px שבו הכול
+// נערם לגובה — בדיוק מה שהיה צריך לגלול. 440 = שתי עמודות ב-normal, שלוש ב-compact.
+const EXPANDED_MIN_W = 440;
+// הערכה לרינדור הראשון בלבד; useLayoutEffect מודד ומתקן לפני הציור.
+const EXPANDED_EST_H = 360;
+
+/**
+ * גובה התוכן של כרטיס — בלי המתיחה של שורת הרשת.
+ *
+ * ⚠️ **נסכם מהילדים, ולא נמדד מהכרטיס.** כרטיס נמתח לגובה השורה שלו
+ * (align-self: stretch), כך שגובהו הוא *תוצאה* של הרשת — ובכרטיס הפתוח,
+ * של מספר השורות שבחרנו. מדידתו הייתה נועלת אותו על הבחירה הקודמת.
+ * ⚠️ offsetHeight ולא getBoundingClientRect: אנימציית הפתיחה מתחילה
+ * ב-scale(0.94), ו-rect היה מודד כרטיס מוקטן.
+ * ⚠️ ובלי שוליים: ל-.exp-open יש margin-top: auto, ו-getComputedStyle מחזיר
+ * את הערך *בפועל* — כלומר את השטח שנמתח. אותה נעילה, מהדלת האחורית.
+ */
+function contentHeight(el) {
+  const cs = getComputedStyle(el);
+  const kids = [...el.children].filter((k) => {
+    if (!k.getClientRects().length) return false;            // display: none
+    const p = getComputedStyle(k).position;
+    return p !== "absolute" && p !== "fixed";                 // לא תופס מקום
+  });
+  const frame = parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop)
+              + parseFloat(cs.paddingBottom) + parseFloat(cs.borderBottomWidth);
+  // mini הוא flex בשורה — הגבוה מבין הילדים, לא סכומם
+  if (cs.flexDirection.startsWith("row")) return frame + Math.max(0, ...kids.map((k) => k.offsetHeight));
+  return frame + (parseFloat(cs.rowGap) || 0) * Math.max(0, kids.length - 1)
+               + kids.reduce((s, k) => s + k.offsetHeight, 0);
+}
+
+/**
+ * כמה שורות של הרשת הכרטיס הפתוח יתפוס, החל מ-startRow (1-based).
+ *
+ * ⚠️ **לפי הגובה הטבעי של כל שורה, ולא לפי "שורה רגילה" — נמדד.** הגרסה
+ * הראשונה חילקה בגובה הכרטיס הסגור הנמוך ביותר. אבל אתר דו-מערכתי (פלורנטין)
+ * גבוה ממנו בכמחצית, וכשהוא בשורה של הכרטיס הפתוח השורות יצאו גבוהות מהחישוב:
+ * 107px ריקים בתוך הכרטיס ושכנים שנמתחו ב-115px.
+ *
+ * לכן: גובה כל שורה = התוכן של הכרטיס הסגור הגבוה בה, ובוחרים את מספר השורות
+ * שסכומן הכי קרוב לתוכן של הכרטיס הפתוח. חסר — השורות גדלות והשכנים נמתחים;
+ * עודף — שטח פנוי בכרטיס הפתוח.
+ *
+ * ⚠️ **חסר שוקל פי 1.5.** שכן שנמתח הוא כרטיס עם בטן ריקה, ובשורה יש כמה כאלה;
+ * השטח הפנוי בכרטיס הפתוח מתחלק בין חלקיו (justify-content ב-CSS) ואינו נראה
+ * כחור. נמדד בשורה עם שני אתרים דו-מערכתיים: 100px מתיחה מול 87px פנוי.
+ */
+function chooseRows(card, grid, startRow) {
+  const h = contentHeight(card);
+  const gs = getComputedStyle(grid);
+  const gap = parseFloat(gs.rowGap) || 0;
+  const tracks = gs.gridTemplateRows.split(" ").map(parseFloat).filter(Number.isFinite);
+  const gTop = grid.getBoundingClientRect().top + parseFloat(gs.borderTopWidth) + parseFloat(gs.paddingTop);
+  const starts = [];
+  let y = 0;
+  for (const t of tracks) { starts.push(y); y += t + gap; }
+
+  const nat = tracks.map(() => 0);
+  for (const c of grid.querySelectorAll(".site-card:not(.is-expanded)")) {
+    // ריחוף מזיז כרטיס ב-2px (translateY) — הסבולת היא חצי רווח
+    const top = c.getBoundingClientRect().top - gTop;
+    let i = 0;
+    while (i + 1 < starts.length && starts[i + 1] <= top + gap / 2 + 3) i++;
+    nat[i] = Math.max(nat[i], contentHeight(c));
+  }
+
+  let best = 1;
+  let bestCost = Infinity;
+  let area = -gap;
+  for (let k = 1; k <= 24; k++) {
+    const row = nat[startRow - 2 + k];
+    // שורה בלי אף כרטיס סגור (סוף הרשימה) נמדדת לפי הכרטיס הפתוח עצמו — אין
+    // שכן שיימתח ואין שטח שיישאר ריק.
+    if (!row) { if (area < h) best = k; break; }
+    area += row + gap;
+    const cost = area >= h ? area - h : (h - area) * 1.5;
+    if (cost < bestCost - 0.5) { best = k; bestCost = cost; }
+    if (area >= h) break;                                       // עוד שורה = רק עוד ריק
+  }
+  return best;
+}
 
 function SiteGrid({ sites, onSiteClick }) {
   // רק כרטיס אחד מורחב בכל רגע — אחרת הרשת מתפרקת ואי אפשר לסרוק אותה
@@ -81,7 +165,33 @@ function SiteGrid({ sites, onSiteClick }) {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [expanded]);
 
-  // הכרטיס נפתח שורה אחת מתחת (ראה placementFor) — ואולי מתחת לקצה המסך.
+  // כמה שורות הכרטיס הפתוח תופס — נמדד אחרי שהוא מוצב ברוחבו, ומתוקן לפני
+  // הציור. ⚠️ `sites` בתלויות: התוכן משתנה עם הנתונים החיים (פעולה שנפתחה מוסיפה
+  // שורה לכרטיס). setState רק כשהמספר באמת השתנה — אחרת אין רינדור נוסף.
+  //
+  // ⚠️ **ושוב אחרי כל תיקון, עד שלוש פעמים.** מי יושב בשורות שליד הכרטיס תלוי
+  // במספר השורות שהוא תופס (הכרטיסים זורמים סביבו), ולכן הבחירה נבדקת שוב
+  // אחרי שהוצבה. התקרה נגד מצב שבו שתי בחירות מחליפות זו את זו בלי סוף.
+  const [expRows, setExpRows] = useState(null);
+  const adjust = useRef({ key: "", n: 0 });
+  useLayoutEffect(() => {
+    if (!expanded || !gridRef.current || cols < 2) return;
+    const card = gridRef.current.querySelector(`.site-card.is-expanded[data-code="${CSS.escape(expanded)}"]`);
+    const index = sites.findIndex((s) => s.code === expanded);
+    if (!card || index < 0 || !String(card.style.gridRow).includes("span")) return;
+    const key = `${expanded}|${cols}|${box.w}|${sites.length}`;
+    if (adjust.current.key !== key) adjust.current = { key, n: 0 };
+    if (adjust.current.n >= 3) return;
+    const rows = chooseRows(card, gridRef.current, Math.floor(index / cols) + 1);
+    setExpRows((prev) => {
+      if (prev && prev.code === expanded && prev.rows === rows) return prev;
+      adjust.current.n += 1;
+      return { code: expanded, rows };
+    });
+  }, [expanded, cols, box, sites, expRows]);
+
+  // הכרטיס נפתח במקומו (או שורה מתחת, כשהוא ברוחב השורה — ראה placementFor),
+  // ואולי מתחת לקצה המסך.
   // גוללים **רק כמה שצריך** (nearest) כדי שכולו ייראה; אם הוא כבר גלוי, שום
   // דבר לא זז.
   //
@@ -148,27 +258,45 @@ function SiteGrid({ sites, onSiteClick }) {
   };
 
   // ==========================================================
-  // הכרטיס המורחב — שורה שלמה, ממש מתחת לשורה שבה לחצו
+  // הכרטיס המורחב — ריבוע במקום שבו לחצו
   // ==========================================================
-  // ⚠️ **לרוחב ולא לגובה — בקשת בעלת המוצר (05/10/2026):** "עדיף שהכרטיס
-  // יפתח לרוחב ולא יצטרכו לגלול אותו". הוא תפס 2×2 תאים, ובצפיפות compact/mini
-  // זה כרטיס של 320–450px שבו הכותרת והמדדים נערמו לגובה — עד שהיה צריך לגלול
-  // כדי לראות את כולו. בשורה שלמה ארבעת המדדים עומדים זה לצד זה.
+  // ⚠️ **שלוש גרסאות, ושתיים נדחו על ידי בעלת המוצר — כל אחת מסיבה אחרת:**
+  //   1. 2×2 תאים — ב-compact/mini כרטיס של 320–450px, הכותרת והמדדים נערמו
+  //      לגובה, ו-2 שורות של 85px לא הכילו אותו: השורות נמתחו ו"צריך לגלול".
+  //   2. שורה שלמה, מתחת לשורה שבה לחצו (fd7d373) — "לא אוהבת שהוא נפתח לכל
+  //      רוחב המסך, עדיף יותר מרובע" (05/10/2026): פס של 1,800×278.
+  //   3. כאן: **רוחב** לפי EXPANDED_MIN_W (2–4 עמודות, ~450–650px), ו**גובה**
+  //      לפי התוכן — כמה שורות שצריך (expandedRows). זה מה שחסר בגרסה 1: מספר
+  //      השורות היה קבוע, ולכן הכרטיס לא נכנס בהן.
   //
-  // ⚠️ **מיקום מפורש בשורה *שמתחת*, ולא auto-placement.** כרטיס ברוחב שורה
-  // שמוצב אוטומטית קופץ לשורה הבאה ומשאיר חורים בשורה שבה היה (התאים שאחריו
-  // ריקים עד סוף השורה). בשורה שמתחת — Grid מציב קודם את המפורש, והשכנים
-  // שאחריו ממלאים את מקומו בשורה המקורית: אין חורים, והכרטיס נפתח כמגירה
-  // ישירות מתחת למקום שבו לחצו.
+  // ⚠️ **במקום, ולא בשורה שמתחת.** הכרטיס הפתוח מכסה את התא שבו לחצו, כך שהוא
+  // נשאר מתחת לסמן. בעמודות האחרונות הוא זז פנימה (start) כדי להיכנס, וזה
+  // מזיז את *השכנים* שקדמו לו בשורה — הם עוברים לתאים הפנויים שאחריו. Grid
+  // מציב קודם את המפורש, ושאר הכרטיסים (כולם 1×1) ממלאים כל תא פנוי: אין חורים.
   //
-  // (הגרסה הקודמת — 2 עמודות, ומיקום מפורש רק בעמודה האחרונה כדי שלא יקפוץ
-  // 183px — מתועדת בהיסטוריה של הקובץ.)
-  const placementFor = (index) => {
+  // ⚠️ **שורה *וגם* עמודה, מפורשות.** עם עמודה בלבד Grid מחפש את השורה הראשונה
+  // שבה כל העמודות פנויות — כלומר הכרטיס קופץ למטה (נמדד בעבר: 183px).
+  //
+  // ⚠️ כשהרוחב הנדרש הוא כל השורה (טלפון, טאבלט) — שורה שלמה *מתחת*, כמו
+  // בגרסה 2: במקום, היה דוחף את כל הכרטיסים שקדמו לו בשורה אל מתחתיו.
+  const spanCols = () => {
+    const gap = DENSITY.GAP[density] ?? 14;
+    const colW = (box.w - (cols - 1) * gap) / cols;
+    let n = 2;
+    while (n < cols && n * colW + (n - 1) * gap < EXPANDED_MIN_W) n++;
+    return n;
+  };
+
+  const placementFor = (index, code) => {
     if (cols < 2) return undefined;                  // עמודה אחת — כבר כל הרוחב
-    return {
-      gridColumn: "1 / -1",
-      gridRow: `${Math.floor(index / cols) + 2}`,
-    };
+    const row = Math.floor(index / cols) + 1;
+    const n = spanCols();
+    if (n >= cols) return { gridColumn: "1 / -1", gridRow: `${row + 1}` };
+    const start = Math.min(index % cols, cols - n) + 1;
+    const rows = expRows?.code === code
+      ? expRows.rows
+      : Math.max(1, Math.round(EXPANDED_EST_H / (DENSITY.CARD_H[density] ?? 168)));
+    return { gridColumn: `${start} / span ${n}`, gridRow: `${row} / span ${rows}` };
   };
 
   return (
@@ -186,7 +314,7 @@ function SiteGrid({ sites, onSiteClick }) {
           expanded={expanded === site.code}
           // רק למורחב: לכרטיס רגיל מיקום מפורש היה מקבע את כל הרשת ומבטל
           // את ה-auto-placement שמסדר אותה מחדש בכל שינוי רוחב.
-          style={expanded === site.code ? placementFor(index) : undefined}
+          style={expanded === site.code ? placementFor(index, site.code) : undefined}
           onToggle={toggle}
           onHover={handleCardEnter}
           onOpenDetail={onSiteClick}

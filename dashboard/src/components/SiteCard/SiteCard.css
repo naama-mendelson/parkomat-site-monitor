@@ -311,8 +311,8 @@
    כרטיס מורחב — לחיצה מגדילה את הריבוע ומבהירה אותו
    ========================================================== */
 
-/* שורה שלמה ברשת — נפתח לרוחב ולא לגובה (בקשת בעלת המוצר, 05/10/2026).
-   השורה עצמה נקבעת ב-SiteGrid (placementFor): מתחת לשורה שבה לחצו. */
+/* ⚠️ הרוחב והגובה ברשת נקבעים ב-SiteGrid (placementFor): ריבוע של 2–4 עמודות
+   במקום שבו לחצו, וכמה שורות שהתוכן צריך. כאן — רק הנפילה לעמודה אחת. */
 .site-card.is-expanded {
   position: relative;
   grid-column: 1 / -1;
@@ -339,13 +339,11 @@
   to   { opacity: 1; transform: scale(1); }
 }
 
-/* המצב צמוד לשם (flex-start + רווח קבוע) ולא בקצה השני: בכרטיס ברוחב שורה
-   space-between היה מרחיק אותו עד 1,500px מהשם שהוא מתאר. */
 .exp-head {
   display: flex;
   align-items: flex-start;
-  justify-content: flex-start;
-  gap: 14px 40px;
+  justify-content: space-between;
+  gap: 14px;
 }
 
 .exp-name {
@@ -378,15 +376,17 @@
   flex-shrink: 0;
 }
 
-/* ארבעת המדדים — גדולים וברורים, בשורה אחת כשיש רוחב.
-   ⚠️ max-width: בכרטיס ברוחב שורה שלמה (עד ~1800px) ארבעה אריחים של 1fr
-   נמתחו ל-440px כל אחד — מספר קטן באמצע שטח ריק. עד 960px הם נשארים
-   אריחים; בטלפון — שניים בשורה. */
+/* ארבעת המדדים — 2×2, ריבוע בתוך ריבוע. ⚠️ שניים בשורה תמיד, גם ברוחב 650:
+   auto-fit שם שלושה בשורה, והרביעי נשאר לבד בשורה משלו. */
 .exp-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  max-width: 960px;
+  /* ⚠️ הכרטיס נמתח לגובה השורות שהוא תופס (chooseRows ב-SiteGrid), ושטח פנוי
+     מתחלק מעל המדדים ומתחתם — לא פס ריק אחד מעל הכפתור. שוליים ולא
+     justify-content: כך הרמז נשאר צמוד לכפתור, ו-contentHeight (שאינו סוכם
+     שוליים) מודד את התוכן ולא את המתיחה. */
+  margin-block: auto;
 }
 
 .exp-metric {
@@ -430,9 +430,6 @@
 }
 
 .exp-open {
-  /* בכרטיס ברוחב שורה כפתור ברוחב מלא הוא פס של 1800px; בטלפון — כל הרוחב */
-  width: min(100%, 420px);
-  align-self: flex-start;
   padding: 11px;
   border-radius: 10px;
   background: var(--accent);
@@ -782,6 +779,33 @@
 /* ⚠️ ענבר ולא אדום: אדום הוא הצבע של "האתר מושבת", וזה בדיוק מה
    שהמצב הזה **אינו**. תג אדום על כרטיס ירוק קורא כסתירה, ואז לומדים
    להתעלם ממנו. */
+/* שתי המערכות בכרטיס המוקטן — שבב לכל מערכת, באותם צבעים כמו בשורות המלאות.
+   הצבעים מגיעים inline מ-STATUS_COLORS; כאן רק הצורה. */
+.card-systems-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sys-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.sys-chip-num {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .card-degraded {
   display: inline-flex;
   align-items: center;
