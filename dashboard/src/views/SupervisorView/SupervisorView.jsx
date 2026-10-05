@@ -9,6 +9,7 @@ import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
 import { fuzzyMatch, formatDate, formatOutage } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
+import { oneRowPerSite } from "../../utils/maintenanceRows";
 import "./SupervisorView.css";
 
 // עמודות הטבלה. numeric קובע יישור ומיון מספרי.
@@ -74,6 +75,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
       return String(av ?? "").localeCompare(String(bv ?? ""), "he") * dir;
     });
   }, [data, liveStatus, statusFilters, query, sortKey, sortDir]);
+
+  // שורה אחת לכל אתר — ראה utils/maintenanceRows (שני חלונות פעילים ל-1311 בייצור).
+  const maintenances = useMemo(() => oneRowPerSite(data?.activeMaintenances), [data]);
 
   function toggleSort(key) {
     if (key === sortKey) {
@@ -291,16 +295,17 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
             <p>חלונות תחזוקה שהופעלו ידנית ועדיין בתוקף</p>
           </header>
 
-          {data.activeMaintenances.length === 0 ? (
+          {maintenances.length === 0 ? (
             <p className="sv-none-inline">אין תחזוקות פעילות</p>
           ) : (
             <ul className="sv-maint">
-              {data.activeMaintenances.map((m) => (
+              {maintenances.map((m) => (
                 <li key={m.siteCode}>
                   <div className="sv-maint-main">
                     <span className="sv-maint-site">{m.siteName}</span>
                     <span className="sv-maint-meta">
                       הפעיל: {m.setBy} · פג ב-{formatDate(m.expiresAt)}
+                      {m.windows > 1 && ` · ${m.windows} חלונות חופפים`}
                     </span>
                     {m.reason && <span className="sv-maint-reason">{m.reason}</span>}
                   </div>
