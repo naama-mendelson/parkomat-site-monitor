@@ -311,11 +311,12 @@
    כרטיס מורחב — לחיצה מגדילה את הריבוע ומבהירה אותו
    ========================================================== */
 
-/* תופס 2 עמודות ו-2 שורות ברשת → "גדל" באמת, לא רק מתארך */
+/* שורה שלמה ברשת — נפתח לרוחב ולא לגובה (בקשת בעלת המוצר, 05/10/2026).
+   השורה עצמה נקבעת ב-SiteGrid (placementFor): מתחת לשורה שבה לחצו. */
 .site-card.is-expanded {
   position: relative;
-  grid-column: span 2;
-  grid-row: span 2;
+  grid-column: 1 / -1;
+  grid-row: auto;
   cursor: default;
 
   display: flex;
@@ -338,11 +339,13 @@
   to   { opacity: 1; transform: scale(1); }
 }
 
+/* המצב צמוד לשם (flex-start + רווח קבוע) ולא בקצה השני: בכרטיס ברוחב שורה
+   space-between היה מרחיק אותו עד 1,500px מהשם שהוא מתאר. */
 .exp-head {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
+  justify-content: flex-start;
+  gap: 14px 40px;
 }
 
 .exp-name {
@@ -375,12 +378,15 @@
   flex-shrink: 0;
 }
 
-/* ארבעת המדדים — גדולים וברורים */
+/* ארבעת המדדים — גדולים וברורים, בשורה אחת כשיש רוחב.
+   ⚠️ max-width: בכרטיס ברוחב שורה שלמה (עד ~1800px) ארבעה אריחים של 1fr
+   נמתחו ל-440px כל אחד — מספר קטן באמצע שטח ריק. עד 960px הם נשארים
+   אריחים; בטלפון — שניים בשורה. */
 .exp-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
-  flex: 1;
+  max-width: 960px;
 }
 
 .exp-metric {
@@ -424,6 +430,9 @@
 }
 
 .exp-open {
+  /* בכרטיס ברוחב שורה כפתור ברוחב מלא הוא פס של 1800px; בטלפון — כל הרוחב */
+  width: min(100%, 420px);
+  align-self: flex-start;
   padding: 11px;
   border-radius: 10px;
   background: var(--accent);
@@ -438,13 +447,6 @@
   transform: translateY(-1px);
 }
 
-/* במסך צר הכרטיס המורחב תופס את כל השורה.
-   ⚠️ 1 / -1 ולא span 1: הכלל נכתב כשבטלפון הייתה עמודה אחת, ו"עמודה אחת" הייתה
-   כל הרוחב. מאז הטלפון מציג שתי עמודות צפופות (mini), ו-span 1 נתן כרטיס מורחב
-   ברוחב 179px — חצי מסך, והמדדים נדחסו לעמודה צרה. נמדד 05/10/2026. */
-@media (max-width: 700px) {
-  .site-card.is-expanded { grid-column: 1 / -1; grid-row: auto; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .site-card.is-expanded { animation: none; }
