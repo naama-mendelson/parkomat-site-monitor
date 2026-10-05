@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // בשני המסלולים. ראה services/dataSource.js לתוכנית ב'.
 import { fetchSitesList } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
+import { keepLastService } from "../utils/serviceMerge.js";
 
 // ============================================================
 // ⚠️ הודעה לבן אדם, לא ל-console
@@ -78,7 +79,8 @@ export function useSites({ hold = false } = {}) {
       try {
         const data = await fetchSitesList();
         if (stale()) return;          // שליפה חדשה יותר כבר בדרך
-        setSites(data);
+        // כשל בשעות השירות — הערך האחרון הידוע, לא "בסיסי" ו-24/7 לדקה (serviceMerge)
+        setSites((prev) => keepLastService(prev, data));
         setError(null);
         setLoading(false);
         return;

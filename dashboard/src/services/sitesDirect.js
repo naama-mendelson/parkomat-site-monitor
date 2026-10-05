@@ -165,6 +165,9 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // הסכם שונה מזה שבחוזה, וזה היה בלתי-נראה לחלוטין.
       servicePlan: svc ? svc.plan : null,
       serviceHours: svc ? svc.service_hours : null,
+      // ⚠️ הקריאה לשעות השירות נכשלה — כל השדות שלמעלה הם ברירת מחדל ולא ערך.
+      // useSites מחליף אותם בערך האחרון הידוע (utils/serviceMerge.js).
+      serviceStale: Boolean(svcRes?.error),
       // אותו כלל בדיוק כמו בשרת — siteTrend במודול המשותף.
       trend: siteTrend(
         { operations: st?.operations ?? 0, failureRate: st?.failure_rate ?? 0 },

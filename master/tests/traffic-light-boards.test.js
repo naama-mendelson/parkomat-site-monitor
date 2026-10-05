@@ -229,10 +229,23 @@ test("⚠️ אין `LIMIT 1` חשוף בחישובי הזמינות", () => {
   // זאת, ctid של שורה 208 קטן משל 151 — הסדר כבר מעורבב.
   const sql = fs.readFileSync(
     path.join(__dirname, "..", "db", "service-hours.postgres.sql"), "utf8");
-  assert.equal((sql.match(/ORDER BY position, id LIMIT 1\)/g) || []).length, 4,
-    "ארבעת מפתחות העמודות חייבים ORDER BY מפורש");
+  // 4 בפונקציות לאתר בודד (service_plan / service_agreement), ו-3 בחישוב לכל
+  // האתרים בבת אחת ב-site_uptime_service (05/10/2026 — במקום 4 קריאות לאתר).
+  assert.equal((sql.match(/ORDER BY position, id LIMIT 1\)/g) || []).length, 7,
+    "שבעת מפתחות העמודות חייבים ORDER BY מפורש");
   assert.equal((sql.match(/ORDER BY r\.position, r\.id/g) || []).length, 2,
-    "שתי התאמות השורה חייבות ORDER BY מפורש");
+    "שתי התאמות השורה (לאתר בודד) חייבות ORDER BY מפורש");
+  // בחישוב לכל האתרים הבחירה היא DISTINCT ON — ושם ה-ORDER BY הוא שקובע
+  // איזו שורה "ראשונה". בלעדיו התשובה היא שוב סדר הערמה.
+  assert.equal((sql.match(/DISTINCT ON \(code\)[\s\S]{0,200}?ORDER BY code, position, id/g) || []).length, 2,
+    "שתי בחירות השורה לכל האתרים (מסלול, שירות) חייבות ORDER BY code, position, id");
+  // והכלל עצמו, לא רק הספירה: אין LIMIT 1 בקוד (בלי הערות) בלי ORDER BY צמוד לפניו
+  const code = sql.split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
+  for (const m of code.matchAll(/LIMIT 1\b/g)) {
+    const before = code.slice(Math.max(0, m.index - 60), m.index);
+    // ORDER BY ואחריו רק שמות עמודות, פסיקים ורווחים (כולל ירידת שורה) — עד ה-LIMIT
+    assert.match(before, /ORDER BY [\w.,\s]*$/, `LIMIT 1 בלי ORDER BY צמוד: "...${before.slice(-60)}LIMIT 1"`);
+  }
 });
 
 // ============================================================

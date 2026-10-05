@@ -275,7 +275,54 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $fn$
-WITH ids AS (
+-- ============================================================
+-- ⚠️ המסלול והשירות של כל האתרים — בסריקה אחת של הלוח
+-- ============================================================
+-- כאן היו 4 קריאות לכל אתר ל-`app.service_plan` / `app.service_agreement`,
+-- וכל אחת סורקת מחדש את כל שורות הרמזור (285) ומריצה את מדיניות ה-RLS
+-- כשאילתה נפרדת. נמדד בייצור (05/10/2026), כמשתמש מחובר: **428ms מתוך
+-- 1,570ms** של קריאה בחיבור קר — הצומת הכבד ביותר בתוכנית. מהדשבורד הקריאה
+-- כולה לקחה 3–12 שניות, ולפעמים חצתה את תקרת 8 השניות (57014); אז הדרגות
+-- והזמינות של כל האתרים נפלו לדקה לערכי ברירת המחדל.
+--
+-- ⚠️ **אותה הגדרה בדיוק כמו שתי הפונקציות** (שנשארות, לשימוש לאתר בודד):
+-- הלוח הרובוטי בלבד, המפתח הראשון לכל תווית לפי (position, id), רשימת קודים
+-- מופרדת בפסיקים בלי רווחים/טאבים, התא הלא-ריק הראשון לפי (position, id),
+-- והערך lower(btrim(...)). נבדק מול הגרסה הקודמת על נתוני הייצור.
+WITH tl_keys AS (
+  SELECT
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'קוד אתר'
+       ORDER BY position, id LIMIT 1) AS k_code,
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'להתייחס כ'
+       ORDER BY position, id LIMIT 1) AS k_kind,
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'סוג הסכם שירות במקור'
+       ORDER BY position, id LIMIT 1) AS k_plan
+),
+tl_codes AS (
+  -- שורה לכל (קוד, שורת לוח): תא "קוד אתר" יכול להחזיק כמה חניונים
+  SELECT c.code, r.position, r.id,
+         r.cells ->> k.k_kind AS served_raw,
+         r.cells ->> k.k_plan AS plan_raw
+    FROM traffic_light_rows r
+    CROSS JOIN tl_keys k
+    CROSS JOIN LATERAL unnest(string_to_array(
+             replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')), chr(32), ''), chr(9), ''),
+             ',')) AS c(code)
+   WHERE r.board = 'robotic'
+),
+tl_plan AS (
+  SELECT DISTINCT ON (code) code, lower(btrim(plan_raw)) AS plan
+    FROM tl_codes
+   WHERE btrim(coalesce(plan_raw, '')) <> ''
+   ORDER BY code, position, id
+),
+tl_served AS (
+  SELECT DISTINCT ON (code) code, lower(btrim(served_raw)) AS served
+    FROM tl_codes
+   WHERE btrim(coalesce(served_raw, '')) <> ''
+   ORDER BY code, position, id
+),
+ids AS (
   -- ============================================================
   -- ⚠️ **הזמינות נמדדת לפי המסלול, לא לפי השירות** — החלטת מוצר
   -- ============================================================
@@ -294,10 +341,12 @@ WITH ids AS (
   -- שורה שאיש לא מילא, ו-24/7 שם היה מוחק מדידה של אתר שיש לו הסכם
   -- — כלומר הרעה שקטה על סמך תא ריק.
   SELECT s.id,
-         app.service_plan(s.id)                                         AS plan,
-         app.service_agreement(s.id)                                    AS served,
-         COALESCE(app.service_plan(s.id), app.service_agreement(s.id))  AS kind
+         p.plan                         AS plan,
+         v.served                       AS served,
+         COALESCE(p.plan, v.served)     AS kind
     FROM sites s
+    LEFT JOIN tl_plan   p ON p.code = s.code
+    LEFT JOIN tl_served v ON v.code = s.code
    WHERE p_site_ids IS NULL OR s.id = ANY(p_site_ids)
 ),
 win AS (
