@@ -863,3 +863,183 @@ repo; no `.env.test` exists.
 Until that is configured, the rule is behavioural: **do not re-run the full suite to confirm a
 result you have already verified.** Run the one gate you changed. A full run that teaches
 nothing still costs ~300 MB against a quota that is already exceeded.
+
+## בודק מוסמך + תחזוקה מונעת (compliance) — built 04/10/2026
+
+Two per-site tabs ("בודק מוסמך", "תחזוקה מונעת") and two lamps on every card. The owner's
+request: every site needs an external certified inspection once a year and preventive maintenance
+twice a year; defects from the inspector's PDF must be tracked to closure, **a defect can be marked
+done only with a photo**, and managers are warned 2 months and 1 month before expiry.
+
+| Piece | Where |
+|---|---|
+| Tables, RPCs, the one traffic-light definition | `master/db/compliance.postgres.sql` (applied with `tools/apply-sql.js`; registered in `db.js`) |
+| SQL tests (PGlite) | `master/tests/compliance.test.js` — 42 tests, 50/50 SQL mutations killed |
+| Data layer | `dashboard/src/services/complianceDirect.js`, re-exported by `dataSource.js` (no server arm) |
+| PDF reading (in the browser) — **dates only** | `extractDates` + `suggestInspectionDates` in `shared/parse-inspection.mjs`, `dashboard/src/utils/pdfText.js` (pdfjs, lazy chunk) |
+| Inspector page, PM tab | `InspectionPage.jsx` (full page, frames `InspectionTab.jsx`), `PmTab.jsx` (+ `Inspection*`, `Defect*`, `Pm*`) |
+| Lamps, manager alerts | `ComplianceLights.jsx`, `ComplianceAlertsButton.jsx`, `utils/compliance.js`, `utils/complianceAlerts.js` |
+| UI unit tests | `master/tests/compliance-ui.test.js` |
+
+Rules that are easy to break and expensive to notice:
+
+- **All ten tables are closed** (RLS on, no policies, no grants — D2). Every read is a bounded
+  `SECURITY DEFINER` RPC gated by `app.require_staff()`. Do not "fix" a 403 with a policy or a
+  `GRANT SELECT`: that is exactly what would expose `data_b64` (PDFs up to 8 MB) to every
+  `select("*")`, and the tables to the agents and the intake identity. `compliance_file` is the
+  only door that returns bytes.
+- **Green/yellow/red is decided in SQL only** (`app.compliance_light`, 30 days). The dashboard
+  translates; it never thresholds. The manager alerts list (`complianceAlerts.js`) only decides
+  *what to list* — 60 days for the inspector (the lamp is still green at 45), 14 days awaiting a
+  clean report, a draft idle 12 h.
+- **The lamp words are the owner's, and they are a traffic light** (06/10/2026): *"בתוקף / עומד
+  לפוג עוד חודש / לא בתוקף — ירוק תקין, צהוב צריך להתכונן לתחזוקה או לזמן בודק, אדום לא תקין"*.
+  So `LIGHT_LABEL` reads בודק / תחזוקה **בתוקף · עומד(ת) לפוג תוך חודש · לא בתוקף** for both
+  areas — "בקרוב" and "באיחור" were replaced. The colours did not change: they already were
+  exactly this (`ok` / `soon` ≤ 30 days / `expired`). Yellow from a cycle awaiting a clean report
+  fits the same rule — it means *summon the inspector* — and keeps its own wording ("בודק בתוקף ·
+  ממתין לתסקיר נקי"). ⚠️ Grey ("אין נתונים", no report at all) is a fourth state the owner's list
+  does not name; it turns red only when `settings.compliance_go_live` is set (see *State* below).
+- ⚠️ **A defect past its fix date turns the inspector lamp red, even on a valid report** (owner,
+  06/10/2026, asked directly: red = not OK). In `app.compliance_machine_rows` the light is
+  `'expired'` when `overdue_n > 0` (open, `due_on < today`, current cycle only, soft-deleted
+  excluded); `validity_state` stays the pure validity. **Keep the two apart** — the label is built
+  from both: "בודק בתוקף · עבר מועד תיקון", not "בודק לא בתוקף", which would send someone to
+  summon an inspector when the job is to fix a defect. `machines_detail` carries `validity` for the
+  same reason, and `machineLampLabel` reads both shapes (`validity` / inspection_site's
+  `validity_state`). ⚠️ The reason avoids the word "באיחור" — the owner replaced it in lamp
+  labels, and `probe-lamps` asserts it is gone. The overdue row in the managers' list is `sev 4`
+  (red) to match. Consequence worth knowing: an **urgent** defect is due on the inspection day
+  itself, so it is red from the next day until closed with a photo — including defects typed in
+  during a historical backfill. SQL test 46 (7/7 mutations killed), UI tests in
+  `compliance-ui.test.js` (6/6).
+- **The traffic light is explained in the "?" help panel** (owner's choice over the inspector
+  page), section *בודק מוסמך ותחזוקה מונעת* in `HelpPanel.jsx`. The samples are `LampSwatch`
+  from `ComplianceLights.jsx` — the same classes and `colorVars` as the card lamp, so the legend
+  cannot drift from what the card shows. Its wording quotes SQL thresholds (30 days, 6 months,
+  overdue = `due_on < today`); change them together.
+- **Lamps are a translucent tint, not a solid fill** (owner, 06/10/2026, once every site went red:
+  "זה אדום מדי חזק, תעשה את זה יותר שקוף" — and after a first 14–16% tint with a full-colour
+  outline, "עדיין מדי חזק"). Background = `COMPLIANCE_COLORS[state].bg` (8–10%), outline at
+  45–50% alpha, glyph in a dark ink of the same hue (`--cl-ink-*` in
+  `ComplianceLights.css`). ⚠️ All three colours share the style — a translucent red beside a solid
+  green would make "OK" shout louder than "not OK". Each ink is checked against its tint *blended
+  over the card*, in both themes, by `scripts/check-colors.mjs` (a low-contrast ink fails it —
+  mutated and seen). The overdue-defects badge stays solid red: it is rare and meant to stand out.
+- **Changing a table later:** never edit a CHECK inside `CREATE TABLE IF NOT EXISTS` — production
+  skips the whole statement. Use `DROP CONSTRAINT IF EXISTS` + `ADD … NOT VALID` + `VALIDATE`
+  (pattern in the file header). The apply-sql dry run now compares constraints, triggers, RLS,
+  grants and indexes (`CON_SQL`), so a skipped change shows as drift.
+- **Only dates are read from the PDF — no wording at all** (owner, 05/10/2026: "אני לא סומכת על
+  כך, כיון שיתכנו ניסוחים רבים — אני רוצה שתחלץ רק תאריכים"). The label parser read the inspection
+  date, validity, defects, inspector and report number by phrasing ("בתוקף עד", "מה התיקונים"…),
+  which works only on a form someone has already seen. Now `extractDates` collects every date in
+  the text and `suggestInspectionDates` proposes the pair: **a date exactly a whole number of months
+  (1–24) before a later one** — inspection → next; else the latest and the one before it. ⚠️ Not
+  "latest and second latest": one real report also carries a signing date a week later and an
+  invoice-page date, and that rule picks a week-wrong inspection date. The months rule found the right pair in
+  every real report. `parseInspectionReport` is used **only** to split a multi-report file into
+  page blocks. Parser tag `dates-1`.
+- **The form shows ONE date to confirm — the next inspection** (owner: "שיהיה רק תאריך שצריך
+  לאשר וזהו"). No date buttons, no +12/+6, no note, no "הוצע: …" line (each was removed at her
+  request). ⚠️ **The inspection date is still required** — defect deadlines count from it and it
+  orders the reports — so it is taken from the pair and sent **hidden**. Its field appears, and
+  then stays (`showInsp`, latched), only when there is no suggestion or it does not fit: empty,
+  in the future, more than ~2 years before the next date, or before the periodic report it
+  follows. Without the latch, fixing the field would make it vanish mid-edit.
+- **Defects: a select with no default** — "אין ליקויים" / "יש ליקויים". "יש" opens one text input
+  per defect, typed by hand from the document beside the form; Enter or "+ עוד ליקוי" adds the
+  next (never a second empty one). **"תוך כמה ימים לתקן" is required and has no default** — 45 was
+  pre-filled and therefore never checked. No per-row urgent/due in the upload form: those are set
+  later in the defect's own edit dialog. Switching to "אין" hides typed rows but does not delete
+  them; what is *sent* follows the choice. The page then shows "נשארו X מתוך Y ליקויים" (open +
+  done of the current cycles); each is closed separately with a photo, and when all are, the
+  cycle is `awaiting_clean` until the clean follow-up report is uploaded.
+- **PDFs are drawn with `disableFontFace: true`** (`utils/pdfText.js`). Without it every Hebrew
+  report tested rendered garbled — letters on top of each other, some missing — because the
+  embedded David/Miriam subsets carry broken hinting ("TT: undefined function") and Chrome rejects
+  them as FontFace. Text extraction was never affected, only the picture the person confirms
+  against. Pinned by `master/tests/pdf-render.test.js`.
+- **Text in the PDF can be selected and copied** (owner, 06/10/2026: "שיהיה אפשר להעתיק מהמסמך
+  עצמו" — defects are typed from the document beside the form). `renderText` in `pdfText.js` lays
+  pdfjs's transparent text layer over the canvas, in the form preview and in the viewer. Positions
+  are percentages and the font size follows `--total-scale-factor`, recomputed by a
+  `ResizeObserver` from the **measured** width — the canvas is resized by CSS, never redrawn. The
+  layer's size comes from `utils/pdfTextLayer.css` (`!important`, height from the page's
+  `aspect-ratio`), not from pdfjs's inline `round()` (unsupported on older phones, and it leans on a
+  variable only their viewer defines). Proven in the browser on both real reports: the layer is the
+  local maximum of ink coverage against shifts in all four directions, and Ctrl+C → Ctrl+V into a
+  defect line gives the same text.
+- ⚠️ **Parentheses come back reversed from some reports, and the fix is per document**
+  (`utils/pdfBrackets.js`). Measured: pdfjs returns one real report's text with every bracket flipped —
+  including the defect itself (`)בקומה 2-(`) — while another, from other software, is correct
+  (`(בדיקה ראשונה)`). A blanket swap breaks the second; none breaks the first.
+  The document decides by its RTL items holding both brackets (which comes first), each page counted
+  once. Only the text layer goes through it — not the date reading. `master/tests/pdf-brackets.test.js`
+  is synthetic; the same checks on the real text run in `real-reports.local.test.js`.
+- ⚠️ **Nothing from a real report goes to git — the repository is public** (owner, 06/10/2026:
+  *"אני לא רוצה שזה יופיע ב-GITHUB, זה צריך להיות ב-SUPABASE"*). Reports carry inspector names,
+  a license number and addresses. The text extracted from two real reports
+  (`master/tests/fixtures/inspection/real/`) and every test that reads it
+  (`master/tests/*.local.test.js`) are git-ignored **by pattern**, so not even a file name lands;
+  they run in every local `npm test` and simply do not exist elsewhere. Public code calls the two
+  formats *נוסח א'* (two columns, reversed brackets, invoice page) and *נוסח ב'* ("מה התיקונים",
+  six-month validity). ⚠️ Before any push, grep what is staged for names, addresses and report
+  numbers — a comment is enough to publish them.
+- **The document gets the wide column** in the upload form (form ≤ 420px, dialog up to 1440px) and
+  the viewer opens screen-sized for a PDF (page up to 1200px) — owner: "שהמסמך יפתח יותר גדול". A
+  page at 400px is 5px letters, and that is what defects are copied from.
+- **The viewer closes on the backdrop only if the press *started* there** — with selectable text, a
+  selection released over the backdrop would otherwise close it mid-copy (same guard as
+  `InspectionDialog`).
+- **Validity is never defaulted to a year** (one real report was 6 months). No date in the
+  document → both fields shown empty and typed by a person; save stays blocked until then. The
+  server records the source by comparing the confirmed date with `parse.parsed` — the suggestion —
+  so keeping the suggestion is "מהמסמך" and any typed date is `manual`.
+- **A person confirms the date before saving** (`confirm_dates`, UI gate): never pre-checked, its
+  label repeats the next date (and the inspection date when its field is shown), and editing a
+  date or switching periodic↔follow-up clears it. A site with several machines gets **no** machine
+  pre-selected — the document is not read for it.
+- **"בודק מוסמך" is a full page, not a tab** (owner's request, 05/10/2026). The card lamp, the
+  alerts panel and the supervisor table all route through `handleSiteClick` to
+  `InspectionPage`; the site window keeps the tab in its nav (with the defects badge) but clicking
+  it opens the page, and "חזרה" returns to the window **on the tab it left from**. The page renders
+  `InspectionTab` itself — never a copy — with `dropAnywhere`. The PM lamp still opens the window.
+- **Dragging a PDF** (managers only) opens the same upload flow with the file already read. On the
+  page a file dropped **anywhere** opens it, unless a dialog is already open — then it is ignored,
+  so it cannot replace a form being filled. In the window tab a drop outside the zone is swallowed.
+  Either way the browser must never open the PDF in place of the dashboard: on the page that holds
+  for operators too, who get "רק מנהל יכול להעלות תסקיר" instead.
+- **The PM form is local-first** (`utils/pmOutbox.js`): ticks/notes in localStorage, photos in
+  IndexedDB, drained when reception returns; ticks are never reverted. Submit needs an empty outbox.
+- **The card fetches `site_compliance` at most every 5 minutes** (it changes daily, or on an event),
+  plus a one-site refetch on each `events.type='compliance'`. A failure keeps the last-known state
+  with a dashed "stale" border, and a site with no known state shows a dashed "?". Never let a lamp
+  vanish. (A StaleBanner line after three failures was built and **removed at the owner's request**,
+  04/10/2026 — the dashed lamp is the signal.)
+- ⚠️ **Opening the app always lands on the operator dashboard (`OperatorView`)** — owner,
+  06/10/2026: "כשפותחים את האפליקציה מגיעים ישר ל-DASHBOARD הבקר". The site and tab used to be
+  kept in the URL (`?site=&tab=`) and reopened on every load, so that a phone killing the PWA
+  mid-visit would return the technician to the form; in practice every refresh landed on the
+  inspector page. **Removed deliberately, and the cost is known:** after such a kill the technician
+  is back on the dashboard and reopens the site. The draft is not lost — `pmOutbox` keeps it on the
+  device, per visit. A leftover `?site=&tab=` (old version, bookmark) opens nothing and is stripped.
+  Do not re-add the restore without asking.
+
+**State:** ✅ the SQL **is applied to production** (05/10/2026: the 271 new objects, nothing else;
+all ten tables empty; post-apply check "הייצור זהה לקוד"; 06/10: the overdue→red rule, two function
+bodies only, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive
+maintenance is not** — owner: *"לדחוף רק את הבודק מוסמך"*. One switch hides it everywhere:
+`PM_ENABLED` in `utils/compliance.js` (env `VITE_COMPLIANCE_PM=true`, default off), read through
+`COMPLIANCE_AREAS` by the card lamp, the mini mark, the site-window tab, the managers' list, the
+help legend and the supervisor ranking. ⚠️ A Pages build nobody configured must give what was
+decided — so off is the default, and `compliance-ui.test.js` pins it. The PM code ships dormant and
+stays tested: the pure functions take `areas` explicitly, and the browser harness runs both modes.
+Turning it on = set the variable in Pages, or flip the default. **Supabase Pro must be in place
+before the historical backfill** (PDFs live in the database; crossing 500 MB makes the database
+read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_live` **is set —
+`2026-10-06`**, at the owner's request *before* the backfill ("אם אין מסמך בדיקה בתוקף הסימון צריך
+להיות אדום"). So "no report" is **red** ("אין תסקיר בודק" / "אין תחזוקה מונעת רשומה") on both lamps,
+and the managers' alert list carries one row per missing site — measured right after: all 60 sites
+`expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
+uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.

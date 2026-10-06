@@ -107,10 +107,12 @@ if (requested && !isSupabaseConfigured) {
  * לחצות). המסלול הישיר חייב לבקש את אותו חלון, אחרת אותו אתר יראה אחוז
  * כשל שונה בשני המצבים והמתג יהפוך לשינוי-משמעות.
  */
-export function fetchSitesList() {
+export function fetchSitesList(opts = {}) {
   if (!useDirect) return fetchSitesViaServer();
   // הפרמטר השלישי — תחילת השבוע הקודם, לחישוב "משתפר/מחמיר" על כל כרטיס.
-  return fetchSitesDirect(weekFromIso(), new Date().toISOString(), prevWeekFromIso());
+  // ⚠️ `opts.withCompliance` — רק בזרוע הישירה; לרמזורי הבודק/התחזוקה אין זרוע
+  // שרת, ובמצב שרת `compliance` נשאר undefined והמנורות פשוט לא מצוירות.
+  return fetchSitesDirect(weekFromIso(), new Date().toISOString(), prevWeekFromIso(), opts);
 }
 
 /**
@@ -862,3 +864,17 @@ export {
   fetchBoard, addColumn, updateColumn, deleteColumn, moveColumn,
   addRow, deleteRow, moveRow, setCell, pasteRows,
 } from "./trafficLightDirect";
+
+// ⚠️ **בודק מוסמך ותחזוקה מונעת — אותו כלל, בלי זרוע שרת.** התכונה נולדה
+// אחרי ש-master יצא משימוש. במצב שרת הלשוניות והמנורות מוסתרות (InsightsModal,
+// SiteCard) — לא מוצגות ונכשלות.
+export {
+  fetchSiteCompliance, fetchInspectionSite, fetchComplianceHistory,
+  uploadInspection, updateInspectionReport, deleteInspectionReport, retireMachine, closeDefectsByReport,
+  saveDefect, deleteDefect, addDefectPhoto, deleteDefectPhoto, markDefectDone, reopenDefect,
+  fetchComplianceThumbs, fetchComplianceFile,
+  fetchPmSite, fetchPmVisit, fetchPmTemplate, savePmTemplate,
+  startPmVisit, checkPmItem, notePmItem, addPmPhoto, deletePmPhoto,
+  submitPmVisit, discardPmVisit, uploadPmHistorical, deletePmVisit, pmOutboxSenders,
+  fetchComplianceStorage, fetchComplianceOrphans, reattachCompliance, purgeCompliance,
+} from "./complianceDirect";

@@ -11,6 +11,7 @@ import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
 import FixFlowLink from "../FixFlowLink/FixFlowLink.jsx";        // פיילוט FixFlow — ראה services/fixflow.js
 import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילוט FixFlow
+import ComplianceLights, { MiniMark } from "../Compliance/ComplianceLights";
 
 // ==========================================================
 // צבע הזמינות — והספים **נמדדו**, לא הומצאו
@@ -138,6 +139,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const label = siteStatusLabel({ ...site, status });
   const isMini = density === "mini";
   const isNormal = density === "normal";
+  // מנורת בודק/תחזוקה פותחת את חלון האתר **על הלשונית שלה**, לא על הסקירה.
+  const openTab = (tab) => onOpenDetail?.(site.code, tab);
 
   // ============================================================
   // ⚠️ שם האתר לעולם לא נחתך באמצע — סדר הוותורים קבוע
@@ -652,6 +655,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               <span className="status-dot" style={{ background: colors.dot }} />
               {label}
             </span>
+            {/* רמזורי בודק/תחזוקה — לחיצה פותחת את הלשונית שלהם בחלון האתר */}
+            <ComplianceLights compliance={site.compliance} density="expanded" onOpen={openTab} />
             {stuckBadge}
             {faultLine}
             {/* ⚠️ נקודת החיבור **היחידה** של פיילוט FixFlow לכרטיס. כל השאר יושב
@@ -783,14 +788,31 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       {isMini ? (
         // ב-mini הכרטיס הוא שם + נקודה. הנקודה שומרת על צבע המצב (אחרת המקרא
         // נשבר) ומקבלת טבעת סגולה — סימן שנראה בלי לקרוא, גם ברשת של 50 אתרים.
-        <span
-          className={`mini-dot${stuck ? " mini-dot--stuck" : ""}`}
-          style={{ background: colors.dot, "--stuck": STUCK_COLOR.dot }}
-          aria-label={stuck ? stuck.text : label}
-          role="img"
-        />
-      ) : (
+        <>
+          {/* ⚠️ ריבוע הבודק/תחזוקה יושב **על פינת** הנקודה — לא בתוכה ולא כמשבצת
+              משלו בשורה. הנקודה היא מצב המתקן עכשיו והריבוע מצב החובות שלו (שני
+              דברים שונים), ומשבצת נפרדת הייתה לוקחת ~19px מהשם ו-useFitName היה
+              מקטין אותו עד הרצפה — דווקא באתרים שדורשים תשומת לב. מצויר רק
+              לצהוב/אדום/"?" (ראה MiniMark). המצב המלא — בכרטיס המורחב (לחיצה). */}
+          <span className="mini-dot-wrap">
+            <span
+              className={`mini-dot${stuck ? " mini-dot--stuck" : ""}`}
+              style={{ background: colors.dot, "--stuck": STUCK_COLOR.dot }}
+              aria-label={stuck ? stuck.text : label}
+              role="img"
+            />
+            <MiniMark compliance={site.compliance} onOpen={openTab} />
+          </span>
+        </>
+      ) : site.compliance === undefined ? (
         statusTag
+      ) : (
+        // ⚠️ עטיפה רק כשיש רמזורים: במצב שרת (compliance === undefined) הכרטיס
+        // נשאר זהה לחלוטין למה שהיה — בלי שורה ריקה ובלי שינוי פריסה.
+        <div className="card-status-row">
+          {statusTag}
+          <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />
+        </div>
       )}
 
       {density === "compact" && systemsCompact}

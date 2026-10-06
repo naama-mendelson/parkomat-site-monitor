@@ -9,6 +9,8 @@ import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
 import { fuzzyMatch, formatDate, formatOutage } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
+import ComplianceLights from "../../components/Compliance/ComplianceLights";
+import { PM_ENABLED, worstSeverity } from "../../utils/compliance";
 import { oneRowPerSite } from "../../utils/maintenanceRows";
 import "./SupervisorView.css";
 
@@ -25,6 +27,13 @@ const COLUMNS = [
   { key: "cycleTotal", label: "מונה", numeric: true },
   { key: "operationsSinceLastError", label: "פעולות מהתקלה", numeric: true },
 ];
+
+// ⚠️ עמודת בודק/תחזוקה נכנסת **אחרי "מצב"** ורק כשיש רמזורים (מצב ישיר).
+// במצב שרת הטבלה זהה לחלוטין למה שהייתה. המיון לפי החמור מבין השתיים —
+// "?" (לא נטען) מעל ירוק, כמו בכל מקום אחר.
+// ⚠️ רק המנורות המוצגות (COMPLIANCE_AREAS): תחזוקה מוסתרת אינה מקפיצה אתר בטבלה.
+const COMPLIANCE_COLUMN = { key: "complianceSeverity", label: PM_ENABLED ? "בודק / תחזוקה מונעת" : "בודק מוסמך", numeric: true };
+const complianceSeverity = (c) => worstSeverity(c);
 
 function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
   const [period, setPeriod] = useState("week");
@@ -43,6 +52,12 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
   // ⚠️ **גם displayStatus**, ולא רק status: הצ'יפ והסינון קוראים אותו. הדבקת
   // status בלבד השאירה את המצב המוצג ישן — שורה "בפעולה" נשארה מסוננת כ"מוכן".
   const liveStatus = useMemo(() => new Map(sites.map((s) => [s.code, s])), [sites]);
+  const hasCompliance = sites.some((s) => s.compliance !== undefined);
+  const columns = useMemo(() => {
+    if (!hasCompliance) return COLUMNS;
+    const i = COLUMNS.findIndex((c) => c.key === "status");
+    return [...COLUMNS.slice(0, i + 1), COMPLIANCE_COLUMN, ...COLUMNS.slice(i + 1)];
+  }, [hasCompliance]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -52,9 +67,13 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
     // מדביקים כאן את הסטטוס העדכני מרשימת האתרים — בלי שום בקשת רשת נוספת.
     const live = data.sites.map((s) => {
       const cur = liveStatus.get(s.code);
-      return cur && (cur.status !== s.status || cur.displayStatus !== s.displayStatus)
+      const withLive = cur && (cur.status !== s.status || cur.displayStatus !== s.displayStatus)
         ? { ...s, status: cur.status, displayStatus: cur.displayStatus ?? cur.status }
         : s;
+      // רמזורי בודק/תחזוקה — מהרשימה החיה, באותה דרך כמו הסטטוס
+      return cur?.compliance === undefined
+        ? withLive
+        : { ...withLive, compliance: cur.compliance, complianceSeverity: complianceSeverity(cur.compliance) };
     });
 
     const filtered = live.filter((s) => {
@@ -184,7 +203,7 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
           <table className="sv-table">
             <thead>
               <tr>
-                {COLUMNS.map((c) => (
+                {columns.map((c) => (
                   <th
                     key={c.key}
                     className={`${c.numeric ? "num" : ""} ${sortKey === c.key ? "is-sorted" : ""}`}
@@ -202,7 +221,7 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length} className="sv-none">לא נמצאו אתרים</td>
+                  <td colSpan={columns.length} className="sv-none">לא נמצאו אתרים</td>
                 </tr>
               ) : (
                 rows.map((s) => {
@@ -223,6 +242,13 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                           {STATUS_LABELS[shown] || shown}
                         </span>
                       </td>
+                      {hasCompliance && (
+                        <td>
+                          {/* המנורה פותחת את האתר על הלשונית שלה, לא על הסקירה */}
+                          <ComplianceLights compliance={s.compliance ?? { unknown: true }} density="compact"
+                            onOpen={(tab) => onSiteClick(s.code, tab)} />
+                        </td>
+                      )}
                       <td className="num">{s.operations.toLocaleString()}</td>
                       <td className="num">
                         {s.errors > 0

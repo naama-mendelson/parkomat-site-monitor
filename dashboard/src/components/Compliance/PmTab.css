@@ -1,0 +1,699 @@
+/* components/Compliance/PmTab.css — לשונית "תחזוקה מונעת" (וכל קבצי Pm*).
+
+   ⚠️ הטופס ממולא בטלפון, בכפפות, בחניון חשוך: כל יעד מגע 44px לפחות,
+   ושדות קלט ב-16px — מתחת לזה ספארי באייפון מגדיל את הדף בכל נגיעה בשדה,
+   והטכנאי מוצא את עצמו גולל הצידה באמצע פריט.
+
+   ⚠️ הצבעים "הקטנים" (טקסט אדום/ירוק/ענבר על כרטיס) מוגדרים כאן לכל ערכה
+   בנפרד: האדום של המנורות (#ef4444) נותן 3.76:1 על לבן — מתחת לסף לטקסט
+   קטן. אלה אותם גוונים ש-ComplianceLights.css כבר בודק מול שני הרקעים.
+   ⚠️ הירוק הבהיר הוא #166534 ולא #15803d: על הגלולה "✓ כל השינויים נשמרו"
+   (12% ירוק מעל רקע החלון) #15803d נותן 4.04:1 — הסימן שהטכנאי בודק לפני
+   שהוא יוצא מהקליטה. #166534 נותן ~5.8:1 שם ו-7.1:1 על לבן. */
+
+.pm {
+  --pm-red-ink: #b91c1c;
+  --pm-green-ink: #166534;
+  --pm-amber-ink: #92400e;
+  --pm-blue-ink: #1d4ed8;
+  --pm-red-bg: rgba(239, 68, 68, 0.08);
+  --pm-red-border: rgba(220, 38, 38, 0.45);
+  --pm-amber-bg: rgba(245, 158, 11, 0.12);
+  --pm-amber-border: rgba(217, 119, 6, 0.5);
+  --pm-green-bg: rgba(34, 197, 94, 0.12);
+  --pm-green-border: rgba(22, 163, 74, 0.45);
+  --pm-blue-bg: rgba(37, 99, 235, 0.07);
+  --pm-blue-border: rgba(37, 99, 235, 0.35);
+  --pm-muted: #64748b;
+
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  direction: rtl;
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .pm {
+  --pm-red-ink: #f87171;
+  --pm-green-ink: #4ade80;
+  --pm-amber-ink: #fbbf24;
+  --pm-blue-ink: #93b4ff;
+  --pm-red-bg: rgba(239, 68, 68, 0.12);
+  --pm-red-border: rgba(248, 113, 113, 0.5);
+  --pm-amber-bg: rgba(245, 158, 11, 0.12);
+  --pm-amber-border: rgba(251, 191, 36, 0.45);
+  --pm-green-bg: rgba(34, 197, 94, 0.13);
+  --pm-green-border: rgba(74, 222, 128, 0.4);
+  --pm-blue-bg: rgba(91, 134, 236, 0.13);
+  --pm-blue-border: rgba(91, 134, 236, 0.45);
+  --pm-muted: #94a3b8;
+}
+
+/* ⚠️ hidden אינו מנצח display:flex של מחבר — בלעדי זה "כלי מנהל" מוסתר נשאר גלוי */
+.pm [hidden] { display: none !important; }
+
+.pm-state {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--text-secondary);
+}
+.pm-error-text { color: var(--pm-red-ink); margin-bottom: 12px; }
+
+/* ===================== כרטיסים וטקסט ===================== */
+.pm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.pm-h3 { margin: 0; font-size: 1.02em; color: var(--text-primary); }
+.pm-meta { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.pm-muted { font-size: 14px; color: var(--text-secondary); }
+.pm-hint { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0; }
+.pm-hint--warn { color: var(--pm-amber-ink); font-weight: 600; }
+.pm-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.pm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.pm-sr {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ===================== כפתורים ===================== */
+.pm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pm-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.pm-btn:disabled { opacity: 0.5; cursor: default; }
+.pm-btn:focus-visible,
+.pm-icon-btn:focus-visible,
+.pm-link:focus-visible,
+.pm-thumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pm-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--brand-on, #fff);
+}
+.pm-btn--primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+/* ⚠️ בערכה כהה --accent הוא #3d78d8 — לבן עליו 4.31:1, מתחת ל-4.5 לטקסט של
+   14–16px. "שליחה", "צילום" ו"התחלת ביקור" הם בדיוק הכפתורים שנלחצים בחושך.
+   #2f6bd0 נותן ~5.1:1 ונשאר באותו גוון. (.pp-btn--primary — ב-PhotoPicker.css) */
+[data-theme="dark"] .pm .pm-btn--primary { background: #2f6bd0; border-color: #2f6bd0; }
+
+/* ⚠️ אדום ומשני: ביטול ומחיקה הם סוף, ולא צריכים להיראות כמו הפעולה הרגילה */
+.pm-btn--danger {
+  background: transparent;
+  border-color: var(--pm-red-border);
+  color: var(--pm-red-ink);
+}
+.pm-btn--danger:hover:not(:disabled) { background: var(--pm-red-bg); }
+
+.pm-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--pm-blue-ink);
+  padding: 0 8px;
+}
+.pm-btn--ghost:hover:not(:disabled) { background: var(--pm-blue-bg); }
+
+.pm-btn--on {
+  border-color: var(--accent);
+  background: var(--pm-blue-bg);
+}
+
+.pm-btn--wide { width: 100%; min-height: 52px; font-size: 16px; }
+/* במחשב — לא פס של 900px; בטלפון הרוחב ממילא קטן מזה */
+.pm-start .pm-btn--wide { max-width: 460px; }
+.pm-btn--inline { margin-inline-start: 8px; vertical-align: middle; }
+
+.pm-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.pm-icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+.pm-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--pm-blue-ink);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  text-align: start;
+}
+
+/* ===================== באנרים ===================== */
+.pm-banner {
+  position: relative;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+.pm-banner--closable { padding-inline-end: 52px; }
+/* הודעת תוצאה מקבלת פוקוס (ראה PmTab) — בלי מסגרת מהבהבת בלחיצה, עם מסגרת במקלדת */
+.pm-banner--closable:focus { outline: none; }
+.pm-banner--closable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pm-banner--error { background: var(--pm-red-bg); border-color: var(--pm-red-border); }
+.pm-banner--error strong { color: var(--pm-red-ink); }
+.pm-banner--warn { background: var(--pm-amber-bg); border-color: var(--pm-amber-border); }
+.pm-banner--ok { background: var(--pm-green-bg); border-color: var(--pm-green-border); }
+.pm-banner--info { background: var(--pm-blue-bg); border-color: var(--pm-blue-border); }
+.pm-banner-x {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+}
+
+.pm-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pm-badge--red { border-color: var(--pm-red-ink); color: var(--pm-red-ink); }
+
+/* ===================== מנורה ומצב ===================== */
+.pm-summary { flex-direction: row; align-items: center; gap: 12px; }
+.pm-summary--compact { padding-block: 10px; }
+
+.pm-lamp {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 16px;
+  border: 2px solid var(--pm-muted);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--pm-muted);
+}
+.pm-lamp svg { display: block; }
+.pm-lamp-glyph { min-width: 10px; text-align: center; }
+/* טקסט כהה על ירוק וענבר (לבן עליהם אינו קריא), לבן על אדום כהה מעט */
+.pm-lamp--ok { background: #22c55e; border-color: #22c55e; color: #111827; }
+.pm-lamp--soon { background: #f59e0b; border-color: #f59e0b; color: #111827; }
+.pm-lamp--expired { background: #dc2626; border-color: #dc2626; color: #ffffff; }
+.pm-lamp--none { background: transparent; }
+.pm-lamp--unknown { background: transparent; border-style: dashed; }
+
+.pm-summary-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-summary-text strong { font-size: 15px; }
+.pm-summary-text span { font-size: 13.5px; color: var(--text-secondary); line-height: 1.45; }
+
+/* ===================== טיוטה / התחלה ===================== */
+.pm-draft { border: 2px solid var(--pm-blue-border); }
+/* ⚠️ אדום רק אחרי 12 שעות שקט — טיוטה של הבוקר אינה תקלה, טיוטה מאתמול כן */
+.pm-draft--stale { border-color: var(--pm-red-border); background: var(--pm-red-bg); }
+.pm-draft-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 15px; }
+.pm-draft-text { margin: 0; font-size: 14px; color: var(--text-secondary); line-height: 1.5; }
+
+/* ===================== הטופס ===================== */
+.pm-form { display: flex; flex-direction: column; gap: 12px; }
+
+.pm-form-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pm-sync {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.pm-sync--ok { color: var(--pm-green-ink); background: var(--pm-green-bg); }
+.pm-sync--pending { color: var(--pm-amber-ink); background: var(--pm-amber-bg); }
+/* נדחה ע"י השרת — אינו "ממתין": לא יישלח לבד */
+.pm-sync--error { color: var(--pm-red-ink); background: var(--pm-red-bg); }
+
+.pm-form-head { gap: 8px; }
+
+.pm-progress {
+  position: relative;
+  height: 26px;
+  border-radius: 13px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.pm-progress-bar {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  background: var(--pm-green-bg);
+  border-inline-end: 2px solid var(--pm-green-border);
+  transition: width 0.25s;
+}
+.pm-progress-text {
+  position: relative;
+  display: block;
+  text-align: center;
+  line-height: 24px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pm-stuck {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-stuck li { display: flex; flex-direction: column; gap: 4px; }
+.pm-stuck-what { font-weight: 700; }
+.pm-stuck-why { font-size: 13px; color: var(--text-secondary); }
+
+/* ---- פריט ---- */
+.pm-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pm-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  /* מתחת לניווט הדביק של החלון — "קפיצה לפריט" לא תסתיר אותו */
+  scroll-margin-block: 150px 40px;
+}
+/* פריט חובה שעוד לא הושלם — פס ענבר בצד, לא צבע מלא: זה מצב רגיל באמצע ביקור */
+.pm-item--todo { border-inline-start: 4px solid var(--status-warning); }
+.pm-item--error { border-color: var(--pm-red-border); }
+
+.pm-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pm-check--photo { cursor: default; }
+.pm-check-ico {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+.pm-check-label {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.pm-checkbox {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.pm-checkbox--sm { width: 22px; height: 22px; margin: 0; }
+
+.pm-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.pm-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pm-tag--req { border-color: var(--pm-amber-border); color: var(--pm-amber-ink); }
+.pm-tag--short { border-color: var(--pm-red-border); color: var(--pm-red-ink); }
+.pm-tag--historical { border-color: var(--pm-blue-border); color: var(--pm-blue-ink); }
+.pm-tag--dashboard { border-color: var(--pm-green-border); color: var(--pm-green-ink); }
+
+.pm-photos { display: flex; flex-direction: column; gap: 10px; }
+
+/* "+ הוספת הערה" בקצה ההתחלה, לא מתוח וממורכז — אחרת הוא נראה ככפתור הראשי של הפריט */
+.pm-item > .pm-btn--ghost { align-self: flex-start; }
+
+.pm-note .pm-textarea { min-height: 60px; }
+
+.pm-item-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+.pm-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.pm-status--pending { color: var(--pm-amber-ink); }
+.pm-status--saved { color: var(--pm-green-ink); }
+.pm-status--error { color: var(--pm-red-ink); }
+.pm-by { color: var(--text-secondary); }
+
+/* ---- שדות ---- */
+.pm-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pm-field > span { font-size: 14px; font-weight: 600; }
+.pm-field em { font-style: normal; font-weight: 400; color: var(--text-secondary); }
+.pm-field-err { color: var(--pm-red-ink); font-size: 13px; font-weight: 600; }
+.pm-suggest { color: var(--pm-amber-ink); font-size: 12px; font-weight: 600; }
+
+.pm-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+.pm-input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.pm-input:disabled { opacity: 0.6; }
+.pm-textarea { resize: vertical; line-height: 1.45; }
+select.pm-input { padding-block: 8px; }
+[data-theme="dark"] .pm-input { color-scheme: dark; }
+
+/* ---- סיום וחתימה ---- */
+.pm-footer { border: 2px solid var(--pm-blue-border); gap: 14px; }
+
+.pm-missing {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--pm-amber-bg);
+  border: 1px solid var(--pm-amber-border);
+  font-size: 14px;
+  font-weight: 600;
+}
+.pm-missing ul { margin: 4px 0 0; padding-inline-start: 20px; font-weight: 400; }
+
+.pm-sig { min-width: 0; }
+
+.pm-blockers {
+  margin: 0;
+  padding-inline-start: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.pm-danger-zone { background: transparent; border-style: dashed; }
+/* ⚠️ ביטול אינו ברוחב מלא: כפתור אדום מתוח מתחת ל"שליחה" הוא מטרה קלה מדי לאגודל */
+.pm-danger-zone > .pm-btn { align-self: flex-start; }
+.pm-confirm { display: flex; flex-direction: column; gap: 10px; }
+.pm-confirm:focus { outline: none; }
+.pm-confirm:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.pm-confirm-text { margin: 0; font-size: 14px; line-height: 1.5; }
+
+/* ===================== היסטוריה ===================== */
+.pm-hist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pm-hist-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.pm-hist-row--open { border-color: var(--pm-blue-border); }
+.pm-hist-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+}
+.pm-hist-main { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pm-hist-date { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pm-hist-meta {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.pm-hist-btn { grid-column: 2; grid-row: 1 / span 2; }
+
+/* ---- צפייה בביקור ---- */
+.pm-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color);
+}
+.pm-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+.pm-facts dt { font-size: 12px; color: var(--text-secondary); }
+.pm-facts dd { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.pm-facts-wide { grid-column: 1 / -1; }
+.pm-facts-wide dd { font-weight: 400; }
+
+.pm-view-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pm-view-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.pm-view-item:last-child { border-bottom: 0; }
+.pm-view-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  background: var(--pm-green-bg);
+  color: var(--pm-green-ink);
+}
+.pm-view-item--no .pm-view-mark { background: var(--bg-hover); color: var(--text-secondary); }
+.pm-view-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pm-view-label { font-size: 14px; font-weight: 600; }
+.pm-view-sub { font-size: 12px; color: var(--text-secondary); }
+.pm-view-note { font-size: 13px; }
+
+.pm-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.pm-thumb-btn {
+  width: 72px;
+  height: 54px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-hover);
+  overflow: hidden;
+  cursor: pointer;
+}
+.pm-thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pm-thumb-empty { display: block; width: 100%; height: 100%; }
+
+.pm-view-admin { padding-top: 4px; }
+
+/* ===================== כלי מנהל ===================== */
+.pm-tools { gap: 12px; }
+
+.pm-upload, .pm-tpl { display: flex; flex-direction: column; gap: 12px; }
+
+.pm-up-list, .pm-tpl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-up-row, .pm-tpl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  min-width: 0;
+}
+.pm-up-row--done { border-color: var(--pm-green-border); }
+.pm-up-row--error, .pm-up-row--invalid, .pm-tpl-row--bad { border-color: var(--pm-red-border); }
+
+.pm-up-file { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pm-up-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+/* "683 B" ולא "B 683": מספר ויחידה לטיניים בתוך שורה עברית */
+.pm-up-size { flex: none; font-size: 12px; color: var(--text-secondary); direction: ltr; unicode-bidi: isolate; }
+
+.pm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.pm-grid-wide { grid-column: 1 / -1; }
+
+.pm-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  animation: pm-spin 0.8s linear infinite;
+}
+@keyframes pm-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .pm-spinner { animation-duration: 2.4s; }
+  .pm-progress-bar { transition: none; }
+}
+
+.pm-tpl-top { display: flex; align-items: center; gap: 8px; }
+.pm-tpl-num {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  font-size: 13px;
+  font-weight: 700;
+}
+.pm-tpl-label { flex: 1; }
+.pm-tpl-opts { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; flex: 1 1 auto; min-width: 0; }
+/* בסיס קבוע: select ברוחב 100% נותן לקבוצה רוחב "טבעי" לא צפוי, והיא נשברת לשתי שורות גם במחשב */
+.pm-tpl-kind { flex: 0 0 200px; }
+.pm-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pm-stepper { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.pm-stepper-val { min-width: 24px; text-align: center; font-size: 16px; font-weight: 800; }
+.pm-tpl-move { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* סוג/חובה/תמונות בצד אחד והזזה/הסרה בצד השני — שורה אחת במחשב, נשבר בטלפון */
+.pm-tpl-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+/* ===================== טלפון ===================== */
+@media (max-width: 480px) {
+  .pm { gap: 12px; }
+  .pm-card { padding: 12px; }
+  .pm-item { padding: 10px 12px; }
+  .pm-form-bar .pm-btn--ghost { padding-inline: 4px; }
+  .pm-tpl-kind { flex: 1 1 100%; }
+}

@@ -1,0 +1,69 @@
+/* components/Compliance/SignaturePad.css
+   ⚠️ 16px שוליים מכל צד — שם האגודל גולל את הטופס. הקנבס עצמו touch-action:none. */
+.sp-wrap {
+  /* דיו לטקסט קטן, לפי ערכה — האדום של המנורות הוא 3.76:1 על לבן (ראה PhotoPicker.css) */
+  --sp-warn-ink: #b91c1c;
+  padding: 0 16px;
+  direction: rtl;
+}
+[data-theme="dark"] .sp-wrap { --sp-warn-ink: #f87171; }
+
+.sp-canvas {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: #ffffff;               /* גם בערכת כהה: החתימה נשמרת על לבן */
+  border: 1.5px dashed var(--border-color);
+  border-radius: 10px;
+  cursor: crosshair;
+}
+
+.sp-wrap--disabled .sp-canvas {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.sp-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.sp-hint--warn {
+  color: var(--sp-warn-ink);
+  font-weight: 600;
+}
+
+.sp-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.sp-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sp-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

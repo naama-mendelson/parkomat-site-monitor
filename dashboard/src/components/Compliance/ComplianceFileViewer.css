@@ -1,0 +1,164 @@
+/* components/Compliance/ComplianceFileViewer.css
+   ⚠️ מעל חלון האתר (InsightsModal הוא z-index 400) — התצוגה נפתחת מתוכו. */
+.cfv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 12, 22, 0.78);
+}
+
+.cfv-box {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  max-height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 12px 40px var(--shadow);
+}
+
+/* מסמך נפתח בגודל המסך ולא כחלון של 960 — "שהמסמך יפתח יותר גדול" (בעלת
+   המוצר). תמונה נשארת בחלון הרגיל: היא ממילא מוקטנת להתאים ונפתחת בלחיצה. */
+.cfv-box--pdf {
+  width: min(1400px, 100%);
+  height: 100%;
+}
+
+.cfv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cfv-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.cfv-tools {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.cfv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cfv-close { font-size: 22px; padding: 0; width: 44px; }
+
+@media (pointer: coarse) {
+  .cfv-btn { min-height: 44px; min-width: 44px; }
+}
+
+.cfv-notice {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--status-error);
+}
+
+.cfv-body {
+  flex: 1;
+  min-height: 200px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg-primary);
+  text-align: center;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cfv-img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: calc(100dvh - 140px);
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+.cfv-img--zoom {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+}
+
+.cfv-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.cfv-page {
+  position: relative;
+  max-width: 100%;
+  background: #ffffff;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+/* renderPage קובע רוחב/גובה inline לפי הרוחב שנמדד; אם הקופסה הצטמצמה מאז
+   (סיבוב מסך) — היחס נשמר במקום עמוד מעוות. */
+.cfv-canvas { display: block; width: 100% !important; height: auto !important; }
+
+.cfv-page-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.cfv-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 12px;
+  color: var(--text-secondary);
+}
+
+/* הגדלה/הקטנה היא כפתור, כדי שתעבוד גם במקלדת (Enter/רווח) ולא רק בעכבר */
+.cfv-imgbtn {
+  display: block;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: inherit;
+  width: 100%;
+}
+
+.cfv-body--zoom .cfv-imgbtn { width: max-content; }
+
+.cfv-imgbtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

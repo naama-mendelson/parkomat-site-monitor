@@ -40,9 +40,36 @@ const MASTER = path.join(__dirname, "..");
 const APPLY = process.argv.includes("--apply");
 const PROD_URL = process.env.DATABASE_URL;
 
-const { FN_SQL, POL_SQL, CRON_SQL } = require("./lib/sql-shape");
+const { FN_SQL, POL_SQL, CRON_SQL, CON_SQL } = require("./lib/sql-shape");
 
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+
+// ============================================================
+// ⚠️ lock_timeout בהחלה — כדי ש-DDL לא ייתקע מאחורי הקליטה
+// ============================================================
+// `CREATE TABLE ... REFERENCES sites` ו-`ALTER TABLE` לוקחים נעילה על `sites`,
+// ו-`ingest_batch` מחזיק `FOR UPDATE` על שורת האתר לאורך כל טרנזקציית הקליטה.
+// בלי תקרה, ה-DDL ממתין בתור — ו**כל בקשה שמגיעה אחריו ממתינה מאחוריו**,
+// כלומר הקליטה של כל האתרים נעצרת עד שה-DDL יקבל את הנעילה.
+//
+// 5 שניות ואז כישלון בקול: הכלי מדווח, ומריצים שוב. עדיף על קליטה תקועה.
+//
+// ⚠️ דרך פרמטר `options` בחיבור (`-c lock_timeout=5000`) ולא `SET` אחרי
+// ההתחברות: db.js בונה את חיבור ההחלה בעצמו, ופרמטר החיבור הוא הדרך היחידה
+// להגיע אליו בלי לגעת בו. tests/sql-shape.test.js מוודא ש-node-postgres
+// באמת שולח אותו.
+function withLockTimeout(url, ms = 5000) {
+  const add = `-c lock_timeout=${ms}`;
+  const u = new URL(url);
+  const prev = u.searchParams.get("options");
+  if (prev) {
+    // כבר יש options: מצרפים, לא דורסים (פרמטר כפול — האחרון גובר ב-pg)
+    u.searchParams.set("options", `${prev} ${add}`);
+    return u.toString();
+  }
+  // בלי ניתוח-ובנייה מחדש של הכתובת: סיסמה עם תווים מיוחדים עוברת כפי שהיא
+  return `${url}${url.includes("?") ? "&" : "?"}options=${encodeURIComponent(add)}`;
+}
 
 async function prodSnapshot() {
   const c = new pg.Client({ connectionString: PROD_URL, ssl: { rejectUnauthorized: false } });
@@ -57,6 +84,7 @@ async function prodSnapshot() {
       fns: (await c.query(FN_SQL)).rows,
       pols: (await c.query(POL_SQL)).rows,
       cron: (await c.query(CRON_SQL)).rows,
+      con: (await c.query(CON_SQL)).rows,
     };
   } finally { await c.end(); }
 }
@@ -103,7 +131,35 @@ function diff(head, prod) {
     if (!p) cron.push(`${l.k}: חסר בייצור`);
     else if (p.schedule !== l.schedule || norm(p.command) !== norm(l.command)) cron.push(`${l.k}: שונה`);
   }
-  return { missing, differ, pols, cron };
+  // טבלאות: חסר בייצור, שונה — **וגם עודף בייצור**. אילוץ, טריגר, מדיניות או
+  // הרשאה שקיימים רק בייצור הם בדיוק מה שנוסף ביד ולא נמצא בגיט.
+  const PK = new Map((prod.con ?? []).map((r) => [r.k, r]));
+  const HK = new Set((head.con ?? []).map((r) => r.k));
+  const con = [];
+  for (const l of head.con ?? []) {
+    const p = PK.get(l.k);
+    if (!p) con.push(`${l.k}: חסר בייצור`);
+    else if (norm(p.def) !== norm(l.def)) con.push(`${l.k}: שונה (ייצור: ${norm(p.def) || "∅"} · קוד: ${norm(l.def) || "∅"})`);
+  }
+  for (const p of prod.con ?? []) if (!HK.has(p.k)) con.push(`${p.k}: קיים רק בייצור`);
+  return { missing, differ, pols, cron, con };
+}
+
+const gaps = (d) => d.missing.length + d.differ.length + d.pols.length + d.cron.length + d.con.length;
+
+function report(d) {
+  console.log(`\n=== הייצור מול הקוד ===`);
+  const sections = [
+    ["פונקציות חסרות בייצור", d.missing],
+    ["פונקציות שונות מהקוד", d.differ],
+    ["מדיניות", d.pols],
+    ["תזמונים", d.cron],
+    ["טבלאות (אילוצים, טריגרים, RLS, הרשאות, אינדקסים)", d.con],
+  ];
+  for (const [title, rows] of sections) {
+    console.log(`  ${title}: ${rows.length}`);
+    for (const m of rows) console.log(`     ${m}`);
+  }
 }
 
 async function main() {
@@ -111,17 +167,8 @@ async function main() {
   const prod = await prodSnapshot();
   const head = await headSnapshot();
   const d = diff(head, prod);
-  const total = d.missing.length + d.differ.length + d.pols.length + d.cron.length;
-
-  console.log(`\n=== הייצור מול הקוד ===`);
-  console.log(`  פונקציות חסרות בייצור: ${d.missing.length}`);
-  for (const m of d.missing) console.log(`     ${m}`);
-  console.log(`  פונקציות שונות מהקוד:  ${d.differ.length}`);
-  for (const m of d.differ) console.log(`     ${m}`);
-  console.log(`  מדיניות:               ${d.pols.length}`);
-  for (const m of d.pols) console.log(`     ${m}`);
-  console.log(`  תזמונים:               ${d.cron.length}`);
-  for (const m of d.cron) console.log(`     ${m}`);
+  const total = gaps(d);
+  report(d);
 
   if (!APPLY) {
     console.log(total === 0
@@ -140,7 +187,8 @@ async function main() {
     return;
   }
 
-  process.env.DATABASE_URL = PROD_URL;
+  // ⚠️ lock_timeout על חיבור ההחלה — ראה withLockTimeout למעלה
+  process.env.DATABASE_URL = withLockTimeout(PROD_URL);
   const db = require(path.join(MASTER, "db", "db.js"));
   const t0 = Date.now();
   await db.init();
@@ -149,9 +197,16 @@ async function main() {
 
   // ⚠️ אימות בקריאה חוזרת, ולא אמון בהחלה: "הוחל" הוא מה שהמסד מחזיר עכשיו.
   const after = diff(head, await prodSnapshot());
-  const left = after.missing.length + after.differ.length + after.pols.length + after.cron.length;
+  const left = gaps(after);
+  if (left) report(after);
   console.log(left === 0 ? "✅ הייצור זהה לקוד." : `❌ נותרו ${left} פערים — ראה למעלה.`);
   process.exitCode = left === 0 ? 0 : 1;
 }
 
-main().catch((e) => { console.error("⛔", e.stack || e.message); process.exitCode = 1; });
+// ⚠️ מורץ רק כתוכנית. כ-require (בבדיקות) נחשפים רק diff ו-withLockTimeout —
+// בלי שום חיבור לייצור.
+if (require.main === module) {
+  main().catch((e) => { console.error("⛔", e.stack || e.message); process.exitCode = 1; });
+}
+
+module.exports = { diff, gaps, withLockTimeout };

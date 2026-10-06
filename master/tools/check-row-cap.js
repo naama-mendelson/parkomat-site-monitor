@@ -72,6 +72,42 @@ const BOUNDED = {
   recent_errors: "p_limit=10",
   // חסום במספר המשתמשים, לא במספר השורות שנקראו.
   list_users: "שורה למשתמש — עשרות, לא אלפים",
+
+  // ---- בודק מוסמך ותחזוקה מונעת (complianceDirect.js) ----
+  // ⚠️ כל הקוראים כאן מחזירים **jsonb יחיד** או שורות שחסומות ב-LIMIT בתוך
+  // ה-RPC עצמו — הטבלאות סגורות (D2), ואין דרך לקרוא אותן בלי לעבור כאן.
+  inspection_site: "jsonb יחיד",
+  pm_site: "jsonb יחיד",
+  pm_visit_detail: "jsonb יחיד",
+  pm_template: "jsonb יחיד (עד 100 פריטים — תקרה ב-pm_template_save)",
+  compliance_history_list: "jsonb יחיד, ≤200 (LEAST ב-RPC)",
+  compliance_file: "שורה אחת לפי id",
+  compliance_thumbs: "≤3 לסגירה נוכחית / ≤9 היסטוריה / ≤40 לביקור — LIMIT ב-RPC, ותקרה של 12 לליקוי ו-40 לביקור ב-RPC הכתיבה",
+  compliance_storage: "שורה אחת",
+  compliance_orphans: "שורה לקוד אתר שנמחק",
+  inspection_upload: "כתיבה",
+  inspection_report_update: "כתיבה",
+  inspection_report_delete: "כתיבה",
+  inspection_machine_retire: "כתיבה",
+  inspection_close_by_report: "כתיבה",
+  inspection_defect_save: "כתיבה",
+  inspection_defect_delete: "כתיבה",
+  inspection_defect_photo_add: "כתיבה",
+  inspection_defect_photo_delete: "כתיבה",
+  inspection_defect_done: "כתיבה",
+  inspection_defect_reopen: "כתיבה",
+  pm_template_save: "כתיבה",
+  pm_visit_start: "כתיבה",
+  pm_visit_item_check: "כתיבה",
+  pm_visit_item_note: "כתיבה",
+  pm_visit_photo_add: "כתיבה",
+  pm_visit_photo_delete: "כתיבה",
+  pm_visit_submit: "כתיבה",
+  pm_visit_discard: "כתיבה",
+  pm_historical_upload: "כתיבה",
+  pm_visit_delete: "כתיבה",
+  compliance_reattach: "כתיבה",
+  compliance_purge: "כתיבה",
 };
 
 // ============================================================
@@ -86,6 +122,7 @@ const MEASURED = [
   { fn: "report_monthly", why: "שורה לחודש", args: (c) => ({ p_site_ids: null, p_from: c.twoYearsAgo, p_to: c.now }) },
   { fn: "report_by_site", why: "שורה לאתר", args: (c) => ({ p_site_ids: null, p_from: c.twoYearsAgo, p_to: c.now }) },
   { fn: "report_site_months", why: "שורה לאתר×חודש", args: (c) => ({ p_site_ids: null, p_from: c.twoYearsAgo, p_to: c.now }) },
+  { fn: "site_compliance", why: "שורה לאתר", args: () => ({ p_site_ids: null }) },
 ];
 
 // ============================================================
@@ -122,6 +159,10 @@ function scan() {
   for (const f of fs.readdirSync(SERVICES).filter((x) => x.endsWith(".js"))) {
     const src = fs.readFileSync(path.join(SERVICES, f), "utf8");
     for (const m of src.matchAll(/supabase\s*\.\s*rpc\(\s*["'](\w+)["']/g)) rpcs.add(m[1]);
+    // ⚠️ complianceDirect.js קורא דרך עטיפה עם זמן קצוב (rpcT / rpcRaw /
+    // outboxCall) ולא `supabase.rpc("...")` ישירות. בלי השורה הזו 33 קריאות
+    // היו נעלמות מהשער — ירוק בלי לסרוק אותן, בדיוק הכשל שהשער נבנה נגדו.
+    for (const m of src.matchAll(/\b(?:rpcT|rpcRaw|outboxCall)\(\s*["'](\w+)["']/g)) rpcs.add(m[1]);
     for (const m of src.matchAll(/supabase\s*\.\s*from\(\s*["'](\w+)["']/g)) tables.add(m[1]);
   }
   return { rpcs, tables };

@@ -1,9 +1,13 @@
 // components/InsightsModal/SectionNav.jsx — ניווט בין מסכי המידע
 import { useState } from "react";
 import "./SectionNav.css";
+import { AreaIcon } from "../Compliance/icons";
 
 // אייקונים קטנים ב-SVG טהור — נקיים, חדים בכל גודל, בלי ספריות.
 const Icon = ({ name }) => {
+  // ⚠️ אותם אייקונים כמו המנורות בכרטיס (Compliance/icons) — מי שלוחץ על
+  // מפתח הברג בכרטיס מגיע ללשונית שעליה אותו מפתח ברג.
+  if (name === "inspection" || name === "pm") return <AreaIcon area={name} size={17} className="sn-icon" />;
   const p = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };
   return (
     <svg className="sn-icon" viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
@@ -86,7 +90,8 @@ function SectionNav({ sections, active, onChange }) {
           className={`sn-tab ${s.key === active ? "is-active" : ""}`}
           // ⚠️ סוגר את התפריט אחרי הבחירה — תפריט שנשאר פתוח מכסה בדיוק
           // את המסך שזה עתה נבחר.
-          onClick={() => { onChange(s.key); setOpen(false); }}
+          // הלשונית הפעילה אינה מחליפה מסך — רק סוגרת את התפריט
+          onClick={() => { if (s.key !== active) onChange(s.key); setOpen(false); }}
         >
           <Icon name={s.key} />
           <span className="sn-label">{s.label}</span>

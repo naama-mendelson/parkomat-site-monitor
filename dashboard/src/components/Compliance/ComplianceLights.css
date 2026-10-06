@@ -1,0 +1,248 @@
+/* components/Compliance/ComplianceLights.css — מנורות בודק/תחזוקה מונעת בכרטיס.
+
+   ⚠️ שתי מידות נפרדות, ובכוונה:
+   • המנורה הנראית — 18px גובה, כדי לא לדחוף את הכרטיס ולא להתחרות בתגית המצב.
+   • שטח הלחיצה — ::before של לפחות 32×32 (44×44 במגע), כי 18px הוא מטרה
+     שאצבע מפספסת. המרווח בין המנורות (10px לפחות) הוא מה שמונע משני
+     שטחי הלחיצה לחפוף — אחרת לחיצה על "תחזוקה" הייתה פותחת את "בודק".
+
+   ⚠️ הצבע מגיע מ-COMPLIANCE_COLORS (utils/constants.js) דרך --cl-fill /
+   --cl-border, ולא מכאן — כדי ש-check-colors יבדוק את מה שבאמת מוצג.
+
+   ⚠️ טקסט קטן (10–11px) צריך 4.5:1, וברירת המחדל של הדשבורד **בהירה**.
+   האדום של המנורות (#ef4444) נותן 3.76:1 מול לבן, ו---text-muted הבהיר
+   3.05:1 — כלומר "לא הוגש", הספרה הלבנה של ליקויים באיחור וה-"?" היו
+   מתחת לסף בדיוק במצב שרוב המשתמשים רואים. שלושת המשתנים כאן נבדקים
+   מול שני הרקעים ב-scripts/check-colors.mjs (שקורא אותם מהקובץ הזה). */
+
+:root,
+[data-theme="light"] {
+  --cl-ink-red: #b91c1c;     /* ✕ ו"לא הוגש" — על הכרטיס ועל הגוון האדום השקוף */
+  --cl-ink-green: #166534;   /* ✓ על הגוון הירוק השקוף */
+  --cl-ink-amber: #92400e;   /* ! על הגוון הענברי השקוף */
+  --cl-solid-red: #dc2626;   /* רקע אדום מלא מאחורי טקסט לבן — תג ליקויים באיחור בלבד */
+  --cl-muted: #64748b;       /* ○ / ? ומסגרת "אין" */
+}
+
+[data-theme="dark"] {
+  --cl-ink-red: #f87171;
+  --cl-ink-green: #4ade80;
+  --cl-ink-amber: #fbbf24;
+  --cl-solid-red: #dc2626;
+  --cl-muted: #94a3b8;
+}
+
+.cl-lights {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* 12 = שני שטחי לחיצה של 5px מכל צד + 2px ביניהם — נוגעים כמעט, לא חופפים.
+     ותג הליקויים (3px מהגלולה שלו) לא נראה שייך למנורה השכנה. */
+  column-gap: 12px;
+  /* (32 − 18) — שטחי הלחיצה של שורות שנשברו אינם חופפים */
+  row-gap: 14px;
+  direction: rtl;
+}
+
+.cl-lamp,
+.cl-mini {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cl-lamp {
+  min-width: 32px;
+  min-height: 18px;
+  gap: 3px;
+  /* במגע הכפתור רחב מהגלולה (44) — ממרכזים, כדי שהתוספת תתחלק לשני הצדדים
+     ולא תיפול כולה משמאל */
+  justify-content: center;
+}
+
+/* שטח הלחיצה: רוחב הכפתור + 5px מכל צד, גובה 32 ממורכז על המנורה.
+   ⚠️ inset-inline: 0 השאיר את הגלולה צמודה לקצה הימני של שטח הלחיצה — אצבע
+   שנגעה פיקסל אחד מימין לה פתחה את הכרטיס (לשונית הסקירה) במקום את המנורה.
+   5px = פחות מחצי ה-column-gap, ולכן שני שטחים שכנים אינם חופפים. */
+.cl-lamp::before {
+  content: "";
+  position: absolute;
+  inset-inline: -5px;
+  top: 50%;
+  height: 32px;
+  min-height: 100%;
+  transform: translateY(-50%);
+}
+
+.cl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  border: 1.5px solid var(--cl-border, var(--text-muted));
+  background: var(--cl-fill, transparent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cl-icon { flex: none; display: block; }
+
+/* LampSwatch — הגלולה לבדה, למקרא בחלון העזרה. הצבעים מגיעים מאותם
+   סלקטורים של .cl-lamp--* למטה, ולכן המקרא משתנה יחד עם המנורה. */
+.cl-swatch {
+  display: inline-flex;
+  vertical-align: middle;
+  direction: rtl;
+}
+.cl-glyph { min-width: 8px; text-align: center; }
+
+/* ⚠️ גוון שקוף ולא מילוי מלא (06/10/2026): כשכל האתרים אדומים, מילוי מלא היה
+   "אדום מדי חזק" (בעלת המוצר), ואחרי גוון ראשון — "עדיין מדי חזק". הרקע הוא bg
+   מ-COMPLIANCE_COLORS (8–10%), המסגרת חצי-שקופה (border שם), והסימן בדיו כהה
+   מאותו צבע. ⚠️ שלושתם באותו סגנון: אדום שקוף ליד
+   ירוק מלא היה הופך את ההיררכיה — "תקין" צועק יותר מ"לא תקין". הניגודיות של
+   כל דיו מול הגוון שלו נבדקת ב-scripts/check-colors.mjs, בשני הנושאים. */
+.cl-lamp--ok .cl-pill { color: var(--cl-ink-green); }
+.cl-lamp--soon .cl-pill { color: var(--cl-ink-amber); }
+.cl-lamp--expired .cl-pill { color: var(--cl-ink-red); }
+
+/* ○ — חלול: "אין עדיין נתונים" אינו מצב שמבקש פעולה */
+.cl-lamp--none .cl-pill {
+  background: transparent;
+  border-color: var(--cl-muted);
+  color: var(--cl-muted);
+}
+
+/* ? — חלול ומקווקו: "לא יודעים", וזה שונה מ"אין" */
+.cl-lamp--unknown .cl-pill {
+  background: transparent;
+  border: 1.5px dashed var(--cl-muted);
+  color: var(--cl-muted);
+}
+
+/* ישן — הצבע נשאר (זה המצב האחרון הידוע), והמסגרת המקווקוות אומרת
+   שהוא לא עודכן. בלי הסימן הזה מצב ישן נראה זהה למצב טרי. */
+.cl-lamp--stale .cl-pill,
+.cl-lamp--stale .cl-mini-sq {
+  border-style: dashed;
+  border-color: var(--text-primary);
+}
+
+.cl-lamp:focus-visible,
+.cl-mini:focus-visible { outline: none; }
+.cl-lamp:focus-visible .cl-pill,
+.cl-mini:focus-visible .cl-mini-sq {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cl-lamp:hover .cl-pill { filter: brightness(1.08); }
+
+/* ---- תגים ---- */
+.cl-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1.5px solid var(--text-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ליקויים באיחור — מלא באדום; ליקויים פתוחים בזמן — קו מתאר בלבד */
+.cl-badge--overdue {
+  background: var(--cl-solid-red);
+  border-color: var(--cl-solid-red);
+  color: #ffffff;
+}
+
+.cl-badge--draft {
+  border-color: var(--cl-ink-red);
+  color: var(--cl-ink-red);
+  padding: 0 5px;
+}
+
+.cl-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cl-await {
+  font-size: 11px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--status-warning);
+  border-radius: 8px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ---- סימן ה-mini ---- */
+.cl-mini {
+  width: 12px;
+  height: 12px;
+  vertical-align: middle;
+}
+
+.cl-mini::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 32px;
+  transform: translate(-50%, -50%);
+}
+
+.cl-mini-sq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-radius: 3px;
+  border: 1.5px solid var(--cl-border, var(--text-muted));
+  background: var(--cl-fill, transparent);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.cl-mini--soon .cl-mini-sq { color: var(--cl-ink-amber); }
+.cl-mini--expired .cl-mini-sq { color: var(--cl-ink-red); }
+.cl-mini--unknown .cl-mini-sq {
+  background: transparent;
+  border: 1.5px dashed var(--cl-muted);
+  color: var(--cl-muted);
+}
+
+/* ---- מגע: 44×44 ---- */
+@media (pointer: coarse) {
+  .cl-lights { row-gap: 26px; }   /* (44 − 18) */
+  .cl-lamp { min-width: 44px; }
+  .cl-lamp::before { height: 44px; }
+  .cl-mini::before { width: 44px; height: 44px; }
+}

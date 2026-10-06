@@ -126,6 +126,17 @@
   align-self: flex-start;
 }
 
+/* ===== שורת המצב: תג המצב + רמזורי בודק/תחזוקה =====
+   ⚠️ לעולם לא בתוך .card-header: שם השם מתכווץ לפי מה שלידו (useFitName),
+   ושתי מנורות נוספות היו מקצרות אותו לשתי אותיות — בדיוק התקלה שתועדה
+   על תגי הסוג והדרגה. כאן הן עוברות שורה כשאין מקום. */
+.card-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -302,6 +313,18 @@
   height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* הנקודה + ריבוע הבודק/תחזוקה על פינתה (כמו תג התראה) — רוחב השורה נשאר 12px */
+.mini-dot-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.mini-dot-wrap .cl-mini {
+  position: absolute;
+  inset-block-start: -8px;
+  inset-inline-start: -9px;
 }
 
 /* ⚠️ חלונית הריחוף של compact/mini (.card-hover-panel) הוסרה לבקשת בעלת

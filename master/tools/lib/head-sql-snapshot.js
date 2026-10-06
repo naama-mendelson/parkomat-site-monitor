@@ -24,7 +24,7 @@ if (!OUT) { console.error("שימוש: head-sql-snapshot.js <קובץ-פלט.jso
 // ⚠️ מנקים את המשתנה כדי ששום דבר כאן לא יוכל להגיע לייצור בטעות.
 delete process.env.DATABASE_URL;
 
-const { FN_SQL, POL_SQL, CRON_SQL } = require("./sql-shape");
+const { FN_SQL, POL_SQL, CRON_SQL, CON_SQL } = require("./sql-shape");
 
 (async () => {
   const local = await require(path.join(__dirname, "..", "..", "tests", "helpers", "local-pg.js")).boot();
@@ -33,6 +33,7 @@ const { FN_SQL, POL_SQL, CRON_SQL } = require("./sql-shape");
       fns: (await local.pg.query(FN_SQL)).rows,
       pols: (await local.pg.query(POL_SQL)).rows,
       cron: (await local.pg.query(CRON_SQL)).rows,
+      con: (await local.pg.query(CON_SQL)).rows,
     };
     fs.writeFileSync(OUT, JSON.stringify(snap));
   } finally { await local.close(); }

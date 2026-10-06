@@ -32,6 +32,12 @@ appsettings.Local.json
 *.sqlite3
 backups/
 
+# טקסט מתסקירי בודק אמיתיים, והבדיקות שקוראות אותו. ⚠️ המאגר ציבורי, ובתסקיר
+# יש שמות, מספר רישיון וכתובות. התסקירים עצמם חיים ב-Supabase בלבד (בעלת המוצר,
+# 06/10/2026). לפי תבנית — כך שגם שמות הקבצים אינם נכנסים.
+master/tests/fixtures/inspection/real/
+*.local.test.js
+
 # ===== תלויות (מותקנות מ-package.json) =====
 node_modules/
 

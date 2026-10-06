@@ -29,6 +29,7 @@
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { siteTrend } from "../../../shared/executive.mjs";
 import { displayStatusFor, systemsAgeMinutes } from "../../../shared/site-systems.mjs";
+import { toCompliance } from "../utils/compliance";
 import { effectiveTier } from "../utils/tier";
 
 /**
@@ -39,14 +40,14 @@ import { effectiveTier } from "../utils/tier";
  * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
  * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
-export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null) {
+export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null, { withCompliance = true } = {}) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
   }
 
   // ⚠️ קריאה חמישית ולא סיבוב לכל אתר: site_stats מקבלת null ומחזירה שורה
   // לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת.
-  const [sitesRes, statsRes, uptimeRes, globalsRes, svcRes, prevRes] = await Promise.all([
+  const [sitesRes, statsRes, uptimeRes, globalsRes, svcRes, prevRes, compRes] = await Promise.all([
     supabase.from("sites").select("*"),
     supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
@@ -58,6 +59,13 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     prevFromIso
       ? supabase.rpc("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
       : Promise.resolve({ data: [], error: null }),
+    // ⚠️ רמזורי בודק מוסמך ותחזוקה מונעת — **אינה קטלנית**, כמו site_uptime_service.
+    // כשל כאן לא יפיל את רשימת האתרים; כל אתר יקבל `{unknown:true}` (מנורה "?"),
+    // ו-useSites ישמור את המצב האחרון הידוע עם סימון stale (D19).
+    // ⚠️ ולא בכל שליפה: הרשימה נשלפת כל דקה בכל מסך פתוח, והרמזור משתנה
+    // לכל היותר פעם ביום (או באירוע — ואז App שולף שורה אחת). useSites מבקש
+    // אותה פעם בכמה דקות; כשלא התבקשה — `compliance: null` = "השאר את הקודם".
+    withCompliance ? supabase.rpc("site_compliance", { p_site_ids: null }) : Promise.resolve(null),
   ]);
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
@@ -80,6 +88,12 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   // ב-`failed` למעלה מאותה סיבה בדיוק.
   const svcById = new Map(((svcRes && svcRes.data) || []).map((r) => [r.site_id, r]));
   const prevById    = new Map((prevRes.data     || []).map((r) => [r.site_id, r]));
+  // ⚠️ `compError` נשמר על כל אתר ולא נבלע: מנורה עם "?" וסיבה בחלונית
+  // הריחוף אומרת "לא יודעים", ומנורה שנעלמת בשקט נראית כמו "אין מה לדווח".
+  const compError = compRes?.error
+    ? (compRes.error.code === "42501" ? "אין הרשאת קריאה" : compRes.error.message || "שגיאה")
+    : null;
+  const compById = new Map(((compRes && !compRes.error && compRes.data) || []).map((r) => [r.site_id, r]));
 
   return (sitesRes.data || []).map((site) => {
     const st = statsById.get(site.id);
@@ -158,6 +172,10 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       uptime: svc && svc.measured_hours > 0
         ? svc.availability_percent
         : (up && up.measured_hours > 0 ? up.availability_percent : null),
+
+      compliance: !compRes ? null
+        : compError ? { unknown: true, error: compError }
+        : toCompliance(compById.get(site.id)),
 
       serviceAgreement: svc ? svc.agreement : null,
       // ⚠️ **המסלול אינו מחשב דבר** — הוא מה שנחתם. הוא נוסע לכרטיס

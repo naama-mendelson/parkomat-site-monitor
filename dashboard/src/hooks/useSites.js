@@ -4,7 +4,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // בשני המסלולים. ראה services/dataSource.js לתוכנית ב'.
 import { fetchSitesList } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
+import { mergeCompliance, complianceFailed, complianceFetched } from "../utils/complianceMerge.js";
 import { keepLastService } from "../utils/serviceMerge.js";
+
+// ⚠️ כל כמה זמן הרשימה שולפת גם את רמזורי הבודק/התחזוקה. הם משתנים לכל היותר
+// פעם ביום (מעבר ספים בחצות), או באירוע — ואירוע מטופל בשליפה ממוקדת של אתר
+// אחד ב-App. שליפה של כל האתרים בכל דקה בכל מסך פתוח הייתה עלות תעבורה בלי
+// שום מידע חדש.
+const COMPLIANCE_EVERY_MS = 5 * 60 * 1000;
 
 // ============================================================
 // ⚠️ הודעה לבן אדם, לא ל-console
@@ -70,6 +77,8 @@ export function useSites({ hold = false } = {}) {
   // ⚠️ וגם `setError(null)` נדרס כך: שליפה ישנה שנכשלה מציבה הודעת
   // שגיאה על מסך שכבר קיבל נתונים תקינים.
   const seq = useRef(0);
+  const lastComplianceAt = useRef(0);
+  const patchedAt = useRef({});          // site id → מתי הוחלף ה-compliance שלו ב-patchSite
 
   const loadSites = useCallback(async () => {
     const mine = ++seq.current;
@@ -77,10 +86,21 @@ export function useSites({ hold = false } = {}) {
 
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
-        const data = await fetchSitesList();
+        const withCompliance = Date.now() - lastComplianceAt.current >= COMPLIANCE_EVERY_MS;
+        const startedAt = Date.now();
+        const data = await fetchSitesList({ withCompliance });
         if (stale()) return;          // שליפה חדשה יותר כבר בדרך
-        // כשל בשעות השירות — הערך האחרון הידוע, לא "בסיסי" ו-24/7 לדקה (serviceMerge)
-        setSites((prev) => keepLastService(prev, data));
+        // כשל ברמזורי הבודק אינו מקדם את השעון — השליפה הבאה תנסה שוב, ולא בעוד
+        // חמש דקות. (פס "אינו מתעדכן" בראש המסך הוסר לבקשת בעלת המוצר, 04/10;
+        // המנורות עצמן מציגות "?" מקווקו כשהסטטוס לא נטען — הן לא נעלמות.)
+        if (complianceFetched(data) && !complianceFailed(data)) lastComplianceAt.current = Date.now();
+        setSites((prev) => {
+          // כשל בשעות השירות — הערך האחרון הידוע, לא "בסיסי" ו-24/7 לדקה (serviceMerge)
+          const { list, missing } = mergeCompliance(prev, keepLastService(prev, data), startedAt, patchedAt.current);
+          // אתר חדש (או שנוסף מאז הסבב האחרון) — הסבב הבא שולף רמזורים, לא בעוד 5 דקות
+          if (missing) lastComplianceAt.current = 0;
+          return list;
+        });
         setError(null);
         setLoading(false);
         return;
@@ -99,6 +119,23 @@ export function useSites({ hold = false } = {}) {
   // עדכון מקומי מהודעת SSE — בלי בקשת רשת.
   // applySiteUpdate מחזיר את *אותו* מערך אם אין מה לעדכן, ולכן React
   // לא מרנדר מחדש לחינם.
+  /**
+   * החלפת שדות של אתר אחד בלי שליפה (למשל `compliance` אחרי אירוע — D20).
+   * @param {string} code
+   * @param {object} fields
+   */
+  const patchSite = useCallback((code, fields) => {
+    setSites((current) => {
+      const i = current.findIndex((s) => s.code === code);
+      if (i === -1) return current;
+      // חותמת — כדי ששליפה מלאה שיצאה לפני העדכון הזה לא תדרוס אותו (mergeCompliance)
+      if ("compliance" in fields) patchedAt.current[current[i].id] = Date.now();
+      const next = current.slice();
+      next[i] = { ...current[i], ...fields };
+      return next;
+    });
+  }, []);
+
   const patch = useCallback((msg) => {
     setSites((current) => applySiteUpdate(current, msg));
   }, []);
@@ -159,5 +196,5 @@ export function useSites({ hold = false } = {}) {
     };
   }, [hasError, loadSites]);
 
-  return { sites, loading, error, reload, patch };
+  return { sites, loading, error, reload, patch, patchSite };
 }

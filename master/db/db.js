@@ -710,8 +710,11 @@ function init() {
       // כמו הקליטה: זה קוד שלנו, לא הרחבה שאולי חסרה.
       // ⚠️ `service-calls` אחרון ואינו תלוי באיש מהם — הוא רק צריך את
       // `app.is_active_user` ואת `app.current_actor` שכבר נוצרו ב-security.
+      // ⚠️ `compliance` **אחרי** service-calls: `app.is_staff()` קורא ל-
+      // `app.is_intake_client()` שנוצר שם, ול-`app.require_manager()` /
+      // `app.record_write_audit()` מ-writes. סדר הפוך נכשל במסד חדש.
       for (const file of ["traffic-light.postgres.sql", "service-hours.postgres.sql", "fixflow.postgres.sql",
-        "service-calls.postgres.sql"]) {
+        "service-calls.postgres.sql", "compliance.postgres.sql"]) {
         await setup.query(fs.readFileSync(path.join(__dirname, file), "utf8"));
       }
 

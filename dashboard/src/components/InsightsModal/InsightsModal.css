@@ -97,6 +97,16 @@
 }
 
 .insights-error { color: #f87171; }
+/* כפתור "נסה שוב" בתוך הודעת שגיאה — קישור, לא כפתור מלא */
+.insights-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 /* רשת מדדים — מסתגלת לרוחב */
 .insights-kpis {

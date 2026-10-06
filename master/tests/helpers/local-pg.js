@@ -44,7 +44,18 @@ function available() {
   }
 }
 
-async function boot() {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.supabaseDefaults] — ⚠️ ההרשאות שברירת המחדל של Supabase נותנת לכל
+ *   טבלה, פונקציה ו-sequence חדשים ב-public (ALL ל-anon / authenticated / service_role).
+ *   בלעדיהן Postgres נקי לא נותן כלום מלכתחילה, ולכן REVOKE שנמחק מהקובץ אינו משנה דבר
+ *   מקומית — ובייצור הוא פותח את הטבלה. בדיקה של "אין הרשאה" שרצה בלי זה עיוורת למה
+ *   שהיא בודקת. (security.postgres.sql: ברירת המחדל הזו העניקה הרשאות על 29 טבלאות.)
+ *   ⚠️ אופציונלי ולא ברירת מחדל: tests/sql-local.test.js עדיין מניח מסד נקי, ובדיקה אחת
+ *   שם (service_calls — "נדחה בהרשאה, לא במדיניות") נופלת תחת המודל. זה פער אמיתי מול
+ *   הייצור, ומחוץ לתחום של P1.
+ */
+async function boot(opts = {}) {
   const { PGlite } = await import("@electric-sql/pglite");
   const { PGLiteSocketServer } = await import("@electric-sql/pglite-socket");
 
@@ -78,6 +89,13 @@ async function boot() {
       headers jsonb DEFAULT '{}', timeout_milliseconds int DEFAULT 5000) RETURNS bigint LANGUAGE sql AS
       $f$ INSERT INTO net.http_request_queue(url, headers, body) VALUES (url, headers, body) RETURNING id $f$;
   `);
+  if (opts.supabaseDefaults) {
+    await pg.exec(`
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES    TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+    `);
+  }
 
   const port = await freePort();
   const server = new PGLiteSocketServer({ db: pg, port, host: "127.0.0.1", maxConnections: 20 });

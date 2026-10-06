@@ -121,6 +121,10 @@ function patchFor(site, msg) {
 export function needsRefetch(msg) {
   if (!msg?.type) return true;
   if (msg.type === "registered") return true;
+  // ⚠️ אירוע בודק/תחזוקה אינו משנה אף מדד של הרשימה. App שולף לו את שורת
+  // site_compliance של האתר הזה בלבד (D20) — בלי זה כל העלאה של תסקיר היסטורי
+  // הייתה מריצה את שליפת הרשימה המלאה על כל דשבורד פתוח, פעם לכל קובץ.
+  if (msg.type === "compliance") return false;
 
   if (msg.type === "operation") {
     return msg.startEnd === "end" && !msg.isAnomaly;

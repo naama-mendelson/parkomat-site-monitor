@@ -1,0 +1,98 @@
+/* components/Compliance/InspectionPage.css — עמוד "בודק מוסמך" מלא.
+
+   ⚠️ עמוד ולא חלון: אין רקע שקוף ואין מסגרת — הוא מחליף את המסך כולו, והדשבורד
+   נשאר מאחוריו כמו שהיה (סינון, גלילה), כך שהחזרה נוחתת בדיוק באותו מקום.
+   z-index כמו של חלון האתר: החלונות של הלשונית עצמה (טופס, תמונה) יושבים מעליו. */
+.ip-page {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  animation: ipIn 0.18s ease-out;
+}
+.ip-page:focus { outline: none; }
+
+@keyframes ipIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* הכותרת — באותו כחול של כותרת הדשבורד, כדי שיהיה ברור שזה עמוד של האפליקציה */
+.ip-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px max(16px, calc((100% - 1000px) / 2));
+  background: var(--header-bg);
+  color: var(--brand-on);
+  box-shadow: 0 2px 10px var(--shadow);
+}
+
+.ip-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--brand-on) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--brand-on) 12%, transparent);
+  color: var(--brand-on);
+  font-weight: 600;
+}
+.ip-back:hover { background: color-mix(in srgb, var(--brand-on) 22%, transparent); }
+.ip-back:focus-visible { outline: 2px solid var(--brand-on); outline-offset: 2px; }
+
+.ip-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ip-title {
+  margin: 0;
+  font-size: 1.3em;
+  line-height: 1.2;
+}
+.ip-site {
+  font-size: 0.88em;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ip-header .lg { margin-inline-start: auto; flex-shrink: 0; }
+
+.ip-body {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 18px 16px 48px;
+}
+
+/* מלבן הגרירה — הוא סיבת העמוד, ולכן גדול מבלשונית שבחלון */
+.ip-page .it-drop {
+  min-height: 150px;
+  gap: 8px;
+  padding: 22px 16px;
+}
+.ip-page .it-drop-title { font-size: 1.15em; }
+
+@media (max-width: 640px) {
+  .ip-header { gap: 10px; padding: 8px 12px; }
+  /* ⚠️ החזרה היא הדרך היחידה החוצה בטלפון (אין Escape) — יעד לאגודל */
+  .ip-back { min-height: 44px; padding: 6px 10px; }
+  .ip-title { font-size: 1.08em; }
+  .ip-site { font-size: 0.8em; }
+  .ip-body { padding: 12px 12px 36px; }
+  .ip-page .it-drop { min-height: 112px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ip-page { animation: none; }
+}

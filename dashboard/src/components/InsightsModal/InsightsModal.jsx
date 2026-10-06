@@ -1,6 +1,6 @@
 // components/InsightsModal/InsightsModal.jsx — מסך "עוד מידע":
 // חמישה מסכי משנה (סקירה · פעילות · כרטיסים · אמינות · לוג), מעל בורר תקופה משותף.
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { DIRECTION_COLORS, METRIC_COLORS, PEAK_COLOR } from "../../utils/constants";
 import { useSiteInsights, useGlobalInsights } from "../../hooks/useSiteInsights";
 import PeriodTabs from "../PeriodTabs/PeriodTabs";
@@ -17,6 +17,27 @@ import "./InsightsModal.css";
 import Logo from "../Logo/Logo";
 import ServiceAgreement from "../ServiceAgreement/ServiceAgreement";
 import { useDirect } from "../../services/dataSource";
+import { COMPLIANCE_TABS, PM_ENABLED } from "../../utils/compliance";
+
+// ⚠️ עצלות: שתי הלשוניות כבדות (טופס, חתימה, מפענח PDF) ורוב מי שפותח אתר
+// לא נכנס אליהן. בלי lazy הן היו נטענות עם כל פתיחה של הדשבורד.
+//
+// ⚠️ **וטעינה שנכשלת לא מפילה את הדשבורד.** אין גבול שגיאות בעץ, ו-lazy שנדחה
+// זורק ברינדור — React מוריד את כל השורש, והמסך מלבין. זה קורה בשני מקרים
+// אמיתיים: טכנאי שנכנס לחניון תת-קרקעי ולוחץ על מנורה בלי קליטה, ו-PWA שפתוח
+// ימים בזמן ש-git push העלה גרסה חדשה (הקובץ הישן כבר לא קיים בשרת). לכן
+// הייבוא לעולם לא נדחה — במקומו מוצגת הודעה בתוך החלון, עם רענון.
+function TabLoadFailed() {
+  return (
+    <p className="insights-state insights-error" role="alert">
+      הלשונית לא נטענה — אין חיבור, או שהדשבורד עודכן.{" "}
+      <button type="button" className="insights-retry" onClick={() => window.location.reload()}>רענון</button>
+    </p>
+  );
+}
+const lazyTab = (load) => lazy(() => load().catch(() => ({ default: TabLoadFailed })));
+const InspectionTab = lazyTab(() => import("../Compliance/InspectionTab"));
+const PmTab = lazyTab(() => import("../Compliance/PmTab"));
 
 const ENTRY_COLOR = DIRECTION_COLORS.entry;   // כחול — כניסות
 const EXIT_COLOR = DIRECTION_COLORS.exit;     // ליים המותג — יציאות
@@ -62,10 +83,59 @@ function repairText(min) {
   return m ? `${h}:${String(m).padStart(2, "0")} שע׳` : `${h} שע׳`;
 }
 
-function InsightsModal({ site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false, maintenance = null, onRefresh = null }) {
+function InsightsModal({
+  site, period, onPeriodChange, version, onClose, initialSection = "overview", allSites = false,
+  maintenance = null, onRefresh = null,
+  // ---- בודק מוסמך / תחזוקה מונעת ----
+  compliance = undefined,        // שורת הרמזור של האתר (מהרשימה) — לתג הליקויים על הלשונית
+  complianceRev = 0,             // עולה באירוע compliance של האתר → הלשונית הפתוחה נטענת מחדש
+  onComplianceChanged = null,    // אחרי כתיבה מוצלחת בלשונית → App שולף את שורת הרמזור
+  onOpenInspection = null,       // "בודק מוסמך" הוא עמוד מלא — App סוגר את החלון ופותח אותו
+  detailMissing = false,         // פרטי האתר לא נטענו (החלון נפתח מהרשימה, ללשונית בודק/תחזוקה)
+}) {
   // ⚠️ `requested` ולא `section`: הרשימה תלויה ב-allSites (ראה sections
   // למטה), ולכן שונית שהתבקשה עשויה לא להתקיים. הערך האפקטיבי נגזר שם.
-  const [requested, setSection] = useState(initialSection);
+  const [requested, setRequested] = useState(initialSection);
+
+  // ============================================================
+  // ⚠️ שומר סגירה — עבודה שעוד לא נשמרה בלשוניות הבודק/התחזוקה
+  // ============================================================
+  // טכנאי שצילם שלוש תמונות וסוגר את החלון בטעות (Escape, לחיצה על הרקע,
+  // מעבר ללשונית אחרת) מאבד אותן — בלי שום סימן. הלשונית מדווחת כאן סיבה
+  // בעברית כל עוד יש העלאה באוויר / פריטים שממתינים לסנכרון / חתימה שלא
+  // נשלחה, וכל דרך יציאה שואלת קודם.
+  const blockerRef = useRef(null);
+  const [blocker, setBlocker] = useState(null);
+  const onDirtyChange = useCallback((reason) => {
+    blockerRef.current = reason || null;
+    setBlocker(reason || null);
+  }, []);
+  const mayLeave = useCallback(() => {
+    const reason = blockerRef.current;
+    return !reason || window.confirm(`${reason}\n\nלצאת בכל זאת?`);
+  }, []);
+  const guardedClose = useCallback(() => { if (mayLeave()) onClose(); }, [mayLeave, onClose]);
+  // הלשונית שמוצגת כרגע — כדי שלחיצה עליה שוב לא תשאל ולא תנטרל את השומר
+  const sectionRef = useRef(null);
+  const setSection = useCallback((key) => {
+    // ⚠️ בחירה מחדש של הלשונית הפתוחה אינה יציאה. בלי זה "כן" בשאלה ניקה את
+    // השומר בזמן שהעבודה עדיין לא נשמרה — והיציאה האמיתית הבאה עברה בלי שאלה.
+    if (key === sectionRef.current) return;
+    if (!mayLeave()) return;
+    // ⚠️ "בודק מוסמך" אינו מוצג כאן אלא בעמוד משלו (InspectionPage). השונית
+    // נשארת בניווט — עם תג הליקויים — כי כאן מחפשים אותה, והיא מעבירה לעמוד.
+    // הלשונית הקודמת נמסרת כדי ש"חזרה" בעמוד תנחת בה.
+    if (key === "inspection" && onOpenInspection) { onOpenInspection(sectionRef.current); return; }
+    blockerRef.current = null;
+    setBlocker(null);
+    setRequested(key);
+  }, [mayLeave, onOpenInspection]);
+  useEffect(() => {
+    if (!blocker) return undefined;
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [blocker]);
   // איזו שורה בטבלת הכרטיסים פתוחה. אחת בכל רגע — פתיחת כולן הופכת את
   // הטבלה לרשימה ארוכה ומאבדת את ההשוואה שהיא באה לתת.
   const [openCard, setOpenCard] = useState(null);
@@ -78,16 +148,20 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
   const [localVersion, setLocalVersion] = useState(0);
   const v = `${version}-${localVersion}`;
 
-  const siteRes = useSiteInsights(site?.code, period, { version: v, enabled: !allSites });
+  // ⚠️ הלשוניות של הבודק והתחזוקה **אינן מחכות** לנתוני התובנות: טכנאי
+  // בחניון תת-קרקעי לא צריך לחכות שניות לגרפים של שנה כדי לסמן וי. לכן
+  // השליפה מושבתת כל עוד אחת מהן פתוחה (§5.1 במפרט).
+  const onComplianceTab = COMPLIANCE_TABS.includes(requested);
+  const siteRes = useSiteInsights(site?.code, period, { version: v, enabled: !allSites && !onComplianceTab });
   const globalRes = useGlobalInsights(period, { version: v, enabled: allSites });
   const { data, loading, error } = allSites ? globalRes : siteRes;
 
-  // סגירה ב-Escape
+  // סגירה ב-Escape — דרך השומר
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") guardedClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [guardedClose]);
 
   // ============================================================
   // ⚠️ counts.all — ולא סכום של שלושה שדות
@@ -128,6 +202,13 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
     ...(allSites ? [] : [{ key: "cards", label: "משתמשים", badge: data?.cards.uniqueCards }]),
     { key: "reliability", label: "אמינות" },
     { key: "log", label: "לוג", badge: logCount },
+    // ⚠️ רק לאתר בודד, ורק במצב הישיר: לתכונה אין זרוע שרת (ראה dataSource).
+    // התג = ליקויים פתוחים, מהרשימה — בלי שליפה נוספת.
+    ...(allSites || !useDirect ? [] : [
+      { key: "inspection", label: "בודק מוסמך", badge: compliance?.inspection?.openDefects || null },
+      // מוסתרת באתר החי עד שיוחלט אחרת (PM_ENABLED ב-utils/compliance)
+      ...(PM_ENABLED ? [{ key: "pm", label: "תחזוקה מונעת" }] : []),
+    ]),
   ];
 
   // ⚠️ שונית שאינה קיימת נופלת ל"סקירה", ולא נשארת פתוחה בלי שונית.
@@ -135,9 +216,11 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
   // עושה זאת היום, אבל במצרפת השונית הזו אינה קיימת — ואז הפאנל היה
   // מוצג **בלי שום שונית מסומנת שתוציא ממנו**.
   const section = sections.some((s) => s.key === requested) ? requested : "overview";
+  const isComplianceSection = COMPLIANCE_TABS.includes(section);
+  sectionRef.current = section;
 
   return (
-    <div className="insights-overlay" onClick={onClose}>
+    <div className="insights-overlay" onClick={guardedClose}>
       <div className="insights-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
 
         {/* ===== כותרת ===== */}
@@ -149,17 +232,32 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
               {allSites ? "מבט מצרף על כל המערכת" : `קוד אתר: ${site.code}`}
             </span>
           </div>
-          <button className="insights-close" onClick={onClose} aria-label="סגירה">✕</button>
+          <button className="insights-close" onClick={guardedClose} aria-label="סגירה">✕</button>
         </header>
 
         {/* ===== ניווט: תקופה + מסך ===== */}
         <div className="insights-nav">
-          <PeriodTabs period={period} onChange={onPeriodChange} rangeLabel={data?.label} />
+          {/* בורר התקופה אינו חל על הבודק והתחזוקה — הם מצב נוכחי והיסטוריה מלאה */}
+          {!isComplianceSection && (
+            <PeriodTabs period={period} onChange={onPeriodChange} rangeLabel={data?.label} />
+          )}
           <SectionNav sections={sections} active={section} onChange={setSection} />
         </div>
 
         {/* ===== תוכן ===== */}
-        {loading && !data ? (
+        {isComplianceSection ? (
+          <div key={section} className="insights-body">
+            <Suspense fallback={<p className="insights-state">טוען…</p>}>
+              {section === "inspection" ? (
+                <InspectionTab site={site} complianceRev={complianceRev}
+                  onDirtyChange={onDirtyChange} onChanged={onComplianceChanged} />
+              ) : (
+                <PmTab site={site} complianceRev={complianceRev}
+                  onDirtyChange={onDirtyChange} onChanged={onComplianceChanged} />
+              )}
+            </Suspense>
+          </div>
+        ) : loading && !data ? (
           <p className="insights-state">טוען נתונים…</p>
         ) : error && !data ? (
           <p className="insights-state insights-error">{error}</p>
@@ -182,7 +280,16 @@ function InsightsModal({ site, period, onPeriodChange, version, onClose, initial
                 ⚠️ ורק לאתר בודד: ב"כל האתרים" אין אתר יחיד לתחזק. */}
             {section === "overview" && !allSites && (
               <section className="insights-card">
-                <SiteFacts site={site} maintenance={maintenance} onRefresh={onRefresh} />
+                {/* ⚠️ החלון יכול להיפתח מהרשימה (ללשונית בודק/תחזוקה) לפני שפרטי
+                    האתר נטענו — או כשהם נכשלו. אז אומרים זאת, ולא מציגים פרטים
+                    חלקיים כאילו הם המלאים. */}
+                {detailMissing ? (
+                  <p className="insights-state insights-error">
+                    פרטי האתר לא נטענו{onRefresh && <>{" — "}<button type="button" className="insights-retry" onClick={onRefresh}>נסה שוב</button></>}
+                  </p>
+                ) : (
+                  <SiteFacts site={site} maintenance={maintenance} onRefresh={onRefresh} />
+                )}
               </section>
             )}
 

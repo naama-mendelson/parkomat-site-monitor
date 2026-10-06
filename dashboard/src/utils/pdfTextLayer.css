@@ -1,0 +1,71 @@
+/* utils/pdfTextLayer.css — שכבת הטקסט ש-pdfText.js בונה מעל הקנבס (renderText).
+   טקסט שקוף במקום המדויק של האותיות, כדי שאפשר יהיה לסמן ולהעתיק מהמסמך.
+
+   מקור: .textLayer ב-pdfjs-dist/web/pdf_viewer.css (6.4). ⚠️ הועתק ולא יובא:
+   הקובץ שלהם הוא 170KB של צופה שלם, וכתוב ב-CSS מקונן — שדפדפן ישן מתעלם
+   ממנו כולו, ואז הטקסט "השקוף" מופיע שחור מעל הציור. כאן הכול שטוח.
+
+   המכל: position:absolute בתוך מכל position:relative שמחזיק גם את הקנבס. */
+.pdf-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* ⚠️ דורס את ה-width/height ש-pdfjs כותב inline עם round() (ראו pdfText.js).
+     הגובה בא מ-aspect-ratio של העמוד, שנקבע inline לכל עמוד. */
+  width: 100% !important;
+  height: auto !important;
+  overflow: hidden;
+  /* המיקום של כל קטע הוא left באחוזים; direction:rtl של החלון לא נוגע בו,
+     וכל קטע נושא dir משלו (pdfjs) — כך עברית ומספרים באותה שורה נשארים בסדר. */
+  direction: ltr;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor, 1) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-text span,
+.pdf-text br {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.pdf-text > :not(.markedContent),
+.pdf-text .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text .markedContent { display: contents; }
+
+.pdf-text ::selection { background: rgba(0, 90, 255, 0.28); color: transparent; }
+.pdf-text br::selection { background: transparent; }
+
+/* רקע לגרירה — ראו "selecting" ב-pdfText.js */
+.pdf-text .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pdf-text.selecting .endOfContent { top: 0; }

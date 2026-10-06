@@ -118,6 +118,15 @@
   unicode-bidi: isolate;
 }
 
+/* מונח שמתחיל בדוגמה של המנורה (LampSwatch) — הגלולה והמילים באותה שורה */
+.help-lamp {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.help-def .cl-badge { vertical-align: middle; }
+
 /* שורה שמתקנת אי-הבנה נפוצה, ולא רק מגדירה. */
 .help-row--warn { border-inline-start: 3px solid var(--status-warning); }
 
