@@ -82,11 +82,10 @@ function HelpPanel({ onClose }) {
             </Row>
             <Row term={<span className="help-lamp"><LampSwatch state="soon" /> עומד לפוג תוך חודש</span>}>
               {PM_ENABLED ? "צריך להתכונן: לזמן בודק או לתאם תחזוקה. בבודק — גם" : "צריך להתכונן: לזמן בודק. גם"}{" "}
-              כשכל הליקויים תוקנו ומחכים לתסקיר נקי מהבודק.
+              כשכל הליקויים תוקנו ומחכים לתסקיר נקי מהבודק, וכש<strong>ליקוי עבר את מועד התיקון</strong> והתסקיר עצמו בתוקף.
             </Row>
             <Row warn term={<span className="help-lamp"><LampSwatch state="expired" /> לא בתוקף</span>}>
               <strong>לא תקין:</strong> התוקף פג, או שאין במערכת {PM_ENABLED ? "תסקיר או ביקור תחזוקה" : "תסקיר"}.
-              {PM_ENABLED ? " בבודק — גם " : " וגם "}<strong>ליקוי שעבר את מועד התיקון</strong>, אפילו כשהתסקיר עצמו בתוקף.
             </Row>
             <Row term={<span className="help-lamp"><span className="cl-badge">2</span> מספר ליד המנורה</span>}>
               ליקויים פתוחים. <span className="cl-badge cl-badge--overdue">2</span> מלא באדום —

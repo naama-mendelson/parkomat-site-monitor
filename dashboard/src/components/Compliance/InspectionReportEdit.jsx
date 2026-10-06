@@ -10,6 +10,10 @@
 // ⚠️ "נקי" (declared_clean) הוא עובדה על המסמך (D7), והוא סוגר מחזור — לכן
 // סימון מחייב סיבה, וביטול סימון של בדיקה חוזרת **פותח מחדש** את הליקויים
 // שנסגרו בה (D24). שני אלה נאמרים כאן במפורש לפני השמירה.
+//
+// ⚠️ תסקיר שנרשמו בו ליקויים אינו מסומן נקי — גם אחרי שכולם נמחקו (deleted_defects).
+// מחיקה בסיבה "טופל" + סימון נקי הדליקה ירוק בלי מסמך מהבודק (06/10/2026). את הנקי
+// מעלים כבדיקה חוזרת. ה-SQL אוכף; כאן רק לא מציעים את מה שייכשל.
 import { useEffect, useRef, useState } from "react";
 import { updateInspectionReport } from "../../services/dataSource";
 import { addMonthsISO, formatDateIL, todayIL } from "../../utils/compliance";
@@ -45,6 +49,7 @@ export default function InspectionReportEdit({ report, parent, onSaved, onClose,
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const liveDefects = (r.defects || []).length;
+  const hadDefects = liveDefects + (Number(r.deleted_defects) || 0);
   const today = todayIL();
 
   // ההפרש בין הטופס לדוח — זה ורק זה נשלח
@@ -167,15 +172,15 @@ export default function InspectionReportEdit({ report, parent, onSaved, onClose,
           <textarea className="it-input it-textarea" rows={2} maxLength={2000} value={form.note} onChange={(e) => set("note", e.target.value)} />
         </label>
 
-        {(liveDefects === 0 || r.declared_clean) && (
+        {(hadDefects === 0 || r.declared_clean) && (
           <label className="it-check">
             <input type="checkbox" checked={form.declared_clean} onChange={(e) => set("declared_clean", e.target.checked)}
-              disabled={liveDefects > 0 && !r.declared_clean} />
+              disabled={hadDefects > 0 && !r.declared_clean} />
             <span>התסקיר נקי — הבודק לא מצא ליקויים</span>
           </label>
         )}
-        {liveDefects > 0 && !r.declared_clean && (
-          <p className="it-hint">יש בתסקיר {liveDefects} ליקויים — אי אפשר לסמן אותו כנקי.</p>
+        {hadDefects > 0 && !r.declared_clean && (
+          <p className="it-hint">בתסקיר הזה נרשמו ליקויים, ולכן הוא אינו נקי — תסקיר נקי מהבודק מעלים כבדיקה חוזרת.</p>
         )}
         {undeclaring && r.kind === "followup" && (
           <p className="it-banner it-banner--warn">ביטול הסימון יפתח מחדש את הליקויים שנסגרו על סמך התסקיר הזה.</p>

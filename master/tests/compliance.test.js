@@ -364,11 +364,10 @@ test("12 · שני מתקנים: אחד פג → האתר אדום; retire → �
 // ================================================================
 
 let T13; // { s, r, d1, d2, p1 } — משמש גם את 14
-test("13 · בוצע: בלי תמונה נדחה; PNG נדחה; JPEG ואז בוצע; replay; בקשה אחרת → PT409", { skip }, async () => {
+test("13 · בוצע: PNG נדחה; JPEG ואז בוצע; replay; בקשה אחרת → PT409", { skip }, async () => {
   const s = await newSite();
   const r = await periodic(s, { defects: [{ body: "מעקה רופף" }, { body: "שלט חסר" }] });
   const [d1, d2] = await defectsOf(r.report_id);
-  await fails(done(OPR, d1.id), "23514", /בלי תמונה/);
   await fails(stagePhoto(OPR, d1.id, png(), uuid(), "image/png"), "23514", /סוג קובץ/);
   const client = uuid();
   const p1 = await stagePhoto(OPR, d1.id, jpg(), client);
@@ -386,7 +385,7 @@ test("14 · ערבויות המסד, גם מול superuser", { skip }, async () 
   const { r, d1, d2, p1 } = T13;
   const setDone = (id, extra) => sup(`UPDATE inspection_defects SET status='done', done_at='x', done_by='x',
                                        done_by_name='שם מלא' ${extra} WHERE id=$1`, [id]);
-  await fails(setDone(d2, ""), "23514");                                                      // בלי ראיה
+  await fails(sup(`UPDATE inspection_defects SET status='done', done_at='x', done_by='x' WHERE id=$1`, [d2]), "23514"); // בלי שם המבצע
   const own = (await sup(`INSERT INTO inspection_defect_photos (client_id, defect_id, closure_no, mime, data_b64, byte_size, uploaded_by, created_at)
                           VALUES ($1, $2, 1, 'image/jpeg', $3, 10, 'x', 'x') RETURNING id::int`, [uuid(), d2, jpg()]))[0].id;
   await fails(setDone(d2, `, done_photo_id=${own}, closed_by_report_id=${r.report_id}`), "23514"); // שתי ראיות
@@ -441,7 +440,7 @@ test("16 · סגירה בתסקיר חוזר נקי: כל הליקויים הפ�
 // מצב
 // ================================================================
 
-test("17 · מחזור: open → awaiting_clean (נורה צהובה) → clean; מחיקת כל הפתוחים → review", { skip }, async () => {
+test("17 · מחזור: open → awaiting_clean (נורה צהובה) → clean; מחיקת כל הפתוחים → awaiting_clean", { skip }, async () => {
   const s = await newSite();
   const p = await periodic(s, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 200), defects: [{ body: "גדר" }, { body: "תאורה" }] });
   assert.equal((await status(s.id)).c, "open");
@@ -461,7 +460,7 @@ test("17 · מחזור: open → awaiting_clean (נורה צהובה) → clean;
     await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [d.id]);
   }
   st = await status(s2.id);
-  assert.deepEqual({ c: st.c, s: st.s }, { c: "review", s: "soon" });
+  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "soon" }, "ליקוי שנרשם — גם אם נמחק — מחייב תסקיר נקי");
 });
 
 test("18 · ספים: +31 ok, +30 soon, +0 soon, −1 expired; go-live; PM; סוף חודש", { skip }, async () => {
@@ -1192,17 +1191,18 @@ const lights = async (siteId, day) => (await sup(
      FROM app.compliance_rows(ARRAY[$1]::int[], $2::date)`, [siteId, day]))[0];
 const pick = (r) => ({ s: r.s, vs: r.vs, od: r.od });
 
-test("46 · ליקוי שעבר את מועד התיקון → אדום; התוקף נשאר; בוצע/נמחק/מחזור קודם — לא נספרים", { skip }, async () => {
+test("46 · ליקוי שעבר את מועד התיקון → צהוב (תסקיר בתוקף) / אדום (פג); התוקף נשאר; בוצע/נמחק/מחזור קודם — לא נספרים", { skip }, async () => {
   const s = await newSite();
   const due = addDays(TODAY, 5);
   const p = await periodic(s, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 200), defects: [{ body: "גדר", due_on: due }] });
   assert.deepEqual(pick(await lights(s.id, due)), { s: "ok", vs: "ok", od: 0 }, "ביום היעד עצמו — עוד לא באיחור");
   let r = await lights(s.id, addDays(due, 1));
-  assert.deepEqual(pick(r), { s: "expired", vs: "ok", od: 1 }, "יום אחרי היעד — אדום, והתוקף בתוקף");
-  assert.deepEqual(r.md.map((m) => ({ s: m.state, v: m.validity, od: m.overdue })), [{ s: "expired", v: "ok", od: 1 }],
-    "פירוט המתקנים נושא גם את התוקף — בלעדיו התווית לא יודעת למה אדום");
+  // בעלת המוצר, 06/10/2026: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו"
+  assert.deepEqual(pick(r), { s: "soon", vs: "ok", od: 1 }, "יום אחרי היעד — צהוב, והתוקף בתוקף");
+  assert.deepEqual(r.md.map((m) => ({ s: m.state, v: m.validity, od: m.overdue })), [{ s: "soon", v: "ok", od: 1 }],
+    "פירוט המתקנים נושא גם את התוקף — בלעדיו התווית לא יודעת למה צהוב");
 
-  // בוצע עם תמונה → כבר לא באיחור: צהוב של "ממתין לתסקיר נקי", לא נשאר אדום
+  // בוצע עם תמונה → כבר לא באיחור: הצהוב הוא עכשיו של "ממתין לתסקיר נקי"
   const [d] = await defectsOf(p.report_id);
   await closeByPhoto(d.id);
   r = await lights(s.id, addDays(due, 1));
@@ -1213,31 +1213,84 @@ test("46 · ליקוי שעבר את מועד התיקון → אדום; התו�
   await periodic(both, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -2), defects: [{ body: "גם וגם", due_on: addDays(TODAY, -300) }] });
   assert.deepEqual(pick(await lights(both.id, TODAY)), { s: "expired", vs: "expired", od: 1 });
 
-  // שני מתקנים: האדום של A צובע את האתר; התוקף של האתר נשאר של התסקירים
+  // שני מתקנים: הצהוב של A צובע את האתר; התוקף של האתר נשאר של התסקירים
   const two = await newSite();
   await periodic(two, { machine: "A", defects: [{ body: "באיחור", due_on: addDays(TODAY, -1) }] });
   await periodic(two, { machine: "B" });
   r = await lights(two.id, TODAY);
-  assert.deepEqual(pick(r), { s: "expired", vs: "ok", od: 1 });
-  assert.deepEqual(r.md.map((m) => [m.key, m.state, m.validity]), [["A", "expired", "ok"], ["B", "ok", "ok"]]);
+  assert.deepEqual(pick(r), { s: "soon", vs: "ok", od: 1 });
+  assert.deepEqual(r.md.map((m) => [m.key, m.state, m.validity]), [["A", "soon", "ok"], ["B", "ok", "ok"]]);
   // ⚠️ אותו דבר בעמוד הבודק — מנורת המתקן נצבעת מ-inspection_site, לא מ-site_compliance
   const site = (await one(MGR, `SELECT public.inspection_site($1) j`, [two.code])).j;
   assert.deepEqual(site.machines.map((m) => [m.key, m.state, m.validity_state, m.overdue]),
-    [["A", "expired", "ok", 1], ["B", "ok", "ok", 0]]);
-  assert.equal(site.status.inspection_state, "expired");
+    [["A", "soon", "ok", 1], ["B", "ok", "ok", 0]]);
+  assert.equal(site.status.inspection_state, "soon");
 
   // ליקוי שנמחק (מחיקה רכה) אינו נספר
   const del = await newSite();
   const pd = await periodic(del, { defects: [{ body: "הוזן בטעות", due_on: addDays(TODAY, -1) }] });
-  assert.equal((await lights(del.id, TODAY)).s, "expired");
+  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "soon", vs: "ok", od: 1 });
   await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [(await defectsOf(pd.report_id))[0].id]);
-  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "soon", vs: "ok", od: 0 }, "נמחק → review (צהוב), לא אדום");
+  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "soon", vs: "ok", od: 0 }, "נמחק → לא באיחור; ממתין לתסקיר נקי");
 
   // ליקוי פתוח במחזור **קודם** אינו צובע: תקופתי חדש פותח מחזור חדש
   const old = await newSite();
   await periodic(old, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35), defects: [{ body: "ישן", due_on: addDays(TODAY, -300) }] });
   await periodic(old, { insp: addDays(TODAY, -5), valid: addDays(TODAY, 300) });
   assert.deepEqual(pick(await lights(old.id, TODAY)), { s: "ok", vs: "ok", od: 0 });
+});
+
+test("47 · ליקוי שנמחק ב'טופל' + סימון התסקיר המקורי נקי — נחסם; רק תסקיר נקי מהבודק סוגר", { skip }, async () => {
+  // בדיוק מה שקרה בייצור, 06/10/2026: תסקיר עם ליקוי אחד, הליקוי נמחק בסיבה "טופל", והתסקיר
+  // המקורי סומן נקי בעריכה — ירוק בלי שום מסמך מהבודק. בעלת המוצר: "צריך מסמך נקי שמעלה בודק
+  // מוסמך שוב ומאשר".
+  const s = await newSite();
+  const p = await periodic(s, { defects: [{ body: "לתקן סנסור" }] });
+  const [d] = await defectsOf(p.report_id);
+  await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'טופל')`, [d.id]);
+  let st = await status(s.id);
+  assert.deepEqual({ c: st.c, s: st.s, vs: st.vs }, { c: "awaiting_clean", s: "soon", vs: "ok" });
+  await fails(rpc(MGR, `SELECT public.inspection_report_update($1, '{"declared_clean": true}'::jsonb, 'טופל')`, [p.report_id]),
+    "23514", /נרשמו ליקויים/);
+  assert.equal((await status(s.id)).c, "awaiting_clean");
+  // עמוד הבודק יודע שנרשמו ליקויים — חלון העריכה לא מציע "נקי"
+  const site = (await one(MGR, `SELECT public.inspection_site($1) j`, [s.code])).j;
+  assert.deepEqual(site.reports.map((r) => [r.defects.length, r.deleted_defects]), [[0, 1]]);
+  // התסקיר הנקי מהבודק — בדיקה חוזרת — הוא שסוגר
+  await followup(s, p.report_id, { insp: TODAY });
+  st = await status(s.id);
+  assert.deepEqual({ c: st.c, s: st.s }, { c: "clean", s: "ok" });
+
+  // תסקיר שמעולם לא נרשם בו ליקוי ושבוטל סימון ה"נקי" שלו — review, ומותר להחזיר את הסימון
+  const s2 = await newSite();
+  const p2 = await periodic(s2);
+  await rpc(MGR, `SELECT public.inspection_report_update($1, '{"declared_clean": false}'::jsonb, 'בטעות')`, [p2.report_id]);
+  assert.equal((await status(s2.id)).c, "review");
+  await rpc(MGR, `SELECT public.inspection_report_update($1, '{"declared_clean": true}'::jsonb, 'המסמך נקי')`, [p2.report_id]);
+  assert.equal((await status(s2.id)).c, "clean");
+});
+
+test("48 · בוצע בלי תמונה: מותר עם שם המבצע; בלי שם — נדחה; בוצע ≠ נקי; פתיחה מחדש וסגירה שנייה", { skip }, async () => {
+  // בעלת המוצר, 06/10/2026: "שזה יהיה אופציונלי — להמשיך גם בלי להעלות תמונה ולציין מי תיקן"
+  const s = await newSite();
+  const p = await periodic(s, { defects: [{ body: "לתקן סנסור" }, { body: "שלט חסר" }] });
+  const [d1, d2] = await defectsOf(p.report_id);
+  await fails(rpc(OPR, `SELECT * FROM public.inspection_defect_done($1, ' ', NULL, $2::uuid)`, [d1.id, uuid()]),
+    "23514", /שם המבצע/);
+  assert.deepEqual(await done(OPR, d1.id), { defect_id: d1.id, photos: 0, replayed: false });
+  const row = (await sup(`SELECT status, done_by_name, done_photo_id, closed_by_report_id FROM inspection_defects WHERE id=$1`,
+    [d1.id]))[0];
+  assert.deepEqual(row, { status: "done", done_by_name: "טכנאי בדיקה", done_photo_id: null, closed_by_report_id: null });
+  assert.equal((await status(s.id)).c, "open", "ליקוי אחד עדיין פתוח");
+  await closeByPhoto(d2.id);                                    // עם תמונה — עדיין עובד, והיא הראיה
+  assert.notEqual((await defectsOf(p.report_id))[1].done_photo_id, null);
+  const st = await status(s.id);
+  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "soon" }, "בוצע ≠ נקי: ממתין לתסקיר מהבודק");
+  // פתיחה מחדש של ליקוי שנסגר בלי תמונה, וסגירה שנייה
+  await rpc(MGR, `SELECT public.inspection_defect_reopen($1, 'לא תוקן')`, [d1.id]);
+  assert.equal((await status(s.id)).c, "open");
+  assert.equal((await done(OPR, d1.id)).photos, 0);
+  assert.equal((await status(s.id)).c, "awaiting_clean");
 });
 
 test("6 · audit_log: מזהים, ספירות ושמות שדות בלבד — אין טקסט חופשי (D22)", { skip }, async () => {

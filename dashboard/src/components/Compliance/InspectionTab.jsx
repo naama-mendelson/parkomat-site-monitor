@@ -46,9 +46,8 @@ import "./InspectionTab.css";
 const LAMP_STATES = new Set(["ok", "soon", "expired", "none"]);
 const NOTICE_MS = 5000;
 
-// ⚠️ `label` ולא LIGHT_LABEL[state]: הנורה עולה מעל התוקף (ליקוי באיחור → אדום,
-// המתנה לתסקיר נקי → צהוב), ותווית לפי הצבע הייתה אומרת "לא בתוקף" ליד
-// "בתוקף עד 03/2027" באותה שורה.
+// ⚠️ `label` ולא LIGHT_LABEL[state]: הנורה עולה מעל התוקף לצהוב (ליקוי באיחור, המתנה
+// לתסקיר נקי), ותווית לפי הצבע הייתה אומרת "עומד לפוג" ליד "בתוקף עד 03/2027" באותה שורה.
 //
 // ⚠️ גוון שקוף ולא מילוי מלא — אותם ערכים בדיוק כמו המנורה בכרטיס (COMPLIANCE_COLORS),
 // לא עותק ב-CSS: "זה אדום מדי חזק" (בעלת המוצר, 06/10/2026). המנורה כאן נשארה מלאה
@@ -346,7 +345,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
           <Lamp state={state} label={insp ? stateLabel("inspection", c) : undefined} />
           <div className="it-status-text">
             <strong className="it-headline">{headline}</strong>
-            {/* ⚠️ למה הנורה אדומה כשכתוב "בתוקף": בלי השורה הזו ✕ אדום ישב ליד "בתוקף עד…"
+            {/* ⚠️ למה הנורה צהובה כשכתוב "בתוקף": בלי השורה הזו הנורה ישבה ליד "בתוקף עד…"
                 בלי שום הסבר, והסיבה הופיעה רק בשבב קטן (בעלת המוצר, 06/10/2026: "תסדר") */}
             {insp?.overdueDefects > 0 && (
               <span className="it-reason">

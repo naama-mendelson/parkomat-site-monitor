@@ -143,22 +143,23 @@ test("⚠️ שני מתקנים: ההמתנה של מתקן B מופיעה בח
 });
 
 // ---------------------------------------------------------------
-// ⚠️ ליקוי שעבר את מועד התיקון → מנורה אדומה על תסקיר בתוקף (06/10/2026).
+// ⚠️ ליקוי שעבר את מועד התיקון → מנורה צהובה על תסקיר בתוקף (06/10/2026: "זה צריך להיות צהוב כיון
+// שהמסמך בתוקף אבל הליקויים לא טופלו" — מחליף את האדום של אותו בוקר).
 // התווית חייבת לומר "בתוקף · עבר מועד תיקון" — לא "לא בתוקף" (שולח לזמן בודק),
 // ולא "נדרשת בדיקה חוזרת" (הנפילה של סיבת המחזור).
 const overdue = (over = {}) => toCompliance(row({
-  inspection_state: "expired", inspection_validity_state: "ok", inspection_cycle: "open",
+  inspection_state: "soon", inspection_validity_state: "ok", inspection_cycle: "open",
   open_defects: 2, overdue_defects: 1,
-  machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "expired", validity: "ok", cycle: "open", open: 2, overdue: 1 }],
+  machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "soon", validity: "ok", cycle: "open", open: 2, overdue: 1 }],
   ...over,
 }));
 
-test("⚠️ ליקוי באיחור על תסקיר בתוקף: 'בודק בתוקף · עבר מועד תיקון', והמנורה אדומה", () => {
+test("⚠️ ליקוי באיחור על תסקיר בתוקף: 'בודק בתוקף · עבר מועד תיקון', והמנורה צהובה", () => {
   const c = overdue();
-  assert.equal(lampState("inspection", c), "expired");
+  assert.equal(lampState("inspection", c), "soon");
   assert.equal(stateLabel("inspection", c), "בודק בתוקף · עבר מועד תיקון");
   assert.equal(c.inspection.machinesDetail[0].validity, "ok", "toCompliance מעביר את התוקף של המתקן");
-  assert.deepEqual(markFor(c), { state: "expired", tab: "inspection", stale: false });
+  assert.deepEqual(markFor(c), { state: "soon", tab: "inspection", stale: false });
   assert.match(lightTitle("inspection", c, NOW), /בתוקף עד 16\/03\/2027/);
   assert.match(lightTitle("inspection", c, NOW), /2 ליקויים פתוחים · 1 באיחור/);
 });
@@ -166,13 +167,14 @@ test("⚠️ ליקוי באיחור על תסקיר בתוקף: 'בודק בת�
 test("ליקוי באיחור + תוקף שעומד לפוג: שתי הסיבות; תסקיר שפג: 'לא בתוקף' בלבד", () => {
   assert.equal(stateLabel("inspection", overdue({ inspection_validity_state: "soon", inspection_days_left: 12 })),
     "בודק עומד לפוג תוך חודש · עבר מועד תיקון");
-  assert.equal(stateLabel("inspection", overdue({ inspection_validity_state: "expired", inspection_days_left: -3 })),
+  assert.equal(stateLabel("inspection", overdue({ inspection_state: "expired", inspection_validity_state: "expired", inspection_days_left: -3 })),
     "בודק לא בתוקף");
 });
 
-test("machineLampLabel: מתקן אדום מליקוי באיחור — בשתי צורות הנתון (site_compliance / inspection_site)", () => {
-  assert.equal(machineLampLabel({ state: "expired", validity: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
-  assert.equal(machineLampLabel({ state: "expired", validity_state: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
+test("machineLampLabel: מתקן צהוב מליקוי באיחור — בשתי צורות הנתון (site_compliance / inspection_site)", () => {
+  assert.equal(machineLampLabel({ state: "soon", validity: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
+  assert.equal(machineLampLabel({ state: "soon", validity_state: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
+  assert.equal(machineLampLabel({ state: "soon", validity_state: "soon", overdue: 1, cycle: "open" }), "בודק עומד לפוג תוך חודש · עבר מועד תיקון");
   assert.equal(machineLampLabel({ state: "expired", validity_state: "expired", overdue: 1, cycle: "open" }), "בודק לא בתוקף");
   assert.equal(machineLampLabel({ state: "soon", validity_state: "ok", overdue: 0, cycle: "awaiting_clean" }),
     "נדרשת בדיקה חוזרת — ממתין לתסקיר נקי");
@@ -185,7 +187,7 @@ test("שני מתקנים: A באיחור, B בתוקף — האתר 'בתוקף
   const c = overdue({
     machines: 2,
     machines_detail: [
-      { key: "A", label: "צפון", valid_until: "2027-03-16", state: "expired", validity: "ok", cycle: "open", open: 2, overdue: 1 },
+      { key: "A", label: "צפון", valid_until: "2027-03-16", state: "soon", validity: "ok", cycle: "open", open: 2, overdue: 1 },
       { key: "B", label: "דרום", valid_until: "2027-03-16", state: "ok", validity: "ok", cycle: "clean", open: 0, overdue: 0 },
     ],
   });

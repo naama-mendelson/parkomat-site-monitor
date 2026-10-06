@@ -131,10 +131,10 @@ export function lampState(area, c) {
 // בפועל הוא לסגור את המחזור.
 const CYCLE_REASON = { awaiting_clean: "ממתין לתסקיר נקי", review: "לבדיקה" };
 
-// ⚠️ והמנורה עולה לאדום כשליקוי עבר את מועד התיקון — גם כשהתסקיר בתוקף (בעלת
-// המוצר, 06/10/2026: "אדום = לא תקין"; ההחלטה ב-SQL). בלי הסיבה הזו התווית
-// הייתה כותבת "בתוקף · נדרשת בדיקה חוזרת" ליד ✕ אדום — ושולחת לזמן בודק,
-// כשמה שנדרש הוא לתקן את הליקוי.
+// ⚠️ והמנורה עולה לצהוב כשליקוי עבר את מועד התיקון והתסקיר בתוקף (בעלת המוצר,
+// 06/10/2026: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו" — מחליף את
+// האדום שנבחר באותו בוקר; ההחלטה ב-SQL). בלי הסיבה הזו התווית הייתה כותבת "עומד לפוג"
+// על תסקיר שבתוקף עד השנה הבאה — ושולחת לזמן בודק, כשמה שנדרש הוא לתקן את הליקוי.
 // ⚠️ לא "באיחור": בעלת המוצר החליפה את המילה הזו בתוויות המנורה (06/10/2026).
 const OVERDUE_REASON = "עבר מועד תיקון";
 
@@ -146,7 +146,7 @@ const OVERDUE_REASON = "עבר מועד תיקון";
 export function machineLampLabel(m) {
   if (!m) return LIGHT_LABEL.inspection.unknown;
   const validity = m.validity ?? m.validity_state ?? null;
-  if (m.state === "expired" && m.overdue > 0 && validity && validity !== "expired") {
+  if (m.overdue > 0 && validity && validity !== "expired") {
     return `${LIGHT_LABEL.inspection[validity] ?? LIGHT_LABEL.inspection.unknown} · ${OVERDUE_REASON}`;
   }
   if (m.state === "soon" && CYCLE_REASON[m.cycle]) return `נדרשת בדיקה חוזרת — ${CYCLE_REASON[m.cycle]}`;
@@ -163,8 +163,8 @@ export function stateLabel(area, c) {
   if (a.missing && a.state !== "none") return labels.missing;
   if (area === "inspection") {
     const validity = a.validityState ?? a.state;
-    // אדום מעל התוקף בא רק מליקוי באיחור — המחזור מעלה לצהוב לכל היותר
-    if (validity !== a.state && a.state === "expired" && a.overdueDefects > 0) {
+    // ליקוי שעבר את מועד התיקון — הסיבה הראשונה, כי הפעולה היא לתקן ולא לזמן בודק
+    if (a.validityState && a.validityState !== "expired" && a.overdueDefects > 0) {
       return `${labels[validity] ?? labels.unknown} · ${OVERDUE_REASON}`;
     }
     // ⚠️ כשהמנורה גבוהה מהתוקף, הצהוב בא ממחזור — **תמיד**, גם כשמחזור האתר

@@ -1,11 +1,11 @@
 // components/Compliance/DefectCloseDialog.jsx — "סימון כבוצע" של ליקוי: תמונה, שם, הערה.
 //
 // ============================================================
-// ⚠️ "בוצע" בלי תמונה אינו ניתן לביטוי — גם לא כאן
+// ⚠️ תמונה — לא חובה. שם המבצע — חובה.
 // ============================================================
-// במסד זה CHECK (D8): ליקוי שבוצע מצביע על תמונה של הסגירה **הנוכחית**.
-// הכפתור כאן נעול עד שיש תמונה שמורה אחת לפחות, כדי שהטכנאי לא ימלא שם
-// ויגלה רק בשליחה שחסר משהו. השרת הוא ההגנה; הנעילה היא נימוס.
+// בעלת המוצר, 06/10/2026: "אני רוצה שזה יהיה אופציונלי, כלומר יהיה אפשר להמשיך גם בלי
+// להעלות תמונה ולציין מי תיקן". כשיש תמונות, הראשונה היא הראיה (D8 במסד). הכפתור
+// מחכה רק לשם, ולתמונה שנמצאת באמצע שמירה — סימון באמצע העלאה היה משאיר אותה בחוץ.
 //
 // ============================================================
 // ⚠️ כל תמונה נשמרת ברגע שנבחרה, וחלון שנפתח מחדש מראה אותה
@@ -119,7 +119,7 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
   };
 
   const trimmed = name.trim();
-  const canSubmit = !done && !submitting && !photos.busy && photos.saved >= 1 && trimmed.length >= 2;
+  const canSubmit = !done && !submitting && !photos.busy && trimmed.length >= 2;
 
   const succeed = () => {
     saveName(trimmed);
@@ -150,7 +150,7 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
 
   const missing = [];
   if (!done) {
-    if (photos.saved < 1) missing.push(photos.busy ? "ממתינים לשמירת התמונה" : "תמונה אחת לפחות של הביצוע");
+    if (photos.busy) missing.push("ממתינים לשמירת התמונה");
     if (trimmed.length < 2) missing.push("שם המבצע");
   }
 
@@ -183,7 +183,7 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
         ) : (
           <>
             <div className="it-field">
-              <span className="it-label">תמונה של הביצוע (עד {MAX_PHOTOS})</span>
+              <span className="it-label">תמונה של הביצוע (לא חובה · עד {MAX_PHOTOS})</span>
               <p className="cmp-hint it-hint">צלמו את המקום אחרי התיקון. כל תמונה נשמרת מיד כשהיא נבחרת.</p>
               {initial === undefined ? (
                 <p className="it-muted">טוען תמונות שמורות…</p>

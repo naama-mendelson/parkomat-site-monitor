@@ -288,7 +288,8 @@ CREATE TABLE IF NOT EXISTS inspection_defects (
   done_request_id     UUID,
   created_at          TEXT NOT NULL,
   deleted_at TEXT, deleted_by TEXT, deleted_reason TEXT,
-  -- ⚠️ "בוצע" בלי ראיה אינו ניתן לביטוי: תמונה של הסגירה הנוכחית, או תסקיר חוזר נקי — אחד בדיוק
+  -- ⚠️ מוחלף ב-1.4א (06/10/2026): תמונה אינה חובה עוד. ההגדרה כאן נשארת כי CREATE TABLE IF NOT
+  -- EXISTS אינו נוגע בטבלה קיימת — מה שקובע הוא ה-DROP/ADD שם.
   CONSTRAINT inspection_defects_done_shape CHECK (
        (status = 'open' AND done_at IS NULL AND done_by IS NULL AND done_by_name IS NULL
         AND done_photo_id IS NULL AND closed_by_report_id IS NULL AND done_request_id IS NULL)
@@ -546,6 +547,21 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ⚠️ "בוצע" בלי תמונה — מותר מ-06/10/2026. בעלת המוצר, על חלון "סימון ליקוי כבוצע": "אני רוצה
+-- שזה יהיה אופציונלי, כלומר יהיה אפשר להמשיך גם בלי להעלות תמונה ולציין מי תיקן". שם המבצע
+-- נשאר חובה — מי תיקן. מה שעדיין אינו ניתן לביטוי: שתי ראיות יחד (תמונה וגם תסקיר חוזר).
+-- הסגירה עדיין אינה "נקי": המחזור ממתין לתסקיר נקי מהבודק (awaiting_clean).
+ALTER TABLE inspection_defects DROP CONSTRAINT IF EXISTS inspection_defects_done_shape;
+ALTER TABLE inspection_defects ADD CONSTRAINT inspection_defects_done_shape CHECK (
+     (status = 'open' AND done_at IS NULL AND done_by IS NULL AND done_by_name IS NULL
+      AND done_photo_id IS NULL AND closed_by_report_id IS NULL AND done_request_id IS NULL)
+  -- ⚠️ "IS NOT NULL" מפורש: length(NULL) הוא NULL, ו-CHECK מקבל NULL כהצלחה. עד היום תנאי
+  -- הראיה (XOR) הפך את הביטוי ל-FALSE והסתיר את זה; בלעדיו "בוצע" בלי שם עבר (נתפס בבדיקה 14).
+  OR (status = 'done' AND done_at IS NOT NULL AND done_by IS NOT NULL
+      AND done_by_name IS NOT NULL AND length(btrim(done_by_name)) >= 2
+      AND NOT (done_photo_id IS NOT NULL AND closed_by_report_id IS NOT NULL))) NOT VALID;
+ALTER TABLE inspection_defects VALIDATE CONSTRAINT inspection_defects_done_shape;
+
 -- ============================================================
 -- 1.5 נעילה — RLS בלי מדיניות, בלי הרשאות (D2)
 -- ============================================================
@@ -624,10 +640,14 @@ dq   AS (SELECT cr.sid, cr.mk,
                 count(*) FILTER (WHERE d.status = 'open' AND d.due_on < p_today)::int AS overdue_n,
                 max(app.compliance_today_at(d.done_at::timestamptz)) AS last_done
            FROM cr JOIN inspection_defects d ON d.report_id = cr.rid AND d.deleted_at IS NULL GROUP BY cr.sid, cr.mk),
+-- ⚠️ כולל ליקויים שנמחקו. בעלת המוצר, 06/10/2026, על אתר שבו ליקוי נמחק בסיבה "טופל" והתסקיר
+-- המקורי סומן נקי: "אם תקנו את הליקויים — אז באמת אין ליקויים, אבל צריך מסמך נקי שמעלה בודק
+-- מוסמך שוב ומאשר". תסקיר שנרשמו בו ליקויים ממתין לתסקיר נקי, גם כשכולם נמחקו.
 lastd AS (SELECT lr.sid, lr.mk, count(d.id)::int AS n FROM lastr lr
-            LEFT JOIN inspection_defects d ON d.report_id = lr.rid AND d.deleted_at IS NULL GROUP BY lr.sid, lr.mk),
+            LEFT JOIN inspection_defects d ON d.report_id = lr.rid GROUP BY lr.sid, lr.mk),
 -- ⚠️ D7/D9: "נקי" הוא עובדה על המסמך (declared_clean), לא ספירת שורות שנותרו.
--- מחיקת הליקוי האחרון מתסקיר שלא הוצהר נקי → review, לא clean.
+-- מחיקת הליקוי האחרון → awaiting_clean (ראו lastd), לא clean. review נשאר רק לתסקיר שמעולם
+-- לא נרשם בו ליקוי ושסימון ה"נקי" שלו בוטל — שם החזרת הסימון בעריכה היא תיקון לגיטימי.
 per  AS (SELECT m.sid, m.mk, m.label, c.pid, COALESCE(o.fvu, c.pvu) AS vu,
                 CASE WHEN c.pid IS NULL THEN 'none'
                      WHEN COALESCE(q.open_n,0) > 0 THEN 'open'
@@ -640,14 +660,15 @@ per  AS (SELECT m.sid, m.mk, m.label, c.pid, COALESCE(o.fvu, c.pvu) AS vu,
            LEFT JOIN lastr lr ON lr.sid = m.sid AND lr.mk = m.mk
            LEFT JOIN lastd ld ON ld.sid = m.sid AND ld.mk = m.mk
            LEFT JOIN dq q ON q.sid = m.sid AND q.mk = m.mk)
--- ⚠️ הנורה אינה התוקף. היא עולה מעליו בשני מקרים, והתוקף עצמו (validity_state) נשאר נקי
--- כדי שהתווית תוכל לומר "בתוקף · עבר מועד תיקון" ולא "לא בתוקף":
---   • ליקוי פתוח שעבר את מועד התיקון → אדום. בעלת המוצר, 06/10/2026: "אדום = לא תקין",
---     ותסקיר בתוקף עם ליקוי שלא תוקן בזמן אינו תקין. "באיחור" = due_on < היום (כמו overdue_n).
+-- ⚠️ הנורה אינה התוקף. היא עולה מעליו לצהוב בשני מקרים, והתוקף עצמו (validity_state) נשאר
+-- נקי כדי שהתווית תוכל לומר "בתוקף · עבר מועד תיקון" ולא "לא בתוקף". אדום = רק התוקף.
+--   • ליקוי פתוח שעבר את מועד התיקון → צהוב. בעלת המוצר, 06/10/2026, על אתר עם 4 ליקויים כאלה
+--     שהיה אדום: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו". (באותו בוקר
+--     נבחר אדום; ההחלטה הזו מחליפה אותה.) "באיחור" = due_on < היום (כמו overdue_n).
 --   • מחזור שממתין לתסקיר נקי / לבדיקה → צהוב (D10): צריך לזמן את הבודק.
 SELECT p.sid, p.mk, p.label, p.pid, p.vu, v.vs,
-       CASE WHEN p.overdue_n > 0 THEN 'expired'
-            WHEN p.cyc IN ('awaiting_clean','review') AND app.light_rank(v.vs) < 2 THEN 'soon' ELSE v.vs END,  -- [FLIP] D10
+       CASE WHEN (p.overdue_n > 0 OR p.cyc IN ('awaiting_clean','review')) AND app.light_rank(v.vs) < 2
+            THEN 'soon' ELSE v.vs END,  -- [FLIP] D10
        p.cyc, p.open_n, p.overdue_n, CASE WHEN p.cyc = 'awaiting_clean' THEN p.last_done END
   FROM per p CROSS JOIN LATERAL (SELECT app.compliance_light(p.vu, p_today, app.compliance_warn_days(),
                                                              app.compliance_go_live()) AS vs) v
@@ -826,7 +847,10 @@ BEGIN
                           'past_photos', (SELECT count(*)::int FROM inspection_defect_photos ph
                                            WHERE ph.defect_id = d.id AND ph.closure_no < d.closure_no))
                         ORDER BY d.seq, d.id)
-                   FROM inspection_defects d WHERE d.report_id = r.id AND d.deleted_at IS NULL), '[]'::jsonb))
+                   FROM inspection_defects d WHERE d.report_id = r.id AND d.deleted_at IS NULL), '[]'::jsonb),
+               -- לחלון העריכה: תסקיר שנרשמו בו ליקויים אינו מסומן נקי, גם כשכולם נמחקו (D7)
+               'deleted_defects', (SELECT count(*)::int FROM inspection_defects d
+                                    WHERE d.report_id = r.id AND d.deleted_at IS NOT NULL))
              ORDER BY r.inspected_on DESC, r.id DESC)
         FROM inspection_reports r
         JOIN inspection_files f ON f.id = r.file_id
@@ -1132,11 +1156,14 @@ BEGIN
      AND (v_new.valid_until <= v_new.inspected_on OR v_new.valid_until > v_new.inspected_on + 800) THEN
     RAISE EXCEPTION 'תאריך התוקף חייב להיות אחרי תאריך הבדיקה ועד כשנתיים ממנו' USING ERRCODE = 'check_violation'; END IF;
 
-  -- D7: "נקי" רק כשאין ליקויים חיים, ועם סיבה (זה מה שסוגר מחזור)
+  -- D7: "נקי" רק בתסקיר שמעולם לא נרשם בו ליקוי, ועם סיבה (זה מה שסוגר מחזור).
+  -- ⚠️ גם ליקוי שנמחק נספר: "מחיקה בסיבה 'טופל' + סימון התסקיר המקורי נקי" הדליקה ירוק בלי
+  -- שום מסמך מהבודק (06/10/2026). תסקיר נקי מהבודק מעלים כבדיקה חוזרת; ליקויים שהוזנו
+  -- בטעות — מוחקים את התסקיר ומעלים אותו מחדש עם "אין ליקויים".
   IF v_new.declared_clean AND NOT v_old.declared_clean THEN
-    SELECT count(*)::int INTO v_live FROM inspection_defects d WHERE d.report_id = v_old.id AND d.deleted_at IS NULL;
+    SELECT count(*)::int INTO v_live FROM inspection_defects d WHERE d.report_id = v_old.id;
     IF v_live > 0 THEN
-      RAISE EXCEPTION 'אי אפשר לסמן נקי תסקיר שיש בו ליקויים' USING ERRCODE = 'check_violation'; END IF;
+      RAISE EXCEPTION 'בתסקיר הזה נרשמו ליקויים, ולכן הוא אינו נקי — תסקיר נקי מהבודק מעלים כבדיקה חוזרת' USING ERRCODE = 'check_violation'; END IF;
     IF v_reason IS NULL OR length(v_reason) < 2 THEN
       RAISE EXCEPTION 'סימון תסקיר כנקי מחייב סיבה' USING ERRCODE = 'check_violation'; END IF;
   END IF;
@@ -1406,7 +1433,8 @@ REVOKE ALL ON FUNCTION public.inspection_defect_photo_delete(bigint) FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.inspection_defect_photo_delete(bigint) TO authenticated;
 
 -- ------------------------------------------------------------
--- inspection_defect_done — "בוצע" רק עם תמונה של הסגירה הנוכחית (D8)
+-- inspection_defect_done — "בוצע": שם המבצע חובה; תמונה של הסגירה הנוכחית — לא חובה (06/10/2026).
+-- כשיש תמונות, הראשונה היא done_photo_id (D8: המפתח המורכב מבטיח שהיא של הליקוי ושל הסגירה הזו).
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.inspection_defect_done(bigint, text, text, uuid);
 CREATE FUNCTION public.inspection_defect_done(p_defect_id bigint, p_done_by_name text, p_note text, p_request_id uuid)
@@ -1438,7 +1466,6 @@ BEGIN
   END IF;
   SELECT min(ph.id), count(*)::int INTO v_first, v_k FROM inspection_defect_photos ph
    WHERE ph.defect_id = p_defect_id AND ph.closure_no = v_row.closure_no;
-  IF v_k = 0 THEN RAISE EXCEPTION 'אי אפשר לסמן כבוצע בלי תמונה של הביצוע' USING ERRCODE = 'check_violation'; END IF;
   UPDATE inspection_defects d SET status = 'done', done_at = app.compliance_now_iso(), done_by = v_actor,
          done_by_user_id = app.current_app_user(), done_by_name = v_name, done_note = v_note,
          done_photo_id = v_first, done_request_id = p_request_id

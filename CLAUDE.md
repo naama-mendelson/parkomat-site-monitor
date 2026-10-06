@@ -868,8 +868,9 @@ nothing still costs ~300 MB against a quota that is already exceeded.
 
 Two per-site tabs ("בודק מוסמך", "תחזוקה מונעת") and two lamps on every card. The owner's
 request: every site needs an external certified inspection once a year and preventive maintenance
-twice a year; defects from the inspector's PDF must be tracked to closure, **a defect can be marked
-done only with a photo**, and managers are warned 2 months and 1 month before expiry.
+twice a year; defects from the inspector's PDF must be tracked to closure, ~~**a defect can be marked
+done only with a photo**~~ (photo optional since 06/10/2026 — see below), and managers are warned 2 months
+and 1 month before expiry.
 
 | Piece | Where |
 |---|---|
@@ -905,18 +906,42 @@ Rules that are easy to break and expensive to notice:
   fits the same rule — it means *summon the inspector* — and keeps its own wording ("בודק בתוקף ·
   ממתין לתסקיר נקי"). ⚠️ Grey ("אין נתונים", no report at all) is a fourth state the owner's list
   does not name; it turns red only when `settings.compliance_go_live` is set (see *State* below).
-- ⚠️ **A defect past its fix date turns the inspector lamp red, even on a valid report** (owner,
-  06/10/2026, asked directly: red = not OK). In `app.compliance_machine_rows` the light is
-  `'expired'` when `overdue_n > 0` (open, `due_on < today`, current cycle only, soft-deleted
-  excluded); `validity_state` stays the pure validity. **Keep the two apart** — the label is built
+- ⚠️ **A defect past its fix date turns the inspector lamp YELLOW on a valid report — not red.**
+  Owner, 06/10/2026, looking at a site with four such defects shown red: *"זה צריך להיות צהוב כיון
+  שהמסמך בתוקף אבל הליקויים לא טופלו"*. ⚠️ That reverses a choice made the same morning (red =
+  "not OK"); **red now means the validity only** (expired / no report). In
+  `app.compliance_machine_rows` the light is raised to `'soon'` when `overdue_n > 0` (open,
+  `due_on < today`, current cycle only, soft-deleted excluded) and the validity is ok — the same
+  rule as an awaiting cycle; an expired report stays red. `validity_state` stays the pure validity. **Keep the two apart** — the label is built
   from both: "בודק בתוקף · עבר מועד תיקון", not "בודק לא בתוקף", which would send someone to
   summon an inspector when the job is to fix a defect. `machines_detail` carries `validity` for the
   same reason, and `machineLampLabel` reads both shapes (`validity` / inspection_site's
   `validity_state`). ⚠️ The reason avoids the word "באיחור" — the owner replaced it in lamp
   labels, and `probe-lamps` asserts it is gone. Consequence worth knowing: an **urgent** defect is due on the inspection day
-  itself, so it is red from the next day until closed with a photo — including defects typed in
-  during a historical backfill. SQL test 46 (7/7 mutations killed), UI tests in
-  `compliance-ui.test.js` (6/6).
+  itself, so it is yellow from the next day until closed — including defects typed in during a
+  historical backfill. The page's reason line ("N ליקויים עברו את מועד התיקון") is amber, like the
+  lamp. SQL test 46, UI tests in `compliance-ui.test.js`; both directions mutated (back to red,
+  and no raise at all) and caught.
+- ⚠️ **Only the inspector's document makes a cycle clean — fixing the defects does not** (owner,
+  06/10/2026: *"אם תקנו את הליקויים — אז באמת אין ליקויים, אבל צריך מסמך נקי שמעלה בודק מוסמך
+  שוב ומאשר"*). Measured on site 1343 the same day: a defect deleted with the reason "טופל", then
+  the *original* report edited to `declared_clean` — green with no document from the inspector.
+  So a report in which a defect was **ever** recorded (deleted ones count) cannot be marked clean in
+  `inspection_report_update`, and a cycle whose last report had defects, all deleted, is
+  `awaiting_clean` ("summon the inspector"), not `review`. `review` remains only for a report that
+  never had a defect and whose clean mark was removed — re-marking it is legitimate there.
+  `inspection_site` carries `deleted_defects` so the edit dialog does not offer the checkbox.
+  Defects typed by mistake: delete the report and upload it again with "אין ליקויים". SQL test 47,
+  3/3 mutations killed.
+- **"בוצע" needs the performer's name; the photo is optional** (owner, 06/10/2026, on the close
+  dialog: *"אני רוצה שזה יהיה אופציונלי, כלומר יהיה אפשר להמשיך גם בלי להעלות תמונה ולציין מי
+  תיקן"*). The RPC no longer demands a photo; `inspection_defects_done_shape` is replaced in the
+  1.4א block (DROP/ADD NOT VALID/VALIDATE — the CREATE TABLE copy is dead text) and now allows
+  *at most* one evidence instead of exactly one. When photos exist, the first is still
+  `done_photo_id` (D8). ⚠️ **The rewrite exposed a NULL hole:** `length(btrim(NULL)) >= 2` is NULL,
+  and CHECK accepts NULL — the old XOR had been turning the expression FALSE and hiding it, so
+  "done" with no name passed until `done_by_name IS NOT NULL` was added (caught by test 14).
+  Done is still not clean: the cycle waits for the inspector's clean report. Test 48.
 - **The traffic light is explained in the "?" help panel** (owner's choice over the inspector
   page), section *בודק מוסמך ותחזוקה מונעת* in `HelpPanel.jsx`. The samples are `LampSwatch`
   from `ComplianceLights.jsx` — the same classes and `colorVars` as the card lamp, so the legend
@@ -1083,8 +1108,9 @@ Rules that are easy to break and expensive to notice:
   Do not re-add the restore without asking.
 
 **State:** ✅ the SQL **is applied to production** (05/10/2026: the 271 new objects, nothing else;
-all ten tables empty; post-apply check "הייצור זהה לקוד"; 06/10: the overdue→red rule, two function
-bodies only, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive
+all ten tables empty; post-apply check "הייצור זהה לקוד"; 06/10: the overdue rule (red, then yellow
+the same day), the clean-only-by-document rule and the optional photo — function bodies and the one
+constraint, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive
 maintenance is not** — owner: *"לדחוף רק את הבודק מוסמך"*. One switch hides it everywhere:
 `PM_ENABLED` in `utils/compliance.js` (env `VITE_COMPLIANCE_PM=true`, default off), read through
 `COMPLIANCE_AREAS` by the card lamp, the mini mark, the site-window tab, the
@@ -1099,3 +1125,4 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 — measured right after: all 60 sites
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
+

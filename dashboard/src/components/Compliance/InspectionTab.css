@@ -268,7 +268,7 @@
 
 .it-headline { font-size: 1.02em; line-height: 1.35; }
 /* הסיבה שהנורה אדומה כשהתסקיר בתוקף — בדיו האדום של הנורה, מתחת לכותרת */
-.it-reason { color: var(--it-ink-red); font-weight: 700; font-size: 0.9em; }
+.it-reason { color: var(--it-ink-amber); font-weight: 700; font-size: 0.9em; }
 
 .it-status-actions {
   display: inline-flex;
