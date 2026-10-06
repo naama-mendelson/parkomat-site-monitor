@@ -1,7 +1,7 @@
 // components/Compliance/InspectionTab.jsx — תוכן "בודק מוסמך": העמוד המלא (InspectionPage) וגם הלשונית בחלון האתר.
 //
 // מה רואים, מלמעלה למטה:
-//   1. פס מצב — נורה, תוקף, מצב המחזור (ושורה לכל מתקן כשיש יותר מאחד).
+//   1. פס מצב — נורה, תוקף, ולמה הנורה אדומה כשהתסקיר בתוקף (ושורה לכל מתקן כשיש יותר מאחד).
 //   2. באנר "ממתין לתסקיר נקי" / "לבדיקה" — כשהפעולה הבאה היא של המנהל.
 //   3. ליקויים פתוחים במחזור הנוכחי, ו"בוצעו (N)".
 //   4. היסטוריית התסקירים, ו"היסטוריית שינויים" (נטענת רק כשנפתחת).
@@ -28,9 +28,10 @@ import {
 } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
 import {
-  GLYPH, LIGHT_LABEL, cycleLabel, formatDateIL, formatDayMonth, machineLampLabel, stateLabel, toCompliance, todayIL,
+  GLYPH, LIGHT_LABEL, formatDateIL, formatDayMonth, machineLampLabel, stateLabel, toCompliance, todayIL,
 } from "../../utils/compliance";
 import { ClipboardCheckIcon } from "./icons";
+import { COMPLIANCE_COLORS } from "../../utils/constants";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { InspectionMenu, InspectionReasonDialog } from "./InspectionDialog";
 import { DefectDoneRow, DefectRow } from "./DefectRows";
@@ -48,21 +49,21 @@ const NOTICE_MS = 5000;
 // ⚠️ `label` ולא LIGHT_LABEL[state]: הנורה עולה מעל התוקף (ליקוי באיחור → אדום,
 // המתנה לתסקיר נקי → צהוב), ותווית לפי הצבע הייתה אומרת "לא בתוקף" ליד
 // "בתוקף עד 03/2027" באותה שורה.
+//
+// ⚠️ גוון שקוף ולא מילוי מלא — אותם ערכים בדיוק כמו המנורה בכרטיס (COMPLIANCE_COLORS),
+// לא עותק ב-CSS: "זה אדום מדי חזק" (בעלת המוצר, 06/10/2026). המנורה כאן נשארה מלאה
+// אחרי שהכרטיס עבר לגוון, ובעמוד הבודק ✕ לבן על אדום מלא צעק ליד "בתוקף עד…".
 function Lamp({ state, label, small = false }) {
   const s = LAMP_STATES.has(state) ? state : "none";
   const text = label ?? LIGHT_LABEL.inspection[s] ?? "";
+  const tint = s === "none" ? null : COMPLIANCE_COLORS[s];
   return (
     <span className={`it-lamp it-lamp--${s}${small ? " it-lamp--small" : ""}`} role="img"
-      aria-label={text} title={text}>
+      aria-label={text} title={text} style={tint ? { background: tint.bg, borderColor: tint.border } : undefined}>
       <ClipboardCheckIcon size={small ? 11 : 13} />
       <span className="it-lamp-glyph" aria-hidden="true">{GLYPH[s]}</span>
     </span>
   );
-}
-
-function CycleBadge({ cycle }) {
-  if (!cycle || cycle === "none") return null;
-  return <span className={`it-cycle it-cycle--${cycle}`}>{cycleLabel(cycle)}</span>;
 }
 
 function DoneList({ items, byId, isManager, onReopen, onOpenPhoto }) {
@@ -74,7 +75,7 @@ function DoneList({ items, byId, isManager, onReopen, onOpenPhoto }) {
         <span aria-hidden="true">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
-        <ul className="it-list">
+        <ul className="it-list it-rows">
           {items.map((d) => (
             <DefectDoneRow key={d.id} defect={d} closingReport={byId.get(d.closed_by_report_id)}
               isManager={isManager} onReopen={onReopen} onOpenPhoto={onOpenPhoto} />
@@ -250,7 +251,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
     message: [
       "מתקן שהוצא משימוש אינו נספר בנורת האתר.",
       m.open > 0
-        ? `ל${machineTitle(m)} יש ${m.open === 1 ? "ליקוי פתוח אחד" : `${m.open} ליקויים פתוחים`}${m.overdue ? ` (${m.overdue} באיחור)` : ""} — הם יוסרו מרשימת הליקויים הפתוחים ומהספירה בכרטיס, ולא יהיה אפשר לסמן אותם כבוצע.`
+        ? `ל${machineTitle(m)} יש ${m.open === 1 ? "ליקוי פתוח אחד" : `${m.open} ליקויים פתוחים`}${m.overdue ? ` (${m.overdue} עברו את מועד התיקון)` : ""} — הם יוסרו מרשימת הליקויים הפתוחים ומהספירה בכרטיס, ולא יהיה אפשר לסמן אותם כבוצע.`
         : "",
       "אין ביטול: רק תסקיר תקופתי חדש, מאוחר מהקיים, יחזיר את המתקן לשימוש.",
     ].filter(Boolean).join(" "),
@@ -345,15 +346,17 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
           <Lamp state={state} label={insp ? stateLabel("inspection", c) : undefined} />
           <div className="it-status-text">
             <strong className="it-headline">{headline}</strong>
+            {/* ⚠️ למה הנורה אדומה כשכתוב "בתוקף": בלי השורה הזו ✕ אדום ישב ליד "בתוקף עד…"
+                בלי שום הסבר, והסיבה הופיעה רק בשבב קטן (בעלת המוצר, 06/10/2026: "תסדר") */}
+            {insp?.overdueDefects > 0 && (
+              <span className="it-reason">
+                {insp.overdueDefects === 1 ? "ליקוי אחד עבר את מועד התיקון" : `${insp.overdueDefects} ליקויים עברו את מועד התיקון`}
+              </span>
+            )}
             {derived.active.length > 1 && insp?.validUntil && <span className="it-muted">המוקדם מבין המתקנים</span>}
-            <span className="it-status-chips">
-              <CycleBadge cycle={insp?.cycle} />
-              {insp?.openDefects > 0 && (
-                <span className={`it-chip${insp.overdueDefects > 0 ? " it-chip--bad" : ""}`}>
-                  {insp.openDefects} פתוחים{insp.overdueDefects > 0 ? ` · ${insp.overdueDefects} באיחור` : ""}
-                </span>
-              )}
-            </span>
+            {/* ⚠️ בלי שבבים: "ליקויים פתוחים" ומספרם — בכותרת של רשימת הליקויים למטה, והמתנה
+                לתסקיר נקי — בבאנר עם הפעולה. בעלת המוצר (06/10/2026): "תעיף את זה ותעצב את כל
+                העמוד נורמלי ויותר מסודר". */}
           </div>
           {isManager && (
             <span className="it-status-actions">
@@ -378,10 +381,10 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                     ? `הוצא משימוש ב-${formatDateIL(ilDateOf(m.retired_at) || "")}`
                     : validityText(m.valid_until, today)}
                 </span>
-                {!m.retired_at && <CycleBadge cycle={m.cycle} />}
                 {!m.retired_at && m.open > 0 && (
-                  <span className={`it-chip${m.overdue > 0 ? " it-chip--bad" : ""}`}>
-                    {m.open} פתוחים{m.overdue > 0 ? ` · ${m.overdue} באיחור` : ""}
+                  <span className="it-machine-open">
+                    {m.open === 1 ? "ליקוי פתוח" : `${m.open} ליקויים פתוחים`}
+                    {m.overdue > 0 && <span className="it-late"> · {m.overdue === 1 ? "אחד עבר את המועד" : `${m.overdue} עברו את המועד`}</span>}
                   </span>
                 )}
                 {isManager && !m.retired_at && (
@@ -411,7 +414,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
               const f = e.dataTransfer?.files?.[0];
               if (f) openUpload(null, f);
             }}>
-            {dropAnywhere && <ClipboardCheckIcon size={34} className="it-drop-icon" />}
+            {dropAnywhere && <ClipboardCheckIcon size={20} className="it-drop-icon" />}
             <span className="it-drop-title">{dragOver || dragActive ? "שחררו כאן את התסקיר" : "גררו לכאן תסקיר בודק מוסמך (PDF)"}</span>
             <span className="it-drop-sub">או לחצו לבחירת קובץ · התאריכים יוצעו לאישור לפני השמירה</span>
           </button>
@@ -495,7 +498,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                     {cy.machine.cycle === "clean" ? "✓ אין ליקויים פתוחים — התסקיר האחרון נקי" : "אין ליקויים פתוחים"}
                   </p>
                 ) : (
-                  <ul className="it-list">
+                  <ul className="it-list it-rows">
                     {cy.open.map((d) => (
                       <DefectRow key={d.id} defect={d} today={today} isManager={isManager} showSource={showSource}
                         onMarkDone={(x) => setDialog({ type: "close", defect: x })}

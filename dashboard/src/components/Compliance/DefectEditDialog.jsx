@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { saveDefect } from "../../services/dataSource";
 import { newId } from "../../utils/complianceFiles";
 import { addDaysISO, formatDateIL } from "../../utils/compliance";
+import { dropCleaned, pasteCleaned } from "../../utils/pdfItems";
 import { InspectionDialog } from "./InspectionDialog";
 import { KIND_LABEL } from "./InspectionUtils";
 
@@ -104,7 +105,8 @@ export default function DefectEditDialog({ defect, report, onSaved, onClose, onD
         <label className="it-field">
           <span className="it-label">תיאור הליקוי</span>
           <textarea data-autofocus className="it-input it-textarea" rows={3} maxLength={2000} value={body}
-            onChange={(e) => setBody(e.target.value)} />
+            onChange={(e) => setBody(e.target.value)} onPaste={(e) => pasteCleaned(e, setBody)}
+            onDrop={(e) => dropCleaned(e, setBody)} />
         </label>
         <label className="it-check">
           <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} />

@@ -5,20 +5,17 @@
 // ============================================================
 // הצבע (ok/soon/expired/none) נקבע ב-SQL ונבדק ב-compliance.test.js. כאן
 // נבדק רק מה שהדשבורד עושה עם השורה: איך היא מתורגמת לאובייקט של הכרטיס,
-// מה כתוב ליד המנורה, ומה נכנס לרשימת "דורש טיפול" של המנהלים.
+// ומה כתוב ליד המנורה ובחלונית שלה.
 //
-// ⚠️ הרשימה היא הערוץ המובטח ל"חודשיים לפני" — במנורה תסקיר שפג בעוד 45 יום
-// הוא **ירוק** (הצהוב מתחיל ב-30). שורה שנשמטת כאן היא התראה שאיש לא יראה.
+// (רשימת "דורש טיפול" למנהלים והבדיקות שלה הוסרו לבקשת בעלת המוצר, 06/10/2026.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   toCompliance, stateLabel, lightTitle, markFor, markVisible, draftStale, lampState, machineLampLabel,
   ALL_AREAS, COMPLIANCE_AREAS, PM_ENABLED, worstSeverity,
 } from "../../dashboard/src/utils/compliance.js";
-import { complianceAlerts } from "../../dashboard/src/utils/complianceAlerts.js";
 import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
 
-const TODAY = "2026-10-04";
 const NOW = "2026-10-04T09:00:00.000Z";
 
 /** שורת site_compliance כמו שה-RPC מחזיר — תקינה, ואז דריסות. */
@@ -34,7 +31,6 @@ function row(over = {}) {
     ...over,
   };
 }
-const site = (code, over) => ({ code, site_name: `אתר ${code}`, compliance: toCompliance(row(over)) });
 
 // ---------------------------------------------------------------
 // toCompliance
@@ -122,96 +118,6 @@ test("טיוטה שלא נגעו בה 12 שעות → לא הוגש; 11 שעות
 });
 
 // ---------------------------------------------------------------
-// רשימת "דורש טיפול" של המנהלים
-// ---------------------------------------------------------------
-test("⚠️ חודשיים לפני: תסקיר שפג בעוד 45 יום נכנס לרשימה אף שהמנורה ירוקה", () => {
-  const s = site("1", { inspection_valid_until: "2026-11-18", inspection_days_left: 45 });
-  assert.equal(lampState("inspection", s.compliance), "ok");
-  const { rows } = complianceAlerts([s], TODAY, NOW);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].tab, "inspection");
-  assert.match(rows[0].text, /בעוד 45 ימים/);
-});
-
-test("גבולות 60 יום: 60 בפנים, 61 בחוץ", () => {
-  const at = (n) => complianceAlerts([site("1", { inspection_days_left: n })], TODAY, NOW).rows.length;
-  assert.equal(at(60), 1);
-  assert.equal(at(61), 0);
-});
-
-test("תסקיר שפג: חומרה עליונה, וטקסט 'לפני' ולא 'בעוד'", () => {
-  const { rows } = complianceAlerts([site("1", { inspection_state: "expired", inspection_validity_state: "expired",
-    inspection_valid_until: "2026-10-01", inspection_days_left: -3 })], TODAY, NOW);
-  assert.equal(rows[0].sev, 4);
-  assert.match(rows[0].text, /פג לפני 3 ימים/);
-  assert.doesNotMatch(rows[0].text, /בעוד/);
-});
-
-test("⚠️ צהוב מהמחזור (תסקיר בתוקף) אינו 'עומד לפוג' ברשימה — רק ההמתנה, ורק אחרי 14 יום", () => {
-  const mk = (since) => site("1", { inspection_state: "soon", inspection_validity_state: "ok",
-    inspection_cycle: "awaiting_clean", inspection_awaiting_since: since });
-  assert.equal(complianceAlerts([mk("2026-09-25")], TODAY, NOW).rows.length, 0, "9 ימים — עוד לא");
-  const { rows } = complianceAlerts([mk("2026-09-10")], TODAY, NOW);
-  assert.equal(rows.length, 1);
-  assert.match(rows[0].text, /ממתין לתסקיר נקי/);
-  assert.doesNotMatch(rows[0].text, /פג/);
-});
-
-test("ליקויים באיחור — שורה משלהם, אדומה (כמו המנורה), גם כשהתסקיר בתוקף", () => {
-  const { rows } = complianceAlerts([site("1", { open_defects: 3, overdue_defects: 1, inspection_cycle: "open" })], TODAY, NOW);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].text, "ליקוי אחד עבר את מועד התיקון");
-  assert.equal(rows[0].sev, 4, "המנורה אדומה — שורה צהובה ברשימה הייתה אומרת 'פחות דחוף' על אותו דבר");
-  const two = complianceAlerts([site("1", { open_defects: 3, overdue_defects: 2, inspection_cycle: "open" })], TODAY, NOW).rows;
-  assert.equal(two[0].text, "2 ליקויים עברו את מועד התיקון");
-});
-
-test("תחזוקה מונעת: באיחור = אדום; תוך 30 = צהוב; טיוטה שלא הוגשה = שורה", () => {
-  const late = complianceAlerts([site("1", { pm_state: "expired", pm_due_on: "2026-10-01", pm_days_left: -3 })], TODAY, NOW, ALL_AREAS).rows;
-  assert.equal(late[0].sev, 4);
-  assert.equal(late[0].tab, "pm");
-  const soon = complianceAlerts([site("1", { pm_state: "soon", pm_due_on: "2026-10-20", pm_days_left: 16 })], TODAY, NOW, ALL_AREAS).rows;
-  assert.equal(soon[0].sev, 3);
-  assert.match(soon[0].text, /בעוד 16 ימים/);
-  const draft = complianceAlerts([site("1", { pm_draft_id: 9, pm_draft_last_activity: "2026-10-02T09:00:00.000Z" })], TODAY, NOW, ALL_AREAS).rows;
-  assert.equal(draft.length, 1);
-  assert.match(draft[0].text, /לא הוגש/);
-});
-
-test("⚠️ לפני העלייה לאוויר: 'אין תסקיר' נספר, לא מציף את הרשימה ב-50 שורות", () => {
-  const none = { inspection_state: "none", inspection_validity_state: "none", inspection_valid_until: null,
-    inspection_days_left: null, inspection_missing: true, inspection_cycle: "none",
-    pm_state: "none", pm_missing: true, pm_last_on: null, pm_due_on: null, pm_days_left: null };
-  const r = complianceAlerts([site("1", none), site("2", none)], TODAY, NOW, ALL_AREAS);
-  assert.equal(r.rows.length, 0);
-  assert.equal(r.noReport, 2);
-  assert.equal(r.noPm, 2);
-});
-
-test("אחרי העלייה לאוויר: 'אין תסקיר' הוא שורה אדומה", () => {
-  const r = complianceAlerts([site("1", { inspection_state: "expired", inspection_validity_state: "expired",
-    inspection_valid_until: null, inspection_days_left: null, inspection_missing: true, inspection_cycle: "none" })], TODAY, NOW);
-  assert.equal(r.noReport, 0);
-  assert.equal(r.rows[0].sev, 4);
-  assert.match(r.rows[0].text, /אין תסקיר/);
-});
-
-test("סטטוס שלא נטען נספר בנפרד, ומצב שרת (undefined) אינו נספר בכלל", () => {
-  const r = complianceAlerts([{ code: "1", compliance: { unknown: true, error: "x" } }, { code: "2", compliance: undefined }], TODAY, NOW);
-  assert.equal(r.unknown, 1);
-  assert.equal(r.rows.length, 0);
-});
-
-test("סדר: אדום לפני צהוב לפני מידע; בתוך אותה חומרה — לפי שם", () => {
-  const r = complianceAlerts([
-    site("b", { pm_draft_id: 9, pm_draft_last_activity: "2026-10-01T00:00:00.000Z" }),
-    site("a", { inspection_days_left: 20 }),
-    site("c", { pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33 }),
-  ], TODAY, NOW, ALL_AREAS).rows;
-  assert.deepEqual(r.map((x) => x.sev), [4, 3, 2]);
-});
-
-// ---------------------------------------------------------------
 // רגרסיות מסקירת החיבור (04/10) — כל אחת נכשלה על הקוד שלפני התיקון
 // ---------------------------------------------------------------
 // אתר עם שני מתקנים: A עם ליקוי פתוח (מחזור האתר = open), B ממתין לתסקיר נקי
@@ -232,11 +138,7 @@ test("⚠️ שני מתקנים: צהוב ממחזור של מתקן B אינו
   assert.match(label, /ממתין לתסקיר נקי/);
 });
 
-test("⚠️ שני מתקנים: שורת ההמתנה של מתקן B מופיעה ברשימה, ואינה אומרת 'כל הליקויים'", () => {
-  const s = { code: "1", site_name: "אתר", compliance: twoMachines() };
-  const r = complianceAlerts([s], TODAY, NOW).rows.filter((x) => /ממתין לתסקיר נקי/.test(x.text));
-  assert.equal(r.length, 1);
-  assert.match(r[0].text, /במתקן אחד/);
+test("⚠️ שני מתקנים: ההמתנה של מתקן B מופיעה בחלונית המנורה, עם התאריך", () => {
   assert.match(lightTitle("inspection", twoMachines(), NOW), /ממתין לתסקיר נקי מאז 01\/08/);
 });
 
@@ -365,24 +267,17 @@ test("ברירת המחדל: התחזוקה המונעת כבויה — בלי �
   assert.deepEqual(COMPLIANCE_AREAS, ["inspection"]);
 });
 
-test("תחזוקה כבויה: אדום של תחזוקה אינו מופיע בסימן הקטן, ברשימה או בטבלת המפקח", () => {
+test("תחזוקה כבויה: אדום של תחזוקה אינו מופיע בסימן הקטן או בטבלת המפקח", () => {
   const pmRed = toCompliance(row({ pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33,
     pm_draft_id: 9, pm_draft_last_activity: "2026-10-01T00:00:00.000Z" }));
   assert.deepEqual(markFor(pmRed), { state: "ok", tab: "inspection", stale: false });
   assert.equal(markVisible(markFor(pmRed)), false, "אתר שהבודק שלו ירוק — אין סימן בכרטיס הקטן");
   assert.equal(worstSeverity(pmRed), 1, "המפקח ממיין לפי הבודק בלבד");
   assert.equal(worstSeverity(pmRed, ALL_AREAS), 4);
-  const r = complianceAlerts([{ code: "1", site_name: "א", compliance: pmRed }], TODAY, NOW);
-  assert.deepEqual({ rows: r.rows.length, noPm: r.noPm }, { rows: 0, noPm: 0 });
-  // "אין תחזוקה" לפני העלייה לאוויר — גם לא נספר
-  const none = toCompliance(row({ pm_state: "none", pm_missing: true, pm_last_on: null, pm_due_on: null, pm_days_left: null }));
-  assert.equal(complianceAlerts([{ code: "2", compliance: none }], TODAY, NOW).noPm, 0);
 });
 
-test("תחזוקה כבויה: שורות הבודק נשארות כמו שהן", () => {
+test("תחזוקה כבויה: הבודק עדיין קובע את הסימן", () => {
   const c = toCompliance(row({ inspection_state: "expired", inspection_validity_state: "expired",
     inspection_valid_until: "2026-10-01", inspection_days_left: -3, pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33 }));
-  const r = complianceAlerts([{ code: "1", site_name: "א", compliance: c }], TODAY, NOW).rows;
-  assert.deepEqual(r.map((x) => [x.tab, x.sev]), [["inspection", 4]]);
   assert.deepEqual(markFor(c), { state: "expired", tab: "inspection", stale: false });
 });

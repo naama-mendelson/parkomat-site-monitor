@@ -146,6 +146,12 @@
 .it-btn--danger-solid:hover:not(:disabled) { background: var(--it-solid-red); filter: brightness(1.08); }
 
 .it-btn--small { min-height: 32px; padding: 0 10px; font-size: 0.8em; }
+/* "סימון כבוצע" — מסגרת בצבע הקישור ולא מילוי: הפעולה הראשית בשורה, בלי לצעוק */
+.it-btn--done {
+  color: var(--it-ink-link);
+  border-color: color-mix(in srgb, var(--it-ink-link) 45%, var(--border-color));
+  font-weight: 700;
+}
 .it-btn--wide { min-width: 150px; }
 .it-btn:disabled { opacity: 0.5; cursor: default; }
 
@@ -195,9 +201,10 @@
   line-height: 1;
 }
 .it-lamp--small { height: 20px; min-width: 36px; padding: 0 6px; font-size: 12px; border-radius: 10px; }
-.it-lamp--ok { background: #22c55e; color: #111827; }
-.it-lamp--soon { background: #f59e0b; color: #111827; }
-.it-lamp--expired { background: var(--it-solid-red); color: #ffffff; }
+/* הרקע והמסגרת — מ-COMPLIANCE_COLORS (inline, ב-Lamp); כאן רק הדיו של הסימן */
+.it-lamp--ok { color: var(--it-ink-green); }
+.it-lamp--soon { color: var(--it-ink-amber); }
+.it-lamp--expired { color: var(--it-ink-red); }
 .it-lamp--none { background: transparent; border-color: var(--it-muted); color: var(--it-muted); }
 
 .it-tag {
@@ -221,37 +228,10 @@
   border-color: color-mix(in srgb, var(--status-ready) 60%, transparent);
   background: color-mix(in srgb, var(--status-ready) 10%, transparent);
 }
-.it-tag--src { color: var(--text-secondary); font-weight: 600; }
+/* מקור התוקף ("מהמסמך", "כמו התקופתי") — טקסט אפור אחרי נקודה, לא עוד גלולה */
+.it-tag--src { color: var(--text-secondary); font-weight: 500; border: 0; padding: 0; }
+.it-tag--src::before { content: "· "; }
 .it-tag--muted { color: var(--text-secondary); font-weight: 600; margin-inline-start: 6px; }
-
-.it-cycle {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 0.76em;
-  font-weight: 700;
-  white-space: nowrap;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-.it-cycle--open { color: var(--it-ink-red); border-color: color-mix(in srgb, var(--it-ink-red) 55%, transparent); }
-.it-cycle--awaiting_clean,
-.it-cycle--review { color: var(--it-ink-amber); border-color: color-mix(in srgb, var(--status-warning) 70%, transparent); background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
-.it-cycle--clean { color: var(--it-ink-green); border-color: color-mix(in srgb, var(--status-ready) 60%, transparent); }
-
-.it-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 0.76em;
-  font-weight: 700;
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.it-chip--bad { color: #ffffff; background: var(--it-solid-red); border-color: var(--it-solid-red); }
 
 .it-count {
   display: inline-flex;
@@ -287,12 +267,8 @@
 }
 
 .it-headline { font-size: 1.02em; line-height: 1.35; }
-
-.it-status-chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+/* הסיבה שהנורה אדומה כשהתסקיר בתוקף — בדיו האדום של הנורה, מתחת לכותרת */
+.it-reason { color: var(--it-ink-red); font-weight: 700; font-size: 0.9em; }
 
 .it-status-actions {
   display: inline-flex;
@@ -304,20 +280,24 @@
 .it-machines {
   list-style: none;
   margin: 2px 0 0;
-  padding: 10px 0 0;
+  padding: 0;
   border-top: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
+/* שורה לכל מתקן: נורה · שם ותוקף · ליקויים פתוחים (טקסט, לא שבב) · ⋯ */
 .it-machine {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
+  gap: 6px 10px;
+  padding: 9px 0;
   font-size: 0.88em;
 }
+.it-machine + .it-machine { border-top: 1px solid var(--border-color); }
+.it-machine-open { color: var(--text-secondary); white-space: nowrap; }
+.it-late { color: var(--it-ink-red); font-weight: 700; }
 .it-machine-text { flex: 1 1 200px; min-width: 0; line-height: 1.4; }
 /* ⋯ תמיד בקצה השמאלי של השורה — גם כשהשורה נשברת, הרשימה נפתחת פנימה */
 .it-machine > .it-menu { margin-inline-start: auto; }
@@ -368,17 +348,21 @@
 .it-none { padding: 4px 0; }
 .it-add { align-self: flex-start; }
 
+/* ⚠️ שורות ולא כרטיסים (06/10/2026, "תעצב את כל העמוד נורמלי ויותר מסודר"): מסגרת
+   סביב כל ליקוי, בתוך כרטיס, בתוך עמוד — הייתה שלוש שכבות של קופסאות. קו מפריד
+   דק בין שורות, ופס אדום בצד רק לליקוי שעבר את המועד. */
+/* מחלקה ולא :has() — :has אינו נתמך בטלפונים ישנים (Safari < 15.4, Chrome < 105) */
+.it-rows { gap: 0; }
 .it-defect {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-inline-start: 4px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-card);
+  padding: 11px 0;
+  padding-inline-start: 12px;
+  border-inline-start: 3px solid transparent;
 }
-.it-defect--overdue { border-inline-start-color: var(--it-solid-red); }
+.it-defect + .it-defect { border-top: 1px solid var(--border-color); }
+.it-defect--overdue { border-inline-start-color: var(--it-ink-red); }
 
 .it-defect-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 
@@ -412,7 +396,7 @@
 @media (max-width: 560px) {
   .it-defect { flex-direction: column; align-items: stretch; }
   .it-defect-actions { width: 100%; }
-  .it-defect-actions .it-btn--primary { flex: 1; }
+  .it-defect-actions .it-btn--done { flex: 1; }
 }
 
 /* בוצעו */
@@ -449,13 +433,13 @@
 .it-done {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 9px 12px;
-  border-radius: 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
+  gap: 4px;
+  padding: 9px 0;
+  padding-inline-start: 12px;
+  border-inline-start: 3px solid transparent;
 }
-.it-done--open { border-inline-start: 4px solid var(--status-warning); }
+.it-done + .it-done { border-top: 1px solid var(--border-color); }
+.it-done--open { border-inline-start-color: var(--status-warning); }
 .it-done-check { color: var(--it-ink-green); font-weight: 800; }
 .it-done-meta { margin: 0; font-size: 0.8em; color: var(--text-secondary); }
 .it-done-note {
@@ -715,18 +699,17 @@ select.it-input { padding-block: 0; }
 .it-year-machine { display: flex; flex-direction: column; gap: 6px; }
 .it-machine-sub { font-size: 0.84em; color: var(--text-primary); display: flex; align-items: center; }
 
+/* תסקיר = שורה בהיסטוריה (לא כרטיס); הבדיקות החוזרות שלו מוזחות מתחתיו עם קו */
 .it-report {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
+  gap: 4px;
+  padding: 11px 0;
 }
-.it-report--nested { background: var(--bg-secondary); }
+.it-report + .it-report { border-top: 1px solid var(--border-color); }
+.it-report--nested { padding: 8px 0; }
 
-.it-report-head { display: flex; align-items: flex-start; gap: 8px; }
+.it-report-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
 .it-report-title {
   flex: 1;
   min-width: 0;

@@ -41,6 +41,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { uploadInspection } from "../../services/dataSource";
 import { extractPages, isPdfModuleFailure, openPdf } from "../../utils/pdfText";
+import { dropCleaned, pasteCleaned } from "../../utils/pdfItems";
 import { extractDates, parseInspectionReport, suggestInspectionDates } from "../../../../shared/parse-inspection.mjs";
 import { newId } from "../../utils/complianceFiles";
 import {
@@ -779,6 +780,9 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
                         <input id={`iu-def-${d.key}`} className="it-input iu-line-input" type="text" maxLength={2000}
                           value={d.body} placeholder="תיאור הליקוי, כמו במסמך" aria-label={`ליקוי ${i + 1}`}
                           onChange={(e) => setDefect(d.key, { body: e.target.value })}
+                          // ליקוי שנשבר לשתי שורות במסמך — בלי זה השדה מוחק את ירידת השורה ומדביק מילים
+                          onPaste={(e) => pasteCleaned(e, (v) => setDefect(d.key, { body: v }))}
+                          onDrop={(e) => dropCleaned(e, (v) => setDefect(d.key, { body: v }))}
                           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (d.body.trim()) addDefect(); } }} />
                         <button type="button" className="iu-x" aria-label={`הסרת ליקוי ${i + 1}`} title="הסרה"
                           onClick={() => removeDefect(d.key)}>×</button>

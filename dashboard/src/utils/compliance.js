@@ -118,15 +118,6 @@ export const LIGHT_LABEL = {
   },
 };
 
-const CYCLE_LABEL = {
-  none: "אין תסקיר",
-  open: "ליקויים פתוחים",
-  awaiting_clean: "ממתין לתסקיר נקי",
-  review: "לבדיקה — לא סומן נקי",
-  clean: "נקי",
-};
-export const cycleLabel = (cycle) => CYCLE_LABEL[cycle] ?? "";
-
 /** מצב המנורה של תחום: ok/soon/expired/none, או unknown כשהסטטוס לא נטען. */
 export function lampState(area, c) {
   if (!c || c.unknown) return "unknown";

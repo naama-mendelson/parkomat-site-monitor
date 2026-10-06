@@ -59,6 +59,11 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
           <span>{formatDateIL(r.inspected_on)}</span>
           {r.declared_clean && <span className="it-tag it-tag--clean">נקי</span>}
         </div>
+        {/* הפעולות בשורת הכותרת — לא בשורה נפרדת בתחתית (06/10/2026: "יותר מסודר") */}
+        <button type="button" className="it-btn it-btn--small" disabled={purged || !r.file?.id}
+          title={purged ? "הקובץ נמחק סופית" : undefined} onClick={() => onViewFile(r)}>
+          צפייה במסמך
+        </button>
         {isManager && (
           <InspectionMenu label="פעולות על התסקיר" items={[
             { label: "עריכת פרטים", onSelect: () => onEdit(r, parent) },
@@ -94,14 +99,10 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
         ) : (
           <span className="it-muted">{r.declared_clean ? "ללא ליקויים" : "אין ליקויים רשומים"}</span>
         )}
-        <button type="button" className="it-btn it-btn--small" disabled={purged || !r.file?.id}
-          title={purged ? "הקובץ נמחק סופית" : undefined} onClick={() => onViewFile(r)}>
-          צפייה במסמך
-        </button>
       </div>
 
       {open && defects.length > 0 && (
-        <ul className="it-list it-report-defects">
+        <ul className="it-list it-rows it-report-defects">
           {defects.map((d) => (d.status === "done" ? (
             <DefectDoneRow key={d.id} defect={d} closingReport={byId.get(d.closed_by_report_id)}
               isManager={false} onOpenPhoto={onOpenPhoto} />
@@ -117,7 +118,7 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
       )}
 
       {followups?.length > 0 && (
-        <ul className="it-list it-followups">
+        <ul className="it-list it-rows it-followups">
           {followups.map((f) => (
             <ReportCard key={f.id} report={f} parent={r} allReports={allReports} nested
               isManager={isManager} onViewFile={onViewFile} onEdit={onEdit} onDelete={onDelete}
@@ -229,7 +230,7 @@ export default function InspectionHistory({
                       {machineByKey.get(key)?.retired_at && <span className="it-tag it-tag--muted">הוצא משימוש</span>}
                     </h5>
                   )}
-                  <ul className="it-list">
+                  <ul className="it-list it-rows">
                     {list.map((r) => (
                       <ReportCard key={r.id} report={r} parent={null} followups={grouped.children.get(r.id)}
                         allReports={reports} isManager={isManager}

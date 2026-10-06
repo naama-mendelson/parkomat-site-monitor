@@ -25,6 +25,7 @@
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "./pdfTextLayer.css";
 import { bracketFixer } from "./pdfBrackets";
+import { addGapSpaces, repairItems } from "./pdfItems";
 
 // ============================================================
 // שתי משפחות של כשל, ואסור לבלבל ביניהן
@@ -131,7 +132,8 @@ export async function extractPages(src) {
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      pages.push({ items: tc.items });
+      // קידוד עברי ישן ("מסומðים") — גם לקריאה, לא רק להעתקה (ראו pdfItems.js)
+      pages.push({ items: repairItems(tc.items) });
       page.cleanup();
     }
     return pages;
@@ -161,14 +163,125 @@ export async function extractPages(src) {
 // (ראו legacy למעלה), ונשען על --scale-round-x שמוגדר רק ב-CSS של הצופה
 // שלהם. pdfTextLayer.css דורס את שניהם, והגובה נקבע מיחס העמוד (aspect-ratio)
 // — לא מהמכל, שגובהו לפי עמוד 1 וטועה בעמוד במאוזן.
+// ⚠️ הרווחים שנוספו במרווחים (pdfItems.addGapSpaces) צריכים **לכסות** את המרווח.
+// pdfjs מותח קטע לרוחבו רק כשיש בו יותר מתו אחד (shouldScaleText), ולכן " " נשאר
+// ברוחב של רווח — 3px — ומרווח של 16px בין "1" ל"יש לחזק" נשאר ריק. גרירה שמתחילה
+// שם, ממש לפני האות הראשונה (איפה שאדם מתחיל לסמן בעברית), לא סימנה כלום. נמדד על
+// תסקיר אמיתי, 06/10/2026. הקטעים של pdfjs באים בסדר הפריטים שיש בהם טקסט.
+function gapSpans(container, items) {
+  // :not(.markedContent) — עוטפים של pdfjs (אם includeMarkedContent יופעל) אינם קטעי טקסט
+  const spans = container.querySelectorAll("span:not(.markedContent)");
+  const texty = items.filter((it) => it.str !== "" && it.str !== undefined);
+  if (spans.length !== texty.length) return [];    // מבנה לא צפוי — לא נוגעים
+  const out = [];
+  texty.forEach((it, i) => { if (it.gapSpace) out.push([spans[i], it.width]); });
+  return out;
+}
+// היחס נשמר גם כשהשכבה משנה גודל (הכול מוכפל באותו מקדם) — אבל המדידה צריכה
+// שכבה גלויה, ולכן היא רצה בכל fit() ולא רק פעם אחת.
+// ⚠️ כתיבה-קריאה-כתיבה באצווה ולא לסירוגין: מדידה אחרי כל כתיבה מאלצת חישוב פריסה
+// לכל מרווח, בכל שינוי גודל.
+function stretchGaps(gaps, k) {
+  for (const [span] of gaps) span.style.setProperty("--scale-x", "1");
+  const natural = gaps.map(([span]) => span.getBoundingClientRect().width);
+  gaps.forEach(([span, width], i) => {
+    if (natural[i] > 0) span.style.setProperty("--scale-x", String((width * k) / natural[i]));
+  });
+}
+
+// ⚠️ סימון שמתחיל או נגמר באמצע מילה מורחב למילה שלמה. "י" היא אות של 3px:
+// גרירה שמתחילה על החצי השמאלי שלה מתחילה **אחריה**, ובעלת המוצר הדביקה
+// "ש לחזק…" במקום "יש לחזק…" (06/10/2026). ליקויים מעתיקים במילים שלמות.
+//
+// ⚠️ ו"באמצע מילה" אינו מספיק: גרירה שמתחילה על החצי השמאלי של האות **האחרונה**
+// במילה מציבה את הסמן בקצה המילה — ובלי ההרחבה המילה כולה נעלמת ("לחזק 7…").
+// מהסמן לבדו אי אפשר להבחין בין "התחלתי על המילה" ל"התחלתי ברווח שאחריה"; הנקודה
+// שבה העכבר נלחץ (או שוחרר) כן: אות שנמצאת מתחתיה, ממש מחוץ לסימון, נכנסת אליו.
+// גרש וגרשיים בתוך מילה — ת"א, ע"י, מס׳ — הם חלק ממנה
+const WORD_CHAR = /[\p{L}\p{N}"'׳״]/u;
+function charUnder(node, i, pt) {
+  if (!pt || !node || node.nodeType !== 3 || i < 0 || i >= node.data.length) return false;
+  const rg = document.createRange();
+  rg.setStart(node, i);
+  rg.setEnd(node, i + 1);
+  const b = rg.getBoundingClientRect();
+  return pt.x >= b.left - 0.5 && pt.x <= b.right + 0.5 && pt.y >= b.top - 2 && pt.y <= b.bottom + 2;
+}
+// ⚠️ ולא מתקנים את מה ש-Chrome עשה — בונים מחדש. נמדד על התסקיר הזה, פיקסל אחר
+// פיקסל לאורך "יש": במקומות מסוימים הסמן נוחת על הקטע עצמו (לא על אות), ובאחרים
+// הגרירה מסתיימת **בלי סימון בכלל**. לכן בשחרור העכבר הסימון נבנה מחדש משתי
+// הנקודות — איפה שנלחץ ואיפה ששוחרר — ולא ממה שהדפדפן השאיר.
+function caretAt(container, pt) {
+  let node = null, offset = 0;
+  if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(pt.x, pt.y);
+    if (p) { node = p.offsetNode; offset = p.offset; }
+  } else if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(pt.x, pt.y);
+    if (r) { node = r.startContainer; offset = r.startOffset; }
+  }
+  if (!node || node.nodeType !== 3 || !container.contains(node)) return null;
+  return { node, offset };
+}
+function fixMouseSelection(container, downPt, upPt) {
+  const sel = window.getSelection?.();
+  if (!sel || !downPt || !upPt) return;
+  if (Math.hypot(upPt.x - downPt.x, upPt.y - downPt.y) < 3) return;   // קליק, לא גרירה
+  let a = caretAt(container, downPt), b = caretAt(container, upPt);
+  if (!a || !b) return;      // אחת הנקודות מחוץ לטקסט (למשל גרירה אל מחוץ לעמוד) — כמו שהדפדפן השאיר
+  // סדר המסמך: מי ההתחלה ומי הסוף
+  const probe = document.createRange();
+  probe.setStart(a.node, a.offset);
+  const backward = probe.comparePoint(b.node, b.offset) < 0;
+  if (backward) [a, b, downPt, upPt] = [b, a, upPt, downPt];
+  let sNode = a.node, so = a.offset, eNode = b.node, eo = b.offset;
+  // האות שמתחת לנקודה נכנסת, גם כשהסמן נפל בקצה שלה
+  if (so > 0 && WORD_CHAR.test(sNode.data[so - 1]) && charUnder(sNode, so - 1, downPt)) so--;
+  if (eo < eNode.data.length && WORD_CHAR.test(eNode.data[eo]) && charUnder(eNode, eo, upPt)) eo++;
+  // ומשם — עד קצה המילה
+  if (so > 0 && so < sNode.data.length && WORD_CHAR.test(sNode.data[so - 1]) && WORD_CHAR.test(sNode.data[so])) {
+    while (so > 0 && WORD_CHAR.test(sNode.data[so - 1])) so--;
+  }
+  if (eo > 0 && eo < eNode.data.length && WORD_CHAR.test(eNode.data[eo - 1]) && WORD_CHAR.test(eNode.data[eo])) {
+    while (eo < eNode.data.length && WORD_CHAR.test(eNode.data[eo])) eo++;
+  }
+  // ⚠️ מילה שנחתכה לשני קטעים צמודים ("יו"+"ם", נמדד) — ממשיכים לקטע השכן. קטע שכן
+  // **צמוד** = אין ביניהם קטע רווח (pdfItems מוסיף רווח רק כשיש מרווח) ואין <br>.
+  const textOf = (el) => (el && el.tagName === "SPAN" && el.firstChild?.nodeType === 3 ? el.firstChild : null);
+  if (so === 0 && WORD_CHAR.test(sNode.data[0] ?? "")) {
+    const prev = textOf(sNode.parentNode?.previousElementSibling);
+    if (prev && WORD_CHAR.test(prev.data[prev.data.length - 1] ?? "")) {
+      let p = prev.data.length;
+      while (p > 0 && WORD_CHAR.test(prev.data[p - 1])) p--;
+      sNode = prev; so = p;
+    }
+  }
+  if (eo === eNode.data.length && WORD_CHAR.test(eNode.data[eo - 1] ?? "")) {
+    const next = textOf(eNode.parentNode?.nextElementSibling);
+    if (next && WORD_CHAR.test(next.data[0] ?? "")) {
+      let n = 0;
+      while (n < next.data.length && WORD_CHAR.test(next.data[n])) n++;
+      eNode = next; eo = n;
+    }
+  }
+  if (sNode === eNode && so >= eo) return;
+  // ⚠️ setBaseAndExtent ולא addRange: שומר את כיוון הגרירה (Shift+חץ אחר כך)
+  if (backward) sel.setBaseAndExtent(eNode, eo, sNode, so);
+  else sel.setBaseAndExtent(sNode, so, eNode, eo);
+}
+
 function attachTextLayer(pdfjs, page, container, fixItems) {
   const viewport = page.getViewport({ scale: 1 });
   container.replaceChildren();
   container.classList.add("pdf-text");
   container.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
+  let gaps = [];
   const fit = () => {
     const w = container.clientWidth;
-    if (w > 0) container.style.setProperty("--total-scale-factor", String(w / viewport.width));
+    if (w > 0) {
+      container.style.setProperty("--total-scale-factor", String(w / viewport.width));
+      stretchGaps(gaps, w / viewport.width);
+    }
   };
   fit();
   const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
@@ -179,10 +292,31 @@ function attachTextLayer(pdfjs, page, container, fixItems) {
   // העמוד — כך גם בצופה של pdfjs עצמו.
   const end = document.createElement("div");
   end.className = "endOfContent";
-  const down = () => container.classList.add("selecting");
-  const up = () => container.classList.remove("selecting");
+  let downPt = null;
+  const down = (e) => {
+    container.classList.add("selecting");
+    // ⚠️ עכבר בלבד. במגע הסימון נעשה בלחיצה ארוכה ובידיות של הדפדפן — שתי נקודות
+    // של אצבע אינן הקצוות של מה שהאדם סימן, ובנייה מחדש מהן הייתה שוברת אותו.
+    downPt = e.pointerType === "mouse" && e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+  };
+  const up = (e) => {
+    container.classList.remove("selecting");
+    if (!downPt) return;
+    const from = downPt;
+    const to = e && Number.isFinite(e.clientX) ? { x: e.clientX, y: e.clientY } : null;   // blur — אין נקודה
+    downPt = null;
+    // אחרי שהדפדפן סיים לעדכן את הסימון של הגרירה.
+    // (החלה שנייה אחרי פריים נוסתה ונמחקה: בקצב של אדם — Ctrl+C 150ms ויותר אחרי
+    // השחרור — סריקה של כל פיקסל לאורך "יש" עברה גם בלעדיה. דריסה נראתה רק בגרירות
+    // בהפרש של 40ms זו מזו, שאדם אינו עושה.)
+    setTimeout(() => fixMouseSelection(container, from, to), 0);
+  };
+  // ⚠️ גרירה שהדפדפן ביטל (למשל גרירה של טקסט שכבר מסומן) שולחת pointercancel ולא
+  // pointerup — בלי זה נקודת הלחיצה נשארת, והשחרור הבא היה בונה סימון ממנה.
+  const cancel = () => { container.classList.remove("selecting"); downPt = null; };
   container.addEventListener("pointerdown", down);
   window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancel);
   window.addEventListener("blur", up);
 
   let layer = null;
@@ -192,7 +326,11 @@ function attachTextLayer(pdfjs, page, container, fixItems) {
     // סוגריים הפוכים בחלק מהתסקירים — ראו pdfBrackets.js
     const textContentSource = { ...tc, items: fixItems(tc.items) };
     layer = new pdfjs.TextLayer({ textContentSource, container, viewport });
-    return layer.render().then(() => { container.append(end); fit(); });
+    return layer.render().then(() => {
+      container.append(end);
+      gaps = gapSpans(container, textContentSource.items);
+      fit();
+    });
   });
   const detach = () => {
     detached = true;
@@ -200,6 +338,7 @@ function attachTextLayer(pdfjs, page, container, fixItems) {
     ro?.disconnect();
     container.removeEventListener("pointerdown", down);
     window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
     window.removeEventListener("blur", up);
   };
   return { done, detach };
@@ -247,7 +386,10 @@ export async function openPdf(src) {
         if (destroyed || !container) return () => {};
         const page = await doc.getPage(pageNo);
         if (destroyed) return () => {};
-        const { done, detach } = attachTextLayer(pdfjs, page, container, (items) => fixBrackets(pageNo, items));
+        // הסדר: קידוד → סוגריים → רווחים. הסוגריים נספרים על הטקסט המתוקן, והרווחים
+        // נוספים אחרון — קטע " " אינו נושא סימן לאף אחד מהם (ראו pdfItems.js)
+        const { done, detach } = attachTextLayer(pdfjs, page, container,
+          (items) => addGapSpaces(fixBrackets(pageNo, repairItems(items))));
         // ⚠️ כשל בשכבת הטקסט אינו כשל בתצוגה: העמוד כבר מצויר, רק אי אפשר
         // לסמן בו. לכן לא נזרק הלאה — שגיאה כאן הייתה מציגה "העמוד לא צויר".
         await done.catch(() => {});

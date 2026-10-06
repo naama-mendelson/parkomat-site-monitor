@@ -14,7 +14,6 @@ import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
 import { useDirect, fetchSiteCompliance } from "./services/dataSource";
 import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
-import ComplianceAlertsButton from "./components/Compliance/ComplianceAlertsButton";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import InspectionPage from "./components/Compliance/InspectionPage";
 import "./components/TrafficLight/TrafficLight.css";
@@ -385,8 +384,6 @@ function App() {
         darkMode={darkMode}
         onToggleDarkMode={toggleTheme}
         onAdmin={() => setAdminOpen(true)}
-        // ⚠️ פאנל ההתראות של הבודק/התחזוקה — מנהלים בלבד, נגזר מהרשימה (בלי שליפה)
-        complianceAlerts={useDirect ? <ComplianceAlertsButton sites={sites} onOpen={handleSiteClick} /> : null}
       />
 
       {/* ⚠️ **בתוך main ומעל התוכן, ולא מעל ה-Header.** הבאנר צריך לשבת

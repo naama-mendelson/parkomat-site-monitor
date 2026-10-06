@@ -878,7 +878,7 @@ done only with a photo**, and managers are warned 2 months and 1 month before ex
 | Data layer | `dashboard/src/services/complianceDirect.js`, re-exported by `dataSource.js` (no server arm) |
 | PDF reading (in the browser) — **dates only** | `extractDates` + `suggestInspectionDates` in `shared/parse-inspection.mjs`, `dashboard/src/utils/pdfText.js` (pdfjs, lazy chunk) |
 | Inspector page, PM tab | `InspectionPage.jsx` (full page, frames `InspectionTab.jsx`), `PmTab.jsx` (+ `Inspection*`, `Defect*`, `Pm*`) |
-| Lamps, manager alerts | `ComplianceLights.jsx`, `ComplianceAlertsButton.jsx`, `utils/compliance.js`, `utils/complianceAlerts.js` |
+| Lamps | `ComplianceLights.jsx`, `utils/compliance.js` |
 | UI unit tests | `master/tests/compliance-ui.test.js` |
 
 Rules that are easy to break and expensive to notice:
@@ -889,9 +889,14 @@ Rules that are easy to break and expensive to notice:
   `select("*")`, and the tables to the agents and the intake identity. `compliance_file` is the
   only door that returns bytes.
 - **Green/yellow/red is decided in SQL only** (`app.compliance_light`, 30 days). The dashboard
-  translates; it never thresholds. The manager alerts list (`complianceAlerts.js`) only decides
-  *what to list* — 60 days for the inspector (the lamp is still green at 45), 14 days awaiting a
-  clean report, a draft idle 12 h.
+  translates; it never thresholds.
+- ⚠️ **The managers' "דורש טיפול" list was built and removed** (owner, 06/10/2026, looking at 60
+  rows of "אין תסקיר בודק": *"אני בכלל לא רוצה כזה דבר, תעיף את זה"*). It was a header button
+  (`ComplianceAlertsButton` + `utils/complianceAlerts.js`, 60 days ahead for the inspector, 14 days
+  awaiting a clean report); `git show b284e8b` holds it. ⚠️ **Consequence, stated plainly:** the
+  original request said managers are warned *two months* and one month before expiry. With the list
+  gone, the only signal is the lamp, which turns yellow at **30** days — nothing on screen says
+  "two months" any more. Push alerts (P5) are still not built. Do not re-add the list without asking.
 - **The lamp words are the owner's, and they are a traffic light** (06/10/2026): *"בתוקף / עומד
   לפוג עוד חודש / לא בתוקף — ירוק תקין, צהוב צריך להתכונן לתחזוקה או לזמן בודק, אדום לא תקין"*.
   So `LIGHT_LABEL` reads בודק / תחזוקה **בתוקף · עומד(ת) לפוג תוך חודש · לא בתוקף** for both
@@ -908,8 +913,7 @@ Rules that are easy to break and expensive to notice:
   summon an inspector when the job is to fix a defect. `machines_detail` carries `validity` for the
   same reason, and `machineLampLabel` reads both shapes (`validity` / inspection_site's
   `validity_state`). ⚠️ The reason avoids the word "באיחור" — the owner replaced it in lamp
-  labels, and `probe-lamps` asserts it is gone. The overdue row in the managers' list is `sev 4`
-  (red) to match. Consequence worth knowing: an **urgent** defect is due on the inspection day
+  labels, and `probe-lamps` asserts it is gone. Consequence worth knowing: an **urgent** defect is due on the inspection day
   itself, so it is red from the next day until closed with a photo — including defects typed in
   during a historical backfill. SQL test 46 (7/7 mutations killed), UI tests in
   `compliance-ui.test.js` (6/6).
@@ -918,6 +922,15 @@ Rules that are easy to break and expensive to notice:
   from `ComplianceLights.jsx` — the same classes and `colorVars` as the card lamp, so the legend
   cannot drift from what the card shows. Its wording quotes SQL thresholds (30 days, 6 months,
   overdue = `due_on < today`); change them together.
+- **The inspector page is rows, not boxes** (owner, 06/10/2026: *"תעיף את זה ותעצב את כל העמוד
+  נורמלי ויותר מסודר"*). No chips in the status card — the open count lives in the defects heading,
+  "awaiting a clean report" in its banner, and a red line under the headline says *why* the lamp is
+  red while the report is valid ("N ליקויים עברו את מועד התיקון"). Defects, completed defects and
+  reports are flat rows split by a thin line (`.it-list:has(...)` drops the gap), with a 3px red
+  start-border only on an overdue defect. "סימון כבוצע" is an outlined small button, not a solid
+  one per row; "צפייה במסמך" sits in the report's title row; validity-source tags are grey text.
+  The drop zone on the page is one 52px strip (dropping works anywhere on the page anyway). The
+  page lamp uses the same `COMPLIANCE_COLORS` tint as the card — it had stayed solid red.
 - **Lamps are a translucent tint, not a solid fill** (owner, 06/10/2026, once every site went red:
   "זה אדום מדי חזק, תעשה את זה יותר שקוף" — and after a first 14–16% tint with a full-colour
   outline, "עדיין מדי חזק"). Background = `COMPLIANCE_COLORS[state].bg` (8–10%), outline at
@@ -970,6 +983,49 @@ Rules that are easy to break and expensive to notice:
   variable only their viewer defines). Proven in the browser on both real reports: the layer is the
   local maximum of ink coverage against shifts in all four directions, and Ctrl+C → Ctrl+V into a
   defect line gives the same text.
+- ⚠️ **"Gives the same text" was proven with a drag that started one pixel inside the span — and a
+  person does not start there.** The owner copied the first defect of a third real report and pasted
+  `ש לחזק7אומים מסומðים…` for `יש לחזק 7 אומים מסומנים…`. Three causes, three fixes, all in
+  `utils/pdfItems.js` + `pdfText.js`, each proven by a browser mutation:
+  - **`ð` for `נ`** — the font stores letters by Windows-1255 (נ = 0xF0) without a usable unicode
+    map, so pdfjs reads Latin-1. `repairHebrewEncoding` maps à–ú back to א–ת, only in an item that
+    already holds Hebrew (or is rtl). Applied to the text layer *and* to `extractPages`.
+  - **No space in the document** — "יש לחזק", "7", "אומים…" are three items with a visible gap and
+    no space character. `addGapSpaces` inserts a `" "` item in the gap (≥ 0.15 em; zero gap = one
+    word split in two, e.g. "יו"+"ם"). Text layer only — date reading assembles split digits by
+    position. ⚠️ pdfjs stretches a span to its width only when it has more than one character, so the
+    space stayed 3px and a drag starting in the gap before the first letter selected **nothing**;
+    `stretchGaps` sets `--scale-x` on those spans after render (and on every resize).
+  - **The first letter** — "י" is 2–4 px wide; a drag starting on its left half starts after it,
+    and one starting on the left half of "ש" puts the caret at the word's *end* and loses "יש"
+    entirely. ⚠️ Patching Chrome's selection did not hold: scanned pixel by pixel along "יש", the
+    caret sometimes lands on the span instead of a letter, and Chrome **re-applies its own
+    selection after `setTimeout(0)`**. So on mouse release (`pointerType === "mouse"` only — touch
+    selects with handles) `fixMouseSelection` **rebuilds** the selection from the press and
+    release points (`caretPositionFromPoint`), adds the letter under each point, widens to whole
+    words, and applies it after `setTimeout(0)`. (A second apply after the next frame was tried and
+    removed: a pixel scan at human pace passes without it, and its mutation was never caught — the
+    overrides seen came only from drags 40 ms apart.) Measured at human pace (Ctrl+C 200 ms after release): every start
+    from inside the gap to the last pixel of "ש" gives "יש לחזק…"; starts on the following space
+    give "לחזק…", which is what the person pointed at.
+  - **An independent review (06/10/2026) added:** no gap space when another item sits inside the
+    gap (tables — the stretched span would cover it and make it unselectable); font size from the
+    *vertical* scale (condensed text got spaces between letters); encoding repair per *word* on
+    paste ("café" became "cafי"); the copied boundary space kept against a neighbouring word
+    (`insertCleaned`); dropped text cleaned like pasted text (`dropCleaned`); `pointercancel`
+    clears the press point; a word split into two adjacent spans ("יו"+"ם") and ת"א / ע"י are
+    taken whole; `setBaseAndExtent` keeps the drag direction; `.it-rows` instead of `:has()` (old
+    phones). Each rule has a unit test, and each test was mutated and failed. ⚠️ **Not handled, by
+    choice:** a *run* of two or more misread 1255 letters may come out in the wrong order (pdfjs
+    orders them as Latin), and an item made only of misread letters is marked ltr and not repaired.
+    Only an isolated broken letter was measured; reordering on theory could break what works.
+  - ⚠️ **A copy/paste test must seed the clipboard.** The first version passed a case where the
+    selection was *empty*: Ctrl+C copied nothing and the paste returned the previous round's text.
+    `probe-r2` writes a sentinel before every copy, and also asserts the raw selection — the paste
+    cleanup repairs `ð` on its own and would hide a broken text layer.
+  - Plus: **paste into a defect line** (`pasteCleaned`) turns line breaks into spaces — an
+    `<input>` silently deletes them, gluing the last word of one line to the first of the next — and
+    drops zero-width / bidi marks.
 - ⚠️ **Parentheses come back reversed from some reports, and the fix is per document**
   (`utils/pdfBrackets.js`). Measured: pdfjs returns one real report's text with every bracket flipped —
   including the defect itself (`)בקומה 2-(`) — while another, from other software, is correct
@@ -1000,8 +1056,8 @@ Rules that are easy to break and expensive to notice:
   label repeats the next date (and the inspection date when its field is shown), and editing a
   date or switching periodic↔follow-up clears it. A site with several machines gets **no** machine
   pre-selected — the document is not read for it.
-- **"בודק מוסמך" is a full page, not a tab** (owner's request, 05/10/2026). The card lamp, the
-  alerts panel and the supervisor table all route through `handleSiteClick` to
+- **"בודק מוסמך" is a full page, not a tab** (owner's request, 05/10/2026). The card lamp and
+  the supervisor table route through `handleSiteClick` to
   `InspectionPage`; the site window keeps the tab in its nav (with the defects badge) but clicking
   it opens the page, and "חזרה" returns to the window **on the tab it left from**. The page renders
   `InspectionTab` itself — never a copy — with `dropAnywhere`. The PM lamp still opens the window.
@@ -1031,7 +1087,7 @@ all ten tables empty; post-apply check "הייצור זהה לקוד"; 06/10: th
 bodies only, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive
 maintenance is not** — owner: *"לדחוף רק את הבודק מוסמך"*. One switch hides it everywhere:
 `PM_ENABLED` in `utils/compliance.js` (env `VITE_COMPLIANCE_PM=true`, default off), read through
-`COMPLIANCE_AREAS` by the card lamp, the mini mark, the site-window tab, the managers' list, the
+`COMPLIANCE_AREAS` by the card lamp, the mini mark, the site-window tab, the
 help legend and the supervisor ranking. ⚠️ A Pages build nobody configured must give what was
 decided — so off is the default, and `compliance-ui.test.js` pins it. The PM code ships dormant and
 stays tested: the pure functions take `areas` explicitly, and the browser harness runs both modes.
@@ -1039,7 +1095,7 @@ Turning it on = set the variable in Pages, or flip the default. **Supabase Pro m
 before the historical backfill** (PDFs live in the database; crossing 500 MB makes the database
 read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_live` **is set —
 `2026-10-06`**, at the owner's request *before* the backfill ("אם אין מסמך בדיקה בתוקף הסימון צריך
-להיות אדום"). So "no report" is **red** ("אין תסקיר בודק" / "אין תחזוקה מונעת רשומה") on both lamps,
-and the managers' alert list carries one row per missing site — measured right after: all 60 sites
+להיות אדום"). So "no report" is **red** ("אין תסקיר בודק" / "אין תחזוקה מונעת רשומה") on both lamps
+— measured right after: all 60 sites
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.

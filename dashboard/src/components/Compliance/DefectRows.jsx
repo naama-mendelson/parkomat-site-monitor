@@ -82,7 +82,7 @@ export function DefectRow({ defect, today, isManager, showSource, onMarkDone, on
           {d.urgent && <span className="it-tag it-tag--urgent">דחוף</span>}
           {d.due_on && (
             <span className={overdue ? "it-due it-due--late" : "it-due"}>
-              לתיקון עד {formatDateIL(d.due_on)}{overdue ? ` · באיחור ${late === 1 ? "יום" : `${late} ימים`}` : ""}
+              לתיקון עד {formatDateIL(d.due_on)}{overdue ? ` · עבר המועד לפני ${late === 1 ? "יום" : `${late} ימים`}` : ""}
             </span>
           )}
           {d.current_photos > 0 && (
@@ -92,7 +92,8 @@ export function DefectRow({ defect, today, isManager, showSource, onMarkDone, on
         </p>
       </div>
       <div className="it-defect-actions">
-        <button type="button" className="it-btn it-btn--primary" onClick={() => onMarkDone(d)}>סימון כבוצע</button>
+        {/* מסגרת ולא מילוי: כפתור כחול מלא בכל שורה הפך את הרשימה לטור של כפתורים */}
+        <button type="button" className="it-btn it-btn--small it-btn--done" onClick={() => onMarkDone(d)}>סימון כבוצע</button>
         {isManager && (
           <InspectionMenu label="פעולות על הליקוי" items={[
             { label: "עריכה", onSelect: () => onEdit(d) },
