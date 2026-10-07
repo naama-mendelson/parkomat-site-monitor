@@ -6,6 +6,7 @@ import { fetchSitesList } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
 import { mergeCompliance, complianceFailed, complianceFetched } from "../utils/complianceMerge.js";
 import { keepLastService } from "../utils/serviceMerge.js";
+import { keepLastStats, statsMissing } from "../utils/siteSync.js";
 
 // ⚠️ כל כמה זמן הרשימה שולפת גם את רמזורי הבודק/התחזוקה. הם משתנים לכל היותר
 // פעם ביום (מעבר ספים בחצות), או באירוע — ואירוע מטופל בשליפה ממוקדת של אתר
@@ -80,23 +81,66 @@ export function useSites({ hold = false } = {}) {
   const lastComplianceAt = useRef(0);
   const patchedAt = useRef({});          // site id → מתי הוחלף ה-compliance שלו ב-patchSite
 
-  const loadSites = useCallback(async () => {
+  // ============================================================
+  // ⚠️ טעינה אחת בכל רגע (07/10/2026)
+  // ============================================================
+  // seq דואג שהתוצאה הישנה לא תדרוס את החדשה — אבל שתי הטעינות עדיין רצות במסד.
+  // כשהשרת איטי, טעינה אורכת יותר מהמרווח בין הטריגרים והן נערמות זו על זו.
+  // עכשיו: אם טעינה כבר רצה, נרשמת **אחת** נוספת ורצה כשהראשונה מסתיימת.
+  const inFlight = useRef(false);
+  const again = useRef(false);
+  const loadRef = useRef(null);
+
+  // ============================================================
+  // ⚠️ הסטטיסטיקות — רק בכניסה לדף (07/10/2026)
+  // ============================================================
+  // טעינה רגילה היא **חיה**: מצב, תקלה, תחזוקה. הסטטיסטיקות (פעולות, זמינות,
+  // מגמה) — רק כשמבקשים במפורש (reloadStats: פתיחה, מעבר דף, חזרה ללשונית), או
+  // כשיש ברשימה אתר שעוד לא חושבה לו (אתר חדש). ראו utils/siteSync.js.
+  const wantStats = useRef(true);          // הטעינה הראשונה — תמיד עם הסטטיסטיקות
+  const statsIds = useRef(new Set());     // אתרים שכבר הגיעו בטעינה עם סטטיסטיקות
+
+  const loadSites = useCallback(async ({ stats = false } = {}) => {
+    if (stats) wantStats.current = true;
+    if (inFlight.current) { again.current = true; return; }
+    inFlight.current = true;
+    try {
+      await loadOnce();
+    } finally {
+      inFlight.current = false;
+      if (again.current) { again.current = false; loadRef.current?.(); }
+    }
+  }, []);
+  loadRef.current = loadSites;
+
+  async function loadOnce() {
     const mine = ++seq.current;
     const stale = () => mine !== seq.current;
+    const withStats = wantStats.current;
+    wantStats.current = false;
 
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
         const withCompliance = Date.now() - lastComplianceAt.current >= COMPLIANCE_EVERY_MS;
         const startedAt = Date.now();
-        const data = await fetchSitesList({ withCompliance });
+        const data = await fetchSitesList({ withCompliance, withStats });
         if (stale()) return;          // שליפה חדשה יותר כבר בדרך
         // כשל ברמזורי הבודק אינו מקדם את השעון — השליפה הבאה תנסה שוב, ולא בעוד
         // חמש דקות. (פס "אינו מתעדכן" בראש המסך הוסר לבקשת בעלת המוצר, 04/10;
         // המנורות עצמן מציגות "?" מקווקו כשהסטטוס לא נטען — הן לא נעלמות.)
         if (complianceFetched(data) && !complianceFailed(data)) lastComplianceAt.current = Date.now();
+        // ⚠️ "הגיעו סטטיסטיקות" — לפי השורות ולא לפי הבקשה: בזרוע השרת כל טעינה מלאה
+        if (!data.some((s) => s && s.statsSkipped)) {
+          statsIds.current = new Set(data.map((s) => s.id));
+        } else if (statsMissing(data, statsIds.current)) {
+          // אתר חדש — בלי זה הוא היה מציג "0 פעולות" עד הכניסה הבאה לדף
+          wantStats.current = true;
+          again.current = true;
+        }
         setSites((prev) => {
+          // טעינה חיה — שדות הסטטיסטיקה מהרשימה שעל המסך (siteSync), ואז:
           // כשל בשעות השירות — הערך האחרון הידוע, לא "בסיסי" ו-24/7 לדקה (serviceMerge)
-          const { list, missing } = mergeCompliance(prev, keepLastService(prev, data), startedAt, patchedAt.current);
+          const { list, missing } = mergeCompliance(prev, keepLastService(prev, keepLastStats(prev, data)), startedAt, patchedAt.current);
           // אתר חדש (או שנוסף מאז הסבב האחרון) — הסבב הבא שולף רמזורים, לא בעוד 5 דקות
           if (missing) lastComplianceAt.current = 0;
           return list;
@@ -106,7 +150,13 @@ export function useSites({ hold = false } = {}) {
         return;
       } catch (err) {
         if (stale()) return;
-        if (attempt === RETRY_DELAYS.length) {
+        // ⚠️ ניסיון חוזר רק על נתק רשת רגעי. שגיאה מהשרת (עומס, timeout, 5xx) — ניסיון
+        // חוזר מיידי רק מוסיף עומס על שרת שכבר מתקשה (07/10/2026); הבדיקה הבאה תנסה.
+        const transient = /failed to fetch|networkerror|load failed/i.test(String(err?.message ?? err ?? ""));
+        if (attempt === RETRY_DELAYS.length || !transient) {
+          // סטטיסטיקות שמעולם לא הגיעו — הטעינה הבאה תנסה שוב איתן. אם כבר יש
+          // כאלה על המסך, הן נשארות עד הכניסה הבאה (לא מכבידים על מסד שנכשל).
+          if (withStats && statsIds.current.size === 0) wantStats.current = true;
           setError(humanError(err));
           setLoading(false);
           return;
@@ -114,7 +164,7 @@ export function useSites({ hold = false } = {}) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
       }
     }
-  }, []);
+  }
 
   // עדכון מקומי מהודעת SSE — בלי בקשת רשת.
   // applySiteUpdate מחזיר את *אותו* מערך אם אין מה לעדכן, ולכן React
@@ -159,7 +209,15 @@ export function useSites({ hold = false } = {}) {
     loadSites();
   }, [hold, loadSites]);
 
+  // טעינה חיה — מצב, תקלה, תחזוקה. הסטטיסטיקות נשמרות מהטעינה הקודמת.
   const reload = useCallback(() => {
+    if (hold) { pendingLoad.current = true; return; }
+    loadSites();
+  }, [hold, loadSites]);
+
+  // כניסה לדף — גם הסטטיסטיקות (~12 שניות במסד; לא לקרוא מטיימר)
+  const reloadStats = useCallback(() => {
+    wantStats.current = true;
     if (hold) { pendingLoad.current = true; return; }
     loadSites();
   }, [hold, loadSites]);
@@ -196,5 +254,5 @@ export function useSites({ hold = false } = {}) {
     };
   }, [hasError, loadSites]);
 
-  return { sites, loading, error, reload, patch, patchSite };
+  return { sites, loading, error, reload, reloadStats, patch, patchSite };
 }

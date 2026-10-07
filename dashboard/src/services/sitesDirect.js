@@ -40,24 +40,48 @@ import { effectiveTier } from "../utils/tier";
  * @returns {Promise<Array>} אותו מבנה בדיוק שהשרת מחזיר ב-GET /api/sites
  * @throws {Error} כדי להתנהג כמו fetchSites — useSites תופס ומציג
  */
-export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null, { withCompliance = true } = {}) {
+/**
+ * מצבי האתרים בלבד — שאילתה אחת על `sites`, בלי שום חישוב (אלפיות שנייה).
+ * לבדיקת הדקה הזולה (utils/siteSync): האם המסך עדיין תואם את המסד. רק אם לא —
+ * טעינה מלאה. (07/10/2026: הטעינה המלאה בכל דקה בכל מסך היא שהפילה את השרת.)
+ * @returns {Promise<Array<{id:number, code:string, status:string}>>}
+ */
+export async function fetchSiteStatusesDirect() {
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase אינו מוגדר בדשבורד");
+  }
+  const { data, error } = await supabase.from("sites").select("id, code, status");
+  if (error) {
+    throw new Error(error.code === "42501" ? "אין הרשאת קריאה — נדרשת התחברות" : error.message);
+  }
+  return data || [];
+}
+
+export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString(), prevFromIso = null, { withCompliance = true, withStats = true } = {}) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase אינו מוגדר בדשבורד");
   }
 
+  // ⚠️ `withStats: false` — טעינה חיה: בלי ארבע קריאות הסטטיסטיקה (~12 שניות במסד
+  // לטעינה, 07/10/2026). כל אתר יוצא עם `statsSkipped: true`, ו-useSites ממלא את
+  // השדות מהטעינה הקודמת (keepLastStats ב-utils/siteSync.js).
+  const skipped = { data: null, error: null };
+  const stat = (fn, args) => (withStats ? supabase.rpc(fn, args) : Promise.resolve(skipped));
+
   // ⚠️ קריאה חמישית ולא סיבוב לכל אתר: site_stats מקבלת null ומחזירה שורה
   // לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת.
+  const statsAt = Date.now();
   const [sitesRes, statsRes, uptimeRes, globalsRes, svcRes, prevRes, compRes] = await Promise.all([
     supabase.from("sites").select("*"),
-    supabase.rpc("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
-    supabase.rpc("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    stat("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    stat("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     supabase.rpc("site_globals", { p_site_ids: null }),
     // ⚠️ זמינות בתוך שעות השירות — מחזירה שורה **רק** לאתר שחובר
     // ברמזור (עמודת "קוד אתר"). אתר שלא חובר ממשיך על 24/7 כפי שהיה,
     // כלומר השינוי חל רק על מה שמישהו הגדיר במפורש.
-    supabase.rpc("site_uptime_service", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    stat("site_uptime_service", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
     prevFromIso
-      ? supabase.rpc("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
+      ? stat("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
       : Promise.resolve({ data: [], error: null }),
     // ⚠️ רמזורי בודק מוסמך ותחזוקה מונעת — **אינה קטלנית**, כמו site_uptime_service.
     // כשל כאן לא יפיל את רשימת האתרים; כל אתר יקבל `{unknown:true}` (מנורה "?"),
@@ -112,6 +136,10 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
 
     return {
       ...site,
+      // טעינה חיה: שדות הסטטיסטיקה שלמטה הם ברירת מחדל ולא ערך (keepLastStats).
+      // statsAt — מתי חושבו, ו-null כשלא חושבו בשליפה הזו.
+      statsSkipped: !withStats,
+      statsAt: withStats ? statsAt : null,
       // ⚠️ רמת השירות מגיעה מהרמזור, ואתר בלי שורה בו הוא "לא חובר" —
       // ראה `effectiveTier`.
       tier: effectiveTier(svc, Boolean(svcRes?.error), site.tier),

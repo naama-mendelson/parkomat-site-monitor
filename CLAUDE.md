@@ -1126,3 +1126,24 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
 
+## Dashboard statistics are computed only on page entry (07/10/2026)
+
+Measured that morning (`pg_stat_statements`, 5-minute delta): **97% of database time** was the
+card statistics (`site_stats` ×2, `site_uptime_service`, `site_uptime`). One load costs about 12 s
+of DB time, and every open screen ran it every minute, hidden tabs included. On NANO compute
+that used up the CPU credits, and Auth, PostgREST and Supavisor all timed out together. Agent
+heartbeats were 0.2%.
+
+The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. אין צורך אלא בשעה שעוברים לדף הזה"*.
+
+- **Statistics run only on page entry:** first load, switching to the operator page, returning
+  to a hidden tab (at most once per 5 min, `STATS_ON_RETURN_MIN_MS`), and an admin change.
+  A new site in the list gets one automatic statistics load.
+- **The live load runs every 5 min, or immediately on a status mismatch:** `sites`,
+  `site_globals` and compliance. It is `withStats: false`. The statistics fields are carried
+  over from the screen (`keepLastStats`, `STATS_FIELDS` in `utils/siteSync.js`). A test checks
+  that list against `sitesDirect`.
+- **No timer bumps `dataVersion`.** The supervisor, executive and "all sites" pages compute on
+  entry, not every 5 minutes.
+- ⚠️ **The known cost was chosen:** a wall screen left visible shows the numbers from when it
+  was opened. Do not reconnect statistics to a timer without asking.

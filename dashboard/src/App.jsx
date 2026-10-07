@@ -22,6 +22,8 @@ import SupervisorView from "./views/SupervisorView/SupervisorView";
 import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
 import Announcement from "./components/Announcement/Announcement";
 import { needsRefetch } from "./utils/sitePatch";
+import { statusesMatch, fullReloadDue, statsDueOnReturn, STATUS_CHECK_EVERY_MS } from "./utils/siteSync";
+import { fetchSiteStatuses } from "./services/dataSource";
 import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
 // להציג אתרים גם אם איש לא נגע בו.
@@ -84,7 +86,46 @@ function App() {
     const t = setTimeout(() => setExecReady(true), 8000);
     return () => clearTimeout(t);
   }, [role, execReady]);
-  const { sites, loading, error, reload, patch, patchSite } = useSites({ hold: role === "executive" && !execReady });
+  const { sites, loading, error, reload, reloadStats, patch, patchSite } = useSites({ hold: role === "executive" && !execReady });
+  const lastFullAt = useRef(Date.now());   // מתי רצה הטעינה החיה האחרונה — הראשונה היא טעינת הפתיחה (utils/siteSync)
+
+  // ==========================================================
+  // ⚠️ כניסה לדף — הרגע היחיד שבו הסטטיסטיקות מחושבות (07/10/2026)
+  // ==========================================================
+  // פתיחת הדשבורד (הטעינה הראשונה של useSites), מעבר בין דפים, וחזרה ללשונית
+  // שהייתה מוסתרת — לכל היותר פעם ב-5 דקות, כדי שמעבר לשוניות תכוף לא יחזיר את
+  // העומס. מסך קיר שנשאר גלוי מציג את המספרים מרגע הכניסה — זה המחיר, והוא נבחר.
+  // ⚠️ לא לחבר את זה לטיימר: טעינה עם סטטיסטיקות היא ~12 שניות במסד, ומסך פתוח
+  // שהריץ אותה כל דקה הוא שהפיל את Supabase.
+  // ⚠️ רק דף הבקר מציג את הסטטיסטיקות של useSites (על הכרטיסים). מנהל הבקרה לוקח
+  // מהרשימה מצב ומנורות בלבד, וההנהלה — כלום; שניהם מחשבים בעצמם (dataVersion).
+  const showsCards = role !== "supervisor" && role !== "executive";
+  const lastStatsAt = useRef(Date.now());
+  const enterPage = useCallback(() => {
+    lastStatsAt.current = Date.now();
+    if (showsCards) reloadStats();
+    setDataVersion((v) => v + 1);
+  }, [showsCards, reloadStats]);
+
+  // מעבר בין דפים. דף מנהל הבקרה / ההנהלה מחשב את שלו כשהוא עולה; כאן — הכרטיסים.
+  // לא בעלייה הראשונה: את זה עושה useSites.
+  const prevRole = useRef(role);
+  useEffect(() => {
+    if (prevRole.current === role) return;
+    prevRole.current = role;
+    lastStatsAt.current = Date.now();
+    if (showsCards) reloadStats();
+  }, [role, showsCards, reloadStats]);
+
+  // חזרה ללשונית שהייתה מוסתרת
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (statsDueOnReturn(lastStatsAt.current)) enterPage();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [enterPage]);
   const { detail, maintenance, error: detailError, refresh: refreshDetail } = useSiteDetail(selectedCode);
   // ⚠️ כרטיס שנלחץ ולא נפתח חייב לומר למה. רק כשאין פרטים בכלל: כשל
   // ברענון של פאנל פתוח משאיר את הנתונים האחרונים, כמו קודם.
@@ -172,11 +213,13 @@ function App() {
   // סנכרון מחדש — מקור האמת כשההודעות אינן מספיקות
   // ==========================================================
   // שליפה מלאה ולא replay של אירועים: היא מתקנת גם חוסרים שלא ידענו
-  // עליהם, ואינה תלויה בסמן שהלקוח צריך לתחזק. גם האגרגציות מרועננות —
-  // הן נגזרות מחלון של 7 ימים בשרת ויכלו להשתנות בזמן שלא הקשבנו.
+  // עליהם, ואינה תלויה בסמן שהלקוח צריך לתחזק.
+  // ⚠️ **חיה בלבד** (07/10/2026): לא הסטטיסטיקות של הכרטיסים ולא dataVersion —
+  // דפי מנהל הבקרה / ההנהלה / "כל האתרים" לא מחושבים מחדש מטיימר. הם מחושבים
+  // בכניסה לדף (enterPage למטה). "אין צורך אלא בשעה שעוברים לדף הזה".
   const resync = useCallback(() => {
+    lastFullAt.current = Date.now();
     reload();
-    setDataVersion((v) => v + 1);
     if (selectedCode) {
       refreshDetail();
       setDetailVersion((v) => v + 1);
@@ -197,10 +240,35 @@ function App() {
   //
   // דקה אחת חוסמת את גיל הנתונים בלי קשר למה שקרה ל-SSE. המחיר זניח:
   // שאילתה אחת מחושבת ב-Postgres, ממוטמעת בשרת.
-  useEffect(() => {
-    const id = setInterval(resync, 60_000);
-    return () => clearInterval(id);
+  //
+  // ============================================================
+  // ⚠️ אבל לא טעינה מלאה בכל דקה (07/10/2026 — השרת קרס בגלל זה)
+  // ============================================================
+  // כל מסך פתוח — גם מוסתר — הריץ כאן את כל הסטטיסטיקות של כל האתרים בכל דקה, ושוב
+  // בכל חזרה ללשונית. עכשיו (utils/siteSync): בדיקה זולה של מצבי האתרים בלבד, ורק אם
+  // משהו לא תואם — טעינה מלאה מיד; הטעינה המלאה עצמה — פעם ב-5 דקות. מסך מוסתר — כלום.
+  // אותה בדיקה (ולא טעינה מלאה) רצה גם בחזרה ללשונית ובהתאוששות הערוץ החי (useSSE).
+  // רשת הביטחון של דקה נשמרת לסטטוס.
+  const checking = useRef(false);
+  const syncNow = useCallback(async () => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    if (checking.current) return;
+    if (fullReloadDue(lastFullAt.current)) { resync(); return; }
+    checking.current = true;
+    try {
+      const fresh = await fetchSiteStatuses();
+      if (!statusesMatch(sitesRef.current, fresh)) resync();
+    } catch {
+      // הבדיקה הזולה נכשלה — לא מנסים שוב מיד (שרת עמוס לא צריך עוד בקשות);
+      // הבדיקה הבאה בעוד דקה, והטעינה המלאה תתקן ממילא.
+    } finally {
+      checking.current = false;
+    }
   }, [resync]);
+  useEffect(() => {
+    const id = setInterval(syncNow, STATUS_CHECK_EVERY_MS);
+    return () => clearInterval(id);
+  }, [syncNow]);
 
   useSSE(
     useCallback((data) => {
@@ -220,7 +288,12 @@ function App() {
       if (selectedCode && data.code === selectedCode) {
         selectedTouched.current = true;
       }
-      if (needsRefetch(data)) {
+      // ⚠️ 07/10/2026: פעולה, תקלה, תחזוקה או ניתוק כבר **לא** גוררים טעינה מלאה. הכרטיס
+      // מתעדכן מההודעה עצמה (patch למעלה), והמדדים המצטברים — בטעינה המלאה של כל 5 דקות
+      // (utils/siteSync). אחרי כל אירוע כזה בכל אחד מ-62 האתרים, כל מסך פתוח חישב הכול מחדש —
+      // וזה חלק ממה שהפיל את השרת. טעינה מיידית נשארת רק כשהרשימה עצמה השתנתה: אתר
+      // שנרשם/עודכן/נמחק, או אירוע שאיננו מכירים.
+      if (needsRefetch(data) && data?.type !== "state" && data?.type !== "operation") {
         aggregatesStale.current = true;
       }
 
@@ -230,6 +303,7 @@ function App() {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => {
         if (aggregatesStale.current) {
+          lastFullAt.current = Date.now();
           reload();
           setDataVersion((v) => v + 1);
           aggregatesStale.current = false;
@@ -257,7 +331,7 @@ function App() {
     //
     // גם האגרגציות מרועננות: הן נגזרות מחלון של 7 ימים בשרת, וייתכן
     // שהשתנו בזמן שלא הקשבנו.
-    resync
+    syncNow
   );
 
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
@@ -333,10 +407,13 @@ function App() {
   }, []);
 
   // אחרי כל שינוי בניהול (הוספה/עריכה/מחיקה) — רענון הרשימה וגם האגרגציות
+  // ⚠️ עם הסטטיסטיקות: הדרגה על הכרטיס מגיעה מהן (site_uptime_service), ושינוי
+  // דרגה בטופס לא היה נראה עד הכניסה הבאה. פעולה מפורשת ונדירה — לא טיימר.
   const handleAdminChanged = useCallback(() => {
-    reload();
+    lastStatsAt.current = Date.now();
+    reloadStats();
     setDataVersion((v) => v + 1);
-  }, [reload]);
+  }, [reloadStats]);
 
   // ===== ניתוב לפי תפקיד =====
   function renderView() {

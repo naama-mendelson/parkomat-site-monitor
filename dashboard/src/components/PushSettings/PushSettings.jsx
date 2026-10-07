@@ -46,7 +46,9 @@ function PushSettings({ onClose }) {
     (async () => {
       // ⚠️ רשימה ריקה נראית כמו "אין אתרים", לא כמו "הקריאה נכשלה" —
       // והמשתמש היה מסיק שאין לו מה לבחור.
-      setSites(await fetchSitesList().catch((e) => { setErr(e.message); return []; }));
+      // ⚠️ רק שמות לבחירה — בלי הסטטיסטיקות ובלי הרמזורים (~12 שניות במסד לשווא)
+      setSites(await fetchSitesList({ withStats: false, withCompliance: false })
+        .catch((e) => { setErr(e.message); return []; }));
       if (pushPermission() === "granted") {
         // ⚠️ חידוש שקט לפני הצגת המצב: אחרת המסך היה מציג "לא מכוסה" על
         // מנוי שהיה מתחדש שנייה אחר כך מעצמו.

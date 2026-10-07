@@ -58,7 +58,7 @@ import { fetchInsightsDirect } from "./insightsDirect";
 import { fetchSiteDetailDirect, fetchSiteAnalyticsDirect } from "./detailDirect";
 import { fetchMonthlyReportDirect } from "./reportDirect";
 import { fetchExecutiveDirect } from "./executiveDirect";
-import { fetchSitesDirect } from "./sitesDirect";
+import { fetchSitesDirect, fetchSiteStatusesDirect } from "./sitesDirect";
 import { fetchSupervisorDirect } from "./supervisorDirect";
 import { startMaintenanceDirect, cancelMaintenanceDirect } from "./maintenanceDirect";
 import { markAsTestDirect, unmarkTestDirect, reclassifyStatusDirect } from "./reportsDirect";
@@ -112,7 +112,18 @@ export function fetchSitesList(opts = {}) {
   // הפרמטר השלישי — תחילת השבוע הקודם, לחישוב "משתפר/מחמיר" על כל כרטיס.
   // ⚠️ `opts.withCompliance` — רק בזרוע הישירה; לרמזורי הבודק/התחזוקה אין זרוע
   // שרת, ובמצב שרת `compliance` נשאר undefined והמנורות פשוט לא מצוירות.
+  // ⚠️ `opts.withStats: false` — טעינה חיה, בלי הסטטיסטיקות (utils/siteSync). רק
+  // בזרוע הישירה: השרת מחזיר הכול בקריאה אחת, ושורותיו אינן מסומנות statsSkipped.
   return fetchSitesDirect(weekFromIso(), new Date().toISOString(), prevWeekFromIso(), opts);
+}
+
+/**
+ * מצבי האתרים בלבד — לבדיקת הדקה הזולה (utils/siteSync). בזרוע השרת אין בדיקה
+ * זולה: null, והטעינה המלאה (כל 5 דקות) מכריעה.
+ */
+export function fetchSiteStatuses() {
+  if (!useDirect) return Promise.resolve(null);
+  return fetchSiteStatusesDirect();
 }
 
 /**
