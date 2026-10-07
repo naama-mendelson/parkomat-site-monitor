@@ -263,3 +263,30 @@ test("אתר בחלון תחזוקה אינו נספר — לא כשותק ול�
   assert.deepEqual(out.map((r) => r.site_code).sort(), ["AG3", "AG4"]);
   assert.equal(await marked(ids), 2);
 });
+
+// ============================================================
+// 6. משימת הסטטיסטיקות נכשלת בשקט → בדיקת הבריאות מתריעה
+// ============================================================
+const health = async () => (await q(`SELECT * FROM app.check_ingestion_health(10, 15)`))
+  .filter((r) => r.alerted === "card_metrics_stale");
+
+test("⚠️ הסטטיסטיקות לא עודכנו שעתיים — בדיקת הבריאות מתריעה; אחרי חישוב — שקט", { skip }, async () => {
+  await q(`SELECT app.refresh_site_card_metrics()`);
+  assert.equal((await health()).length, 0, "טרי — אין התראה");
+  await q(`UPDATE site_card_metrics SET computed_at = to_char((now() - interval '2 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`);
+  const stale = await health();
+  assert.equal(stale.length, 1);
+  assert.match(stale[0].detail, /^עודכנו לאחרונה /);
+  await q(`SELECT app.refresh_site_card_metrics()`);
+  assert.equal((await health()).length, 0, "אחרי חישוב — שוב שקט");
+});
+
+test("29 דקות — עוד לא (ריצה אחת שהוחמצה אינה תקלה); טבלה ריקה — 'לא חושבו מעולם'", { skip }, async () => {
+  await q(`UPDATE site_card_metrics SET computed_at = to_char((now() - interval '29 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`);
+  assert.equal((await health()).length, 0);
+  await q(`DELETE FROM site_card_metrics`);
+  const never = await health();
+  assert.equal(never.length, 1);
+  assert.equal(never[0].detail, "לא חושבו מעולם");
+  await q(`SELECT app.refresh_site_card_metrics()`);
+});

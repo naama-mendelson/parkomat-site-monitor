@@ -734,6 +734,7 @@ DECLARE
   v_req       bigint;
   v_blk       record;
   v_sil       record;
+  v_cm        text;
   -- ============================================================
   -- ⚠️ התראות מערכתיות כבויות בברירת מחדל — וזו החלטה
   -- ============================================================
@@ -951,6 +952,35 @@ BEGIN
         (v_sil.site_code || ' מנותק ' || v_sil.quiet_hours || ' שעות')::text;
     END IF;
   END LOOP;
+
+  -- ============================================================
+  -- 5. הסטטיסטיקות של הכרטיסים קפאו
+  -- ============================================================
+  -- ⚠️ מ-07/10/2026 הכרטיסים קוראים פעולות, זמינות ומגמה מ-site_card_metrics, ש-pg_cron
+  -- ממלא כל 10 דקות (card-metrics.postgres.sql). אם המשימה נכשלת — שגיאה אחרי שינוי עתידי
+  -- בפונקציה, זמן קצוב במסד עמוס, משימה שנמחקה — **המספרים פשוט קופאים**: אין שגיאה במסך,
+  -- אין שורה ריקה, ואין שום דבר שנראה שבור. זה בדיוק הכשל השקט שהקובץ הזה קיים בשבילו.
+  --
+  -- 30 דקות = שלוש ריצות שהוחמצו (לא אחת — ריצה בודדת יכולה ליפול על עומס רגעי).
+  -- דה-דופ של 6 שעות, כמו החשכה: מצב שנמשך, לא אירוע.
+  SELECT max(m.computed_at) INTO v_cm FROM site_card_metrics m;
+  IF EXISTS (SELECT 1 FROM sites)
+     AND (v_cm IS NULL OR v_cm::timestamptz < now() - interval '30 minutes') THEN
+    SELECT value INTO v_last FROM settings WHERE key = 'alert_last_card_metrics';
+    IF v_last IS NULL OR EXTRACT(EPOCH FROM (now() - v_last::timestamptz)) / 3600 > 6 THEN
+      v_req := CASE WHEN v_sys_on THEN app.send_push(
+        'fault', 'מערכת הניטור',
+        'הסטטיסטיקות בכרטיסים לא מתעדכנות' || COALESCE(
+          ' מאז ' || to_char(v_cm::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'DD/MM HH24:MI'), ' — לא חושבו מעולם')) END;
+      -- ⚠️ אותו נימוק כמו בסעיפים שמעל: אין שליחה, אין השתקה.
+      IF v_req IS NOT NULL THEN
+        INSERT INTO settings (key, value, updated_at) VALUES ('alert_last_card_metrics', v_now, v_now)
+          ON CONFLICT (key) DO UPDATE SET value = v_now, updated_at = v_now;
+      END IF;
+      RETURN QUERY SELECT 'card_metrics_stale'::text,
+        COALESCE('עודכנו לאחרונה ' || v_cm, 'לא חושבו מעולם')::text;
+    END IF;
+  END IF;
 
 
 END;
