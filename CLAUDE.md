@@ -1228,5 +1228,10 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   `ingest_drops` row (`silence_mass_skipped`), which raises the hourly drops alert. Sites don't
   fail together; a slow database does. The function also now reports and marks from a single
   list of IDs, where before it wrote the same conditions twice.
-- ⚠️ **`parkomat-agent-silence` stays paused until compute is upgraded off NANO** (owner's
-  call). Re-enable with `cron.alter_job(jobid, active := true)`.
+- ✅ **`parkomat-agent-silence` re-enabled 07/10/2026 14:21.** It was paused until the compute
+  upgrade (owner's call). The project had in fact been resized NANO → **MICRO (1 GB)** at 09:41 that
+  morning. Check it with `pg_postmaster_start_time()` and `SHOW shared_buffers` (256MB); don't trust
+  older notes. A read-only preview before enabling showed it would mark 0 sites (58/62 beating, 4
+  already `no_comm`). Runs take 12–17 ms, against 52 s when throttled. ⚠️ **Micro is burstable
+  too.** Throttling came back at 10:52, after the resize, under the old dashboard load, so the fixes
+  above are what keep it healthy, not the size alone.
