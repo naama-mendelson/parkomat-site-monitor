@@ -714,7 +714,10 @@ function init() {
       // `app.is_intake_client()` שנוצר שם, ול-`app.require_manager()` /
       // `app.record_write_audit()` מ-writes. סדר הפוך נכשל במסד חדש.
       for (const file of ["traffic-light.postgres.sql", "service-hours.postgres.sql", "fixflow.postgres.sql",
-        "service-calls.postgres.sql", "compliance.postgres.sql"]) {
+        "service-calls.postgres.sql", "compliance.postgres.sql",
+        // ⚠️ אחרון: מריץ את site_stats / site_uptime / site_uptime_service (חישוב ראשון),
+        // ו-app.is_active_user למדיניות. ה-cron שמרענן אותו — ב-cron.postgres.sql למטה.
+        "card-metrics.postgres.sql"]) {
         await setup.query(fs.readFileSync(path.join(__dirname, file), "utf8"));
       }
 

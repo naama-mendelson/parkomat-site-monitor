@@ -74,13 +74,23 @@ async function boot(opts = {}) {
       $f$ SELECT nullif(current_setting('request.jwt.claims', true)::json ->> 'sub', '')::uuid $f$;
 
     CREATE SCHEMA IF NOT EXISTS cron;
-    CREATE TABLE IF NOT EXISTS cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text, command text);
+    CREATE TABLE IF NOT EXISTS cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text, command text,
+                                         active boolean NOT NULL DEFAULT true);
+    -- ⚠️ כמו pg_cron 1.6: schedule על שם קיים **מדליק** את המשימה מחדש — זה בדיוק
+    -- מה ש-app.ensure_cron_job עוקף, וזה מה שהבדיקה שלו חייבת לראות כדי להיכשל עליו.
     CREATE OR REPLACE FUNCTION cron.schedule(n text, s text, c text) RETURNS bigint LANGUAGE sql AS
       $f$ INSERT INTO cron.job(jobname, schedule, command) VALUES (n, s, c)
-          ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+          ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command, active = true
           RETURNING jobid::bigint $f$;
     CREATE OR REPLACE FUNCTION cron.unschedule(n text) RETURNS boolean LANGUAGE sql AS
       $f$ WITH d AS (DELETE FROM cron.job WHERE jobname = n RETURNING 1) SELECT EXISTS (SELECT 1 FROM d) $f$;
+    -- NULL = "אל תשנה", כמו ב-pg_cron
+    CREATE OR REPLACE FUNCTION cron.alter_job(job_id bigint, schedule text DEFAULT NULL, command text DEFAULT NULL,
+        database text DEFAULT NULL, username text DEFAULT NULL, active boolean DEFAULT NULL) RETURNS void LANGUAGE sql AS
+      $f$ UPDATE cron.job j SET schedule = COALESCE(alter_job.schedule, j.schedule),
+                                command  = COALESCE(alter_job.command, j.command),
+                                active   = COALESCE(alter_job.active, j.active)
+           WHERE j.jobid = job_id $f$;
 
     CREATE SCHEMA IF NOT EXISTS net;
     CREATE TABLE IF NOT EXISTS net.http_request_queue (id bigserial PRIMARY KEY, url text, headers jsonb, body jsonb);

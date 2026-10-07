@@ -62,27 +62,32 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     throw new Error("Supabase אינו מוגדר בדשבורד");
   }
 
-  // ⚠️ `withStats: false` — טעינה חיה: בלי ארבע קריאות הסטטיסטיקה (~12 שניות במסד
-  // לטעינה, 07/10/2026). כל אתר יוצא עם `statsSkipped: true`, ו-useSites ממלא את
-  // השדות מהטעינה הקודמת (keepLastStats ב-utils/siteSync.js).
+  // ⚠️ `withStats: false` — טעינה חיה: בלי הסטטיסטיקות. כל אתר יוצא עם
+  // `statsSkipped: true`, ו-useSites ממלא את השדות מהטעינה הקודמת (keepLastStats
+  // ב-utils/siteSync.js).
   const skipped = { data: null, error: null };
-  const stat = (fn, args) => (withStats ? supabase.rpc(fn, args) : Promise.resolve(skipped));
 
-  // ⚠️ קריאה חמישית ולא סיבוב לכל אתר: site_stats מקבלת null ומחזירה שורה
-  // לכל אתר, ולכן התקופה הקודמת עולה בדיוק כמו הנוכחית — אחת.
-  const statsAt = Date.now();
-  const [sitesRes, statsRes, uptimeRes, globalsRes, svcRes, prevRes, compRes] = await Promise.all([
+  // ============================================================
+  // ⚠️ הסטטיסטיקות נקראות מטבלה, לא מחושבות כאן (07/10/2026)
+  // ============================================================
+  // עד היום כל מסך הריץ בעצמו site_stats (פעמיים — התקופה והקודמת), site_uptime
+  // ו-site_uptime_service: ~12 שניות מסד לכל טעינה, וזה מה שגמר את הקרדיטים של
+  // המעבד. עכשיו pg_cron מריץ את **אותן ארבע פונקציות** פעם ב-10 דקות לכולם
+  // (master/db/card-metrics.postgres.sql), והמסך קורא שורה לכל אתר.
+  //
+  // ⚠️ **החלון אינו של המסך יותר.** fromIso / toIso / prevFromIso כבר לא קובעים
+  // כאן כלום: app.card_metrics_window מחשב את אותו "שבוע מחצות מקומית" בדיוק, ו-
+  // tests/card-metrics.test.js בודק שהוא זהה ל-periodFromIso. המספרים נכונים
+  // ל-`computed_at` של השורה — לכל היותר 10 דקות אחורה.
+  //
+  // ⚠️ **ובלי נפילה לחישוב חי.** טבלה ריקה (ה-cron לא רץ) תציג "0 פעולות", וזה
+  // בכוונה: נפילה שקטה לחישוב במסך היא בדיוק מה שהיה מחזיר את העומס בלי שאיש ידע.
+  const [sitesRes, metricsRes, globalsRes, compRes] = await Promise.all([
     supabase.from("sites").select("*"),
-    stat("site_stats",   { p_site_ids: null, p_from: fromIso, p_to: toIso }),
-    stat("site_uptime",  { p_site_ids: null, p_from: fromIso, p_to: toIso }),
+    withStats
+      ? supabase.from("site_card_metrics").select("site_id, computed_at, stats, prev, uptime, svc")
+      : Promise.resolve(skipped),
     supabase.rpc("site_globals", { p_site_ids: null }),
-    // ⚠️ זמינות בתוך שעות השירות — מחזירה שורה **רק** לאתר שחובר
-    // ברמזור (עמודת "קוד אתר"). אתר שלא חובר ממשיך על 24/7 כפי שהיה,
-    // כלומר השינוי חל רק על מה שמישהו הגדיר במפורש.
-    stat("site_uptime_service", { p_site_ids: null, p_from: fromIso, p_to: toIso }),
-    prevFromIso
-      ? stat("site_stats", { p_site_ids: null, p_from: prevFromIso, p_to: fromIso })
-      : Promise.resolve({ data: [], error: null }),
     // ⚠️ רמזורי בודק מוסמך ותחזוקה מונעת — **אינה קטלנית**, כמו site_uptime_service.
     // כשל כאן לא יפיל את רשימת האתרים; כל אתר יקבל `{unknown:true}` (מנורה "?"),
     // ו-useSites ישמור את המצב האחרון הידוע עם סימון stale (D19).
@@ -91,6 +96,16 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     // אותה פעם בכמה דקות; כשלא התבקשה — `compliance: null` = "השאר את הקודם".
     withCompliance ? supabase.rpc("site_compliance", { p_site_ids: null }) : Promise.resolve(null),
   ]);
+
+  // השורות השמורות → אותם ארבעה "תשובות RPC" שהמיפוי למטה קרא תמיד. svc קיים רק
+  // לאתר שחובר ברמזור — אתר שלא חובר ממשיך על 24/7 כפי שהיה.
+  const rows = metricsRes.data || [];
+  const pick = (k) => rows.map((r) => r[k]).filter(Boolean);
+  const statsRes  = { data: pick("stats"),  error: metricsRes.error };
+  const uptimeRes = { data: pick("uptime"), error: null };
+  const prevRes   = { data: pick("prev"),   error: null };
+  const svcRes    = withStats ? { data: pick("svc"), error: null } : skipped;
+  const computedAt = new Map(rows.map((r) => [r.site_id, Date.parse(r.computed_at)]));
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
   if (failed) {
@@ -137,9 +152,9 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     return {
       ...site,
       // טעינה חיה: שדות הסטטיסטיקה שלמטה הם ברירת מחדל ולא ערך (keepLastStats).
-      // statsAt — מתי חושבו, ו-null כשלא חושבו בשליפה הזו.
+      // statsAt — מתי חושבו (computed_at של השורה), ו-null כשאין שורה או כשלא נקראו.
       statsSkipped: !withStats,
-      statsAt: withStats ? statsAt : null,
+      statsAt: withStats ? (computedAt.get(site.id) ?? null) : null,
       // ⚠️ רמת השירות מגיעה מהרמזור, ואתר בלי שורה בו הוא "לא חובר" —
       // ראה `effectiveTier`.
       tier: effectiveTier(svc, Boolean(svcRes?.error), site.tier),

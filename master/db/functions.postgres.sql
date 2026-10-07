@@ -73,7 +73,7 @@
 -- שהקובץ הזה נשען עליה ("הקובץ הוא מצב היעד").
 --
 -- ⚠️ **והסכמה `app` נוצרת כאן, ולא רק ב-security.** הקובץ הזה מגדיר
--- `app.op_served` ו-`app.error_segments`, והוא מוחל **לפני** security —
+-- `app.served_operations` ו-`app.error_segments`, והוא מוחל **לפני** security —
 -- שם היה ה-`CREATE SCHEMA` היחיד. בייצור הסכמה כבר קיימת ולכן זה לא נראה;
 -- על מסד חדש (שחזור, מסד בדיקות, יציאה מ-Supabase) העלייה נפלה על
 -- `schema "app" does not exist`. נמדד על Postgres 17 נקי, 17/09/2026.
@@ -477,20 +477,48 @@ COMMENT ON FUNCTION public.site_segments_collapsed(integer[], text, text) IS
 --
 -- ⚠️ גבול חצי-פתוח (< end): פעולה ברגע שהחלון נגמר היא כבר שירות.
 -- ⚠️ חלון שסומן כניסוי אינו מכסה דבר — אותו כלל כמו בכל שאר המקומות.
-CREATE OR REPLACE FUNCTION app.op_served(p_site_id integer, p_occurred_at text)
-RETURNS boolean
+--
+-- ============================================================
+-- ⚠️ app.served_operations() — "הפעולות שהן שירות", כמקור ולא כמסנן
+-- ============================================================
+-- עד 07/10/2026 זו הייתה `app.op_served(site_id, occurred_at)`: פונקציה בוליאנית
+-- שנקראה **לכל שורת פעולה**. פונקציה סקלרית שגופה תת-שאילתה (NOT EXISTS) אינה
+-- מתמזגת לשאילתה הקוראת לעולם — וה-SET search_path רק הוסיף עלות לכל קריאה.
+-- נמדד בייצור: 1.1 מיליון סריקות של maintenance_windows (35 שורות!) ב-5 דקות.
+--
+-- ⚠️ **והסרת ה-SET לבדה מחמירה.** נמדד על Postgres 17 מקומי, 40,000 פעולות:
+--     op_served עם SET        196ms   (לא מתמזגת)
+--     op_served בלי SET       661ms   (לא מתמזגת — ואיטית פי 3)
+--     served_operations()      64ms   (מתמזגת: Merge/Hash Anti Join)
+--   ובשאילתה בצורת site_stats: 48.9ms מול 17.1ms, ולאתר אחד 2.9ms מול 1.5ms.
+--   התוצאות זהות בכל החלופות, כולל חלונות שבוטלו ושסומנו כניסוי.
+--
+-- הצורה הזו — פונקציית SQL שמחזירה קבוצה, בלי SET, בלי SECURITY DEFINER —
+-- **מתמזגת** לתוך ה-FROM של הקורא, וה-NOT EXISTS הופך ל-anti join שסורק את
+-- maintenance_windows פעם אחת. ההגדרה (אילו חלונות, גבול חצי-פתוח) נשארת
+-- **במקום אחד** — וזו הסיבה שלא שוכפל NOT EXISTS לשש השאילתות.
+--
+-- ⚠️ **אסור להוסיף לה SET או SECURITY DEFINER** — שתיהן מונעות את המיזוג, והכול
+-- יחזור לפעולה-פעולה בלי שום שגיאה. `tests/served-operations.test.js` בודק את זה
+-- בתוכנית השאילתה עצמה.
+CREATE OR REPLACE FUNCTION app.served_operations()
+RETURNS SETOF public.operations
 LANGUAGE sql
 STABLE
-SET search_path = public, app, pg_temp
 AS $$
-  SELECT NOT EXISTS (
-    SELECT 1 FROM public.maintenance_windows w
-     WHERE w.site_id = p_site_id
-       AND w.excluded_at IS NULL
-       AND p_occurred_at >= w.started_at
-       AND p_occurred_at <  COALESCE(w.cancelled_at, w.expires_at)
-  );
+  SELECT o.*
+    FROM public.operations o
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.maintenance_windows w
+      WHERE w.site_id = o.site_id
+        AND w.excluded_at IS NULL
+        AND o.occurred_at >= w.started_at
+        AND o.occurred_at <  COALESCE(w.cancelled_at, w.expires_at)
+   );
 $$;
+
+-- הגרסה הקודמת — שתי הגדרות לאותו כלל הן בדיוק מה שהיה סוטה.
+DROP FUNCTION IF EXISTS app.op_served(integer, text);
 
 -- ============================================================
 -- app.error_segments — הגדרה **אחת** לשאלה "מהי תקלה שנספרת"
@@ -635,7 +663,7 @@ STABLE
 AS $$
 WITH ops AS (
   SELECT o.site_id, COUNT(*)::int AS n
-    FROM operations o
+    FROM app.served_operations() o
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      -- ⚠️ הוצאה ידנית של מנהל. **לא** מוזגה ל-is_anomaly: זה שיפוט של
      -- הקליטה על סמך הנתון, וזו הצהרה של אדם. מיזוגם היה מוחק את ההבחנה.
@@ -644,8 +672,7 @@ WITH ops AS (
      AND o.start_end = 'end'
      -- מעבר פיזי אחד = פעולה אחת: ניסיון שנקטע והוחלף אינו נספר שוב
      AND o.superseded_by IS NULL
-     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served
-     AND app.op_served(o.site_id, o.occurred_at)
+     -- ⚠️ חלון תחזוקה ידני — ראה app.served_operations
      -- לקסיקוגרפי על TEXT — idx_operations_site_time נשאר בשימוש
      AND o.occurred_at >= p_from
      AND o.occurred_at < p_to
@@ -1127,7 +1154,7 @@ ALTER TABLE public.events REPLICA IDENTITY FULL;
 -- report_monthly, report_by_site ו-report_site_months מוצגות באותו מסך.
 -- עד 23/09/2026 הן נבדלו בארבעה דברים, ונמצאו בסקירה:
 --   • `excluded_at` לא סונן באף אחת — "ניסוי" נעלם מהדשבורד ונשאר בדוח;
---   • `app.op_served` (חלון ידני) הוחל רק בטבלה לפי אתר;
+--   • `app.served_operations` (חלון ידני) הוחל רק בטבלה לפי אתר;
 --   • תקלה נספרה "חופפת לטווח" בטבלה לפי אתר ו"התחילה בטווח" בשתיים האחרות;
 --   • החודש נחתך לפי UTC, והגבולות מהדשבורד הם חצות **בישראל**.
 -- tests/report-consistency.test.js בודק את ארבעתם, וכל אחד נכשל על הגרסה הישנה.
@@ -1154,7 +1181,7 @@ WITH ops AS (
          COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
          COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits,
          COUNT(DISTINCT o.site_id)::int AS sites
-    FROM operations o
+    FROM app.served_operations() o
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.is_anomaly = 0
      AND o.superseded_by IS NULL
@@ -1163,8 +1190,7 @@ WITH ops AS (
      AND o.occurred_at >= p_from
      AND o.occurred_at <  p_to
      AND o.excluded_at IS NULL
-     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served. כמו report_by_site.
-     AND app.op_served(o.site_id, o.occurred_at)
+     -- ⚠️ חלון תחזוקה ידני — ראה app.served_operations. כמו report_by_site.
    GROUP BY 1
 ),
 errs AS (
@@ -1277,12 +1303,11 @@ WITH ids AS (
 ),
 ops AS (
   SELECT o.site_id, COUNT(*)::int AS operations
-    FROM operations o
+    FROM app.served_operations() o
    WHERE o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
      AND o.occurred_at >= p_from AND o.occurred_at < p_to
      AND o.excluded_at IS NULL
-     -- ⚠️ חלון תחזוקה ידני — ראה app.op_served
-     AND app.op_served(o.site_id, o.occurred_at)
+     -- ⚠️ חלון תחזוקה ידני — ראה app.served_operations
    GROUP BY o.site_id
 ),
 -- המונה נמדד על **כל** הפעולות: בלאי מכני, לא ספירת חניות.
@@ -1433,12 +1458,11 @@ WITH ops AS (
          COUNT(*)::int AS operations,
          COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::int AS entries,
          COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::int  AS exits
-    FROM operations o
+    FROM app.served_operations() o
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.is_anomaly = 0 AND o.superseded_by IS NULL AND o.start_end = 'end'
      AND o.occurred_at >= p_from AND o.occurred_at < p_to
      AND o.excluded_at IS NULL
-     AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY 1, 2
 ),
 -- המונה נמדד על כל הפעולות (בלאי מכני), ודורש שתי קריאות לפחות באותו חודש.
@@ -1625,18 +1649,17 @@ ops AS (
          COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::integer      AS entries,
          COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::integer       AS exits
     FROM b
-    JOIN operations o
+    JOIN app.served_operations() o
       ON o.occurred_at >= b.f
      AND o.occurred_at < b.t
    WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      -- ⚠️ הסינון **חייב** להיות זהה לזה של site_stats — כולל
-     -- app.op_served — אחרת כניסות+יציאות לא יסתכמו לסך הפעולות **על
+     -- app.served_operations — אחרת כניסות+יציאות לא יסתכמו לסך הפעולות **על
      -- אותו מסך**, וזה נראה כמו טעות עיגול ולא כמו מקור שונה.
      AND o.excluded_at IS NULL
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
      AND o.superseded_by IS NULL
-     AND app.op_served(o.site_id, o.occurred_at)
    GROUP BY b.bucket, o.site_id
 ),
 -- הקיפול, פעם אחת, על כל התקופה.
@@ -1823,7 +1846,7 @@ AS $$
     -- ⚠️ **החלונות שמכסים את התקופה — ולא רק אלה שהתחילו בה.** `wins` למעלה
     -- הוא "כמה פעמים הופעלה תחזוקה בתקופה" ונשאר כך. אבל חלון שהתחיל לפני
     -- התקופה ונמשך לתוכה עדיין מכסה פעולות ותקלות שבה — כך סופרים site_stats
-    -- ו-app.op_served, ובלעדיו החלון היה סופר אותן והכרטיס לא. אותה חלוקה
+    -- ו-app.served_operations, ובלעדיו החלון היה סופר אותן והכרטיס לא. אותה חלוקה
     -- לפי started_at, ולכן כל חלון נופל בחלק אחד בדיוק.
     'cover', jsonb_build_object(
       'cols', '["site_id","started_at","expires_at","cancelled_at","excluded_at"]'::jsonb,

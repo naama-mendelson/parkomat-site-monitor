@@ -1147,3 +1147,30 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   entry, not every 5 minutes.
 - ⚠️ **The known cost was chosen:** a wall screen left visible shows the numbers from when it
   was opened. Do not reconnect statistics to a timer without asking.
+
+### The structural fixes, same day
+
+- **Card statistics are computed once, not per screen.** `pg_cron` job `parkomat-card-metrics`
+  runs `app.refresh_site_card_metrics()` every 10 minutes and writes one row per site to
+  `site_card_metrics` (`master/db/card-metrics.postgres.sql`). It calls the same four
+  functions, and every column is their output. The window comes from `app.card_metrics_window`,
+  which matches `periodFromIso("week")` exactly, DST included (`tests/card-metrics.test.js`).
+  The columns are `json`, not `jsonb`, so floats keep PostgREST's representation. `sitesDirect`
+  reads the table. It never falls back to computing live, because a silent fallback would
+  bring the load back unseen. An empty table shows "0 operations".
+- **`app.op_served` is gone. Read operations from `app.served_operations()`.** A scalar SQL
+  function whose body is a subquery is never inlined. Measured on 40k operations: 196 ms as it
+  was, **661 ms with `SET` removed**, and 64 ms as an inlinable set-returning function (anti
+  join). Results are identical. ⚠️ Never give it `SET` or `SECURITY DEFINER`, because either one
+  silently stops the inlining. A test checks the query plan.
+- **Applying SQL no longer re-enables a paused cron job.** `app.ensure_cron_job` creates a job
+  that doesn't exist. For one that does, it updates the schedule and command and leaves
+  `active` alone. Before this, `apply-sql.js --apply` (the full `db.init()`) would have quietly
+  re-enabled `parkomat-agent-silence`.
+- **Mass-silence guard in `mark_silent_agents`.** If at least 5 sites, and at least half of
+  those currently alive, go silent in the same scan, it marks none of them. It writes one
+  `ingest_drops` row (`silence_mass_skipped`), which raises the hourly drops alert. Sites don't
+  fail together; a slow database does. The function also now reports and marks from a single
+  list of IDs, where before it wrote the same conditions twice.
+- ⚠️ **`parkomat-agent-silence` stays paused until compute is upgraded off NANO** (owner's
+  call). Re-enable with `cron.alter_job(jobid, active := true)`.

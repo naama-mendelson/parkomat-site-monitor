@@ -376,9 +376,10 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_ids   integer[];   -- מי שתק — רשימה **אחת**, שממנה גם מדווחים וגם מסמנים
+  v_alive integer;     -- כמה אתרים נחשבים חיים כרגע (הבסיס לשומר ההמונים)
 BEGIN
-  RETURN QUERY
   WITH expected AS (
     -- אתרים שיש להם סוכן פעיל עם זהות, ושכבר דיברו לפחות פעם אחת.
     -- ⚠️ **`LEFT JOIN` ותנאי `IS NOT NULL`, ולא `JOIN` פשוט.** סוכן שהוקם
@@ -391,11 +392,11 @@ BEGIN
       JOIN app_users u ON u.site_id = s.id AND u.role = 'agent' AND u.is_active
       LEFT JOIN alive a ON a.site_id = s.id
      WHERE a.seen_at IS NOT NULL
-  ), silent AS (
-    SELECT e.id, e.code,
-           (EXTRACT(EPOCH FROM (now() - e.seen_at)) / 60)::integer AS quiet
+  ), watched AS (
+    -- האתרים שהסריקה **שומרת** עליהם כרגע: לא מנותקים כבר, ולא בחלון תחזוקה.
+    SELECT e.*
       FROM expected e
-     WHERE e.seen_at < now() - make_interval(mins => p_stale_minutes)
+     WHERE e.status <> 'no_comm'
        -- ⚠️ **הגנה בעומק, ולא ההגנה — וזה נמדד.** כתבתי כאן שהתנאי הוא
        -- מה שמונע מקטע נתק חדש בכל סריקה. מוטציה הראתה אחרת: הסרתו
        -- השאירה את השער ירוק, כי `app.ingest_state` **כבר** מחזיר
@@ -405,30 +406,6 @@ BEGIN
        -- אבל מי ששומר על הזמינות הוא שומר האי-שינוי שם. תיאור לא מדויק
        -- של מי מגן על מה הוא בדיוק איך שמישהו מוחק את ההגנה האמיתית.
 
-       -- ============================================================
-       -- ⚠️ שום דבר לא הגיע מאז שהפעימה נעצרה
-       -- ============================================================
-       -- נמדד באתר 1326 ב-09/09/2026: הפעימה הישירה נשברה (סיסמה
-       -- פסולה), אבל MQTT המשיך למסור מצוין. הסריקה סימנה `no_comm`
-       -- **כל דקה**, MQTT החזיר אותו ל'מוכן' תוך שתי דקות, וכך יומיים.
-       -- החתימה הייתה חד-משמעית: כל מקטע נתק התחיל בשנייה `:00` —
-       -- צוואה של ברוקר מגיעה בשנייה אקראית, סריקה מתוזמנת לא.
-       --
-       -- ⚠️ **וזו אינה תקלה של אתר אחד.** הפונקציה בדקה את הפעימה
-       -- בלבד, ולכן **כל** אתר שהמסלול הישיר שלו נשבר היה מוצג מנותק
-       -- לנצח בזמן שהוא מדווח היטב. היום יש 14 מועמדים כאלה.
-       --
-       -- ⚠️ **והתנאי אינו "שקט".** שתיקה כבר נמדדה כלא-סימן: פערים של
-       -- 61–68 שעות בין הודעות הם שגרה. התנאי כאן חזק יותר — *שום
-       -- דבר לא הגיע **מאז** שהפעימה נעצרה*, כלומר שני המסלולים
-       -- שותקים יחד. אתר שנפל באמת עונה על זה; אתר שרק הפעימה שלו
-       -- נשברה — לא.
-       --
-       -- ⚠️ `last_seen` הוא TEXT ו-`no_comm` **אינו** מעדכן אותו (ראה
-       -- ingest_state), ולכן הוא באמת "מתי הגיעה הודעה אמיתית".
-       -- ו-NULL פירושו שדבר לא הגיע מעולם — ולכן `-infinity`.
-       AND COALESCE(e.last_seen::timestamptz, '-infinity'::timestamptz) <= e.seen_at
-       AND e.status <> 'no_comm'
        -- ============================================================
        -- ⚠️ שתי משמעויות ל"תחזוקה", וכאן הן הושוו — וזה הסתיר אתר
        -- ============================================================
@@ -461,8 +438,74 @@ BEGIN
             AND w.excluded_at IS NULL
             AND v_now >= w.started_at
             AND v_now <  COALESCE(w.cancelled_at, w.expires_at))
+  ), silent AS (
+    SELECT e.id
+      FROM watched e
+     WHERE e.seen_at < now() - make_interval(mins => p_stale_minutes)
+       -- ============================================================
+       -- ⚠️ שום דבר לא הגיע מאז שהפעימה נעצרה
+       -- ============================================================
+       -- נמדד באתר 1326 ב-09/09/2026: הפעימה הישירה נשברה (סיסמה
+       -- פסולה), אבל MQTT המשיך למסור מצוין. הסריקה סימנה `no_comm`
+       -- **כל דקה**, MQTT החזיר אותו ל'מוכן' תוך שתי דקות, וכך יומיים.
+       -- החתימה הייתה חד-משמעית: כל מקטע נתק התחיל בשנייה `:00` —
+       -- צוואה של ברוקר מגיעה בשנייה אקראית, סריקה מתוזמנת לא.
+       --
+       -- ⚠️ **וזו אינה תקלה של אתר אחד.** הפונקציה בדקה את הפעימה
+       -- בלבד, ולכן **כל** אתר שהמסלול הישיר שלו נשבר היה מוצג מנותק
+       -- לנצח בזמן שהוא מדווח היטב. היום יש 14 מועמדים כאלה.
+       --
+       -- ⚠️ **והתנאי אינו "שקט".** שתיקה כבר נמדדה כלא-סימן: פערים של
+       -- 61–68 שעות בין הודעות הם שגרה. התנאי כאן חזק יותר — *שום
+       -- דבר לא הגיע **מאז** שהפעימה נעצרה*, כלומר שני המסלולים
+       -- שותקים יחד. אתר שנפל באמת עונה על זה; אתר שרק הפעימה שלו
+       -- נשברה — לא.
+       --
+       -- ⚠️ `last_seen` הוא TEXT ו-`no_comm` **אינו** מעדכן אותו (ראה
+       -- ingest_state), ולכן הוא באמת "מתי הגיעה הודעה אמיתית".
+       -- ו-NULL פירושו שדבר לא הגיע מעולם — ולכן `-infinity`.
+       AND COALESCE(e.last_seen::timestamptz, '-infinity'::timestamptz) <= e.seen_at
   )
-  SELECT s.code, s.quiet FROM silent s;
+  SELECT COALESCE((SELECT array_agg(s.id ORDER BY s.id) FROM silent s), '{}'::integer[]),
+         (SELECT COUNT(*)::int FROM watched)
+    INTO v_ids, v_alive;
+
+  -- ============================================================
+  -- ⚠️ שומר ההמונים: כשחצי מהאתרים שותקים יחד — זה אנחנו, לא הם
+  -- ============================================================
+  -- נמדד ב-07/10/2026: המסד (NANO) נשאר בלי קרדיטים למעבד, והסריקה הזו
+  -- לקחה 52 מתוך 66 השניות של המסד בדקה אחת. הפעימות לא הצליחו להיכנס,
+  -- **וכל 61 האתרים סומנו `no_comm` בבת אחת** — מקטע נתק פיקטיבי בהיסטוריה
+  -- של כל אתר, ואירוע לכל אחד מהם. ובאותו זמן, כל מסך פתוח טען הכול מחדש
+  -- על כל אירוע כזה (תוקן בדשבורד), כלומר העומס הזין את עצמו.
+  --
+  -- ⚠️ **אתרים אינם נופלים יחד.** אתר נופל בגלל חשמל, חומת אש או סיסמה —
+  -- דברים מקומיים. כשרוב האתרים "נעצרו" באותה דקה, הסיבה המשותפת היחידה
+  -- היא הצד שלנו: מסד איטי, Supabase שלא עונה, או קליטה שנתקעה. סימון
+  -- שלהם כמנותקים אינו מידע — הוא רעש שנכתב לצמיתות לזמינות של כל אתר.
+  --
+  -- לכן: לפחות 5 אתרים **וגם** לפחות מחצית מאלה שנחשבים חיים — לא מסמנים
+  -- אף אחד בסבב הזה, ורושמים שורה אחת ב-`ingest_drops` עם המספרים. היא
+  -- **אינה** ברשימת השקטים של `check_ingestion_health`, ולכן מתריעה (פעם
+  -- בשעה, כשהדגל דלוק) — מסד שאינו מקבל פעימות הוא בדיוק מה שצריך לדעת.
+  --
+  -- ⚠️ **המחיר, במפורש:** אם באמת רוב האתרים ייפלו באותה דקה (למשל ספק
+  -- אינטרנט אחד לכולם), הסימון יחכה עד שהמספר ירד מתחת לסף. 5 ומחצית
+  -- נבחרו כך שאתר בודד, ושניים-שלושה שנופלים יחד (הפסקת חשמל אזורית),
+  -- מסומנים בדיוק כמו קודם.
+  IF cardinality(v_ids) >= 5 AND cardinality(v_ids) * 2 >= v_alive THEN
+    INSERT INTO ingest_drops (at, topic, site_code, kind, reason, detail)
+    VALUES (v_now, 'cron/agent-silence', NULL, 'silence', 'silence_mass_skipped',
+            cardinality(v_ids) || ' מתוך ' || v_alive ||
+            ' האתרים החיים שתקו יחד — כנראה המסד או הקליטה ולא האתרים. לא סומנו.');
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT s.code, (EXTRACT(EPOCH FROM (now() - a.seen_at)) / 60)::integer
+    FROM sites s
+    JOIN alive a ON a.site_id = s.id
+   WHERE s.id = ANY(v_ids);
 
   -- ============================================================
   -- ⚠️ הסימון עובר ב-ingest_state ולא ב-UPDATE ישיר
@@ -472,24 +515,13 @@ BEGIN
   -- והאירוע ל-`events`. UPDATE ישיר על `sites.status` היה משנה את הצ'יפ
   -- על המסך ומשאיר את ההיסטוריה בלי המקטע — כלומר זמינות שלא יודעת
   -- שהאתר היה מנותק.
-  PERFORM app.ingest_state(e.id, 'no_comm', v_now, NULL)
-     FROM sites e
-     JOIN app_users u ON u.site_id = e.id AND u.role = 'agent' AND u.is_active
-     JOIN alive a     ON a.site_id = e.id
-    WHERE a.seen_at < now() - make_interval(mins => p_stale_minutes)
-      -- ⚠️ **אותו תנאי בדיוק כמו למעלה, ובכוונה.** שני הביטויים
-      -- חייבים להסכים: אחד קובע מה מדווח והשני מה נכתב, ופער ביניהם
-      -- פירושו אתר שמסומן מנותק ואינו מופיע בדוח — כלומר שינוי מצב
-      -- שאיש אינו יודע עליו.
-      AND COALESCE(e.last_seen::timestamptz, '-infinity'::timestamptz) <= a.seen_at
-      AND e.status <> 'no_comm'
-      -- ⚠️ אותו תנאי בדיוק כמו למעלה — חלון תחזוקה פעיל, ולא הסטטוס.
-      AND NOT EXISTS (
-        SELECT 1 FROM public.maintenance_windows w
-         WHERE w.site_id = e.id
-           AND w.excluded_at IS NULL
-           AND v_now >= w.started_at
-           AND v_now <  COALESCE(w.cancelled_at, w.expires_at));
+  --
+  -- ⚠️ **מאותה רשימה בדיוק שדווחה למעלה** (v_ids). עד 07/10/2026 התנאים
+  -- נכתבו פעמיים — פעם לדוח ופעם לסימון — עם הערה ש"שני הביטויים חייבים
+  -- להסכים". רשימה אחת היא הדרך שבה הם לא יכולים שלא להסכים.
+  PERFORM app.ingest_state(s.id, 'no_comm', v_now, NULL)
+     FROM sites s
+    WHERE s.id = ANY(v_ids);
 END;
 $fn$;
 
@@ -977,12 +1009,51 @@ SELECT cron.schedule('parkomat-ingestion-health', '*/10 * * * *',
 -- ⚠️ **ואין כאן התראת push, בכוונה:** הסימון עצמו מפיק אירוע ב-`events`,
 -- ומשם רצה שרשרת ההתראות הרגילה של תקלה. התראה שנייה מכאן הייתה שולחת
 -- שתי הודעות על אותו אירוע.
-DO $$
+-- ============================================================
+-- ⚠️ app.ensure_cron_job — החלה של הקובץ **אינה** מבטלת השהיה ידנית
+-- ============================================================
+-- עד 07/10/2026 כל משימה כאן נקבעה ב-`unschedule` ואחריו `schedule`. זה
+-- אידמפוטנטי — וגם מוחק את המשימה ויוצר אותה מחדש **פעילה**. באותו יום
+-- `parkomat-agent-silence` הושהתה ביד (`cron.alter_job(..., active := false)`)
+-- כי היא זו שהפכה מסד איטי לסימון כל האתרים כמנותקים, והוכרע להשאיר אותה
+-- מושהית עד שהמסד יוגדל. `tools/apply-sql.js --apply` מריץ את הקובץ הזה —
+-- כלומר ההחלה הבאה, של כל שינוי שהוא, הייתה מדליקה אותה בחזרה בשקט.
+--
+-- כאן: משימה שאינה קיימת — נוצרת. משימה שקיימת — מתעדכנים רק הלוח
+-- והפקודה, ו-`active` **נשאר כפי שהוא** (`cron.alter_job` עם active NULL).
+-- השהיה היא החלטה של אדם; קוד שמוחל אינו המקום לבטל אותה.
+--
+-- ⚠️ ההשוואה ב-apply-sql (CRON_SQL) רואה לוח ופקודה, לא `active` — ולכן
+-- משימה מושהית נראית שם "זהה לקוד", וזה נכון: הקוד אינו קובע אם היא פועלת.
+CREATE OR REPLACE FUNCTION app.ensure_cron_job(p_name text, p_schedule text, p_command text)
+RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  v_id bigint;
 BEGIN
-  PERFORM cron.unschedule('parkomat-agent-silence');
-EXCEPTION WHEN OTHERS THEN NULL;
-END
-$$;
+  SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = p_name;
+  IF v_id IS NULL THEN
+    PERFORM cron.schedule(p_name, p_schedule, p_command);
+  ELSE
+    PERFORM cron.alter_job(v_id, schedule := p_schedule, command := p_command);
+  END IF;
+END;
+$fn$;
 
-SELECT cron.schedule('parkomat-agent-silence', '* * * * *',
-                     'SELECT app.mark_silent_agents(3)');
+REVOKE ALL ON FUNCTION app.ensure_cron_job(text, text, text) FROM PUBLIC;
+
+-- ⚠️ **מושהית מ-07/10/2026 עד הגדלת המסד** (ראה למעלה). ensure ולא
+-- unschedule + schedule — כדי שההחלה לא תדליק אותה. להפעלה מחדש, אחרי ההגדלה:
+--   SELECT cron.alter_job(jobid, active := true) FROM cron.job WHERE jobname = 'parkomat-agent-silence';
+SELECT app.ensure_cron_job('parkomat-agent-silence', '* * * * *',
+                           'SELECT app.mark_silent_agents(3)');
+
+-- ============================================================
+-- הסטטיסטיקות של כרטיסי הדשבורד — פעם ב-10 דקות, ולא פעם למסך
+-- ============================================================
+-- ראה card-metrics.postgres.sql. ⚠️ לא כל דקה: סטטיסטיקה שבועית אינה זזה
+-- בדקות, וכל חישוב הוא כמה שניות של מעבד על שרת NANO. 10 דקות הן ~0.5%
+-- ממעבד אחד — מול ~12 שניות **לכל מסך בכל דקה** לפני 07/10/2026.
+SELECT app.ensure_cron_job('parkomat-card-metrics', '*/10 * * * *',
+                           'SELECT app.refresh_site_card_metrics()');

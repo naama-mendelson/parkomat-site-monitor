@@ -447,7 +447,7 @@ svc AS (
 -- ---------- פעולות בתוך חלון השירות ----------
 ops AS (
   SELECT o.site_id, count(DISTINCT o.id)::int AS n
-    FROM operations o
+    FROM app.served_operations() o
     JOIN win ON win.site_id = o.site_id
    WHERE o.occurred_at >= p_from
      AND o.occurred_at <  p_to
@@ -455,7 +455,6 @@ ops AS (
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
      AND o.superseded_by IS NULL
-     AND app.op_served(o.site_id, o.occurred_at)
      AND o.occurred_at::timestamptz >= win.starts_at
      AND o.occurred_at::timestamptz <  win.ends_at
    GROUP BY o.site_id
