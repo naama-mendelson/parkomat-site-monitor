@@ -66,10 +66,11 @@ function HelpPanel({ onClose }) {
             </Row>
           </Section>
 
-          {/* ⚠️ הספים כאן הם של ה-SQL: "חודש" = app.compliance_warn_days (30),
-              "חצי שנה" = app.pm_interval_months (6), ליקוי באיחור = due_on < היום.
-              הצבעים נקבעים שם בלבד — שינוי שם מחייב שינוי כאן. המילים של בעלת
-              המוצר (06/10/2026): "ירוק תקין, צהוב צריך להתכונן, אדום לא תקין". */}
+          {/* ⚠️ הספים כאן הם של ה-SQL: "חודש" = app.compliance_warn_days (30) — גם למסמך וגם
+              למועד תיקון, "חצי שנה" = app.pm_interval_months (6), עבר מועד = due_on < היום.
+              הצבעים נקבעים שם בלבד (app.compliance_machine_rows) — שינוי שם מחייב שינוי כאן.
+              הטבלה של בעלת המוצר (06/10/2026): 2 שחור-לבן · 1 ירוק · 4, 9 צהוב · 8 צהוב חזק ·
+              3 כתום · 5, 6, 7 אדום. הדוגמאות הן LampSwatch — אותן מחלקות ומשתנים כמו בכרטיס. */}
           {/* תחזוקה מוסתרת באתר החי (PM_ENABLED) → המקרא מדבר על הבודק בלבד */}
           <Section
             title={PM_ENABLED ? "בודק מוסמך ותחזוקה מונעת" : "בודק מוסמך"}
@@ -78,18 +79,26 @@ function HelpPanel({ onClose }) {
               : "המנורה עם הלוח והווי בכרטיס — תסקיר בודק מוסמך. לחיצה עליה פותחת את עמוד הבודק."}
           >
             <Row term={<span className="help-lamp"><LampSwatch state="ok" /> בתוקף</span>}>
-              תקין. יותר מחודש עד שהתוקף פג.
+              תקין: התסקיר בתוקף ואין ליקויים פתוחים.
+            </Row>
+            <Row term={<span className="help-lamp"><LampSwatch state="fixing" /> ליקויים בטיפול</span>}>
+              התסקיר בתוקף, ויש ליקויים שעוד יש זמן לתקן אותם.
             </Row>
             <Row term={<span className="help-lamp"><LampSwatch state="soon" /> עומד לפוג תוך חודש</span>}>
-              {PM_ENABLED ? "צריך להתכונן: לזמן בודק או לתאם תחזוקה. בבודק — גם" : "צריך להתכונן: לזמן בודק. גם"}{" "}
-              כשכל הליקויים תוקנו ומחכים לתסקיר נקי מהבודק, וכש<strong>ליקוי עבר את מועד התיקון</strong> והתסקיר עצמו בתוקף.
+              התסקיר פג בעוד פחות מחודש, או שמועד התיקון של ליקוי בעוד פחות מחודש.
+              {PM_ENABLED ? " בתחזוקה — הביקור הבא נדרש תוך חודש." : ""}
             </Row>
-            <Row warn term={<span className="help-lamp"><LampSwatch state="expired" /> לא בתוקף</span>}>
-              <strong>לא תקין:</strong> התוקף פג, או שאין במערכת {PM_ENABLED ? "תסקיר או ביקור תחזוקה" : "תסקיר"}.
+            <Row term={<span className="help-lamp"><LampSwatch state="awaiting" /> ממתין לתסקיר נקי</span>}>
+              הליקויים טופלו — צריך לזמן את הבודק ולהעלות את התסקיר הנקי שלו.
+            </Row>
+            <Row term={<span className="help-lamp"><LampSwatch state="overdue" /> עבר מועד תיקון</span>}>
+              התסקיר בתוקף, אבל ליקוי לא תוקן עד המועד.
+            </Row>
+            <Row term={<span className="help-lamp"><LampSwatch state="expired" /> לא בתוקף</span>}>
+              <strong>לא תקין:</strong> התוקף פג, או שאין במערכת {PM_ENABLED ? "תסקיר או ביקור תחזוקה" : "תסקיר"} — בלי קשר לליקויים.
             </Row>
             <Row term={<span className="help-lamp"><span className="cl-badge">2</span> מספר ליד המנורה</span>}>
-              ליקויים פתוחים. <span className="cl-badge cl-badge--overdue">2</span> מלא באדום —
-              לפחות אחד מהם עבר את מועד התיקון.
+              כמה ליקויים פתוחים.
             </Row>
             <Row term={<span className="help-lamp"><LampSwatch state="unknown" /> סימן שאלה</span>}>
               הסטטוס לא נטען — איננו יודעים, וזה לא "תקין".

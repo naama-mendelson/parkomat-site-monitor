@@ -117,8 +117,12 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $$
               WHEN p_due - p_today <= p_warn THEN 'soon'
               ELSE 'ok' END
 $$;
+-- ⚠️ שבעה מצבים לנורת הבודק (בעלת המוצר, 06/10/2026), מהחמור: expired (אדום) > overdue (כתום)
+-- > awaiting (צהוב חזק) > soon (צהוב) > fixing (ירוק) > ok (שחור-לבן) > none (אפור).
+-- התחזוקה המונעת והתוקף הטהור משתמשים רק ב-ok/soon/expired/none — הסדר היחסי שלהם נשמר.
 CREATE OR REPLACE FUNCTION app.light_rank(p text) RETURNS integer LANGUAGE sql IMMUTABLE AS $$
-  SELECT CASE p WHEN 'expired' THEN 3 WHEN 'soon' THEN 2 WHEN 'ok' THEN 1 ELSE 0 END $$;
+  SELECT CASE p WHEN 'expired' THEN 6 WHEN 'overdue' THEN 5 WHEN 'awaiting' THEN 4 WHEN 'soon' THEN 3
+                WHEN 'fixing' THEN 2 WHEN 'ok' THEN 1 ELSE 0 END $$;
 CREATE OR REPLACE FUNCTION app.cycle_rank(p text) RETURNS integer LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE p WHEN 'open' THEN 4 WHEN 'awaiting_clean' THEN 3 WHEN 'review' THEN 2 WHEN 'clean' THEN 1 ELSE 0 END $$;
 
@@ -619,7 +623,8 @@ DROP FUNCTION IF EXISTS app.compliance_machine_rows(integer[], date);
 -- מצב לכל מתקן פעיל (לא retired) — מקור אחד לכרטיס, לטאב ולהתראה.
 CREATE FUNCTION app.compliance_machine_rows(p_site_ids integer[], p_today date)
 RETURNS TABLE (site_id integer, machine_key text, label text, periodic_id bigint, valid_until date,
-               validity_state text, light text, cycle text, open_n integer, overdue_n integer, awaiting_since date)
+               validity_state text, light text, cycle text, open_n integer, overdue_n integer, due_soon_n integer,
+               awaiting_since date)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
 WITH mach AS (SELECT m.site_id AS sid, m.machine_key AS mk, m.label FROM inspection_machines m
                WHERE m.retired_at IS NULL AND (p_site_ids IS NULL OR m.site_id = ANY (p_site_ids))),
@@ -638,6 +643,9 @@ lastr AS (SELECT DISTINCT ON (cr.sid, cr.mk) cr.sid, cr.mk, cr.rid, cr.declared_
 dq   AS (SELECT cr.sid, cr.mk,
                 count(*) FILTER (WHERE d.status = 'open')::int AS open_n,
                 count(*) FILTER (WHERE d.status = 'open' AND d.due_on < p_today)::int AS overdue_n,
+                -- מועד תיקון בעוד 30 יום או פחות (היום עצמו כלול — עוד לא באיחור)
+                count(*) FILTER (WHERE d.status = 'open' AND d.due_on >= p_today
+                                   AND d.due_on - p_today <= app.compliance_warn_days())::int AS due_soon_n,
                 max(app.compliance_today_at(d.done_at::timestamptz)) AS last_done
            FROM cr JOIN inspection_defects d ON d.report_id = cr.rid AND d.deleted_at IS NULL GROUP BY cr.sid, cr.mk),
 -- ⚠️ כולל ליקויים שנמחקו. בעלת המוצר, 06/10/2026, על אתר שבו ליקוי נמחק בסיבה "טופל" והתסקיר
@@ -654,22 +662,35 @@ per  AS (SELECT m.sid, m.mk, m.label, c.pid, COALESCE(o.fvu, c.pvu) AS vu,
                      WHEN lr.declared_clean THEN 'clean'
                      WHEN COALESCE(ld.n,0) > 0 THEN 'awaiting_clean'
                      ELSE 'review' END AS cyc,
-                COALESCE(q.open_n,0) AS open_n, COALESCE(q.overdue_n,0) AS overdue_n, q.last_done
+                COALESCE(q.open_n,0) AS open_n, COALESCE(q.overdue_n,0) AS overdue_n,
+                COALESCE(q.due_soon_n,0) AS due_soon_n, q.last_done
            FROM mach m LEFT JOIN cyc c ON c.sid = m.sid AND c.mk = m.mk
            LEFT JOIN ovr o ON o.sid = m.sid AND o.mk = m.mk
            LEFT JOIN lastr lr ON lr.sid = m.sid AND lr.mk = m.mk
            LEFT JOIN lastd ld ON ld.sid = m.sid AND ld.mk = m.mk
            LEFT JOIN dq q ON q.sid = m.sid AND q.mk = m.mk)
--- ⚠️ הנורה אינה התוקף. היא עולה מעליו לצהוב בשני מקרים, והתוקף עצמו (validity_state) נשאר
--- נקי כדי שהתווית תוכל לומר "בתוקף · עבר מועד תיקון" ולא "לא בתוקף". אדום = רק התוקף.
---   • ליקוי פתוח שעבר את מועד התיקון → צהוב. בעלת המוצר, 06/10/2026, על אתר עם 4 ליקויים כאלה
---     שהיה אדום: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו". (באותו בוקר
---     נבחר אדום; ההחלטה הזו מחליפה אותה.) "באיחור" = due_on < היום (כמו overdue_n).
---   • מחזור שממתין לתסקיר נקי / לבדיקה → צהוב (D10): צריך לזמן את הבודק.
+-- ⚠️ הנורה אינה התוקף: התוקף (validity_state) נשאר טהור, כדי שהתווית תוכל לומר "בתוקף · עבר
+-- מועד תיקון" ולא "לא בתוקף". בעלת המוצר, 06/10/2026 — תשעה מקרים, שבעה מצבים, ובכל אחד צבע אחר:
+--   expired  (אדום)       — המסמך לא בתוקף, מה שלא יהיה עם הליקויים (מקרים 5, 6, 7).
+--   overdue  (כתום)       — בתוקף, וליקוי פתוח עבר את מועד התיקון: due_on < היום (מקרה 3).
+--   awaiting (צהוב חזק)   — בתוקף, ואין ליקוי פתוח אבל המחזור לא נקי: הליקויים טופלו ומחכים לתסקיר
+--                           נקי מהבודק, או "לבדיקה" (מקרה 8). "צהוב יותר חזק מהצהוב של 4 ו-9".
+--   soon     (צהוב)       — המסמך פג בעוד 30 יום או פחות (מקרה 4), או שמועד התיקון של ליקוי פתוח
+--                           בעוד 30 יום או פחות, היום כלול (מקרה 9).
+--   fixing   (ירוק)       — בתוקף, ויש ליקויים פתוחים שמועד התיקון שלהם רחוק מחודש (מקרה 1).
+--   ok       (שחור-לבן)   — בתוקף, אין ליקויים פתוחים, והמחזור נקי (מקרה 2).
+--   none     (אפור)       — אין תסקיר ו-go-live לא נקבע (ללא שינוי).
+-- כשכמה חלים יחד — החמור קובע, לפי app.light_rank. ⚠️ awaiting לפני soon: מסמך שעומד לפוג
+-- כשהליקויים כבר טופלו הוא צהוב חזק (בשניהם צריך לזמן את הבודק). המחזור awaiting_clean/review
+-- כבר אומר שאין ליקוי פתוח (cycle open קודם לו), ולכן fixing אינו יכול להתנגש בו.
 SELECT p.sid, p.mk, p.label, p.pid, p.vu, v.vs,
-       CASE WHEN (p.overdue_n > 0 OR p.cyc IN ('awaiting_clean','review')) AND app.light_rank(v.vs) < 2
-            THEN 'soon' ELSE v.vs END,  -- [FLIP] D10
-       p.cyc, p.open_n, p.overdue_n, CASE WHEN p.cyc = 'awaiting_clean' THEN p.last_done END
+       CASE WHEN v.vs IN ('expired', 'none') THEN v.vs
+            WHEN p.overdue_n > 0 THEN 'overdue'
+            WHEN p.cyc IN ('awaiting_clean', 'review') THEN 'awaiting'
+            WHEN v.vs = 'soon' OR p.due_soon_n > 0 THEN 'soon'
+            WHEN p.open_n > 0 THEN 'fixing'
+            ELSE 'ok' END,
+       p.cyc, p.open_n, p.overdue_n, p.due_soon_n, CASE WHEN p.cyc = 'awaiting_clean' THEN p.last_done END
   FROM per p CROSS JOIN LATERAL (SELECT app.compliance_light(p.vu, p_today, app.compliance_warn_days(),
                                                              app.compliance_go_live()) AS vs) v
 $$;
@@ -679,7 +700,7 @@ CREATE FUNCTION app.compliance_rows(p_site_ids integer[], p_today date)
 RETURNS TABLE (site_id integer, site_code text, site_name text,
                inspection_state text, inspection_validity_state text, inspection_valid_until date,
                inspection_days_left integer, inspection_missing boolean, inspection_cycle text,
-               inspection_awaiting_since date, open_defects integer, overdue_defects integer,
+               inspection_awaiting_since date, open_defects integer, overdue_defects integer, due_soon_defects integer,
                machines integer, machines_detail jsonb,
                pm_state text, pm_missing boolean, pm_last_on date, pm_last_visit_id bigint, pm_due_on date,
                pm_days_left integer, pm_draft_id bigint, pm_draft_last_activity text)
@@ -691,11 +712,12 @@ agg AS (SELECT mr.site_id AS sid, count(*)::int AS n, min(mr.valid_until) AS vu,
                (array_agg(mr.light ORDER BY app.light_rank(mr.light) DESC))[1] AS light,
                (array_agg(mr.validity_state ORDER BY app.light_rank(mr.validity_state) DESC))[1] AS vstate,
                (array_agg(mr.cycle ORDER BY app.cycle_rank(mr.cycle) DESC))[1] AS cyc,
-               sum(mr.open_n)::int AS open_n, sum(mr.overdue_n)::int AS overdue_n, min(mr.awaiting_since) AS aw,
+               sum(mr.open_n)::int AS open_n, sum(mr.overdue_n)::int AS overdue_n, sum(mr.due_soon_n)::int AS due_soon_n,
+               min(mr.awaiting_since) AS aw,
                -- 'validity' לצד 'state': בלעדיו התווית של מתקן אדום אינה יודעת אם פג או שיש ליקוי באיחור
                jsonb_agg(jsonb_build_object('key',mr.machine_key,'label',mr.label,'valid_until',mr.valid_until,
                          'state',mr.light,'validity',mr.validity_state,'cycle',mr.cycle,
-                         'open',mr.open_n,'overdue',mr.overdue_n)
+                         'open',mr.open_n,'overdue',mr.overdue_n,'due_soon',mr.due_soon_n)
                          ORDER BY mr.machine_key) AS detail
           FROM mr GROUP BY mr.site_id),
 -- D11: טיוטות לעולם אינן נספרות; רק ביקור שהוגש ולא נמחק
@@ -716,7 +738,8 @@ SELECT s.id, s.code, s.site_name,
        COALESCE(a.vstate, CASE WHEN ret.sid IS NOT NULL THEN 'none' END,
                 app.compliance_light(NULL, p_today, cfg.warn, cfg.go_live)),
        a.vu, a.vu - p_today, a.vu IS NULL AND ret.sid IS NULL, COALESCE(a.cyc, 'none'), a.aw,
-       COALESCE(a.open_n,0), COALESCE(a.overdue_n,0), COALESCE(a.n,0), COALESCE(a.detail,'[]'::jsonb),
+       COALESCE(a.open_n,0), COALESCE(a.overdue_n,0), COALESCE(a.due_soon_n,0), COALESCE(a.n,0),
+       COALESCE(a.detail,'[]'::jsonb),
        app.compliance_light(pd.due, p_today, cfg.warn, cfg.go_live), pmv.vid IS NULL, pmv.performed_on, pmv.vid,
        pd.due, pd.due - p_today, dr.vid, dr.last_activity_at
   FROM s CROSS JOIN cfg
@@ -735,7 +758,7 @@ CREATE FUNCTION public.site_compliance(p_site_ids integer[] DEFAULT NULL)
 RETURNS TABLE (site_id integer, site_code text, site_name text,
                inspection_state text, inspection_validity_state text, inspection_valid_until date,
                inspection_days_left integer, inspection_missing boolean, inspection_cycle text,
-               inspection_awaiting_since date, open_defects integer, overdue_defects integer,
+               inspection_awaiting_since date, open_defects integer, overdue_defects integer, due_soon_defects integer,
                machines integer, machines_detail jsonb,
                pm_state text, pm_missing boolean, pm_last_on date, pm_last_visit_id bigint, pm_due_on date,
                pm_days_left integer, pm_draft_id bigint, pm_draft_last_activity text)
@@ -820,7 +843,8 @@ BEGIN
                'key', m.machine_key, 'label', m.label, 'retired_at', m.retired_at,
                'state', mr.light, 'validity_state', mr.validity_state, 'cycle', mr.cycle,
                'valid_until', mr.valid_until, 'periodic_id', mr.periodic_id,
-               'open', mr.open_n, 'overdue', mr.overdue_n, 'awaiting_since', mr.awaiting_since)
+               'open', mr.open_n, 'overdue', mr.overdue_n, 'due_soon', mr.due_soon_n,
+               'awaiting_since', mr.awaiting_since)
              ORDER BY m.machine_key)
         FROM inspection_machines m
         LEFT JOIN app.compliance_machine_rows(ARRAY[v_site], v_today) mr ON mr.machine_key = m.machine_key
@@ -840,6 +864,10 @@ BEGIN
                  SELECT jsonb_agg(jsonb_build_object(
                           'id', d.id, 'seq', d.seq, 'body', d.body, 'urgent', d.urgent, 'due_on', d.due_on,
                           'status', d.status, 'closure_no', d.closure_no, 'done_at', d.done_at,
+                          -- מצב המועד מה-SQL, באותם כללים כמו overdue_n / due_soon_n — הדשבורד אינו מחשב סף
+                          'due_state', CASE WHEN d.status = 'open' AND d.due_on < v_today THEN 'overdue'
+                                             WHEN d.status = 'open' AND d.due_on - v_today <= app.compliance_warn_days()
+                                             THEN 'soon' END,
                           'done_by_name', d.done_by_name, 'done_note', d.done_note,
                           'closed_by_report_id', d.closed_by_report_id,
                           'current_photos', (SELECT count(*)::int FROM inspection_defect_photos ph
@@ -1433,7 +1461,7 @@ REVOKE ALL ON FUNCTION public.inspection_defect_photo_delete(bigint) FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.inspection_defect_photo_delete(bigint) TO authenticated;
 
 -- ------------------------------------------------------------
--- inspection_defect_done — "בוצע": שם המבצע חובה; תמונה של הסגירה הנוכחית — לא חובה (06/10/2026).
+-- inspection_defect_done — "בוצע": שם המבצע ותמונה — שניהם רשות (06/10/2026); בלי שם — המשתמש המחובר.
 -- כשיש תמונות, הראשונה היא done_photo_id (D8: המפתח המורכב מבטיח שהיא של הליקוי ושל הסגירה הזו).
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.inspection_defect_done(bigint, text, text, uuid);
@@ -1447,7 +1475,12 @@ DECLARE
   v_note text := NULLIF(btrim(COALESCE(p_note,'')),'');
   v_row inspection_defects%ROWTYPE; v_first bigint; v_k integer; v_code text;
 BEGIN
-  IF v_name IS NULL OR length(v_name) < 2 THEN RAISE EXCEPTION 'חובה לציין את שם המבצע' USING ERRCODE = 'check_violation'; END IF;
+  -- ⚠️ שם המבצע — רשות (בעלת המוצר, 06/10/2026: "שיוכלו לעשות סמן כבוצע בלי למלא את הכל").
+  -- בלי שם נרשם המשתמש המחובר — מהזהות המאומתת, לא מגוף הבקשה — כך שהשורה תמיד אומרת מי סימן,
+  -- והאילוץ (done_by_name חובה) נשאר כמו שהוא.
+  IF v_name IS NULL OR length(v_name) < 2 THEN
+    v_name := COALESCE(NULLIF(btrim(app.actor_display_name()), ''), v_actor);
+  END IF;
   IF length(v_name) > 100 THEN RAISE EXCEPTION 'שם המבצע ארוך מדי (עד 100 תווים)' USING ERRCODE = 'check_violation'; END IF;
   IF p_request_id IS NULL THEN RAISE EXCEPTION 'חסר מזהה בקשה' USING ERRCODE = 'check_violation'; END IF;
   IF v_note IS NOT NULL AND length(v_note) > 1000 THEN

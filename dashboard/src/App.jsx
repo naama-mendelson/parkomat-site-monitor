@@ -12,7 +12,9 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts } from "./services/dataSource";
+import TasksDialog from "./components/Tasks/TasksDialog";
+import { TasksContext } from "./components/Tasks/TasksContext";
 import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import InspectionPage from "./components/Compliance/InspectionPage";
@@ -56,6 +58,10 @@ function App() {
   const [complianceRev, setComplianceRev] = useState({});
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
   const [trafficOpen, setTrafficOpen] = useState(false);        // לוח הרמזור
+  // משימות: מספרי הפתוחות לכל אתר×סוג (שני כפתורים בכרטיס), החלון הפתוח ({site, kind}), ומונה אירועים
+  const [taskCounts, setTaskCounts] = useState(null);
+  const [tasksOpen, setTasksOpen] = useState(null);
+  const [tasksRev, setTasksRev] = useState(0);
 
   // ערכת נושא: בהירה כברירת מחדל, והבחירה נזכרת בין ביקורים (ראה useTheme)
   const { darkMode, toggle: toggleTheme } = useTheme();
@@ -169,6 +175,21 @@ function App() {
     }
     if (bump) setComplianceRev((m) => ({ ...m, [code]: (m[code] ?? 0) + 1 }));
   }, [patchSite]);
+  // ⚠️ מספרי המשימות: בעלייה, כל 5 דקות, ומיד בכל אירוע משימות (של כל משתמש). כשל
+  // משאיר את המספרים הקודמים — כפתור שנעלם היה נראה כמו "אין משימות".
+  const loadTaskCounts = useCallback(() => {
+    if (!useDirect) return;
+    fetchTaskCounts().then(setTaskCounts).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadTaskCounts();
+    const id = setInterval(loadTaskCounts, 5 * 60_000);
+    return () => clearInterval(id);
+  }, [loadTaskCounts]);
+  const tasksCtx = useDirect && taskCounts
+    ? { bySite: taskCounts.bySite, openSite: (site, kind) => setTasksOpen({ site, kind }) }
+    : null;
+
   const scheduleComplianceRefresh = useCallback((code) => {
     if (!code) return;
     clearTimeout(complianceTimers.current[code]);
@@ -281,6 +302,12 @@ function App() {
         scheduleComplianceRefresh(data.code);
         return;
       }
+      // 0א. משימות — המספרים בכפתורים, והטבלה אם פתוחה. שום דבר ברשימת האתרים לא השתנה
+      if (data?.type === "tasks") {
+        loadTaskCounts();
+        setTasksRev((v) => v + 1);
+        return;
+      }
 
       // 1. עדכון מיידי מהודעה — בלי בקשת רשת
       patch(data);
@@ -314,7 +341,7 @@ function App() {
           selectedTouched.current = false;
         }
       }, SSE_DEBOUNCE_MS);
-    }, [patch, reload, selectedCode, refreshDetail, scheduleComplianceRefresh]),
+    }, [patch, reload, selectedCode, refreshDetail, scheduleComplianceRefresh, loadTaskCounts]),
 
     // ==========================================================
     // התאוששות מנתק — שליפה מלאה, לא השלמת הודעות
@@ -468,8 +495,15 @@ function App() {
           נקרא כשורת מערכת ומדלגים עליו. */}
       <main className="app-main">
         <StaleBanner />
-        {renderView()}
+        <TasksContext.Provider value={tasksCtx}>
+          {renderView()}
+        </TasksContext.Provider>
       </main>
+
+      {tasksOpen && (
+        <TasksDialog {...tasksOpen} rev={tasksRev}
+          onClose={() => setTasksOpen(null)} onChanged={loadTaskCounts} />
+      )}
 
       {/* ⚠️ **מחוץ ל-main ואחרון**, כדי שיישב מעל הכול — כולל חלוניות
           שנשארו פתוחות מהפעם הקודמת. הרכיב מחזיר null כשאין מה להכריז,

@@ -889,8 +889,10 @@ Rules that are easy to break and expensive to notice:
   `GRANT SELECT`: that is exactly what would expose `data_b64` (PDFs up to 8 MB) to every
   `select("*")`, and the tables to the agents and the intake identity. `compliance_file` is the
   only door that returns bytes.
-- **Green/yellow/red is decided in SQL only** (`app.compliance_light`, 30 days). The dashboard
-  translates; it never thresholds.
+- **The lamp state is decided in SQL only** — `app.compliance_machine_rows` (the pure validity in
+  `app.compliance_light`; "a month" = `app.compliance_warn_days()`, 30, for the report *and* for fix
+  dates). The dashboard translates; it never thresholds — even the per-defect "within the month"
+  mark comes from SQL (`due_state` in `inspection_site`).
 - ⚠️ **The managers' "דורש טיפול" list was built and removed** (owner, 06/10/2026, looking at 60
   rows of "אין תסקיר בודק": *"אני בכלל לא רוצה כזה דבר, תעיף את זה"*). It was a header button
   (`ComplianceAlertsButton` + `utils/complianceAlerts.js`, 60 days ahead for the inspector, 14 days
@@ -898,30 +900,34 @@ Rules that are easy to break and expensive to notice:
   original request said managers are warned *two months* and one month before expiry. With the list
   gone, the only signal is the lamp, which turns yellow at **30** days — nothing on screen says
   "two months" any more. Push alerts (P5) are still not built. Do not re-add the list without asking.
-- **The lamp words are the owner's, and they are a traffic light** (06/10/2026): *"בתוקף / עומד
-  לפוג עוד חודש / לא בתוקף — ירוק תקין, צהוב צריך להתכונן לתחזוקה או לזמן בודק, אדום לא תקין"*.
-  So `LIGHT_LABEL` reads בודק / תחזוקה **בתוקף · עומד(ת) לפוג תוך חודש · לא בתוקף** for both
-  areas — "בקרוב" and "באיחור" were replaced. The colours did not change: they already were
-  exactly this (`ok` / `soon` ≤ 30 days / `expired`). Yellow from a cycle awaiting a clean report
-  fits the same rule — it means *summon the inspector* — and keeps its own wording ("בודק בתוקף ·
-  ממתין לתסקיר נקי"). ⚠️ Grey ("אין נתונים", no report at all) is a fourth state the owner's list
-  does not name; it turns red only when `settings.compliance_go_live` is set (see *State* below).
-- ⚠️ **A defect past its fix date turns the inspector lamp YELLOW on a valid report — not red.**
-  Owner, 06/10/2026, looking at a site with four such defects shown red: *"זה צריך להיות צהוב כיון
-  שהמסמך בתוקף אבל הליקויים לא טופלו"*. ⚠️ That reverses a choice made the same morning (red =
-  "not OK"); **red now means the validity only** (expired / no report). In
-  `app.compliance_machine_rows` the light is raised to `'soon'` when `overdue_n > 0` (open,
-  `due_on < today`, current cycle only, soft-deleted excluded) and the validity is ok — the same
-  rule as an awaiting cycle; an expired report stays red. `validity_state` stays the pure validity. **Keep the two apart** — the label is built
-  from both: "בודק בתוקף · עבר מועד תיקון", not "בודק לא בתוקף", which would send someone to
-  summon an inspector when the job is to fix a defect. `machines_detail` carries `validity` for the
-  same reason, and `machineLampLabel` reads both shapes (`validity` / inspection_site's
-  `validity_state`). ⚠️ The reason avoids the word "באיחור" — the owner replaced it in lamp
-  labels, and `probe-lamps` asserts it is gone. Consequence worth knowing: an **urgent** defect is due on the inspection day
-  itself, so it is yellow from the next day until closed — including defects typed in during a
-  historical backfill. The page's reason line ("N ליקויים עברו את מועד התיקון") is amber, like the
-  lamp. SQL test 46, UI tests in `compliance-ui.test.js`; both directions mutated (back to red,
-  and no raise at all) and caught.
+- ⚠️ **Seven states, one colour each — the owner's table (06/10/2026, evening).** The same day went
+  red → yellow → this; the table is the decision, the two before it are history:
+
+  | state (SQL) | owner case | colour | glyph | label |
+  |---|---|---|---|---|
+  | `ok` | 2 valid, no defects | black/white ("מסגרת שחורה"; dark theme: white frame) | ✓ | בודק בתוקף |
+  | `fixing` | 1 valid, defects still in time | green | … | בודק בתוקף · ליקויים בטיפול |
+  | `soon` | 4 expires within a month · 9 a fix date within a month | yellow | ! | עומד לפוג תוך חודש / בתוקף · מועד תיקון בעוד פחות מחודש |
+  | `awaiting` | 8 defects handled, waiting for the clean report (also `review`) | **solid** yellow — "צהוב יותר חזק מהצהוב של 4 ו-9" | ◷ | בודק בתוקף · ממתין לתסקיר נקי |
+  | `overdue` | 3 a defect past its fix date | orange | ‼ (+U+FE0E) | בודק בתוקף · עבר מועד תיקון |
+  | `expired` | 5, 6, 7 report not valid / no report after go-live — whatever the defects | red | ✕ | בודק לא בתוקף |
+  | `none` | no report, go-live unset | hollow grey | ○ | בודק — אין נתונים |
+
+  Precedence (`app.light_rank`, mirrored by `SEVERITY` in `utils/compliance.js`): expired > overdue >
+  awaiting > soon > fixing > ok > none; a site is its worst machine. ⚠️ `awaiting` outranks `soon`,
+  so a report about to expire whose defects are handled is solid yellow (both mean "summon the
+  inspector"). "Within a month" = `due_on - today <= 30` with today included (not overdue);
+  overdue = `due_on < today`; current cycle only, soft-deleted excluded. `validity_state` stays the
+  **pure** validity and labels are built from both — "בודק בתוקף · עבר מועד תיקון", never "לא בתוקף",
+  which would send someone to summon an inspector when the job is to fix a defect. ⚠️ Lamp labels
+  never say "באיחור" (the owner replaced the word; the hover text still counts "N באיחור").
+  Consequence worth knowing: an **urgent** defect is due on the inspection day itself, so it is
+  yellow that day and orange from the next. New fields: `due_soon_n` / `due_soon_defects` /
+  `machines_detail.due_soon` / `inspection_site.machines[].due_soon`, and `due_state` per defect.
+  An unknown state ranks like "?" in the dashboard, never 0 (an orange site sorted under a green
+  one was the silent failure the mapping found). SQL test 49 (nine cases, precedence, month
+  boundaries, two-machine sites, `due_state`), UI tests (the `CASES` table, completeness of rank /
+  glyph / label / colour per state, ordering, no "באיחור").
 - ⚠️ **Only the inspector's document makes a cycle clean — fixing the defects does not** (owner,
   06/10/2026: *"אם תקנו את הליקויים — אז באמת אין ליקויים, אבל צריך מסמך נקי שמעלה בודק מוסמך
   שוב ומאשר"*). Measured on site 1343 the same day: a defect deleted with the reason "טופל", then
@@ -933,9 +939,11 @@ Rules that are easy to break and expensive to notice:
   `inspection_site` carries `deleted_defects` so the edit dialog does not offer the checkbox.
   Defects typed by mistake: delete the report and upload it again with "אין ליקויים". SQL test 47,
   3/3 mutations killed.
-- **"בוצע" needs the performer's name; the photo is optional** (owner, 06/10/2026, on the close
-  dialog: *"אני רוצה שזה יהיה אופציונלי, כלומר יהיה אפשר להמשיך גם בלי להעלות תמונה ולציין מי
-  תיקן"*). The RPC no longer demands a photo; `inspection_defects_done_shape` is replaced in the
+- **Nothing in "בוצע" is required** (owner, 06/10/2026: *"אופציונלי — להמשיך גם בלי להעלות
+  תמונה"*, then *"שיוכלו לעשות סמן כבוצע בלי למלא את הכל"*). An empty performer name records the
+  signed-in user — `app.actor_display_name()`, from the verified identity, never the request — so
+  every row still says who marked it and `done_by_name` stays NOT NULL. (PM's own "שם המבצע" on a
+  visit is still required; only the defect close changed.) The RPC no longer demands a photo; `inspection_defects_done_shape` is replaced in the
   1.4א block (DROP/ADD NOT VALID/VALIDATE — the CREATE TABLE copy is dead text) and now allows
   *at most* one evidence instead of exactly one. When photos exist, the first is still
   `done_photo_id` (D8). ⚠️ **The rewrite exposed a NULL hole:** `length(btrim(NULL)) >= 2` is NULL,
@@ -945,25 +953,34 @@ Rules that are easy to break and expensive to notice:
 - **The traffic light is explained in the "?" help panel** (owner's choice over the inspector
   page), section *בודק מוסמך ותחזוקה מונעת* in `HelpPanel.jsx`. The samples are `LampSwatch`
   from `ComplianceLights.jsx` — the same classes and `colorVars` as the card lamp, so the legend
-  cannot drift from what the card shows. Its wording quotes SQL thresholds (30 days, 6 months,
+  cannot drift from what the card shows. One row per state, in the table's order, plus the neutral
+  count and "?". Its wording quotes SQL thresholds (30 days for the report and fix dates, 6 months,
   overdue = `due_on < today`); change them together.
 - **The inspector page is rows, not boxes** (owner, 06/10/2026: *"תעיף את זה ותעצב את כל העמוד
   נורמלי ויותר מסודר"*). No chips in the status card — the open count lives in the defects heading,
-  "awaiting a clean report" in its banner, and a red line under the headline says *why* the lamp is
-  red while the report is valid ("N ליקויים עברו את מועד התיקון"). Defects, completed defects and
-  reports are flat rows split by a thin line (`.it-list:has(...)` drops the gap), with a 3px red
-  start-border only on an overdue defect. "סימון כבוצע" is an outlined small button, not a solid
+  "awaiting a clean report" in its banner, and a line under the headline says *why* the lamp is
+  coloured while the report is valid — orange "N ליקויים עברו את מועד התיקון", or yellow "מועד
+  התיקון של N ליקויים בעוד פחות מחודש" when that is what colours it. Defects, completed defects and
+  reports are flat rows split by a thin line (`.it-list:has(...)` drops the gap), with a 3px start
+  border only on an overdue defect (orange) or one due within the month (yellow, from `due_state`). "סימון כבוצע" is an outlined small button, not a solid
   one per row; "צפייה במסמך" sits in the report's title row; validity-source tags are grey text.
   The drop zone on the page is one 52px strip (dropping works anywhere on the page anyway). The
   page lamp uses the same `COMPLIANCE_COLORS` tint as the card — it had stayed solid red.
-- **Lamps are a translucent tint, not a solid fill** (owner, 06/10/2026, once every site went red:
-  "זה אדום מדי חזק, תעשה את זה יותר שקוף" — and after a first 14–16% tint with a full-colour
-  outline, "עדיין מדי חזק"). Background = `COMPLIANCE_COLORS[state].bg` (8–10%), outline at
-  45–50% alpha, glyph in a dark ink of the same hue (`--cl-ink-*` in
-  `ComplianceLights.css`). ⚠️ All three colours share the style — a translucent red beside a solid
-  green would make "OK" shout louder than "not OK". Each ink is checked against its tint *blended
-  over the card*, in both themes, by `scripts/check-colors.mjs` (a low-contrast ink fails it —
-  mutated and seen). The overdue-defects badge stays solid red: it is rare and meant to stand out.
+- **Lamp colours: clear, but tasteful** (owner, 06/10/2026: *"שיהיה הכל ברור אבל לא מוגזם, שיהיה
+  בטעם"* and *"שכל הצבעים יהיה ברור איזה צבע הם"*). Earlier that day, when every site was red, a
+  solid fill was "אדום מדי חזק" and a 14–16% tint "עדיין מדי חזק", so lamps went to 8–10%; with seven
+  states that was too faint to tell yellow from orange. Now: a 12–22% tint with a **full-hue**
+  border and a dark glyph of the same hue; only `awaiting` is solid. ⚠️ **The values live only in
+  `ComplianceLights.css`**, per theme (`--cl-<state>-fill/border/ink`); `COMPLIANCE_COLORS` just
+  references them, because black/white is black-on-white in light and white-on-card in dark — no
+  single value fits both. The inspector page lamp, the help legend and the mini mark all read the
+  same variables (the page's own `--it-ink-*` copy had already drifted once). `check-colors.mjs`
+  measures the **rendered** lamps: every state has fill/border/ink in both themes and each value
+  parses (an unreadable value fails instead of passing as NaN), ink ≥ 4.5:1 on its fill as seen over
+  the card, any two states ΔE ≥ 25 in fill or border, and every glyph is different — 6 mutations,
+  all caught. ⚠️ The defect-count badge is always a neutral outline (owner: *"למה העיגול אדום? זה
+  מפריע"*); the lamp's colour already says whether one is overdue. PmTab's own `.pm-lamp--*` is
+  still a solid, hard-coded fill (hidden behind `PM_ENABLED`) — align it before enabling PM.
 - **Changing a table later:** never edit a CHECK inside `CREATE TABLE IF NOT EXISTS` — production
   skips the whole statement. Use `DROP CONSTRAINT IF EXISTS` + `ADD … NOT VALID` + `VALIDATE`
   (pattern in the file header). The apply-sql dry run now compares constraints, triggers, RLS,
@@ -1125,6 +1142,45 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 — measured right after: all 60 sites
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
+
+## משימות — קשרי לקוחות וטכני (built 06/10/2026)
+
+The owner: *"יש המון משימות שנפתחות כל יום בשירות"* — customer-relations tasks ("tell the customer he
+parked wrong") and technical ones ("grease…, replace…", mostly per site). Two header buttons
+("משימות קשרי לקוחות", "משימות טכני", each with its open count) and a "משימות (N)" button in every
+expanded site card.
+
+| Piece | Where |
+|---|---|
+| Table + RPCs | `master/db/tasks.postgres.sql` (registered in `db.js` after compliance; applied with `tools/apply-sql.js`) |
+| SQL tests (PGlite) | `master/tests/tasks.test.js` — 12 tests, 9/9 SQL mutations killed |
+| Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js` (no server arm) |
+| UI | `components/Tasks/TasksDialog.jsx` (one dialog for a kind or a site), `TasksContext.js`, header buttons in `Header.jsx`, card button in `SiteCard.jsx` |
+
+Rules that are easy to break:
+
+- **One model, not three lists** (owner's choice): every task is `customer` or `technical`, optionally
+  tied to a site. The header buttons show one kind (with a site column); the site button shows that
+  site's tasks of both kinds (with a kind column, and adding requires choosing the kind — no default).
+- **A task is never deleted.** "בוצע" records who and when and moves it to a collapsed "בוצעו (N)".
+  There is no DELETE path at all, and no reopen — so the button asks to confirm *inside itself* for
+  4 seconds (second click commits), not with a popup.
+- ⚠️ **Who may mark "done" is not decided yet** (owner: *"נראה אחרי זה"*). The request said only a
+  customer-relations user closes customer tasks — but there are no teams in the system, only roles.
+  Until decided: any staff user, and the name is recorded (attribution, not prevention — as with
+  maintenance). **The single place to change it is `app.can_close_task(kind)`**; `tasks_list` returns
+  `can_close` per row and the button follows it. T11 proves the RPC honours a stricter rule.
+- **Closed table** (RLS on, no policies, no grants), like compliance: every read/write is a
+  `SECURITY DEFINER` RPC behind `app.require_staff()`. The author is the verified display name, never
+  typed. `audit_log` gets ids only (it is readable by every active user — no task text there).
+- **`tasks_list` returns one jsonb**: all open tasks, the 200 most recent done, and `done_total`.
+  PostgREST cuts at 1,000 rows silently and done tasks only accumulate (declared in `check-row-cap`).
+- **Live:** every write publishes `events.type='tasks'`. `App` refreshes the counts (and the open
+  dialog) on it, and `sitePatch.needsRefetch` ignores it — a task never reloads the site list.
+  Counts also refresh every 5 minutes; a failed fetch keeps the last counts rather than hiding buttons.
+- **The site dialog does not collapse the card**: `SiteGrid`'s outside-click handler ignores clicks
+  inside `.tk-overlay` — otherwise closing the dialog dropped you on a collapsed card.
+- `client_id` per draft (regenerated only after success) makes a resent add a single task.
 
 ## Dashboard statistics are computed only on page entry (07/10/2026)
 

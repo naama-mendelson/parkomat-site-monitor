@@ -3,8 +3,8 @@
 // ============================================================
 // ⚠️ אין כאן אף סף, ואין כאן החלטה על מצב
 // ============================================================
-// ירוק/צהוב/אדום נקבע ב-SQL (`app.compliance_light`), במקום אחד, ומשם הוא
-// מגיע לכרטיס, ללשונית ולהתראה. כל מה שכאן **מתרגם** את מה שהשרת החליט
+// צבע המנורה נקבע ב-SQL (`app.compliance_machine_rows`; התוקף ב-`app.compliance_light`),
+// במקום אחד, ומשם הוא מגיע לכרטיס, ללשונית ולהתראה. כל מה שכאן **מתרגם** את מה שהשרת החליט
 // לטקסט ולסימן. עותק של הסף בצד הלקוח היה נותן יום אחד בשנה שבו הכרטיס
 // צהוב וההתראה אומרת "פג" — ושני מקורות אמת שאיש לא יודע מי מהם צודק.
 //
@@ -52,7 +52,9 @@ export function toCompliance(row) {
   return {
     inspection: {
       state: row.inspection_state ?? "none",
-      validityState: row.inspection_validity_state ?? row.inspection_state ?? "none",
+      // ⚠️ התוקף הטהור. בלי העמודה (נתון ישן) — המצב, אבל רק אם הוא באמת מצב תוקף: "overdue"
+      // אינו תוקף, והתווית הייתה נבנית ממנו ("בודק — לא נטען · עבר מועד תיקון").
+      validityState: row.inspection_validity_state ?? (VALIDITY_STATES.has(row.inspection_state) ? row.inspection_state : "none"),
       validUntil: row.inspection_valid_until ?? null,
       daysLeft: row.inspection_days_left ?? null,
       missing: !!row.inspection_missing,
@@ -60,17 +62,20 @@ export function toCompliance(row) {
       awaitingSince: row.inspection_awaiting_since ?? null,
       openDefects: row.open_defects ?? 0,
       overdueDefects: row.overdue_defects ?? 0,
+      // מועד תיקון בעוד 30 יום או פחות (היום כלול) — מה-SQL, שם הסף
+      dueSoonDefects: row.due_soon_defects ?? 0,
       machines: row.machines ?? 0,
       machinesDetail: detail.map((m) => ({
         key: m.key,
         label: m.label ?? null,
         validUntil: m.valid_until ?? null,
         state: m.state ?? "none",
-        // התוקף לבדו — הנורה (state) עולה מעליו בליקוי באיחור או בהמתנה לתסקיר נקי
+        // התוקף לבדו — המצב (state) נקבע גם מהליקויים ומהמחזור
         validity: m.validity ?? null,
         cycle: m.cycle ?? "none",
         open: m.open ?? 0,
         overdue: m.overdue ?? 0,
+        dueSoon: m.due_soon ?? 0,
       })),
     },
     pm: {
@@ -88,21 +93,31 @@ export function toCompliance(row) {
 // ============================================================
 // דרגות ותוויות
 // ============================================================
-// ⚠️ unknown מדורג **מעל** ok: "לא יודעים" אינו "בסדר", ובמיון לפי חומרה
-// אתר שהסטטוס שלו לא נטען לא צריך להתחבא בין הירוקים.
-const SEVERITY = { none: 0, ok: 1, unknown: 2, soon: 3, expired: 4 };
-export const severity = (state) => SEVERITY[state] ?? 0;
+// הסדר של app.light_rank ב-SQL: אדום > כתום > צהוב חזק > צהוב > ירוק > שחור-לבן > אפור.
+// ⚠️ unknown מדורג **מעל** ok: "לא יודעים" אינו "בסדר", ובמיון לפי חומרה אתר שהסטטוס
+// שלו לא נטען לא צריך להתחבא בין התקינים. ⚠️ ומצב שאינו מוכר כאן מדורג כמו unknown —
+// לעולם לא 0: אתר כתום שמוין מתחת לשחור-לבן הוא בדיוק הכשל השקט שהסדר הזה קיים בשבילו.
+const SEVERITY = { none: 0, ok: 1, unknown: 2, fixing: 3, soon: 4, awaiting: 5, overdue: 6, expired: 7 };
+export const severity = (state) => SEVERITY[state] ?? SEVERITY.unknown;
+const VALIDITY_STATES = new Set(["ok", "soon", "expired", "none"]);
 
-export const GLYPH = { ok: "✓", soon: "!", expired: "✕", none: "○", unknown: "?" };
+// ⚠️ לכל מצב גליף משלו — הצבע לעולם אינו הסימן היחיד (צהוב/כתום/אדום קשים במיוחד לעיוורי
+// צבעים). ‼ עם VS15 (U+FE0E): בלעדיו חלק מהטלפונים מציירים אותו כאמוג׳י צבעוני.
+export const GLYPH = {
+  ok: "✓", fixing: "…", soon: "!", awaiting: "◷", overdue: String.fromCodePoint(0x203c, 0xfe0e),
+  expired: "✕", none: "○", unknown: "?",
+};
 
-// ⚠️ רמזור, במילים של בעלת המוצר (06/10/2026): "בתוקף / עומד לפוג עוד חודש /
-// לא בתוקף — ירוק תקין, צהוב צריך להתכונן לתחזוקה או לזמן בודק, אדום לא תקין".
-// אותן שלוש מילים לשני התחומים. "תוך חודש" = compliance_warn_days (30) ב-SQL —
-// הסף שם בלבד; כאן רק השם שלו.
+// ⚠️ המילים של בעלת המוצר (06/10/2026): "בתוקף / עומד לפוג עוד חודש / לא בתוקף", ולבודק —
+// גם הסיבה כשהמצב בא מהליקויים או מהמחזור. "תוך חודש" = compliance_warn_days (30) ב-SQL —
+// הסף שם בלבד; כאן רק השם שלו. ⚠️ בלי "באיחור" בתוויות המנורה (היא החליפה את המילה הזו).
 export const LIGHT_LABEL = {
   inspection: {
     ok: "בודק בתוקף",
+    fixing: "בודק בתוקף · ליקויים בטיפול",
     soon: "בודק עומד לפוג תוך חודש",
+    awaiting: "בודק בתוקף · ממתין לתסקיר נקי",
+    overdue: "בודק בתוקף · עבר מועד תיקון",
     expired: "בודק לא בתוקף",
     none: "בודק — אין נתונים",
     unknown: "בודק — לא נטען",
@@ -118,39 +133,54 @@ export const LIGHT_LABEL = {
   },
 };
 
-/** מצב המנורה של תחום: ok/soon/expired/none, או unknown כשהסטטוס לא נטען. */
+/** מצב המנורה של תחום (בודק: אחד משבעת המצבים; תחזוקה: ok/soon/expired/none), או unknown כשלא נטען. */
 export function lampState(area, c) {
   if (!c || c.unknown) return "unknown";
   return c[area]?.state ?? "unknown";
 }
 
-// ⚠️ המנורה של הבודק עולה לצהוב גם כשהתסקיר **בתוקף** — כשהמחזור ממתין
-// לתסקיר נקי או לבדיקה (D10 ב-SQL). התוקף האמיתי מגיע בנפרד
-// (validityState). תווית שנגזרת מצבע המנורה בלבד הייתה כותבת "בודק עומד
-// לפוג" על אתר שבתוקף עד השנה הבאה — ושולחת להזמין בודק, כשמה שנדרש
-// בפועל הוא לסגור את המחזור.
+// ⚠️ המצב של הבודק נקבע גם מהליקויים ומהמחזור, והתוקף (validityState) מגיע בנפרד. תווית
+// שנגזרת מהמצב בלבד הייתה כותבת "עומד לפוג" על תסקיר שבתוקף עד השנה הבאה — ושולחת להזמין
+// בודק, כשמה שנדרש בפועל הוא לתקן ליקוי או לסגור את המחזור. לכן: התוקף, ואחריו הסיבה.
 const CYCLE_REASON = { awaiting_clean: "ממתין לתסקיר נקי", review: "לבדיקה" };
-
-// ⚠️ והמנורה עולה לצהוב כשליקוי עבר את מועד התיקון והתסקיר בתוקף (בעלת המוצר,
-// 06/10/2026: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו" — מחליף את
-// האדום שנבחר באותו בוקר; ההחלטה ב-SQL). בלי הסיבה הזו התווית הייתה כותבת "עומד לפוג"
-// על תסקיר שבתוקף עד השנה הבאה — ושולחת לזמן בודק, כשמה שנדרש הוא לתקן את הליקוי.
-// ⚠️ לא "באיחור": בעלת המוצר החליפה את המילה הזו בתוויות המנורה (06/10/2026).
 const OVERDUE_REASON = "עבר מועד תיקון";
+const DUE_SOON_REASON = "מועד תיקון בעוד פחות מחודש";
+const OPEN_REASON = "ליקויים בטיפול";
+
+/**
+ * תווית נורת הבודק — של אתר או של מתקן. המצב מה-SQL; כאן רק המילים.
+ * @param {string} state — ok/fixing/soon/awaiting/overdue/expired/none
+ * @param {string|null} validity — התוקף הטהור (ok/soon/expired/none), או null בנתון ישן
+ * @param {string} cycle — מחזור (awaiting_clean / review נותנים את הסיבה של "ממתין")
+ * @param {{overdue?: number}} n — ספירות
+ */
+function inspectionLabel(state, validity, cycle, n = {}) {
+  const L = LIGHT_LABEL.inspection;
+  // כתום, צהוב חזק וירוק — התסקיר לא פג (ה-SQL), ולכן התוקף הוא "בתוקף" או "עומד לפוג"
+  const head = validity === "soon" ? L.soon : L.ok;
+  switch (state) {
+    case "overdue": return `${head} · ${OVERDUE_REASON}`;
+    case "awaiting": return `${head} · ${CYCLE_REASON[cycle] ?? CYCLE_REASON.awaiting_clean}`;
+    case "fixing": return `${head} · ${OPEN_REASON}`;
+    case "soon":
+      if (validity !== "ok") return L.soon;
+      // ⚠️ SQL מלפני 06/10/2026 בערב שלח soon גם לליקוי באיחור ולהמתנה לתסקיר נקי. ב-SQL הנוכחי
+      // soon על תסקיר בתוקף בא רק ממועד תיקון קרוב — אבל בדקות שבין הדחיפה להחלת ה-SQL, הסיבות
+      // הישנות עדיין מגיעות, ותווית "מועד תיקון בעוד פחות מחודש" על ליקוי שכבר באיחור הייתה שקר.
+      if (n.overdue > 0) return `${L.ok} · ${OVERDUE_REASON}`;
+      if (CYCLE_REASON[cycle]) return `${L.ok} · ${CYCLE_REASON[cycle]}`;
+      return `${L.ok} · ${DUE_SOON_REASON}`;
+    default: return L[state] ?? L.unknown;
+  }
+}
 
 /**
  * התווית של מנורת בודק של **מתקן** — בפירוט האתר ובעמוד הבודק.
  * מקבל גם את צורת site_compliance (`validity`) וגם את צורת inspection_site (`validity_state`).
- * בלי תוקף נפרד (נתון ישן) — לפי הצבע בלבד, כמו קודם.
  */
 export function machineLampLabel(m) {
   if (!m) return LIGHT_LABEL.inspection.unknown;
-  const validity = m.validity ?? m.validity_state ?? null;
-  if (m.overdue > 0 && validity && validity !== "expired") {
-    return `${LIGHT_LABEL.inspection[validity] ?? LIGHT_LABEL.inspection.unknown} · ${OVERDUE_REASON}`;
-  }
-  if (m.state === "soon" && CYCLE_REASON[m.cycle]) return `נדרשת בדיקה חוזרת — ${CYCLE_REASON[m.cycle]}`;
-  return LIGHT_LABEL.inspection[m.state] ?? m.state;
+  return inspectionLabel(m.state, m.validity ?? m.validity_state ?? null, m.cycle, { overdue: m.overdue });
 }
 
 /** התווית שמופיעה ליד המנורה בצפיפות רגילה/מורחבת. */
@@ -162,20 +192,11 @@ export function stateLabel(area, c) {
   if (!a) return labels.unknown;
   if (a.missing && a.state !== "none") return labels.missing;
   if (area === "inspection") {
-    const validity = a.validityState ?? a.state;
-    // ליקוי שעבר את מועד התיקון — הסיבה הראשונה, כי הפעולה היא לתקן ולא לזמן בודק
-    if (a.validityState && a.validityState !== "expired" && a.overdueDefects > 0) {
-      return `${labels[validity] ?? labels.unknown} · ${OVERDUE_REASON}`;
-    }
-    // ⚠️ כשהמנורה גבוהה מהתוקף, הצהוב בא ממחזור — **תמיד**, גם כשמחזור האתר
-    // הוא 'open'. מחזור האתר הוא הגרוע מבין המתקנים (open > awaiting_clean),
-    // ולכן באתר עם ליקוי פתוח במתקן אחד ובדיקה חוזרת חסרה בשני, הסיבה יושבת
-    // במתקן ולא באתר — והנפילה ל-labels[a.state] הייתה כותבת "עומד לפוג".
-    if (validity !== a.state) {
-      const m = (a.machinesDetail || []).find((x) => x.state === a.state && CYCLE_REASON[x.cycle]);
-      const reason = CYCLE_REASON[a.cycle] ?? CYCLE_REASON[m?.cycle] ?? "נדרשת בדיקה חוזרת";
-      return `${labels[validity] ?? labels.unknown} · ${reason}`;
-    }
+    // ⚠️ מחזור האתר הוא הגרוע מבין המתקנים (open > awaiting_clean). באתר שבו מתקן אחד בטיפול
+    // והשני ממתין לתסקיר נקי, הסיבה של "ממתין" יושבת במתקן שהמצב שלו הוא מצב האתר.
+    const m = (a.machinesDetail || []).find((x) => x.state === a.state);
+    const cycle = CYCLE_REASON[a.cycle] ? a.cycle : m?.cycle;
+    return inspectionLabel(a.state, a.validityState ?? null, cycle, { overdue: a.overdueDefects });
   }
   return labels[a.state] ?? labels.unknown;
 }
@@ -283,8 +304,9 @@ export function worstSeverity(c, areas = COMPLIANCE_AREAS) {
   return Math.max(...areas.map((a) => severity(lampState(a, c))));
 }
 
-/** האם סימן ה-mini מצויר בכלל: רק כשיש מה לראות — צהוב, אדום או "?". */
-export const markVisible = (m) => !!m && (m.state === "soon" || m.state === "expired" || m.state === "unknown");
+/** האם סימן ה-mini מצויר בכלל: רק כשצריך לעשות משהו — צהוב, צהוב חזק, כתום, אדום או "?". */
+const MARKED = new Set(["soon", "awaiting", "overdue", "expired", "unknown"]);
+export const markVisible = (m) => !!m && MARKED.has(m.state);
 
 // ============================================================
 // חלונית הריחוף (title) — המשפט המלא שמאחורי המנורה
@@ -295,6 +317,14 @@ function worstMachine(detail) {
     if (!worst || severity(m.state) > severity(worst.state)) worst = m;
   }
   return worst;
+}
+
+// "· 2 באיחור · 1 לתיקון תוך חודש" — בחלונית הריחוף ובתווית הנגישה (לא בתווית המנורה)
+function defectCounts(a, sep) {
+  const parts = [];
+  if (a.overdueDefects > 0) parts.push(`${a.overdueDefects} באיחור`);
+  if (a.dueSoonDefects > 0) parts.push(`${a.dueSoonDefects} לתיקון תוך חודש`);
+  return parts.length ? sep + parts.join(sep) : "";
 }
 
 function validityLine(a) {
@@ -333,9 +363,7 @@ export function lightTitle(area, c, nowIso = new Date().toISOString()) {
     if (anyReview(a)) {
       lines.push("אין ליקויים פתוחים, אבל התסקיר לא סומן נקי — לבדוק");
     }
-    if (a.openDefects > 0) {
-      lines.push(`${a.openDefects} ליקויים פתוחים${a.overdueDefects > 0 ? ` · ${a.overdueDefects} באיחור` : ""}`);
-    }
+    if (a.openDefects > 0) lines.push(`${a.openDefects} ליקויים פתוחים${defectCounts(a, " · ")}`);
     if (a.machines > 1) {
       const w = worstMachine(a.machinesDetail);
       const name = w ? (w.label || `מתקן ${w.key}`) : "";
@@ -376,7 +404,7 @@ export function lightAria(area, c, nowIso = new Date().toISOString()) {
       const a = c.inspection || {};
       // התווית כבר נושאת את הסיבה כשהצהוב נובע מהמחזור — לא פעמיים
       if (isAwaiting(a) && !parts[0].includes(CYCLE_REASON.awaiting_clean)) parts.push(CYCLE_REASON.awaiting_clean);
-      if (a.openDefects > 0) parts.push(`${a.openDefects} ליקויים פתוחים${a.overdueDefects > 0 ? `, ${a.overdueDefects} באיחור` : ""}`);
+      if (a.openDefects > 0) parts.push(`${a.openDefects} ליקויים פתוחים${defectCounts(a, ", ")}`);
     } else if (area === "pm" && draftStale(c, nowIso)) {
       parts.push("ביקור לא הוגש");
     }

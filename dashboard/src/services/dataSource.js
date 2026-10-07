@@ -889,3 +889,8 @@ export {
   submitPmVisit, discardPmVisit, uploadPmHistorical, deletePmVisit, pmOutboxSenders,
   fetchComplianceStorage, fetchComplianceOrphans, reattachCompliance, purgeCompliance,
 } from "./complianceDirect";
+
+// ⚠️ **משימות — אותו כלל, בלי זרוע שרת.** במצב שרת הכפתורים מוסתרים (App, SiteCard).
+export {
+  TASK_KINDS, TASK_KIND_LABEL, fetchTasks, fetchTaskCounts, addTask, markTaskDone,
+} from "./tasksDirect";

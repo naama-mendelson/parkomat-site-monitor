@@ -55,6 +55,8 @@ const SCREENS = [
   ["לשונית בודק מוסמך",  "it-donelist"],
   ["עמוד בודק מוסמך",    "ip-back"],
   ["לשונית תחזוקה מונעת", "pm-error-text"],
+  ["משימות (חלון)",      "tk-dialog"],
+  ["משימות (כפתורים בכרטיס)", "tk-site-btns"],
 ];
 
 let files;

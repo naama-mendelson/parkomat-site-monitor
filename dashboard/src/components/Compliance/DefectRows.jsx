@@ -66,23 +66,29 @@ export function DefectThumbs({ kind, ownerId, expected = 1, onOpen, eager = fals
 
 /**
  * ליקוי פתוח. `showSource` — כשיש במחזור יותר מדוח אחד, לציין מאיזה.
- * ⚠️ "באיחור" מחושב מ-due_on מול היום בישראל — אותו כלל כמו overdue_n ב-SQL
- * (due_on < today), ולכן הספירה בכרטיס והאדום כאן מסכימים.
+ * ⚠️ מצב המועד מגיע מה-SQL (`due_state`: overdue / soon) — אותם כללים כמו overdue_n ו-due_soon_n,
+ * ולכן הצבע כאן והנורה מסכימים, בלי עותק של הסף (30 יום) בדפדפן. SQL ישן שאינו שולח אותו —
+ * "עבר המועד" לפי due_on < היום, כמו קודם, ובלי "בתוך החודש".
  */
 export function DefectRow({ defect, today, isManager, showSource, onMarkDone, onEdit, onDelete }) {
   const d = defect;
-  const overdue = !!d.due_on && d.due_on < today;
+  const due = d.due_state !== undefined ? d.due_state : (d.due_on && d.due_on < today ? "overdue" : null);
+  const overdue = due === "overdue";
+  const soon = due === "soon";
   const late = overdue ? daysBetween(d.due_on, today) : 0;
+  const left = soon ? daysBetween(today, d.due_on) : 0;
   const photosAny = (d.current_photos || 0) + (d.past_photos || 0);
   return (
-    <li className={`it-defect${overdue ? " it-defect--overdue" : ""}`}>
+    <li className={`it-defect${overdue ? " it-defect--overdue" : soon ? " it-defect--soon" : ""}`}>
       <div className="it-defect-main">
         <p className="it-defect-body">{d.body}</p>
         <p className="it-defect-meta">
           {d.urgent && <span className="it-tag it-tag--urgent">דחוף</span>}
           {d.due_on && (
-            <span className={overdue ? "it-due it-due--late" : "it-due"}>
-              לתיקון עד {formatDateIL(d.due_on)}{overdue ? ` · עבר המועד לפני ${late === 1 ? "יום" : `${late} ימים`}` : ""}
+            <span className={overdue ? "it-due it-due--late" : soon ? "it-due it-due--soon" : "it-due"}>
+              לתיקון עד {formatDateIL(d.due_on)}
+              {overdue ? ` · עבר המועד לפני ${late === 1 ? "יום" : `${late} ימים`}` : ""}
+              {soon ? ` · ${left === 0 ? "היום" : left === 1 ? "מחר" : `בעוד ${left} ימים`}` : ""}
             </span>
           )}
           {d.current_photos > 0 && (

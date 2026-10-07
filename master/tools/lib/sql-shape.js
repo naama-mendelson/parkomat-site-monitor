@@ -49,6 +49,7 @@ const CON_TABLES = [
   "inspection_machines", "inspection_files", "inspection_reports", "inspection_defects",
   "inspection_defect_photos", "pm_checklist_items", "pm_visits", "pm_visit_items", "pm_files",
   "compliance_history",
+  "tasks",
 ];
 
 const CON_SQL = `

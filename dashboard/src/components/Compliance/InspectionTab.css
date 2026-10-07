@@ -3,7 +3,7 @@
    ⚠️ יעדי מגע של 44px לפחות בטלפון ובמגע: "סימון כבוצע" נלחץ בחדר מכונות,
    לפעמים בכפפות. במחשב הכפתורים קטנים יותר — שם הם נלחצים בעכבר.
 
-   ⚠️ הצבע לעולם אינו הסימן היחיד: הנורה נושאת גליף (✓ ! ✕ ○), "באיחור"
+   ⚠️ הצבע לעולם אינו הסימן היחיד: לכל מצב של הנורה גליף משלו (GLYPH), "עבר המועד"
    כתוב במילים, ו"דחוף" הוא תגית עם טקסט — לא רק מסגרת אדומה.
 
    ⚠️ טקסט אדום קטן על כרטיס בהיר: #ef4444 נותן 3.76:1 מול לבן — מתחת לסף.
@@ -201,11 +201,7 @@
   line-height: 1;
 }
 .it-lamp--small { height: 20px; min-width: 36px; padding: 0 6px; font-size: 12px; border-radius: 10px; }
-/* הרקע והמסגרת — מ-COMPLIANCE_COLORS (inline, ב-Lamp); כאן רק הדיו של הסימן */
-.it-lamp--ok { color: var(--it-ink-green); }
-.it-lamp--soon { color: var(--it-ink-amber); }
-.it-lamp--expired { color: var(--it-ink-red); }
-.it-lamp--none { background: transparent; border-color: var(--it-muted); color: var(--it-muted); }
+/* מילוי, מסגרת וסימן — inline ב-Lamp, מאותם משתנים של המנורה בכרטיס (ComplianceLights.css) */
 
 .it-tag {
   display: inline-flex;
@@ -267,8 +263,9 @@
 }
 
 .it-headline { font-size: 1.02em; line-height: 1.35; }
-/* הסיבה שהנורה אדומה כשהתסקיר בתוקף — בדיו האדום של הנורה, מתחת לכותרת */
-.it-reason { color: var(--it-ink-amber); font-weight: 700; font-size: 0.9em; }
+/* הסיבה שהנורה צבועה כשהתסקיר בתוקף — בדיו של הנורה עצמה: כתום לעבר מועד, צהוב לבתוך החודש */
+.it-reason { color: var(--cl-overdue-ink); font-weight: 700; font-size: 0.9em; }
+.it-reason--soon { color: var(--cl-soon-ink); }
 
 .it-status-actions {
   display: inline-flex;
@@ -297,7 +294,7 @@
 }
 .it-machine + .it-machine { border-top: 1px solid var(--border-color); }
 .it-machine-open { color: var(--text-secondary); white-space: nowrap; }
-.it-late { color: var(--it-ink-red); font-weight: 700; }
+.it-late { color: var(--cl-overdue-ink); font-weight: 700; }
 .it-machine-text { flex: 1 1 200px; min-width: 0; line-height: 1.4; }
 /* ⋯ תמיד בקצה השמאלי של השורה — גם כשהשורה נשברת, הרשימה נפתחת פנימה */
 .it-machine > .it-menu { margin-inline-start: auto; }
@@ -362,7 +359,8 @@
   border-inline-start: 3px solid transparent;
 }
 .it-defect + .it-defect { border-top: 1px solid var(--border-color); }
-.it-defect--overdue { border-inline-start-color: var(--it-ink-red); }
+.it-defect--overdue { border-inline-start-color: var(--cl-overdue-border); }
+.it-defect--soon { border-inline-start-color: var(--cl-soon-border); }
 
 .it-defect-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 
@@ -384,7 +382,8 @@
 }
 
 .it-due { color: var(--text-secondary); font-weight: 600; }
-.it-due--late { color: var(--it-ink-red); font-weight: 800; }
+.it-due--late { color: var(--cl-overdue-ink); font-weight: 800; }
+.it-due--soon { color: var(--cl-soon-ink); font-weight: 800; }
 
 .it-defect-actions {
   display: flex;

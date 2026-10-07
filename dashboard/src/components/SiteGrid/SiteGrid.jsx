@@ -157,6 +157,9 @@ function SiteGrid({ sites, onSiteClick }) {
     const onPointerDown = (e) => {
       const el = e.target;
       if (el instanceof Element && el.closest(".site-card.is-expanded")) return;
+      // חלון המשימות של האתר נפתח מהכרטיס — לחיצה בתוכו אינה "מחוץ לכרטיס": כשהוא
+      // נסגר חוזרים לכרטיס הפתוח, לא לרשת שבה הכרטיס התכווץ מתחת לחלון.
+      if (el instanceof Element && el.closest(".tk-overlay")) return;
       setPinned(false);
       setExpanded(null);
     };

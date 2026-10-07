@@ -6,29 +6,39 @@
      שאצבע מפספסת. המרווח בין המנורות (10px לפחות) הוא מה שמונע משני
      שטחי הלחיצה לחפוף — אחרת לחיצה על "תחזוקה" הייתה פותחת את "בודק".
 
-   ⚠️ הצבע מגיע מ-COMPLIANCE_COLORS (utils/constants.js) דרך --cl-fill /
-   --cl-border, ולא מכאן — כדי ש-check-colors יבדוק את מה שבאמת מוצג.
+   ⚠️ כל הצבעים של הנורה — כאן, ורק כאן: לכל מצב מילוי, מסגרת וסימן, לכל נושא בנפרד.
+   COMPLIANCE_COLORS (utils/constants.js) רק מפנה לשמות, ו-colorVars שם אותם על המנורה
+   כ---cl-fill / --cl-border / --cl-ink. scripts/check-colors.mjs קורא את שני הבלוקים
+   האלה ומודד את מה שמוצג: סימן מול המילוי 4.5:1, וכל שני מצבים נבדלים — בשני הנושאים.
 
-   ⚠️ טקסט קטן (10–11px) צריך 4.5:1, וברירת המחדל של הדשבורד **בהירה**.
-   האדום של המנורות (#ef4444) נותן 3.76:1 מול לבן, ו---text-muted הבהיר
-   3.05:1 — כלומר "לא הוגש", הספרה הלבנה של ליקויים באיחור וה-"?" היו
-   מתחת לסף בדיוק במצב שרוב המשתמשים רואים. שלושת המשתנים כאן נבדקים
-   מול שני הרקעים ב-scripts/check-colors.mjs (שקורא אותם מהקובץ הזה). */
+   ⚠️ שבעה מצבים, וכל אחד בצבע שברור איזה הוא — "שיהיה הכל ברור אבל לא מוגזם, שיהיה
+   בטעם" (בעלת המוצר, 06/10/2026). גוון שקוף עם מסגרת בצבע המלא; רק "ממתין לתסקיר נקי"
+   מלא — "צהוב יותר חזק מהצהוב של 4 ו-9". שחור-לבן הוא "מסגרת שחורה" על לבן, ובכהה
+   מתהפך: מסגרת לבנה על הכרטיס. ⚠️ ערכי hex בני 6 ספרות, rgba(...) או transparent
+   בלבד — אחרת הבדיקה לא תקרא אותם. */
 
 :root,
 [data-theme="light"] {
-  --cl-ink-red: #b91c1c;     /* ✕ ו"לא הוגש" — על הכרטיס ועל הגוון האדום השקוף */
-  --cl-ink-green: #166534;   /* ✓ על הגוון הירוק השקוף */
-  --cl-ink-amber: #92400e;   /* ! על הגוון הענברי השקוף */
-  --cl-solid-red: #dc2626;   /* רקע אדום מלא מאחורי טקסט לבן — תג ליקויים באיחור בלבד */
-  --cl-muted: #64748b;       /* ○ / ? ומסגרת "אין" */
+  --cl-ok-fill: #ffffff;                  --cl-ok-border: #1f2937;       --cl-ok-ink: #111827;
+  --cl-fixing-fill: rgba(34,197,94,0.16); --cl-fixing-border: #16a34a;   --cl-fixing-ink: #166534;
+  --cl-soon-fill: rgba(250,204,21,0.22);  --cl-soon-border: #eab308;     --cl-soon-ink: #854d0e;
+  --cl-awaiting-fill: #facc15;            --cl-awaiting-border: #ca8a04; --cl-awaiting-ink: #422006;
+  --cl-overdue-fill: rgba(249,115,22,0.16); --cl-overdue-border: #f97316; --cl-overdue-ink: #9a3412;
+  --cl-expired-fill: rgba(239,68,68,0.12); --cl-expired-border: #ef4444; --cl-expired-ink: #b91c1c;
+  --cl-none-fill: transparent;            --cl-none-border: #64748b;     --cl-none-ink: #64748b;
+  --cl-ink-red: #b91c1c;     /* "לא הוגש" (תחזוקה) על הכרטיס */
+  --cl-muted: #64748b;       /* ? ומסגרת "לא נטען" */
 }
 
 [data-theme="dark"] {
+  --cl-ok-fill: transparent;              --cl-ok-border: #e5e7eb;       --cl-ok-ink: #f9fafb;
+  --cl-fixing-fill: rgba(34,197,94,0.18); --cl-fixing-border: #22c55e;   --cl-fixing-ink: #4ade80;
+  --cl-soon-fill: rgba(250,204,21,0.16);  --cl-soon-border: #eab308;     --cl-soon-ink: #fde047;
+  --cl-awaiting-fill: #facc15;            --cl-awaiting-border: #fde047; --cl-awaiting-ink: #422006;
+  --cl-overdue-fill: rgba(249,115,22,0.20); --cl-overdue-border: #f97316; --cl-overdue-ink: #fdba74;
+  --cl-expired-fill: rgba(239,68,68,0.18); --cl-expired-border: #ef4444; --cl-expired-ink: #fca5a5;
+  --cl-none-fill: transparent;            --cl-none-border: #94a3b8;     --cl-none-ink: #94a3b8;
   --cl-ink-red: #f87171;
-  --cl-ink-green: #4ade80;
-  --cl-ink-amber: #fbbf24;
-  --cl-solid-red: #dc2626;
   --cl-muted: #94a3b8;
 }
 
@@ -93,6 +103,7 @@
   border-radius: 9px;
   border: 1.5px solid var(--cl-border, var(--text-muted));
   background: var(--cl-fill, transparent);
+  color: var(--cl-ink, inherit);
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
@@ -110,22 +121,7 @@
 }
 .cl-glyph { min-width: 8px; text-align: center; }
 
-/* ⚠️ גוון שקוף ולא מילוי מלא (06/10/2026): כשכל האתרים אדומים, מילוי מלא היה
-   "אדום מדי חזק" (בעלת המוצר), ואחרי גוון ראשון — "עדיין מדי חזק". הרקע הוא bg
-   מ-COMPLIANCE_COLORS (8–10%), המסגרת חצי-שקופה (border שם), והסימן בדיו כהה
-   מאותו צבע. ⚠️ שלושתם באותו סגנון: אדום שקוף ליד
-   ירוק מלא היה הופך את ההיררכיה — "תקין" צועק יותר מ"לא תקין". הניגודיות של
-   כל דיו מול הגוון שלו נבדקת ב-scripts/check-colors.mjs, בשני הנושאים. */
-.cl-lamp--ok .cl-pill { color: var(--cl-ink-green); }
-.cl-lamp--soon .cl-pill { color: var(--cl-ink-amber); }
-.cl-lamp--expired .cl-pill { color: var(--cl-ink-red); }
-
-/* ○ — חלול: "אין עדיין נתונים" אינו מצב שמבקש פעולה */
-.cl-lamp--none .cl-pill {
-  background: transparent;
-  border-color: var(--cl-muted);
-  color: var(--cl-muted);
-}
+/* הצבע של כל מצב — מ-colorVars (למעלה). כאן רק "?", שאינו מצב של השרת אלא "לא נטען". */
 
 /* ? — חלול ומקווקו: "לא יודעים", וזה שונה מ"אין" */
 .cl-lamp--unknown .cl-pill {
@@ -170,12 +166,8 @@
   white-space: nowrap;
 }
 
-/* ליקויים באיחור — מלא באדום; ליקויים פתוחים בזמן — קו מתאר בלבד */
-.cl-badge--overdue {
-  background: var(--cl-solid-red);
-  border-color: var(--cl-solid-red);
-  color: #ffffff;
-}
+/* ⚠️ מספר הליקויים הפתוחים — תמיד קו מתאר ניטרלי. היה מלא באדום כשאחד מהם עבר את המועד,
+   ובעלת המוצר (06/10/2026): "למה העיגול אדום? זה מפריע". הצבע של המנורה כבר אומר את זה. */
 
 .cl-badge--draft {
   border-color: var(--cl-ink-red);
@@ -226,13 +218,12 @@
   border-radius: 3px;
   border: 1.5px solid var(--cl-border, var(--text-muted));
   background: var(--cl-fill, transparent);
+  color: var(--cl-ink, inherit);
   font-size: 9px;
   font-weight: 900;
   line-height: 1;
 }
 
-.cl-mini--soon .cl-mini-sq { color: var(--cl-ink-amber); }
-.cl-mini--expired .cl-mini-sq { color: var(--cl-ink-red); }
 .cl-mini--unknown .cl-mini-sq {
   background: transparent;
   border: 1.5px dashed var(--cl-muted);

@@ -10,7 +10,8 @@
 //
 //   npm run check:colors
 import { readFileSync } from "node:fs";
-import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS, STUCK_COLOR, UPTIME_COLORS, COMPLIANCE_COLORS } from "../src/utils/constants.js";
+import { BRAND, STATUS_COLORS, DIRECTION_COLORS, METRIC_COLORS, STUCK_COLOR, UPTIME_COLORS, COMPLIANCE_STATES } from "../src/utils/constants.js";
+import { GLYPH } from "../src/utils/compliance.js";
 
 const MIN_DELTA_E = 25;   // מתחת לזה — שני הצבעים נקראים כאותו צבע במבט חטוף
 const MIN_CONTRAST = 3;   // מול רקע הכרטיס הכהה — אחרת הקו בגרף פשוט נעלם
@@ -58,11 +59,8 @@ const GROUPS = {
     stuck: STUCK_COLOR.dot,
   },
   "שורת הזמינות (UptimeBar)": UPTIME_COLORS,
-  // שתי המנורות יושבות זו ליד זו בכרטיס, וכל אחת יכולה להיות בכל אחד מארבעת
-  // המצבים — כלומר ארבעת הגוונים חייבים להיבדל זה מזה.
-  "רמזורי בודק/תחזוקה מונעת (כרטיס)": Object.fromEntries(
-    Object.entries(COMPLIANCE_COLORS).map(([k, v]) => [k, v.dot]),
-  ),
+  // ⚠️ מנורות הבודק/תחזוקה **אינן** כאן: הצבע שלהן הוא מילוי + מסגרת + סימן, לכל נושא בנפרד,
+  // וצהוב מול "צהוב חזק" נבדלים בעוצמה ולא בגוון. הן נמדדות למטה, כפי שהן מוצגות.
 };
 
 // הערה למי שיחשוב לצבוע שני מקטעים באותה משפחת גוונים כדי "לקבץ" אותם:
@@ -103,21 +101,18 @@ for (const [group, colors] of Object.entries(GROUPS)) {
 }
 
 // ============================================================
-// טקסט קטן במנורות הציות — 4.5:1 מול **שני** הרקעים
+// מנורות בודק/תחזוקה — כפי שהן מוצגות, בשני הנושאים
 // ============================================================
-// הבדיקה שלמעלה מודדת רק מול הכרטיס הכהה, אבל ברירת המחדל של הדשבורד
-// בהירה — ושם "לא הוגש" באדום #ef4444 נתן 3.76:1 וה-"?" האפור 3.05:1.
-// הערכים נקראים מ-ComplianceLights.css עצמו, כדי שהבדיקה תמדוד את מה
-// שמוצג ולא עותק שלו שיכול לסטות.
+// הערכים נקראים מ-ComplianceLights.css עצמו (שני בלוקי הנושא), כדי שהבדיקה תמדוד את מה
+// שמוצג ולא עותק שלו שיכול לסטות. לכל מצב: מילוי, מסגרת וסימן. נבדק:
+//   • כל המשתנים קיימים וניתנים לקריאה — ערך שלא נקרא נכשל, לא "עובר" (NaN < 25 הוא false).
+//   • הסימן קריא על המילוי (4.5:1) — כפי שהמילוי נראה מעל הכרטיס.
+//   • כל שני מצבים נבדלים (ΔE ≥ 25) במילוי או במסגרת — כפי שהם נראים מעל הכרטיס.
+//     בעלת המוצר, 06/10/2026: "אני רוצה שכל הצבעים יהיה ברור איזה צבע הם".
+//   • לכל מצב גליף אחר — הצבע לעולם אינו הסימן היחיד.
 {
   const LIGHT_CARD = "#ffffff";
   const MIN_TEXT = 4.5;
-  // rgba(...) מעל צבע הכרטיס → hex: הצבע שהעין רואה בפועל מאחורי הסימן
-  const over = (rgba, under) => {
-    const [r, g, b, a] = rgba.match(/[\d.]+/g).map(Number);
-    const u = under.match(/[0-9a-f]{2}/gi).map((h) => parseInt(h, 16));
-    return "#" + [r, g, b].map((v, i) => Math.round(v * a + u[i] * (1 - a)).toString(16).padStart(2, "0")).join("");
-  };
   const css = readFileSync(new URL("../src/components/Compliance/ComplianceLights.css", import.meta.url), "utf8");
   const block = (selector) => {
     const at = css.indexOf(selector);
@@ -125,40 +120,62 @@ for (const [group, colors] of Object.entries(GROUPS)) {
     const open = css.indexOf("{", at);
     const close = css.indexOf("}", open);
     const vars = {};
-    for (const m of css.slice(open + 1, close).matchAll(/(--cl-[a-z-]+)\s*:\s*(#[0-9a-fA-F]{6})/g)) vars[m[1]] = m[2];
+    for (const m of css.slice(open + 1, close).matchAll(/(--cl-[a-z-]+)\s*:\s*([^;]+);/g)) vars[m[1]] = m[2].trim();
     return vars;
+  };
+  // ערך → hex כפי שהעין רואה אותו מעל `under`. null = לא נקרא (נכשל).
+  const paint = (value, under) => {
+    if (!value) return null;
+    if (value === "transparent") return under;
+    if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
+    const m = value.match(/^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/);
+    if (!m) return null;
+    const [r, g, b, a] = m.slice(1).map(Number);
+    const u = rgb(under);
+    return "#" + [r, g, b].map((v, k) => Math.round(v * a + u[k] * (1 - a)).toString(16).padStart(2, "0")).join("");
   };
   const themes = [
     ["בהיר", block("[data-theme=\"light\"] {"), LIGHT_CARD],
     ["כהה", block("[data-theme=\"dark\"] {"), DARK_CARD],
   ];
-  console.log("\nטקסט קטן במנורות בודק/תחזוקה (4.5:1)");
+  console.log("\nמנורות בודק/תחזוקה — כפי שהן מוצגות");
   let localFail = 0;
+  const bad = (msg) => { localFail++; console.log(`   ❌ ${msg}`); };
   for (const [name, vars, card] of themes) {
-    const need = ["--cl-ink-red", "--cl-ink-green", "--cl-ink-amber", "--cl-solid-red", "--cl-muted"];
-    if (!vars || need.some((k) => !vars[k])) {
-      localFail++;
-      console.log(`   ❌ ${name}: לא נמצאו ${need.join(", ")} ב-ComplianceLights.css`);
-      continue;
+    if (!vars) { bad(`${name}: בלוק הנושא לא נמצא ב-ComplianceLights.css`); continue; }
+    const look = {};
+    for (const st of COMPLIANCE_STATES) {
+      const fill = paint(vars[`--cl-${st}-fill`], card);
+      const border = fill && paint(vars[`--cl-${st}-border`], fill);   // המסגרת מעל המילוי (border-box)
+      const ink = vars[`--cl-${st}-ink`];
+      if (!fill || !border || !/^#[0-9a-fA-F]{6}$/.test(ink || "")) {
+        bad(`${name}: ${st} — מילוי/מסגרת/סימן חסרים או לא ניתנים לקריאה`);
+        continue;
+      }
+      look[st] = { fill, border };
+      const c = contrast(ink, fill);
+      if (c < MIN_TEXT) bad(`${name}: ${st} — סימן ${ink} על ${fill}: ${c.toFixed(2)}:1`);
     }
-    const pairs = [
-      [`"לא הוגש" (${vars["--cl-ink-red"]}) על הכרטיס`, vars["--cl-ink-red"], card],
-      [`ספרה/✕ לבנים על ${vars["--cl-solid-red"]}`, "#ffffff", vars["--cl-solid-red"]],
-      [`○ / ? (${vars["--cl-muted"]}) על הכרטיס`, vars["--cl-muted"], card],
-      // המנורות עצמן (06/10/2026: גוון שקוף, לא מילוי): דיו על ה-bg כפי שהוא נראה מעל הכרטיס
-      [`✓ (${vars["--cl-ink-green"]}) על הגוון הירוק`, vars["--cl-ink-green"], over(COMPLIANCE_COLORS.ok.bg, card)],
-      [`! (${vars["--cl-ink-amber"]}) על הגוון הענברי`, vars["--cl-ink-amber"], over(COMPLIANCE_COLORS.soon.bg, card)],
-      [`✕ (${vars["--cl-ink-red"]}) על הגוון האדום`, vars["--cl-ink-red"], over(COMPLIANCE_COLORS.expired.bg, card)],
-    ];
-    for (const [label, fg, bg] of pairs) {
-      const c = contrast(fg, bg);
-      if (c < MIN_TEXT) {
-        localFail++;
-        console.log(`   ❌ ${name}: ${label} — ${c.toFixed(2)}:1`);
+    const keys = Object.keys(look);
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const [a, b] = [look[keys[i]], look[keys[j]]];
+        const d = Math.max(deltaE(a.fill, b.fill), deltaE(a.border, b.border));
+        if (d < MIN_DELTA_E) bad(`${name}: ${keys[i]} ↔ ${keys[j]} — ΔE ${d.toFixed(1)}, קרובים מדי`);
       }
     }
+    // טקסט קטן על הכרטיס עצמו: "לא הוגש", "?", ושורות הסיבה בעמוד הבודק
+    for (const [label, v] of [["לא הוגש", "--cl-ink-red"], ["?", "--cl-muted"],
+                              ["סיבה כתומה", "--cl-overdue-ink"], ["סיבה צהובה", "--cl-soon-ink"]]) {
+      const fg = vars[v];
+      if (!/^#[0-9a-fA-F]{6}$/.test(fg || "")) { bad(`${name}: ${v} חסר`); continue; }
+      const c = contrast(fg, card);
+      if (c < MIN_TEXT) bad(`${name}: ${label} (${fg}) על הכרטיס — ${c.toFixed(2)}:1`);
+    }
   }
-  if (!localFail) console.log("   ✓ כל הטקסט הקטן קריא בשני הנושאים");
+  const glyphs = [...COMPLIANCE_STATES, "unknown"].map((st) => GLYPH[st]);
+  if (glyphs.some((g) => !g) || new Set(glyphs).size !== glyphs.length) bad(`גליפים חסרים או כפולים: ${glyphs.join(" ")}`);
+  if (!localFail) console.log(`   ✓ ${COMPLIANCE_STATES.length} מצבים — נבדלים, קריאים, עם גליף משלהם, בשני הנושאים`);
   failures += localFail;
 }
 

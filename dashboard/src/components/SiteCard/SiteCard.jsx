@@ -12,6 +12,9 @@ import "./SiteCard.css";
 import FixFlowLink from "../FixFlowLink/FixFlowLink.jsx";        // פיילוט FixFlow — ראה services/fixflow.js
 import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילוט FixFlow
 import ComplianceLights, { MiniMark } from "../Compliance/ComplianceLights";
+import { useTasks } from "../Tasks/TasksContext";
+import { TASK_KINDS, TASK_KIND_LABEL } from "../../services/dataSource";
+import "../Tasks/Tasks.css";
 
 // ==========================================================
 // צבע הזמינות — והספים **נמדדו**, לא הומצאו
@@ -126,6 +129,7 @@ function TypeBadge({ type, system }) {
 }
 
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
+  const tasks = useTasks();          // null — אין משימות במצב הזה
   // ⚠️ **הצ'יפ מציג את המערכת הגרועה, המדד מחשב את הטובה.** באתר
   // דו-מערכתי אלה שני דברים שונים במכוון: "במה לטפל עכשיו" מול "האם
   // עמדנו בהתחייבות". באתר חד-מערכתי `displayStatus` שווה ל-`status`,
@@ -702,6 +706,24 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
 
+        {/* משימות האתר — שני כפתורים, כל אחד עם מספר הפתוחות שלו (בעלת המוצר, 06/10/2026:
+            "משימות קשרי לקוחות וטכני… עבור כל כרטיס") */}
+        {tasks && (
+          <div className="tk-site-btns">
+            {TASK_KINDS.map((k) => {
+              const n = tasks.bySite[site.id]?.[k] ?? 0;
+              return (
+                <button key={k} type="button" className="tk-site-btn" data-kind={k}
+                  onClick={(e) => { e.stopPropagation(); tasks.openSite(site, k); }}
+                  aria-label={`משימות ${TASK_KIND_LABEL[k]}${n ? ` — ${n} פתוחות` : ""}`}>
+                  {TASK_KIND_LABEL[k]}
+                  {n > 0 && <span className="tk-count" aria-hidden="true">{n}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <button
           className="exp-open"
           // ⚠️ בלי stopPropagation הלחיצה מבעבעת לכרטיס, toggle סוגר אותו,
@@ -774,7 +796,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               משלו בשורה. הנקודה היא מצב המתקן עכשיו והריבוע מצב החובות שלו (שני
               דברים שונים), ומשבצת נפרדת הייתה לוקחת ~19px מהשם ו-useFitName היה
               מקטין אותו עד הרצפה — דווקא באתרים שדורשים תשומת לב. מצויר רק
-              לצהוב/אדום/"?" (ראה MiniMark). המצב המלא — בכרטיס המורחב (לחיצה). */}
+              כשצריך לעשות משהו — צהוב, צהוב חזק, כתום, אדום או "?" (ראה MiniMark). המצב
+              המלא — בכרטיס המורחב (לחיצה). */}
           <span className="mini-dot-wrap">
             <span
               className={`mini-dot${stuck ? " mini-dot--stuck" : ""}`}

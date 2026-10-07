@@ -715,6 +715,8 @@ function init() {
       // `app.record_write_audit()` מ-writes. סדר הפוך נכשל במסד חדש.
       for (const file of ["traffic-light.postgres.sql", "service-hours.postgres.sql", "fixflow.postgres.sql",
         "service-calls.postgres.sql", "compliance.postgres.sql",
+        // משימות — אחרי compliance: app.require_staff / app.is_staff מוגדרים שם
+        "tasks.postgres.sql",
         // ⚠️ אחרון: מריץ את site_stats / site_uptime / site_uptime_service (חישוב ראשון),
         // ו-app.is_active_user למדיניות. ה-cron שמרענן אותו — ב-cron.postgres.sql למטה.
         "card-metrics.postgres.sql"]) {

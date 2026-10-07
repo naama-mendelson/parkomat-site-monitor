@@ -3,17 +3,18 @@
 // ============================================================
 // ⚠️ מה נבדק כאן, ומה לא
 // ============================================================
-// הצבע (ok/soon/expired/none) נקבע ב-SQL ונבדק ב-compliance.test.js. כאן
-// נבדק רק מה שהדשבורד עושה עם השורה: איך היא מתורגמת לאובייקט של הכרטיס,
-// ומה כתוב ליד המנורה ובחלונית שלה.
+// המצב (שבעה: ok/fixing/soon/awaiting/overdue/expired/none) נקבע ב-SQL ונבדק ב-compliance.test.js.
+// כאן נבדק רק מה שהדשבורד עושה עם השורה: איך היא מתורגמת לאובייקט של הכרטיס, מה כתוב ליד
+// המנורה ובחלונית שלה, ושלכל מצב יש דירוג, גליף, תווית וצבע.
 //
 // (רשימת "דורש טיפול" למנהלים והבדיקות שלה הוסרו לבקשת בעלת המוצר, 06/10/2026.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   toCompliance, stateLabel, lightTitle, markFor, markVisible, draftStale, lampState, machineLampLabel,
-  ALL_AREAS, COMPLIANCE_AREAS, PM_ENABLED, worstSeverity,
+  ALL_AREAS, COMPLIANCE_AREAS, PM_ENABLED, worstSeverity, severity, GLYPH, LIGHT_LABEL,
 } from "../../dashboard/src/utils/compliance.js";
+import { COMPLIANCE_STATES, COMPLIANCE_COLORS } from "../../dashboard/src/utils/constants.js";
 import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
 
 const NOW = "2026-10-04T09:00:00.000Z";
@@ -24,8 +25,9 @@ function row(over = {}) {
     site_id: 1, site_code: "1000", site_name: "אתר",
     inspection_state: "ok", inspection_validity_state: "ok", inspection_valid_until: "2027-03-16",
     inspection_days_left: 163, inspection_missing: false, inspection_cycle: "clean",
-    inspection_awaiting_since: null, open_defects: 0, overdue_defects: 0,
-    machines: 1, machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "ok", cycle: "clean", open: 0, overdue: 0 }],
+    inspection_awaiting_since: null, open_defects: 0, overdue_defects: 0, due_soon_defects: 0,
+    machines: 1, machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "ok", validity: "ok", cycle: "clean",
+      open: 0, overdue: 0, due_soon: 0 }],
     pm_state: "ok", pm_missing: false, pm_last_on: "2026-08-01", pm_last_visit_id: 5, pm_due_on: "2027-02-01",
     pm_days_left: 120, pm_draft_id: null, pm_draft_last_activity: null,
     ...over,
@@ -42,14 +44,29 @@ test("toCompliance: שורה חסרה → {unknown:true} (מנורה '?'), לא 
 });
 
 test("toCompliance: השדות עוברים כפי שהם — המצב מה-SQL, לא מחושב כאן", () => {
-  const c = toCompliance(row({ inspection_state: "soon", inspection_validity_state: "ok", inspection_cycle: "awaiting_clean",
+  const c = toCompliance(row({ inspection_state: "awaiting", inspection_validity_state: "ok", inspection_cycle: "awaiting_clean",
     inspection_awaiting_since: "2026-09-20", open_defects: 0, pm_state: "expired", pm_days_left: -3 }));
-  assert.equal(c.inspection.state, "soon");
+  assert.equal(c.inspection.state, "awaiting");
   assert.equal(c.inspection.validityState, "ok");
   assert.equal(c.inspection.awaitingSince, "2026-09-20");
   assert.equal(c.pm.state, "expired");
   assert.equal(c.pm.daysLeft, -3);
   assert.equal(c.inspection.machinesDetail.length, 1);
+});
+
+test("⚠️ toCompliance: הספירה 'בתוך החודש' עוברת בשם של ה-SQL — באתר ובכל מתקן", () => {
+  // ?? 0 היה מאפס בשקט שם שגוי — הבדיקה הזו ובדיקה 49 ב-SQL מצמידות את השם משני הצדדים
+  const c = toCompliance(row({ inspection_state: "soon", open_defects: 3, overdue_defects: 0, due_soon_defects: 2,
+    machines_detail: [{ key: "1", state: "soon", validity: "ok", cycle: "open", open: 3, overdue: 0, due_soon: 2 }] }));
+  assert.equal(c.inspection.dueSoonDefects, 2);
+  assert.equal(c.inspection.machinesDetail[0].dueSoon, 2);
+});
+
+test("toCompliance: בלי עמודת התוקף — המצב משמש כתוקף רק אם הוא באמת מצב תוקף", () => {
+  const legacy = (state) => { const r = row({ inspection_state: state }); delete r.inspection_validity_state; return toCompliance(r); };
+  assert.equal(legacy("soon").inspection.validityState, "soon");
+  assert.equal(legacy("overdue").inspection.validityState, "none", "כתום אינו תוקף");
+  assert.equal(legacy("fixing").inspection.validityState, "none");
 });
 
 // ---------------------------------------------------------------
@@ -73,12 +90,66 @@ test("רמזור: שלוש המילים, לבודק ולתחזוקה", () => {
   assert.match(lightTitle("pm", at("soon", 12)), /עומדת לפוג — הבאה עד .* \(עוד 12 ימים\)/);
   assert.match(lightTitle("pm", at("expired", -3)), /לא בתוקף — נדרשה עד/);
 });
-test("⚠️ צהוב מהמחזור על תסקיר בתוקף — 'בודק בתוקף · ממתין לתסקיר נקי', לא 'עומד לפוג'", () => {
-  const c = toCompliance(row({ inspection_state: "soon", inspection_validity_state: "ok", inspection_cycle: "awaiting_clean" }));
-  const label = stateLabel("inspection", c);
-  assert.match(label, /בתוקף/);
-  assert.match(label, /ממתין לתסקיר נקי/);
-  assert.doesNotMatch(label, /עומד לפוג/);
+test("⚠️ צהוב חזק מהמחזור על תסקיר בתוקף — 'בודק בתוקף · ממתין לתסקיר נקי', לא 'עומד לפוג'", () => {
+  const c = toCompliance(row({ inspection_state: "awaiting", inspection_validity_state: "ok", inspection_cycle: "awaiting_clean" }));
+  assert.equal(stateLabel("inspection", c), "בודק בתוקף · ממתין לתסקיר נקי");
+  // ומסמך שעומד לפוג כשהליקויים כבר טופלו — שתי הסיבות
+  const both = toCompliance(row({ inspection_state: "awaiting", inspection_validity_state: "soon", inspection_cycle: "awaiting_clean" }));
+  assert.equal(stateLabel("inspection", both), "בודק עומד לפוג תוך חודש · ממתין לתסקיר נקי");
+});
+
+// ---------------------------------------------------------------
+// ⚠️ הטבלה של בעלת המוצר (06/10/2026) — תשעה מקרים, שבעה מצבים
+// ---------------------------------------------------------------
+// 2 שחור-לבן · 1 ירוק · 4, 9 צהוב · 8 צהוב חזק · 3 כתום · 5, 6, 7 אדום. המצב מגיע מה-SQL
+// (בדיקה 49 שם); כאן — מה שהדשבורד עושה איתו: תווית, סימן בכרטיס הקטן, דירוג.
+const CASES = [
+  // [מקרה, מצב, תוקף, מחזור, ספירות, תווית, סימן בכרטיס הקטן]
+  ["2 בתוקף, אין ליקויים", "ok", "ok", "clean", {}, "בודק בתוקף", false],
+  ["1 בתוקף, ליקויים בזמן", "fixing", "ok", "open", { open_defects: 2 }, "בודק בתוקף · ליקויים בטיפול", false],
+  ["4 עומד לפוג", "soon", "soon", "clean", {}, "בודק עומד לפוג תוך חודש", true],
+  ["9 מועד תיקון בתוך החודש", "soon", "ok", "open", { open_defects: 1, due_soon_defects: 1 }, "בודק בתוקף · מועד תיקון בעוד פחות מחודש", true],
+  ["8 טופלו, ממתין לנקי", "awaiting", "ok", "awaiting_clean", {}, "בודק בתוקף · ממתין לתסקיר נקי", true],
+  ["3 עבר מועד", "overdue", "ok", "open", { open_defects: 2, overdue_defects: 1 }, "בודק בתוקף · עבר מועד תיקון", true],
+  ["5 לא בתוקף", "expired", "expired", "clean", {}, "בודק לא בתוקף", true],
+  ["6 לא בתוקף, טופלו", "expired", "expired", "awaiting_clean", {}, "בודק לא בתוקף", true],
+  ["7 לא בתוקף, עבר מועד", "expired", "expired", "open", { open_defects: 1, overdue_defects: 1 }, "בודק לא בתוקף", true],
+];
+for (const [name, state, validity, cycle, counts, label, marked] of CASES) {
+  test(`מקרה ${name}: '${label}'`, () => {
+    const c = toCompliance(row({ inspection_state: state, inspection_validity_state: validity, inspection_cycle: cycle, ...counts }));
+    assert.equal(lampState("inspection", c), state);
+    assert.equal(stateLabel("inspection", c), label);
+    assert.equal(markVisible(markFor(c, ["inspection"])), marked, "סימן בכרטיס הקטן רק כשצריך לעשות משהו");
+  });
+}
+
+test("⚠️ שלמות: לכל מצב של ה-SQL — דירוג, גליף משלו, תווית וצבע; ומצב לא מוכר אינו יורד מתחת לתקין", () => {
+  for (const st of COMPLIANCE_STATES) {
+    assert.ok(GLYPH[st], `גליף ל-${st}`);
+    assert.ok(LIGHT_LABEL.inspection[st], `תווית ל-${st}`);
+    assert.ok(COMPLIANCE_COLORS[st]?.bg && COMPLIANCE_COLORS[st]?.border && COMPLIANCE_COLORS[st]?.ink, `צבע ל-${st}`);
+  }
+  const glyphs = [...COMPLIANCE_STATES, "unknown"].map((s) => GLYPH[s]);
+  assert.equal(new Set(glyphs).size, glyphs.length, "גליף אחר לכל מצב — הצבע לעולם אינו הסימן היחיד");
+  // הסדר של app.light_rank, ו-"?" מעל התקין
+  const order = ["none", "ok", "unknown", "fixing", "soon", "awaiting", "overdue", "expired"];
+  for (let i = 1; i < order.length; i++) assert.ok(severity(order[i]) > severity(order[i - 1]), `${order[i]} > ${order[i - 1]}`);
+  assert.ok(severity("state-from-the-future") > severity("ok"), "מצב לא מוכר — לפחות כמו '?', לא 0");
+});
+
+test("⚠️ בלי 'באיחור' בתוויות המנורה (בעלת המוצר החליפה את המילה)", () => {
+  for (const [, state, validity, cycle, counts] of CASES) {
+    const c = toCompliance(row({ inspection_state: state, inspection_validity_state: validity, inspection_cycle: cycle, ...counts }));
+    assert.doesNotMatch(stateLabel("inspection", c), /באיחור/);
+  }
+  for (const l of Object.values(LIGHT_LABEL.inspection)) assert.doesNotMatch(l, /באיחור/);
+});
+
+test("⚠️ SQL ישן (לפני ההחלה): soon על תסקיר בתוקף עם ליקוי באיחור / המתנה — הסיבה הישנה, לא 'מועד קרוב'", () => {
+  const old = (o) => stateLabel("inspection", toCompliance(row({ inspection_state: "soon", inspection_validity_state: "ok", ...o })));
+  assert.equal(old({ inspection_cycle: "open", open_defects: 2, overdue_defects: 1 }), "בודק בתוקף · עבר מועד תיקון");
+  assert.equal(old({ inspection_cycle: "awaiting_clean" }), "בודק בתוקף · ממתין לתסקיר נקי");
 });
 
 test("אין תסקיר אחרי העלייה לאוויר → 'אין תסקיר בודק'; לפני — 'אין נתונים' אפור", () => {
@@ -120,18 +191,18 @@ test("טיוטה שלא נגעו בה 12 שעות → לא הוגש; 11 שעות
 // ---------------------------------------------------------------
 // רגרסיות מסקירת החיבור (04/10) — כל אחת נכשלה על הקוד שלפני התיקון
 // ---------------------------------------------------------------
-// אתר עם שני מתקנים: A עם ליקוי פתוח (מחזור האתר = open), B ממתין לתסקיר נקי
-// (המנורה שלו עלתה לצהוב). התוקף של שניהם בסדר.
+// אתר עם שני מתקנים: A עם ליקוי פתוח בזמן (ירוק, מחזור האתר = open), B ממתין לתסקיר נקי
+// (צהוב חזק — הוא המצב של האתר). התוקף של שניהם בסדר.
 const twoMachines = () => toCompliance(row({
-  inspection_state: "soon", inspection_validity_state: "ok", inspection_valid_until: "2027-06-01", inspection_days_left: 240,
+  inspection_state: "awaiting", inspection_validity_state: "ok", inspection_valid_until: "2027-06-01", inspection_days_left: 240,
   inspection_cycle: "open", inspection_awaiting_since: "2026-08-01", open_defects: 2, overdue_defects: 0, machines: 2,
   machines_detail: [
-    { key: "A", label: null, valid_until: "2027-06-01", state: "ok", cycle: "open", open: 2, overdue: 0 },
-    { key: "B", label: null, valid_until: "2027-06-01", state: "soon", cycle: "awaiting_clean", open: 0, overdue: 0 },
+    { key: "A", label: null, valid_until: "2027-06-01", state: "fixing", validity: "ok", cycle: "open", open: 2, overdue: 0 },
+    { key: "B", label: null, valid_until: "2027-06-01", state: "awaiting", validity: "ok", cycle: "awaiting_clean", open: 0, overdue: 0 },
   ],
 }));
 
-test("⚠️ שני מתקנים: צהוב ממחזור של מתקן B אינו 'עומד לפוג' כשמחזור האתר הוא open", () => {
+test("⚠️ שני מתקנים: הסיבה של מתקן B ('ממתין') נמצאת גם כשמחזור האתר הוא open", () => {
   const label = stateLabel("inspection", twoMachines());
   assert.doesNotMatch(label, /עומד לפוג/);
   assert.match(label, /בתוקף/);
@@ -143,23 +214,22 @@ test("⚠️ שני מתקנים: ההמתנה של מתקן B מופיעה בח
 });
 
 // ---------------------------------------------------------------
-// ⚠️ ליקוי שעבר את מועד התיקון → מנורה צהובה על תסקיר בתוקף (06/10/2026: "זה צריך להיות צהוב כיון
-// שהמסמך בתוקף אבל הליקויים לא טופלו" — מחליף את האדום של אותו בוקר).
+// ⚠️ ליקוי שעבר את מועד התיקון → מנורה כתומה על תסקיר בתוקף (מקרה 3 בטבלה של 06/10/2026).
 // התווית חייבת לומר "בתוקף · עבר מועד תיקון" — לא "לא בתוקף" (שולח לזמן בודק),
 // ולא "נדרשת בדיקה חוזרת" (הנפילה של סיבת המחזור).
 const overdue = (over = {}) => toCompliance(row({
-  inspection_state: "soon", inspection_validity_state: "ok", inspection_cycle: "open",
+  inspection_state: "overdue", inspection_validity_state: "ok", inspection_cycle: "open",
   open_defects: 2, overdue_defects: 1,
-  machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "soon", validity: "ok", cycle: "open", open: 2, overdue: 1 }],
+  machines_detail: [{ key: "1", label: null, valid_until: "2027-03-16", state: "overdue", validity: "ok", cycle: "open", open: 2, overdue: 1 }],
   ...over,
 }));
 
-test("⚠️ ליקוי באיחור על תסקיר בתוקף: 'בודק בתוקף · עבר מועד תיקון', והמנורה צהובה", () => {
+test("⚠️ ליקוי באיחור על תסקיר בתוקף: 'בודק בתוקף · עבר מועד תיקון', והמנורה כתומה", () => {
   const c = overdue();
-  assert.equal(lampState("inspection", c), "soon");
+  assert.equal(lampState("inspection", c), "overdue");
   assert.equal(stateLabel("inspection", c), "בודק בתוקף · עבר מועד תיקון");
   assert.equal(c.inspection.machinesDetail[0].validity, "ok", "toCompliance מעביר את התוקף של המתקן");
-  assert.deepEqual(markFor(c), { state: "soon", tab: "inspection", stale: false });
+  assert.deepEqual(markFor(c), { state: "overdue", tab: "inspection", stale: false });
   assert.match(lightTitle("inspection", c, NOW), /בתוקף עד 16\/03\/2027/);
   assert.match(lightTitle("inspection", c, NOW), /2 ליקויים פתוחים · 1 באיחור/);
 });
@@ -171,23 +241,30 @@ test("ליקוי באיחור + תוקף שעומד לפוג: שתי הסיבו�
     "בודק לא בתוקף");
 });
 
-test("machineLampLabel: מתקן צהוב מליקוי באיחור — בשתי צורות הנתון (site_compliance / inspection_site)", () => {
-  assert.equal(machineLampLabel({ state: "soon", validity: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
-  assert.equal(machineLampLabel({ state: "soon", validity_state: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
-  assert.equal(machineLampLabel({ state: "soon", validity_state: "soon", overdue: 1, cycle: "open" }), "בודק עומד לפוג תוך חודש · עבר מועד תיקון");
+test("machineLampLabel: כל המצבים — בשתי צורות הנתון (site_compliance / inspection_site)", () => {
+  assert.equal(machineLampLabel({ state: "overdue", validity: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
+  assert.equal(machineLampLabel({ state: "overdue", validity_state: "ok", overdue: 1, cycle: "open" }), "בודק בתוקף · עבר מועד תיקון");
+  assert.equal(machineLampLabel({ state: "overdue", validity_state: "soon", overdue: 1, cycle: "open" }), "בודק עומד לפוג תוך חודש · עבר מועד תיקון");
   assert.equal(machineLampLabel({ state: "expired", validity_state: "expired", overdue: 1, cycle: "open" }), "בודק לא בתוקף");
-  assert.equal(machineLampLabel({ state: "soon", validity_state: "ok", overdue: 0, cycle: "awaiting_clean" }),
-    "נדרשת בדיקה חוזרת — ממתין לתסקיר נקי");
+  assert.equal(machineLampLabel({ state: "awaiting", validity_state: "ok", overdue: 0, cycle: "awaiting_clean" }), "בודק בתוקף · ממתין לתסקיר נקי");
+  assert.equal(machineLampLabel({ state: "awaiting", validity_state: "ok", overdue: 0, cycle: "review" }), "בודק בתוקף · לבדיקה");
+  assert.equal(machineLampLabel({ state: "awaiting", validity_state: "soon", cycle: "awaiting_clean" }),
+    "בודק עומד לפוג תוך חודש · ממתין לתסקיר נקי", "התוקף שעומד לפוג אינו נבלע בסיבה");
+  assert.equal(machineLampLabel({ state: "fixing", validity_state: "ok", open: 2, cycle: "open" }), "בודק בתוקף · ליקויים בטיפול");
+  assert.equal(machineLampLabel({ state: "soon", validity_state: "ok", open: 1, due_soon: 1, cycle: "open" }),
+    "בודק בתוקף · מועד תיקון בעוד פחות מחודש");
+  assert.equal(machineLampLabel({ state: "soon", validity_state: "soon", cycle: "clean" }), "בודק עומד לפוג תוך חודש");
   assert.equal(machineLampLabel({ state: "ok", validity_state: "ok", overdue: 0, cycle: "clean" }), "בודק בתוקף");
-  // בלי תוקף נפרד (נתון ישן) — לפי הצבע, לא ממציאים "בתוקף"
+  // בלי תוקף נפרד (נתון ישן) — לפי המצב, ולעולם לא המילה האנגלית
   assert.equal(machineLampLabel({ state: "expired", overdue: 1, cycle: "open" }), "בודק לא בתוקף");
+  assert.equal(machineLampLabel({ state: "state-from-the-future" }), "בודק — לא נטען");
 });
 
 test("שני מתקנים: A באיחור, B בתוקף — האתר 'בתוקף · עבר מועד תיקון', והגרוע הוא A עם הסיבה", () => {
   const c = overdue({
     machines: 2,
     machines_detail: [
-      { key: "A", label: "צפון", valid_until: "2027-03-16", state: "soon", validity: "ok", cycle: "open", open: 2, overdue: 1 },
+      { key: "A", label: "צפון", valid_until: "2027-03-16", state: "overdue", validity: "ok", cycle: "open", open: 2, overdue: 1 },
       { key: "B", label: "דרום", valid_until: "2027-03-16", state: "ok", validity: "ok", cycle: "clean", open: 0, overdue: 0 },
     ],
   });
@@ -274,8 +351,14 @@ test("תחזוקה כבויה: אדום של תחזוקה אינו מופיע ב
     pm_draft_id: 9, pm_draft_last_activity: "2026-10-01T00:00:00.000Z" }));
   assert.deepEqual(markFor(pmRed), { state: "ok", tab: "inspection", stale: false });
   assert.equal(markVisible(markFor(pmRed)), false, "אתר שהבודק שלו ירוק — אין סימן בכרטיס הקטן");
-  assert.equal(worstSeverity(pmRed), 1, "המפקח ממיין לפי הבודק בלבד");
-  assert.equal(worstSeverity(pmRed, ALL_AREAS), 4);
+  assert.equal(worstSeverity(pmRed), severity("ok"), "המפקח ממיין לפי הבודק בלבד");
+  assert.equal(worstSeverity(pmRed, ALL_AREAS), severity("expired"));
+  // עם התחזוקה: כתום של בודק מעל צהוב של תחזוקה; אדום של תחזוקה מעל כתום של בודק
+  const pair = (insp, pm) => markFor(toCompliance(row({ inspection_state: insp, pm_state: pm })), ALL_AREAS);
+  assert.deepEqual(pair("overdue", "soon"), { state: "overdue", tab: "inspection", stale: false });
+  assert.deepEqual(pair("overdue", "expired"), { state: "expired", tab: "pm", stale: false });
+  assert.deepEqual(pair("fixing", "soon"), { state: "soon", tab: "pm", stale: false });
+  assert.deepEqual(pair("awaiting", "soon"), { state: "awaiting", tab: "inspection", stale: false });
 });
 
 test("תחזוקה כבויה: הבודק עדיין קובע את הסימן", () => {

@@ -125,6 +125,8 @@ export function needsRefetch(msg) {
   // site_compliance של האתר הזה בלבד (D20) — בלי זה כל העלאה של תסקיר היסטורי
   // הייתה מריצה את שליפת הרשימה המלאה על כל דשבורד פתוח, פעם לכל קובץ.
   if (msg.type === "compliance") return false;
+  // משימות — אותו דבר: אין בהן אף מדד של רשימת האתרים (App מרענן את המספרים בלבד)
+  if (msg.type === "tasks") return false;
 
   if (msg.type === "operation") {
     return msg.startEnd === "end" && !msg.isAnomaly;

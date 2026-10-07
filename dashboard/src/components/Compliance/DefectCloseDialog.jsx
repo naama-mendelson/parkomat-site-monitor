@@ -1,11 +1,12 @@
 // components/Compliance/DefectCloseDialog.jsx — "סימון כבוצע" של ליקוי: תמונה, שם, הערה.
 //
 // ============================================================
-// ⚠️ תמונה — לא חובה. שם המבצע — חובה.
+// ⚠️ שום שדה אינו חובה
 // ============================================================
-// בעלת המוצר, 06/10/2026: "אני רוצה שזה יהיה אופציונלי, כלומר יהיה אפשר להמשיך גם בלי
-// להעלות תמונה ולציין מי תיקן". כשיש תמונות, הראשונה היא הראיה (D8 במסד). הכפתור
-// מחכה רק לשם, ולתמונה שנמצאת באמצע שמירה — סימון באמצע העלאה היה משאיר אותה בחוץ.
+// בעלת המוצר, 06/10/2026: "אופציונלי — להמשיך גם בלי להעלות תמונה", ואחר כך "שיוכלו לעשות
+// סמן כבוצע בלי למלא את הכל". בלי שם — השרת רושם את המשתמש המחובר (מהזהות, לא מהבקשה),
+// כך שהשורה תמיד אומרת מי סימן. כשיש תמונות, הראשונה היא הראיה (D8 במסד). הכפתור מחכה רק
+// לתמונה שנמצאת באמצע שמירה — סימון באמצע העלאה היה משאיר אותה בחוץ.
 //
 // ============================================================
 // ⚠️ כל תמונה נשמרת ברגע שנבחרה, וחלון שנפתח מחדש מראה אותה
@@ -119,10 +120,10 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
   };
 
   const trimmed = name.trim();
-  const canSubmit = !done && !submitting && !photos.busy && trimmed.length >= 2;
+  const canSubmit = !done && !submitting && !photos.busy;
 
   const succeed = () => {
-    saveName(trimmed);
+    if (trimmed) saveName(trimmed);   // שם שנזכר אינו נמחק בסימון בלי שם
     setDone(true);
     setSubmitting(false);
     onDone?.();
@@ -151,7 +152,6 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
   const missing = [];
   if (!done) {
     if (photos.busy) missing.push("ממתינים לשמירת התמונה");
-    if (trimmed.length < 2) missing.push("שם המבצע");
   }
 
   return (
@@ -212,9 +212,9 @@ export default function DefectCloseDialog({ defect, onDone, onClose, onDirtyChan
             </div>
 
             <label className="it-field">
-              <span className="it-label">שם המבצע</span>
+              <span className="it-label">שם המבצע (לא חובה)</span>
               <input className="it-input" type="text" value={name} maxLength={100} autoComplete="name"
-                onChange={(e) => setName(e.target.value)} placeholder="שם מלא" />
+                onChange={(e) => setName(e.target.value)} placeholder="אם ריק — יירשם השם שלך" />
             </label>
 
             <label className="it-field">

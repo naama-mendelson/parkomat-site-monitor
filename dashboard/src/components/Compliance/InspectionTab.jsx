@@ -1,7 +1,7 @@
 // components/Compliance/InspectionTab.jsx — תוכן "בודק מוסמך": העמוד המלא (InspectionPage) וגם הלשונית בחלון האתר.
 //
 // מה רואים, מלמעלה למטה:
-//   1. פס מצב — נורה, תוקף, ולמה הנורה אדומה כשהתסקיר בתוקף (ושורה לכל מתקן כשיש יותר מאחד).
+//   1. פס מצב — נורה, תוקף, ולמה הנורה צבועה כשהתסקיר בתוקף (ושורה לכל מתקן כשיש יותר מאחד).
 //   2. באנר "ממתין לתסקיר נקי" / "לבדיקה" — כשהפעולה הבאה היא של המנהל.
 //   3. ליקויים פתוחים במחזור הנוכחי, ו"בוצעו (N)".
 //   4. היסטוריית התסקירים, ו"היסטוריית שינויים" (נטענת רק כשנפתחת).
@@ -31,7 +31,7 @@ import {
   GLYPH, LIGHT_LABEL, formatDateIL, formatDayMonth, machineLampLabel, stateLabel, toCompliance, todayIL,
 } from "../../utils/compliance";
 import { ClipboardCheckIcon } from "./icons";
-import { COMPLIANCE_COLORS } from "../../utils/constants";
+import { COMPLIANCE_COLORS, COMPLIANCE_STATES } from "../../utils/constants";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { InspectionMenu, InspectionReasonDialog } from "./InspectionDialog";
 import { DefectDoneRow, DefectRow } from "./DefectRows";
@@ -43,22 +43,21 @@ import InspectionHistory from "./InspectionHistory";
 import { KIND_LABEL, deriveInspection, hasDraggedFiles, ilDateOf, machineTitle, validityText } from "./InspectionUtils";
 import "./InspectionTab.css";
 
-const LAMP_STATES = new Set(["ok", "soon", "expired", "none"]);
+const LAMP_STATES = new Set(COMPLIANCE_STATES);
 const NOTICE_MS = 5000;
 
-// ⚠️ `label` ולא LIGHT_LABEL[state]: הנורה עולה מעל התוקף לצהוב (ליקוי באיחור, המתנה
-// לתסקיר נקי), ותווית לפי הצבע הייתה אומרת "עומד לפוג" ליד "בתוקף עד 03/2027" באותה שורה.
+// ⚠️ `label` ולא LIGHT_LABEL[state]: המצב נקבע גם מהליקויים ומהמחזור, ותווית לפי הצבע
+// בלבד הייתה אומרת "עומד לפוג" ליד "בתוקף עד 03/2027" באותה שורה.
 //
-// ⚠️ גוון שקוף ולא מילוי מלא — אותם ערכים בדיוק כמו המנורה בכרטיס (COMPLIANCE_COLORS),
-// לא עותק ב-CSS: "זה אדום מדי חזק" (בעלת המוצר, 06/10/2026). המנורה כאן נשארה מלאה
-// אחרי שהכרטיס עבר לגוון, ובעמוד הבודק ✕ לבן על אדום מלא צעק ליד "בתוקף עד…".
+// ⚠️ מילוי, מסגרת וסימן — אותם משתנים בדיוק כמו המנורה בכרטיס (COMPLIANCE_COLORS →
+// ComplianceLights.css), לא עותק כאן: שני עותקים כבר סטו פעם (ירוק #15803d מול #166534).
 function Lamp({ state, label, small = false }) {
   const s = LAMP_STATES.has(state) ? state : "none";
   const text = label ?? LIGHT_LABEL.inspection[s] ?? "";
-  const tint = s === "none" ? null : COMPLIANCE_COLORS[s];
+  const c = COMPLIANCE_COLORS[s];
   return (
     <span className={`it-lamp it-lamp--${s}${small ? " it-lamp--small" : ""}`} role="img"
-      aria-label={text} title={text} style={tint ? { background: tint.bg, borderColor: tint.border } : undefined}>
+      aria-label={text} title={text} style={{ background: c.bg, borderColor: c.border, color: c.ink }}>
       <ClipboardCheckIcon size={small ? 11 : 13} />
       <span className="it-lamp-glyph" aria-hidden="true">{GLYPH[s]}</span>
     </span>
@@ -345,11 +344,17 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
           <Lamp state={state} label={insp ? stateLabel("inspection", c) : undefined} />
           <div className="it-status-text">
             <strong className="it-headline">{headline}</strong>
-            {/* ⚠️ למה הנורה צהובה כשכתוב "בתוקף": בלי השורה הזו הנורה ישבה ליד "בתוקף עד…"
-                בלי שום הסבר, והסיבה הופיעה רק בשבב קטן (בעלת המוצר, 06/10/2026: "תסדר") */}
+            {/* ⚠️ למה הנורה צבועה כשכתוב "בתוקף": בלי השורה הזו הנורה ישבה ליד "בתוקף עד…"
+                בלי שום הסבר (בעלת המוצר, 06/10/2026: "תסדר"). כתום — עבר מועד; צהוב — מועד
+                תיקון בעוד פחות מחודש, רק כשזה מה שצובע (בכתום הסיבה הכתומה מספיקה). */}
             {insp?.overdueDefects > 0 && (
               <span className="it-reason">
                 {insp.overdueDefects === 1 ? "ליקוי אחד עבר את מועד התיקון" : `${insp.overdueDefects} ליקויים עברו את מועד התיקון`}
+              </span>
+            )}
+            {state === "soon" && insp?.validityState === "ok" && insp?.dueSoonDefects > 0 && (
+              <span className="it-reason it-reason--soon">
+                {insp.dueSoonDefects === 1 ? "מועד התיקון של ליקוי אחד בעוד פחות מחודש" : `מועד התיקון של ${insp.dueSoonDefects} ליקויים בעוד פחות מחודש`}
               </span>
             )}
             {derived.active.length > 1 && insp?.validUntil && <span className="it-muted">המוקדם מבין המתקנים</span>}

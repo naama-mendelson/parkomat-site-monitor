@@ -440,13 +440,13 @@ test("16 · סגירה בתסקיר חוזר נקי: כל הליקויים הפ�
 // מצב
 // ================================================================
 
-test("17 · מחזור: open → awaiting_clean (נורה צהובה) → clean; מחיקת כל הפתוחים → awaiting_clean", { skip }, async () => {
+test("17 · מחזור: open → awaiting_clean (צהוב חזק) → clean; מחיקת כל הפתוחים → awaiting_clean", { skip }, async () => {
   const s = await newSite();
   const p = await periodic(s, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 200), defects: [{ body: "גדר" }, { body: "תאורה" }] });
   assert.equal((await status(s.id)).c, "open");
   for (const d of await defectsOf(p.report_id)) await closeByPhoto(d.id);
   let st = await status(s.id);
-  assert.deepEqual({ c: st.c, s: st.s, vs: st.vs }, { c: "awaiting_clean", s: "soon", vs: "ok" });
+  assert.deepEqual({ c: st.c, s: st.s, vs: st.vs }, { c: "awaiting_clean", s: "awaiting", vs: "ok" });
   const f = await followup(s, p.report_id, { insp: TODAY });
   st = await status(s.id);
   assert.deepEqual({ c: st.c, s: st.s }, { c: "clean", s: "ok" });
@@ -460,7 +460,7 @@ test("17 · מחזור: open → awaiting_clean (נורה צהובה) → clean;
     await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [d.id]);
   }
   st = await status(s2.id);
-  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "soon" }, "ליקוי שנרשם — גם אם נמחק — מחייב תסקיר נקי");
+  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "awaiting" }, "ליקוי שנרשם — גם אם נמחק — מחייב תסקיר נקי");
 });
 
 test("18 · ספים: +31 ok, +30 soon, +0 soon, −1 expired; go-live; PM; סוף חודש", { skip }, async () => {
@@ -1191,47 +1191,48 @@ const lights = async (siteId, day) => (await sup(
      FROM app.compliance_rows(ARRAY[$1]::int[], $2::date)`, [siteId, day]))[0];
 const pick = (r) => ({ s: r.s, vs: r.vs, od: r.od });
 
-test("46 · ליקוי שעבר את מועד התיקון → צהוב (תסקיר בתוקף) / אדום (פג); התוקף נשאר; בוצע/נמחק/מחזור קודם — לא נספרים", { skip }, async () => {
+test("46 · מועד תיקון: בתוך חודש → צהוב, עבר → כתום (תסקיר בתוקף) / אדום (פג); התוקף נשאר; בוצע/נמחק/מחזור קודם — לא נספרים", { skip }, async () => {
   const s = await newSite();
   const due = addDays(TODAY, 5);
   const p = await periodic(s, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 200), defects: [{ body: "גדר", due_on: due }] });
-  assert.deepEqual(pick(await lights(s.id, due)), { s: "ok", vs: "ok", od: 0 }, "ביום היעד עצמו — עוד לא באיחור");
+  assert.deepEqual(pick(await lights(s.id, due)), { s: "soon", vs: "ok", od: 0 },
+    "ביום היעד עצמו — עוד לא באיחור, אבל בתוך החודש: צהוב (מקרה 9)");
   let r = await lights(s.id, addDays(due, 1));
-  // בעלת המוצר, 06/10/2026: "זה צריך להיות צהוב כיון שהמסמך בתוקף אבל הליקויים לא טופלו"
-  assert.deepEqual(pick(r), { s: "soon", vs: "ok", od: 1 }, "יום אחרי היעד — צהוב, והתוקף בתוקף");
-  assert.deepEqual(r.md.map((m) => ({ s: m.state, v: m.validity, od: m.overdue })), [{ s: "soon", v: "ok", od: 1 }],
-    "פירוט המתקנים נושא גם את התוקף — בלעדיו התווית לא יודעת למה צהוב");
+  // בעלת המוצר, 06/10/2026: מקרה 3 — "המסמך בתוקף, זמן תיקון הליקויים לא בתוקף" — כתום
+  assert.deepEqual(pick(r), { s: "overdue", vs: "ok", od: 1 }, "יום אחרי היעד — כתום, והתוקף בתוקף");
+  assert.deepEqual(r.md.map((m) => ({ s: m.state, v: m.validity, od: m.overdue })), [{ s: "overdue", v: "ok", od: 1 }],
+    "פירוט המתקנים נושא גם את התוקף — בלעדיו התווית לא יודעת למה כתום");
 
-  // בוצע עם תמונה → כבר לא באיחור: הצהוב הוא עכשיו של "ממתין לתסקיר נקי"
+  // בוצע עם תמונה → כבר לא באיחור: צהוב חזק של "ממתין לתסקיר נקי" (מקרה 8)
   const [d] = await defectsOf(p.report_id);
   await closeByPhoto(d.id);
   r = await lights(s.id, addDays(due, 1));
-  assert.deepEqual({ ...pick(r), c: r.c }, { s: "soon", vs: "ok", od: 0, c: "awaiting_clean" });
+  assert.deepEqual({ ...pick(r), c: r.c }, { s: "awaiting", vs: "ok", od: 0, c: "awaiting_clean" });
 
   // תסקיר שפג וגם ליקוי באיחור — אדום, והתוקף אומר "לא בתוקף"
   const both = await newSite();
   await periodic(both, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -2), defects: [{ body: "גם וגם", due_on: addDays(TODAY, -300) }] });
   assert.deepEqual(pick(await lights(both.id, TODAY)), { s: "expired", vs: "expired", od: 1 });
 
-  // שני מתקנים: הצהוב של A צובע את האתר; התוקף של האתר נשאר של התסקירים
+  // שני מתקנים: הכתום של A צובע את האתר; התוקף של האתר נשאר של התסקירים
   const two = await newSite();
   await periodic(two, { machine: "A", defects: [{ body: "באיחור", due_on: addDays(TODAY, -1) }] });
   await periodic(two, { machine: "B" });
   r = await lights(two.id, TODAY);
-  assert.deepEqual(pick(r), { s: "soon", vs: "ok", od: 1 });
-  assert.deepEqual(r.md.map((m) => [m.key, m.state, m.validity]), [["A", "soon", "ok"], ["B", "ok", "ok"]]);
+  assert.deepEqual(pick(r), { s: "overdue", vs: "ok", od: 1 });
+  assert.deepEqual(r.md.map((m) => [m.key, m.state, m.validity]), [["A", "overdue", "ok"], ["B", "ok", "ok"]]);
   // ⚠️ אותו דבר בעמוד הבודק — מנורת המתקן נצבעת מ-inspection_site, לא מ-site_compliance
   const site = (await one(MGR, `SELECT public.inspection_site($1) j`, [two.code])).j;
   assert.deepEqual(site.machines.map((m) => [m.key, m.state, m.validity_state, m.overdue]),
-    [["A", "soon", "ok", 1], ["B", "ok", "ok", 0]]);
-  assert.equal(site.status.inspection_state, "soon");
+    [["A", "overdue", "ok", 1], ["B", "ok", "ok", 0]]);
+  assert.equal(site.status.inspection_state, "overdue");
 
   // ליקוי שנמחק (מחיקה רכה) אינו נספר
   const del = await newSite();
   const pd = await periodic(del, { defects: [{ body: "הוזן בטעות", due_on: addDays(TODAY, -1) }] });
-  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "soon", vs: "ok", od: 1 });
+  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "overdue", vs: "ok", od: 1 });
   await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [(await defectsOf(pd.report_id))[0].id]);
-  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "soon", vs: "ok", od: 0 }, "נמחק → לא באיחור; ממתין לתסקיר נקי");
+  assert.deepEqual(pick(await lights(del.id, TODAY)), { s: "awaiting", vs: "ok", od: 0 }, "נמחק → לא באיחור; ממתין לתסקיר נקי");
 
   // ליקוי פתוח במחזור **קודם** אינו צובע: תקופתי חדש פותח מחזור חדש
   const old = await newSite();
@@ -1249,7 +1250,7 @@ test("47 · ליקוי שנמחק ב'טופל' + סימון התסקיר המק�
   const [d] = await defectsOf(p.report_id);
   await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'טופל')`, [d.id]);
   let st = await status(s.id);
-  assert.deepEqual({ c: st.c, s: st.s, vs: st.vs }, { c: "awaiting_clean", s: "soon", vs: "ok" });
+  assert.deepEqual({ c: st.c, s: st.s, vs: st.vs }, { c: "awaiting_clean", s: "awaiting", vs: "ok" });
   await fails(rpc(MGR, `SELECT public.inspection_report_update($1, '{"declared_clean": true}'::jsonb, 'טופל')`, [p.report_id]),
     "23514", /נרשמו ליקויים/);
   assert.equal((await status(s.id)).c, "awaiting_clean");
@@ -1270,13 +1271,14 @@ test("47 · ליקוי שנמחק ב'טופל' + סימון התסקיר המק�
   assert.equal((await status(s2.id)).c, "clean");
 });
 
-test("48 · בוצע בלי תמונה: מותר עם שם המבצע; בלי שם — נדחה; בוצע ≠ נקי; פתיחה מחדש וסגירה שנייה", { skip }, async () => {
+test("48 · בוצע בלי תמונה ובלי שם: מותר; בלי שם — נרשם המשתמש המחובר; בוצע ≠ נקי; פתיחה מחדש וסגירה שנייה", { skip }, async () => {
   // בעלת המוצר, 06/10/2026: "שזה יהיה אופציונלי — להמשיך גם בלי להעלות תמונה ולציין מי תיקן"
   const s = await newSite();
-  const p = await periodic(s, { defects: [{ body: "לתקן סנסור" }, { body: "שלט חסר" }] });
-  const [d1, d2] = await defectsOf(p.report_id);
-  await fails(rpc(OPR, `SELECT * FROM public.inspection_defect_done($1, ' ', NULL, $2::uuid)`, [d1.id, uuid()]),
-    "23514", /שם המבצע/);
+  const p = await periodic(s, { defects: [{ body: "לתקן סנסור" }, { body: "שלט חסר" }, { body: "תאורה" }] });
+  const [d1, d2, d3] = await defectsOf(p.report_id);
+  // "בלי למלא את הכל" (06/10/2026): בלי שם ובלי תמונה — מותר, ונרשם המשתמש המחובר (מהזהות, לא מהבקשה)
+  await one(OPR, `SELECT * FROM public.inspection_defect_done($1, ' ', NULL, $2::uuid)`, [d3.id, uuid()]);
+  assert.equal((await sup(`SELECT done_by_name FROM inspection_defects WHERE id=$1`, [d3.id]))[0].done_by_name, "בקר בדיקה");
   assert.deepEqual(await done(OPR, d1.id), { defect_id: d1.id, photos: 0, replayed: false });
   const row = (await sup(`SELECT status, done_by_name, done_photo_id, closed_by_report_id FROM inspection_defects WHERE id=$1`,
     [d1.id]))[0];
@@ -1285,12 +1287,89 @@ test("48 · בוצע בלי תמונה: מותר עם שם המבצע; בלי ש
   await closeByPhoto(d2.id);                                    // עם תמונה — עדיין עובד, והיא הראיה
   assert.notEqual((await defectsOf(p.report_id))[1].done_photo_id, null);
   const st = await status(s.id);
-  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "soon" }, "בוצע ≠ נקי: ממתין לתסקיר מהבודק");
+  assert.deepEqual({ c: st.c, s: st.s }, { c: "awaiting_clean", s: "awaiting" }, "בוצע ≠ נקי: ממתין לתסקיר מהבודק");
   // פתיחה מחדש של ליקוי שנסגר בלי תמונה, וסגירה שנייה
   await rpc(MGR, `SELECT public.inspection_defect_reopen($1, 'לא תוקן')`, [d1.id]);
   assert.equal((await status(s.id)).c, "open");
   assert.equal((await done(OPR, d1.id)).photos, 0);
   assert.equal((await status(s.id)).c, "awaiting_clean");
+});
+
+test("49 · שבעה צבעים: תשעת המקרים של בעלת המוצר, קדימות, גבולות החודש, מתקן מול אתר, ומצב מועד לכל ליקוי", { skip }, async () => {
+  // בעלת המוצר, 06/10/2026: 2 שחור-לבן (ok) · 1 ירוק (fixing) · 4, 9 צהוב (soon) · 8 צהוב חזק (awaiting)
+  // · 3 כתום (overdue) · 5, 6, 7 אדום (expired). כשכמה חלים יחד — החמור קובע.
+  const VALID = addDays(TODAY, 200), SOON = addDays(TODAY, 20);
+  const EXP = { insp: addDays(TODAY, -400), valid: addDays(TODAY, -2) };
+  const far = addDays(TODAY, 60), near = addDays(TODAY, 10), past = addDays(TODAY, -2);
+  const row = async (s) => (await sup(
+    `SELECT inspection_state s, inspection_validity_state vs, overdue_defects od, due_soon_defects ds, machines_detail md
+       FROM app.compliance_rows(ARRAY[$1]::int[], $2::date)`, [s.id, TODAY]))[0];
+  const closeAll = async (p) => { for (const d of await defectsOf(p.report_id)) await done(OPR, d.id); };
+  const make = async (o, after) => {
+    const s = await newSite();
+    const p = await periodic(s, o);
+    if (after) await after(p);
+    return s;
+  };
+  const cases = [
+    ["1 בתוקף, ליקוי שיש לו עוד זמן", { valid: VALID, defects: [{ body: "גדר", due_on: far }] }, null, "fixing"],
+    ["2 בתוקף, אין ליקויים", { valid: VALID }, null, "ok"],
+    ["3 בתוקף, ליקוי שעבר את המועד", { valid: VALID, defects: [{ body: "גדר", due_on: past }] }, null, "overdue"],
+    ["4 בתוקף, פג בעוד פחות מחודש", { valid: SOON }, null, "soon"],
+    ["5 לא בתוקף, אין ליקויים", { ...EXP }, null, "expired"],
+    ["6 לא בתוקף, הליקויים טופלו", { ...EXP, defects: [{ body: "גדר", due_on: addDays(TODAY, -300) }] }, closeAll, "expired"],
+    ["7 לא בתוקף, ליקוי שעבר את המועד", { ...EXP, defects: [{ body: "גדר", due_on: addDays(TODAY, -300) }] }, null, "expired"],
+    ["8 בתוקף, הליקויים טופלו (ממתין לתסקיר נקי)", { valid: VALID, defects: [{ body: "גדר", due_on: far }] }, closeAll, "awaiting"],
+    ["9 בתוקף, מועד תיקון בעוד פחות מחודש", { valid: VALID, defects: [{ body: "גדר", due_on: near }] }, null, "soon"],
+    // קדימות
+    ["4+3 → כתום", { valid: SOON, defects: [{ body: "גדר", due_on: past }] }, null, "overdue"],
+    ["4+8 → צהוב חזק", { valid: SOON, defects: [{ body: "גדר", due_on: far }] }, closeAll, "awaiting"],
+    ["4+1 → צהוב", { valid: SOON, defects: [{ body: "גדר", due_on: far }] }, null, "soon"],
+    ["9+1 → צהוב", { valid: VALID, defects: [{ body: "גדר", due_on: near }, { body: "שלט", due_on: far }] }, null, "soon"],
+    ["3+9 → כתום", { valid: VALID, defects: [{ body: "גדר", due_on: past }, { body: "שלט", due_on: near }] }, null, "overdue"],
+    // גבולות החודש: היום עצמו עוד לא באיחור; 30 יום — בתוך החודש; 31 — כבר לא
+    ["מועד היום → צהוב", { valid: VALID, defects: [{ body: "גדר", due_on: TODAY }] }, null, "soon"],
+    ["מועד בעוד 30 → צהוב", { valid: VALID, defects: [{ body: "גדר", due_on: addDays(TODAY, 30) }] }, null, "soon"],
+    ["מועד בעוד 31 → ירוק", { valid: VALID, defects: [{ body: "גדר", due_on: addDays(TODAY, 31) }] }, null, "fixing"],
+  ];
+  for (const [name, o, after, want] of cases) {
+    const r = await row(await make(o, after));
+    assert.equal(r.s, want, name);
+    if (want !== "expired") assert.notEqual(r.vs, "expired", `${name}: התוקף נשאר טהור`);
+  }
+
+  // הספירות: overdue / due_soon נפרדות, באתר ובפירוט המתקנים
+  const cnt = await make({ valid: VALID, defects: [{ body: "ליקוי א", due_on: past }, { body: "ליקוי ב", due_on: near },
+                                                   { body: "ליקוי ג", due_on: TODAY }, { body: "ליקוי ד", due_on: far }] });
+  let r = await row(cnt);
+  assert.deepEqual({ od: r.od, ds: r.ds }, { od: 1, ds: 2 }, "באיחור = לפני היום; בתוך החודש = היום עד 30 יום");
+  assert.deepEqual(r.md.map((m) => [m.state, m.overdue, m.due_soon]), [["overdue", 1, 2]]);
+
+  // מצב המועד לכל ליקוי — מה-SQL, באותם כללים; ליקוי שבוצע — בלי מצב
+  const ins = (await one(MGR, `SELECT public.inspection_site($1) j`, [cnt.code])).j;
+  assert.deepEqual(ins.machines.map((m) => [m.state, m.overdue, m.due_soon]), [["overdue", 1, 2]]);
+  const states = ins.reports[0].defects.map((d) => [d.body, d.due_state]);
+  assert.deepEqual(states, [["ליקוי א", "overdue"], ["ליקוי ב", "soon"], ["ליקוי ג", "soon"], ["ליקוי ד", null]]);
+  await done(OPR, ins.reports[0].defects[0].id);
+  const ins2 = (await one(MGR, `SELECT public.inspection_site($1) j`, [cnt.code])).j;
+  assert.equal(ins2.reports[0].defects[0].due_state, null, "ליקוי שבוצע — אין לו מצב מועד");
+  assert.equal(ins2.status.inspection_state, "soon", "אחרי שהבאיחור בוצע — נשארו שניים בתוך החודש: צהוב");
+
+  // אתר עם שני מתקנים — החמור קובע, והפירוט שומר את כל אחד
+  const two = async (a, b) => {
+    const s = await newSite();
+    const pa = await periodic(s, { machine: "A", ...a.o }); if (a.after) await a.after(pa);
+    const pb = await periodic(s, { machine: "B", ...b.o }); if (b.after) await b.after(pb);
+    const x = await row(s);
+    return [x.s, ...x.md.map((m) => m.state)];
+  };
+  const FIX = { o: { valid: VALID, defects: [{ body: "גדר", due_on: far }] } };
+  const AWAIT = { o: { valid: VALID, defects: [{ body: "גדר", due_on: far }] }, after: closeAll };
+  const OK = { o: { valid: VALID } };
+  const LATE = { o: { valid: VALID, defects: [{ body: "גדר", due_on: past }] } };
+  assert.deepEqual(await two(FIX, AWAIT), ["awaiting", "fixing", "awaiting"], "צהוב חזק מעל ירוק");
+  assert.deepEqual(await two(OK, FIX), ["fixing", "ok", "fixing"], "ירוק מעל שחור-לבן");
+  assert.deepEqual(await two(LATE, { o: { ...EXP } }), ["expired", "overdue", "expired"], "אדום מעל כתום");
 });
 
 test("6 · audit_log: מזהים, ספירות ושמות שדות בלבד — אין טקסט חופשי (D22)", { skip }, async () => {

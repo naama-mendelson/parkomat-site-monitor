@@ -136,22 +136,28 @@ export const STUCK_COLOR = {
 // עובד". ⚠️ ולכן **אין** כאן מחלקות `.tl-lamp--*` — אלה שייכות ללוח הרמזור,
 // ושיתוף שלהן היה קושר שני מסכים שמשתנים מסיבות שונות.
 //
-// הגוונים זהים בכוונה לירוק/ענבר/אדום/אפור של מצבי האתר: "בתוקף" הוא ירוק
-// בכל מקום במערכת. ⚠️ והצבע **לעולם אינו הסימן היחיד** — כל מנורה נושאת גם
-// גליף (✓ ! ✕ ○ ?), כי עיוורון צבעים אדום-ירוק נפוץ דווקא בין טכנאים.
+// ⚠️ שבעה מצבים לנורת הבודק, וכל אחד בצבע אחר שברור איזה הוא (בעלת המוצר, 06/10/2026:
+// "שיהיה הכל ברור אבל לא מוגזם, שיהיה בטעם"). המצב נקבע ב-SQL (app.compliance_machine_rows):
+//   ok       שחור-לבן   — בתוקף, אין ליקויים (מקרה 2): רקע לבן, מסגרת וסימן שחורים
+//   fixing   ירוק       — בתוקף, יש ליקויים ועוד יש זמן לתקן (מקרה 1)
+//   soon     צהוב       — המסמך או מועד תיקון פג בעוד פחות מחודש (מקרים 4, 9)
+//   awaiting צהוב חזק   — הליקויים טופלו, ממתינים לתסקיר נקי (מקרה 8) — מילוי מלא
+//   overdue  כתום       — ליקוי עבר את מועד התיקון (מקרה 3)
+//   expired  אדום       — המסמך לא בתוקף (מקרים 5, 6, 7)
+//   none     אפור חלול  — אין תסקיר ועוד לא נקבע go-live
+// התחזוקה המונעת משתמשת רק ב-ok/soon/expired/none.
 //
-// none (אפור) קיים רק לפני תאריך העלייה לאוויר; אחריו "אין תסקיר" הוא אדום.
-//
-// ⚠️ bg ו-border **שקופים** (06/10/2026, פעמיים): כשכל 60 האתרים נעשו אדומים,
-// מילוי מלא היה "אדום מדי חזק", וגם גוון של 16% עם מסגרת מלאה — "עדיין מדי
-// חזק" (בעלת המוצר). הצבע המלא (dot) נשאר רק להבחנה בין הצבעים (check-colors),
-// והסימן עצמו נצבע בדיו כהה (--cl-ink-* ב-ComplianceLights.css) — הוא מה שנקרא.
-export const COMPLIANCE_COLORS = {
-  ok:      { dot: "#22c55e", bg: "rgba(34,197,94,0.08)",   text: "#4ade80", border: "rgba(34,197,94,0.45)" },
-  soon:    { dot: "#f59e0b", bg: "rgba(245,158,11,0.10)",  text: "#fbbf24", border: "rgba(245,158,11,0.5)" },
-  expired: { dot: "#ef4444", bg: "rgba(239,68,68,0.08)",   text: "#f87171", border: "rgba(239,68,68,0.45)" },
-  none:    { dot: "#94a3b8", bg: "rgba(148,163,184,0.14)", text: "#cbd5e1", border: "#94a3b8" },
-};
+// ⚠️ הערכים עצמם — **ב-ComplianceLights.css**, לכל נושא (בהיר/כהה) בנפרד: מילוי, מסגרת, סימן.
+// כאן רק ההפניות אליהם, כי שחור-לבן הוא לבן-על-שחור בכהה, ואין ערך אחד שנכון לשני הנושאים.
+// scripts/check-colors.mjs קורא את אותו קובץ ומודד את מה שמוצג: סימן מול המילוי (4.5:1) ושכל
+// שני מצבים נבדלים במילוי או במסגרת — בשני הנושאים. ⚠️ והצבע **לעולם אינו הסימן היחיד**:
+// לכל מצב גליף משלו (GLYPH ב-utils/compliance.js), כי עיוורון צבעים נפוץ דווקא בין טכנאים.
+export const COMPLIANCE_STATES = ["ok", "fixing", "soon", "awaiting", "overdue", "expired", "none"];
+export const COMPLIANCE_COLORS = Object.fromEntries(COMPLIANCE_STATES.map((s) => [s, {
+  bg: `var(--cl-${s}-fill)`,
+  border: `var(--cl-${s}-border)`,
+  ink: `var(--cl-${s}-ink)`,
+}]));
 
 // ==========================================================
 // דרגת אתר (רמת שירות) — VIP / מורחב / בסיסי
@@ -253,10 +259,9 @@ export const DENSITY = {
   // גובה כרטיס משוער, כולל הרווח שמתחתיו
   CARD_H:   { normal: 168, compact: 96,  mini: 46 },
 
-  // ⚠️ תקרה קשיחה שנשארת גם כשיש מקום: מעל המספרים האלה הכרטיס המלא
-  // אינו קריא ממילא — סורקים רשת של 60 אתרים בצבע, לא בטקסט.
+  // ⚠️ תקרה קשיחה שנשארת גם כשיש מקום: מעל 60 אתרים — compact. (MINI_THRESHOLD הוסר:
+  // הרשת לעולם אינה מגיעה ל-mini — ראו densityFor.)
   COMPACT_THRESHOLD: 60,
-  MINI_THRESHOLD: 120,
 
   // ============================================================
   // ⚠️ מסך אחד וקצת גלילה עדיף על ויתור על מידע
@@ -272,25 +277,28 @@ export const DENSITY = {
 };
 
 /**
- * הרמה העשירה ביותר שנכנסת ל-{width × height} בלי גלילה.
+ * הרמה העשירה ביותר שנכנסת ל-{width × height} בלי גלילה — normal או compact.
  *
  * ⚠️ `height` הוא הגובה הפנוי לרשת, לא גובה החלון. בלעדיו הבחירה הייתה
  * מתעלמת מהכותרת ומהמסננים שמעל, והרשת הייתה "נכנסת" על הנייר וגולשת
  * במסך.
+ *
+ * ============================================================
+ * ⚠️ לעולם לא mini
+ * ============================================================
+ * בעלת המוצר, 06/10/2026, על 60 אתרים שהצטמצמו לכרטיסים של שם ונקודה: "אני לא רוצה
+ * שה-DASHBOARD יצטמצם אף פעם לכזה גודל, זה מדי קטן — לא רוצה כרטיסים שלא רואים בהם כמעט
+ * שום מידע, זה מוגזם". הרמה הצפופה ביותר היא compact (מצב, שעון תקלה, מנורת הבודק, שורת
+ * התקלה), וכשגם היא לא נכנסת — גוללים. הקוד של mini (SiteCard, MiniMark) נשאר רדום;
+ * אל תחזירו את הרמה בלי לשאול.
  */
 export function densityFor(count, width, height) {
   if (!width || !height) return count > DENSITY.COMPACT_THRESHOLD ? "compact" : "normal";
-
-  for (const level of ["normal", "compact", "mini"]) {
-    if (level === "compact" && count > DENSITY.MINI_THRESHOLD) continue;
-    if (level === "normal"  && count > DENSITY.COMPACT_THRESHOLD) continue;
-
-    const gap = DENSITY.GAP[level];
-    const cols = Math.max(1, Math.floor((width + gap) / (DENSITY.MIN_COL[level] + gap)));
-    const rows = Math.ceil(count / cols);
-    if (rows * DENSITY.CARD_H[level] <= height * DENSITY.SCROLL_TOLERANCE) return level;
-  }
-  return "mini";
+  if (count > DENSITY.COMPACT_THRESHOLD) return "compact";
+  const gap = DENSITY.GAP.normal;
+  const cols = Math.max(1, Math.floor((width + gap) / (DENSITY.MIN_COL.normal + gap)));
+  const rows = Math.ceil(count / cols);
+  return rows * DENSITY.CARD_H.normal <= height * DENSITY.SCROLL_TOLERANCE ? "normal" : "compact";
 }
 
 

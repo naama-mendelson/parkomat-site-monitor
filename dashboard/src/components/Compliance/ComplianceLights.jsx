@@ -7,9 +7,9 @@
 // ============================================================
 // ⚠️ הצבע לעולם אינו הסימן היחיד
 // ============================================================
-// כל מנורה נושאת אייקון תחום (לוח עם וי / מפתח ברג) וגליף מצב (✓ ! ✕ ○ ?).
-// מנורה אדומה ומנורה ירוקה נבדלות גם בשחור-לבן, וגם למי שאינו מבחין בין
-// אדום לירוק.
+// כל מנורה נושאת אייקון תחום (לוח עם וי / מפתח ברג) וגליף מצב — לכל אחד משבעת
+// המצבים גליף משלו (GLYPH ב-utils/compliance.js). מנורה אדומה, כתומה וצהובה נבדלות
+// גם בשחור-לבן, וגם למי שאינו מבחין בין הגוונים.
 //
 // ⚠️ ומנורה **לא נעלמת** כשהסטטוס לא נטען. היא הופכת ל-"?" מקווקו. מנורה
 // חסרה נראית בדיוק כמו "אין מה לדווח" — וזה הלקח של 17/09, כשהמסך הפסיק
@@ -25,10 +25,9 @@ import "./ComplianceLights.css";
 
 function colorVars(state) {
   const c = COMPLIANCE_COLORS[state];
-  // ⚠️ רקע שקוף (bg, 8–10%) ולא הצבע המלא (dot): "זה אדום מדי חזק, תעשה את זה יותר
-  // שקוף" (בעלת המוצר, 06/10/2026 — כשכל 60 האתרים נעשו אדומים), ואחר כך "עדיין מדי
-  // חזק" — ולכן גם המסגרת חצי-שקופה. הצבע נושא רק הסימן.
-  return c ? { "--cl-fill": c.bg, "--cl-border": c.border } : undefined;
+  // ⚠️ מילוי, מסגרת וסימן — שמות של משתני CSS, והערכים ב-ComplianceLights.css לכל נושא.
+  // "?" (unknown) אינו כאן בכוונה: הוא נצבע מה-CSS, מקווקו.
+  return c ? { "--cl-fill": c.bg, "--cl-border": c.border, "--cl-ink": c.ink } : undefined;
 }
 
 /**
@@ -57,7 +56,6 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
   // התווית כבר אומרת "ממתין לתסקיר נקי" כשהצהוב נובע מהמחזור — בלי שבב כפול
   const awaiting = isAwaiting(insp) && !label.includes("ממתין");
   const open = insp?.openDefects ?? 0;
-  const overdue = insp?.overdueDefects ?? 0;
   const notSubmitted = area === "pm" && draftStale(compliance, nowIso);
 
   return (
@@ -80,7 +78,8 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
         <span className="cl-glyph" aria-hidden="true">{GLYPH[state]}</span>
       </span>
       {open > 0 && (
-        <span className={`cl-badge${overdue > 0 ? " cl-badge--overdue" : ""}`} aria-hidden="true">
+        // ⚠️ תמיד ניטרלי — "למה העיגול אדום? זה מפריע" (בעלת המוצר, 06/10/2026)
+        <span className="cl-badge" aria-hidden="true">
           {open}
         </span>
       )}
@@ -116,8 +115,8 @@ export default function ComplianceLights({ compliance, density = "normal", onOpe
 
 /**
  * הסימן הקטן שליד נקודת המצב בכרטיס mini: הגרוע מבין שתי המנורות.
- * מצויר רק לצהוב, אדום או "?" — ירוק ואפור אינם דורשים תשומת לב, וריבוע
- * ירוק על כל כרטיס ברשת של 50 אתרים היה רק רעש.
+ * מצויר רק כשצריך לעשות משהו — צהוב, צהוב חזק, כתום, אדום או "?" (markVisible).
+ * שחור-לבן, ירוק ואפור אינם מצוירים: ריבוע על כל כרטיס ברשת של 50 אתרים היה רק רעש.
  */
 export function MiniMark({ compliance, onOpen, nowIso }) {
   const m = markFor(compliance);
