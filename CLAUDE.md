@@ -1236,7 +1236,7 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   too.** Throttling came back at 10:52, after the resize, under the old dashboard load, so the fixes
   above are what keep it healthy, not the size alone.
 
-## Sites without a controller, and maintenance lists per type (built 07/10/2026, not yet deployed)
+## Sites without a controller, and maintenance lists per type (built 07/10/2026, deployed 08/10/2026)
 
 The owner, on Sotefin facilities: *"the site isn't linked to the facility itself, because it's
 Sotefin's, but it does exist, and it does need the inspector, maintenance and tasks"*. On
@@ -1299,7 +1299,7 @@ specific to the type of facility"*.
   (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,
   run with `VITE_COMPLIANCE_PM=true`, 10 UI mutations caught).
 
-## "בודק מוסמך" in the header filter (built 08/10/2026, not yet deployed)
+## "בודק מוסמך" in the header filter (built and deployed 08/10/2026)
 
 Five versions in one day. The owner's words decided each one, so they are recorded:
 
@@ -1350,6 +1350,15 @@ Five versions in one day. The owner's words decided each one, so they are record
 - ⚠️ **It exposed a card bug, still fixed.** The lamp label was `nowrap`, and "בודק בתוקף · מועד תיקון
   בעוד פחות מחודש" is longer than a 270px card, so it stuck out and gave the page a horizontal scroll.
   `.cl-label` now wraps (`min-width: 0`).
+- **Deployed 08/10/2026, 10:03 (`f249d66`), together with the 07/10 work.** The SQL went first
+  (`apply-sql --apply`: 16 gaps, all new, then "הייצור זהה לקוד"). Pages served the new bundle at
+  10:04, checked by finding `cf-area-btn` in the live JS. Afterwards 64 of 65 sites had a fresh beat
+  and events kept flowing.
+  ⚠️ **The dry run does not show missing tables or columns.** `pm_templates`, `pm_site_templates`,
+  `sites.monitored` and `pm_checklist_items.template_id` / `section` were all absent from production,
+  and none of them appeared in the 16 gaps. Only their functions and some constraints did. `--apply`
+  runs the full `db.init()`, so they were created, but before applying, check
+  `information_schema.columns` / `.tables` by hand. Do not read "16 gaps" as the whole change.
 - ⚠️ **Found along the way, and not yet fixed: with PM enabled, tapping a site's name on a phone opens
   the PM tab.** Chrome adjusts a touch to a nearby button, and the PM lamp's 44px hit area ends 7px
   below the centre of the name. Measured: a touch at (215,309) became a click on `cl-lamp--soon` at
