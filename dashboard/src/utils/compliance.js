@@ -407,6 +407,23 @@ export function complianceFilterCounts(sites, areas = COMPLIANCE_AREAS) {
   return counts;
 }
 
+/**
+ * בחירה שמורה (localStorage) → מצב בורר תקין. כל מה שאינו מוכר נופל לברירת המחדל של אותו תחום.
+ * ⚠️ בלי זה, ערך ישן — מצב שהוסר מהבורר ("none" לפני 08/10), או JSON שבור — היה מסנן את הלוח
+ * לאפס אתרים, בלי אפשרות בבורר שמראה למה. בחירה אחת לכל תחום, כמו הבורר עצמו.
+ */
+export function sanitizeComplianceView(raw) {
+  const out = {};
+  for (const area of ALL_AREAS) {
+    const v = raw && typeof raw === "object" ? raw[area] : null;
+    const key = Array.isArray(v?.only) ? v.only[0] : undefined;
+    out[area] = v?.show === true
+      ? { show: true, only: LISTED[area].has(key) ? [key] : [] }
+      : { show: false, only: [] };
+  }
+  return out;
+}
+
 /** כמה מסננים פעילים — ל"סינון ותצוגה · N פעילים" בכותרת: תחום שנבחר בו משהו נספר פעם אחת, כמו כל בורר. */
 export function complianceActiveCount(view, areas = COMPLIANCE_AREAS) {
   return areas.filter((a) => shown(view, a)).length;

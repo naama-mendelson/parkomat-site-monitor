@@ -14,7 +14,7 @@ import {
   toCompliance, stateLabel, lightTitle, markFor, markVisible, draftStale, lampState, machineLampLabel,
   ALL_AREAS, COMPLIANCE_AREAS, PM_ENABLED, worstSeverity, severity, GLYPH, LIGHT_LABEL,
   COMPLIANCE_FILTER_ROWS, complianceFilterKey, complianceFilterCounts,
-  DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView, complianceActiveCount,
+  DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView, complianceActiveCount, sanitizeComplianceView,
 } from "../../dashboard/src/utils/compliance.js";
 import { COMPLIANCE_STATES, COMPLIANCE_COLORS } from "../../dashboard/src/utils/constants.js";
 import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
@@ -500,4 +500,24 @@ test("סימן ה-mini מכבד נורה מוסתרת: בודק מוסתר — �
   assert.equal(markVisible(markFor(c, [])), false);
   assert.deepEqual(markFor(toCompliance(null), ["pm"]), { state: "unknown", tab: "pm", stale: false }, "'?' פותח לשונית שקיימת");
   assert.deepEqual(markFor(toCompliance(null)), { state: "unknown", tab: "inspection", stale: false });
+});
+
+test("בחירה שמורה (localStorage): מה שמוכר נשמר, כל השאר — ברירת המחדל של אותו תחום", () => {
+  const off = { show: false, only: [] };
+  for (const raw of [null, undefined, "x", 7, [], {}, { inspection: null }, { inspection: { show: "true", only: ["ok"] } }]) {
+    assert.deepEqual(sanitizeComplianceView(raw), { inspection: off, pm: off }, JSON.stringify(raw));
+  }
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: ["overdue"] } }),
+    { inspection: { show: true, only: ["overdue"] }, pm: off });
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: [] } }).inspection, { show: true, only: [] }, "'כל האתרים'");
+  // ⚠️ מצב שהוסר מהבורר ("none" עד 08/10) או מפתח זר — "כל האתרים", לא לוח מסונן לאפס
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: ["none"] } }).inspection, { show: true, only: [] });
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: ["unknown"] } }).inspection, { show: true, only: [] });
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: "ok" } }).inspection, { show: true, only: [] });
+  // בחירה אחת, כמו הבורר; ומפתח נבדק מול השורות של התחום שלו
+  assert.deepEqual(sanitizeComplianceView({ inspection: { show: true, only: ["expired", "ok"] } }).inspection, { show: true, only: ["expired"] });
+  assert.deepEqual(sanitizeComplianceView({ pm: { show: true, only: ["overdue"] } }).pm, { show: true, only: [] }, "'עבר מועד תיקון' אינו מצב של תחזוקה");
+  assert.deepEqual(sanitizeComplianceView({ pm: { show: true, only: ["soon"] } }).pm, { show: true, only: ["soon"] });
+  // ברירת המחדל עצמה עוברת כמו שהיא
+  assert.deepEqual(sanitizeComplianceView(DEFAULT_COMPLIANCE_VIEW), { inspection: off, pm: off });
 });

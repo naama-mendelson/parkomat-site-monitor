@@ -1328,7 +1328,18 @@ Five versions in one day. The owner's words decided each one, so they are record
   N פעילים".
 - ⚠️ **By default ("בלי"), the area's lamp is not drawn on the board's cards.** This was chosen
   knowingly, and it is a change: before 08/10 the inspector lamp was always there. Any choice draws it.
-  The help panel says so. A refresh returns to "בלי", because nothing is persisted.
+  The help panel says so.
+- **The choice is remembered from last time, per user, per device.** The owner said *"לפי הבחירה האחרונה
+  של הבן אדם מהפעם הקודמת"* and chose "each device separately". It lives in localStorage under
+  `parkomat.complianceView:<user id>` (`hooks/useComplianceView.js`), unlike the other board
+  filters, which reset on refresh.
+  - The key carries the user id, so two people on a shared office screen each get their own choice.
+  - It is written only when the user chooses, never from an effect. An effect would store "בלי" on the
+    first render, before the saved choice was read, and wipe it.
+  - What is read back goes through `sanitizeComplianceView`. A removed state ("none") or a foreign
+    key becomes "כל האתרים", and broken JSON becomes "בלי". A stale value must never filter the board
+    to zero with no option that explains why.
+  - Probe R1–R6.
 - **The choice combines with the status and type filters (AND),** and the two areas combine with AND.
   An unmonitored site *is* matched.
 
@@ -1337,7 +1348,7 @@ Five versions in one day. The owner's words decided each one, so they are record
 | View model (pure) | `DEFAULT_COMPLIANCE_VIEW` (`{ show: false, only: [] }` per area), `lampAreasFor`, `matchesComplianceView`, `complianceActiveCount`, `COMPLIANCE_FILTER_ROWS` / `complianceFilterKey` / `complianceFilterCounts`, in `utils/compliance.js` |
 | Hiding a lamp | `LampAreasContext` in `ComplianceLights.jsx`, provided by `OperatorView` around `SiteGrid`; `markFor` respects it too |
 | The tile | `components/ComplianceFilters/`, rendered by `Header` in the status row; state `complianceView` in `App.jsx` |
-| Tests | `compliance-ui.test.js` (5 tests, 17/17 mutations caught, run on a scratch copy); browser `e2e/probe-cf.mjs` (18) + `dbg-cf-pmoff.mjs` (3) |
+| Tests | `compliance-ui.test.js` (6 tests, 21/21 mutations caught, run on a scratch copy); browser `e2e/probe-cf.mjs` (25) + `dbg-cf-pmoff.mjs` (3) |
 
 - **The key is the SQL state.** "אין תסקיר" is split from "לא בתוקף" by `stateLabel`'s own rule
   (`missing`, except under `none`). An unrecognised state gets the key `unknown`.

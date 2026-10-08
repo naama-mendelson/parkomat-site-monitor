@@ -15,7 +15,9 @@ import TrafficLight from "./components/TrafficLight/TrafficLight";
 import { useDirect, fetchSiteCompliance, fetchTaskCounts } from "./services/dataSource";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
-import { COMPLIANCE_TABS, DEFAULT_COMPLIANCE_VIEW, toCompliance } from "./utils/compliance";
+import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
+import { useAuth } from "./hooks/useAuth";
+import { useComplianceView } from "./hooks/useComplianceView";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import InspectionPage from "./components/Compliance/InspectionPage";
 import "./components/TrafficLight/TrafficLight.css";
@@ -46,9 +48,11 @@ function App() {
   const [systemFilter, setSystemFilter] = useState("");         // סינון לפי מערכת הפעלה ("" = הכל)
   const [tierFilter, setTierFilter] = useState("");             // סינון לפי רמת שירות ("" = הכל)
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
-  // "בודק מוסמך" בסינון שבכותרת — לכל תחום: האם נבחר בו משהו (הנורה בכרטיסים), ואיזה מצב. לא
-  // נשמר: רענון מחזיר לברירת המחדל (בלי), כמו שאר המסננים בלוח.
-  const [complianceView, setComplianceView] = useState(DEFAULT_COMPLIANCE_VIEW);
+  // "בודק מוסמך" בסינון שבכותרת — לכל תחום: האם נבחר בו משהו (הנורה בכרטיסים), ואיזה מצב.
+  // ⚠️ נזכר מהפעם הקודמת, לכל משתמש בכל מכשיר (בעלת המוצר, 08/10/2026) — בשונה משאר המסננים
+  // בלוח, שמתאפסים ברענון. ראה hooks/useComplianceView.js.
+  const { user } = useAuth();
+  const [complianceView, setComplianceView] = useComplianceView(user?.id);
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   // הלשונית שהחלון **נפתח** עליה (מנורה בכרטיס → "בודק מוסמך"/"תחזוקה מונעת").
   // ⚠️ רק הפתיחה: המעבר בין לשוניות בתוך החלון אינו משנה אותה — אחרת מעבר
