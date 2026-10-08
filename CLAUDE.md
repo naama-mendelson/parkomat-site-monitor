@@ -1316,16 +1316,37 @@ Five versions in one day. The owner's words decided each one, so they are record
 - **The header's filter row** has a "בודק מוסמך" tile (and "תחזוקה מונעת" when `PM_ENABLED`), after
   the type/system/tier box. It uses the status tiles' `filter-btn` class, with the area icon in place
   of the count.
-- **The tile is a real `<select>`.** It is transparent and covers the whole tile, so a click anywhere
-  opens the list underneath, a choice closes it, and on a phone it opens as the phone's own picker.
-  That is exactly the behaviour of the three `SiteFilterTile` selects beside it. The options:
-  - "בלי בודק מוסמך" — the default;
-  - "כל האתרים (N)" — shows the lamps, filters nothing;
-  - the 7 states with their counts ("לא בתוקף (2)" …). PM has 4.
+- **The tile opens our own list underneath. It was a `<select>` and was replaced on 08/10,** after the
+  owner said *"תעשה את זה יותר יפה"*. The OS draws a `<select>`'s list, white and without colour or
+  lamp, and it cannot be styled. The list is a card (`role="listbox"`) with:
+  - "בלי בודק מוסמך" — the default ("בלי נורות בכרטיסים");
+  - "כל האתרים · N" — shows the lamps, filters nothing;
+  - the 7 states, each with its lamp (`LampSwatch`) and count. PM has 4.
+
+  The current choice is marked ✓. Thin lines separate the three groups.
+- **What the `<select>` gave for free is rebuilt explicitly:**
+  - closing on a choice, on a click outside, or on Esc;
+  - arrows, Home/End and Enter;
+  - focus returning to the tile.
+- ⚠️ **Two traps on a phone, both measured:**
+  - Focusing the selected row with a plain `focus()` scrolled the page. A scroll closes the whole
+    "סינון ותצוגה" panel (`Header.jsx`), so the list vanished under the finger. The fix is
+    `focus({ preventScroll: true })`.
+  - The header is sticky, so the list inside it does not move with a page scroll. Its height is capped
+    at what is left of the screen, and the rest scrolls inside it.
+
+  It also flips to the tile's left edge when there is no room to its left.
+- **The closed tile reads like the status tiles beside it.**
+  - "בלי": the icon, the area name and ▾.
+  - "כל האתרים": the same, plus a "כל האתרים" line.
+  - A state: big count + its lamp, the state's name, "בודק מוסמך" underneath, and the tile filled in the
+    state's colour (via the status tiles' `--filter-bg/-border/-text` variables, with dark ink on
+    yellow and white).
 - **One choice at a time**, like the selects beside it. The model's `only` array can hold several;
-  the UI does not offer that.
-- **The active tile names its choice** on a second line, and counts as one filter in "סינון ותצוגה ·
-  N פעילים".
+  the UI does not offer that. An active tile counts as one filter in "סינון ותצוגה · N פעילים".
+- ⚠️ **Probe trap:** wait for the list's open animation to finish (`getAnimations().finished` with a
+  `catch`) before a Playwright `tap`. Otherwise it stalls on "not stable", and screenshots show the
+  list half-transparent.
 - ⚠️ **By default ("בלי"), the area's lamp is not drawn on the board's cards.** This was chosen
   knowingly, and it is a change: before 08/10 the inspector lamp was always there. Any choice draws it.
   The help panel says so.
@@ -1348,7 +1369,7 @@ Five versions in one day. The owner's words decided each one, so they are record
 | View model (pure) | `DEFAULT_COMPLIANCE_VIEW` (`{ show: false, only: [] }` per area), `lampAreasFor`, `matchesComplianceView`, `complianceActiveCount`, `COMPLIANCE_FILTER_ROWS` / `complianceFilterKey` / `complianceFilterCounts`, in `utils/compliance.js` |
 | Hiding a lamp | `LampAreasContext` in `ComplianceLights.jsx`, provided by `OperatorView` around `SiteGrid`; `markFor` respects it too |
 | The tile | `components/ComplianceFilters/`, rendered by `Header` in the status row; state `complianceView` in `App.jsx` |
-| Tests | `compliance-ui.test.js` (6 tests, 21/21 mutations caught, run on a scratch copy); browser `e2e/probe-cf.mjs` (25) + `dbg-cf-pmoff.mjs` (3) |
+| Tests | `compliance-ui.test.js` (6 tests, 21/21 mutations caught, run on a scratch copy); browser `e2e/probe-cf.mjs` (28) + `dbg-cf-pmoff.mjs` (3) |
 
 - **The key is the SQL state.** "אין תסקיר" is split from "לא בתוקף" by `stateLabel`'s own rule
   (`missing`, except under `none`). An unrecognised state gets the key `unknown`.
