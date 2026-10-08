@@ -77,7 +77,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
     : sites;
   const [withIdentity, setWithIdentity] = useState(undefined);
   useEffect(() => { sitesWithAgentIdentity().then(setWithIdentity).catch(() => setWithIdentity(null)); }, [agentIssued]);
-  const missingIdentity = (s) => withIdentity instanceof Set && !withIdentity.has(s.id);
+  // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו "חסר זהות" — אין לו סוכן בכלל, וזה מכוון.
+  const missingIdentity = (s) => withIdentity instanceof Set && s.monitored !== false && !withIdentity.has(s.id);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -604,6 +605,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                         {/* ⚠️ אתר בלי זהות אינו מציג שום סימן היום — הוא פשוט
                             מפסיק לפעום, וזה נראה כמו אתר שקט. הסימון הוא
                             ההבדל בין "צריך לטפל" לבין "לא שמתי לב חודשיים". */}
+                        {/* אתר בלי בקר מחובר — אין סוכן ואין בקר להחליף (07/10/2026) */}
+                        {s.monitored !== false && (<>
                         <button
                           className={missingIdentity(s) ? "adm-btn-ghost adm-needs-identity" : "adm-btn-ghost"}
                           disabled={issuing === s.code}
@@ -621,6 +624,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                           onClick={() => { setConfirmController(s.code); setErr(null); }}>
                           הוחלף בקר
                         </button>
+                        </>)}
                         <button className="adm-btn-ghost adm-danger-text"
                           onClick={() => { setConfirmDelete(s.code); setErr(null); }}>
                           מחק

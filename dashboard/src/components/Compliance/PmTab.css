@@ -343,6 +343,53 @@
   gap: 10px;
 }
 
+/* ---- קבוצות בביקור (07/10/2026): שורה שנפתחת בלחיצה, גוון ירוק כשהושלמה ---- */
+.pm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scroll-margin-block: 150px 40px;
+}
+.pm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  color: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+}
+.pm-group-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-color);
+  border-radius: 50%;
+  font-size: 14px;
+}
+.pm-group-name { flex: 1; }
+.pm-group-count { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.pm-group-chev { color: var(--text-secondary); }
+.pm-group--done .pm-group-head { background: var(--pm-green-bg); border-color: var(--pm-green-border); }
+.pm-group--done .pm-group-mark { border-color: var(--pm-green-ink); color: var(--pm-green-ink); }
+.pm-group--done .pm-group-count { color: var(--pm-green-ink); }
+.pm-group > .pm-items { padding-inline-start: 12px; }
+
 .pm-item {
   display: flex;
   flex-direction: column;
@@ -669,6 +716,15 @@ select.pm-input { padding-block: 8px; }
 .pm-tpl-opts { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; flex: 1 1 auto; min-width: 0; }
 /* בסיס קבוע: select ברוחב 100% נותן לקבוצה רוחב "טבעי" לא צפוי, והיא נשברת לשתי שורות גם במחשב */
 .pm-tpl-kind { flex: 0 0 200px; }
+.pm-tpl-sec { flex: 0 0 200px; }
+/* כותרת קבוצה — בראש הפריט הראשון שלה, כמו בביקור */
+.pm-tpl-group {
+  margin: 2px 0 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 800;
+  font-size: 15px;
+}
 .pm-inline-check {
   display: inline-flex;
   align-items: center;
@@ -696,4 +752,17 @@ select.pm-input { padding-block: 8px; }
   .pm-item { padding: 10px 12px; }
   .pm-form-bar .pm-btn--ghost { padding-inline: 4px; }
   .pm-tpl-kind { flex: 1 1 100%; }
+  .pm-tpl-sec { flex: 1 1 100%; }
 }
+
+/* ===== רשימות תחזוקה (07/10/2026): בורר בעורך, ושורת "הרשימות של האתר" ===== */
+.pm-tpl-lists { align-items: flex-end; flex-wrap: wrap; }
+.pm-tpl-pick { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--text-secondary); }
+.pm-tpl-pick select { min-height: 40px; min-width: 220px; max-width: 100%; }
+.pm-tpl-name { flex-wrap: wrap; }
+.pm-tpl-name .pm-input { flex: 1 1 220px; }
+.pm-site-lists { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pm-site-lists-names { font-weight: 600; }
+.pm-site-lists-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.pm-site-lists-edit label { display: flex; align-items: center; gap: 8px; }
+.pm-site-lists-edit input[type="checkbox"] { width: 18px; height: 18px; }

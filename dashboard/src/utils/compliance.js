@@ -287,14 +287,16 @@ export function draftStale(c, nowIso = new Date().toISOString()) {
 // ============================================================
 // בכרטיס mini אין מקום לשתי מנורות, ולכן מוצג הגרוע מבין השתיים — והקשה
 // עליו פותחת את הלשונית של הגרוע. בתיקו — הבודק: הוא החוקי מבין השניים.
+// ⚠️ גם הבודק משתתף רק אם הוא מוצג: מאז שהבורר בכותרת יכול להסתיר כל נורה (08/10/2026),
+// סימן של בודק בכרטיס שבו הנורה שלו הוסתרה היה מחזיר בדלת האחורית את מה שביקשו להסתיר.
 export function markFor(c, areas = COMPLIANCE_AREAS) {
-  if (c === undefined) return null;
-  if (!c || c.unknown) return { state: "unknown", tab: "inspection", stale: false };
+  if (c === undefined || areas.length === 0) return null;
+  if (!c || c.unknown) return { state: "unknown", tab: areas.includes("inspection") ? "inspection" : areas[0], stale: false };
   const i = lampState("inspection", c);
   // תחזוקה כבויה → אינה משתתפת. אחרת אדום של תחזוקה היה מופיע בכרטיס הקטן
   // כסימן של בודק, ולחיצה עליו הייתה פותחת לשונית שאינה קיימת.
   const p = areas.includes("pm") ? lampState("pm", c) : "none";
-  const worse = severity(p) > severity(i) ? "pm" : "inspection";
+  const worse = !areas.includes("inspection") || severity(p) > severity(i) ? "pm" : "inspection";
   return { state: worse === "pm" ? p : i, tab: worse, stale: !!c.stale };
 }
 
@@ -302,6 +304,112 @@ export function markFor(c, areas = COMPLIANCE_AREAS) {
 export function worstSeverity(c, areas = COMPLIANCE_AREAS) {
   if (c === undefined) return 0;
   return Math.max(...areas.map((a) => severity(lampState(a, c))));
+}
+
+// ============================================================
+// "בודק מוסמך" בסינון שבכותרת (08/10/2026; היה סרגל בצד הלוח באותו יום)
+// ============================================================
+// בעלת המוצר: "סרגל בצד של סינון שיציג רק אתרים פגים או אתרים נקיים וכו'", ואחר כך: "תהיה אופציה
+// בצד לסמן האם רוצים לראות בודק מוסמך, האם רוצים לראות תחזוקה מונעת. תחת כל סימון כזה יפתח
+// תפריט" של המצבים. ובתשובות שלה: כל המצבים מופיעים תמיד (גם 0), והסימון של התחום קובע גם אם
+// הנורה שלו מופיעה בכרטיסים. ⚠️ והבחירה — "בדיוק כמו בכותרת" (אחרי שראתה תיבות סימון שכולן
+// מסומנות): "הכל" מודגש בהתחלה, לחיצה על מצב מציגה רק אותו, אפשר כמה, ו"הכל" מנקה.
+// ⚠️ ואז: "אני רוצה שבודק מוסמך יופיע בסינון ב-HEADER" — והנורה בכרטיס "מופיעה רק כשמסמנים". ולבסוף,
+// במקום סרגל: "כשלוחצים על בודק מוסמך יפתח תפריט מתחת, ואז יצטרכו לבחור מה רואים, ואז זה יסגר".
+// כלומר בברירת המחדל התחום **כבוי**: בלי סינון, ובלי הנורה שלו בכרטיסי הלוח. זה שינוי מכוון מהמצב
+// שבו הנורה הופיעה תמיד.
+// ⚠️ "אין נתונים" ו"לא נטען" אינם שורות — בעלת המוצר, 08/10/2026: "תעיף את זה, זה לא קיים".
+// אין נתונים = אין תסקיר לפני תאריך העלייה לאוויר, והוא כבר נקבע (06/10); לא נטען = תקלת רשת
+// בדפדפן, לא מצב של אתר. אתר במצב כזה מוצג תחת "הכל" בלבד — אי אפשר לבחור בו.
+// ⚠️ גם כאן אין סף: המפתח הוא מצב המנורה מה-SQL, ו"אין תסקיר" נפרד מ"לא בתוקף" באותו
+// כלל שבו stateLabel מפריד ביניהם — כך אפשרות בבורר אומרת בדיוק מה שהכרטיס אומר. סרגל
+// שמונה "פג" באתר שכתוב עליו "אין תסקיר בודק" היה סותר את הכרטיס שלידו.
+// הסדר — מהחמור לקל, כמו SEVERITY. `swatch` = המנורה שמצוירת בשורה.
+export const COMPLIANCE_FILTER_ROWS = {
+  inspection: [
+    { key: "expired", swatch: "expired", label: "לא בתוקף" },
+    { key: "missing", swatch: "expired", label: "אין תסקיר" },
+    { key: "overdue", swatch: "overdue", label: "עבר מועד תיקון" },
+    { key: "awaiting", swatch: "awaiting", label: "ממתין לתסקיר נקי" },
+    { key: "soon", swatch: "soon", label: "עומד לפוג תוך חודש",
+      title: "התסקיר פג בעוד פחות מחודש, או שמועד התיקון של ליקוי בעוד פחות מחודש" },
+    { key: "fixing", swatch: "fixing", label: "ליקויים בטיפול" },
+    { key: "ok", swatch: "ok", label: "בתוקף" },
+  ],
+  pm: [
+    { key: "expired", swatch: "expired", label: "לא בתוקף" },
+    { key: "missing", swatch: "expired", label: "אין תחזוקה רשומה" },
+    { key: "soon", swatch: "soon", label: "עומדת לפוג תוך חודש" },
+    { key: "ok", swatch: "ok", label: "בתוקף" },
+  ],
+};
+
+// ============================================================
+// מצב הבורר: לכל תחום — האם נבחר בו משהו (הנורה), ואיזה מצב
+// ============================================================
+// `show` — סומן בכותרת (ברירת מחדל: לא). `only` ריק = "הכל", כמו activeFilters של מוני המצב בכותרת.
+export const DEFAULT_COMPLIANCE_VIEW = Object.freeze({
+  inspection: Object.freeze({ show: false, only: Object.freeze([]) }),
+  pm: Object.freeze({ show: false, only: Object.freeze([]) }),
+});
+
+// המצבים שיש להם אפשרות בבורר, לכל תחום
+const LISTED = Object.fromEntries(
+  Object.entries(COMPLIANCE_FILTER_ROWS).map(([area, rows]) => [area, new Set(rows.map((r) => r.key))]),
+);
+
+/**
+ * לאיזו אפשרות בבורר האתר שייך בתחום הזה. אותו כלל כמו stateLabel: missing גובר, חוץ מ-none.
+ * "none" ו-"unknown" — אתר שאין לו שורה. ⚠️ מצב שאינו מוכר כאן → "unknown", כמו שהוא מדורג
+ * (severity) ומצויר ("?") — ולא מפתח חדש ששום שורה אינה סופרת.
+ */
+export function complianceFilterKey(area, c) {
+  const state = lampState(area, c);
+  const key = state !== "unknown" && c[area]?.missing && state !== "none" ? "missing" : state;
+  return LISTED[area]?.has(key) || key === "none" ? key : "unknown";
+}
+
+// ⚠️ רק true מפורש: תחום שלא סומן בכותרת — כבוי, גם כשהמצב חסר או חלקי
+const shown = (view, area) => view?.[area]?.show === true;
+
+/** התחומים שנבחר בהם משהו בכותרת — הנורה שלהם מוצגת בכרטיסי הלוח. מתוך COMPLIANCE_AREAS. */
+export function lampAreasFor(view, areas = COMPLIANCE_AREAS) {
+  return areas.filter((a) => shown(view, a));
+}
+
+/**
+ * האם האתר עובר את הבורר: בכל תחום מוצג שנבחרו בו מצבים, המצב של האתר הוא אחד מהם. בתוך תחום —
+ * "או"; בין תחומים — "וגם", כמו מצב × סוג בכותרת. תחום שלא מסומן אינו מסנן בכלל — "לא רוצה
+ * לראות בודק" אינו "תסתיר את כל האתרים".
+ * ⚠️ אתר בלי שורה ("אין נתונים", "לא נטען") אינו אף אחד מהמצבים, ולכן מופיע רק תחת "הכל".
+ * ⚠️ תחום כבוי (PM_ENABLED) אינו מסנן גם אם נשארה בו בחירה — אחרת אתרים היו נעלמים בגלל
+ * אריח שאינו מוצג, ואין איך לבטל אותו.
+ */
+export function matchesComplianceView(site, view, areas = COMPLIANCE_AREAS) {
+  for (const area of areas) {
+    const only = view?.[area]?.only;
+    if (!shown(view, area) || !(only?.length > 0)) continue;
+    if (!only.includes(complianceFilterKey(area, site?.compliance))) return false;
+  }
+  return true;
+}
+
+/** כמה אתרים בכל שורה. אתר בלי שורה ("אין נתונים", "לא נטען") אינו נספר באף אחת. */
+export function complianceFilterCounts(sites, areas = COMPLIANCE_AREAS) {
+  const counts = {};
+  for (const area of areas) {
+    counts[area] = Object.fromEntries(COMPLIANCE_FILTER_ROWS[area].map((r) => [r.key, 0]));
+    for (const site of sites || []) {
+      const key = complianceFilterKey(area, site?.compliance);
+      if (key in counts[area]) counts[area][key]++;
+    }
+  }
+  return counts;
+}
+
+/** כמה מסננים פעילים — ל"סינון ותצוגה · N פעילים" בכותרת: תחום שנבחר בו משהו נספר פעם אחת, כמו כל בורר. */
+export function complianceActiveCount(view, areas = COMPLIANCE_AREAS) {
+  return areas.filter((a) => shown(view, a)).length;
 }
 
 /** האם סימן ה-mini מצויר בכלל: רק כשצריך לעשות משהו — צהוב, צהוב חזק, כתום, אדום או "?". */

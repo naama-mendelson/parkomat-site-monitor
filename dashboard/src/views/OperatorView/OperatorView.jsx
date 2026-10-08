@@ -1,12 +1,22 @@
 // views/OperatorView/OperatorView.jsx — דשבורד הבקר: ניטור שוטף של כלל האתרים.
 // הועבר מ-App.jsx ללא שינוי התנהגות; הסינון והחיפוש מגיעים מה-Header.
+import { useMemo } from "react";
 import SiteGrid from "../../components/SiteGrid/SiteGrid";
+import { LampAreasContext } from "../../components/Compliance/ComplianceLights";
 import { matchesSiteFilters } from "../../components/SiteFilterTile/SiteFilterTile";
 import { fuzzyMatch } from "../../utils/helpers";
 import { compareSitesByPriority } from "../../utils/sortSites";
+import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
 import "./OperatorView.css";
 
-function OperatorView({ sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "", searchQuery, onSiteClick }) {
+function OperatorView({
+  sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "",
+  complianceView = DEFAULT_COMPLIANCE_VIEW, searchQuery, onSiteClick,
+}) {
+  // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
+  // של הלוח היה נותן ערך חדש להקשר ומרנדר מחדש את כל המנורות בכל הכרטיסים.
+  const lampAreas = useMemo(() => lampAreasFor(complianceView), [complianceView]);
+
   // ============================================================
   // ⚠️ שגיאה **אינה** מוחקת מסך שיש בו נתונים
   // ============================================================
@@ -39,10 +49,15 @@ function OperatorView({ sites, loading, error, onRetry, activeFilters = [], type
     // מסתיר מ"תחזוקה" אתר שכתוב עליו "תחזוקה" — כלומר הסרגל והכרטיס
     // היו סותרים זה את זה על אותו מסך.
     const shown = site.displayStatus ?? site.status;
-    if (activeFilters.length > 0 && !activeFilters.includes(shown)) return false;
+    // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו בשום מצב: מופיע ב"הכל", ולא בסינון לפי מצב —
+    // אחרת "אין תקשורת" היה מראה אותו, כי זה מה שנשאר במסד כברירת מחדל.
+    if (activeFilters.length > 0 && (site.monitored === false || !activeFilters.includes(shown))) return false;
     // ⚠️ הכלל עצמו חי ב-SiteFilterTile ומיוצא — כך הסרגל והתצוגה מסכימים על
     // מה קורה עם אתר בלי סוג, במקום להגדיר את זה פעמיים.
     if (!matchesSiteFilters(site, typeFilter, tierFilter, systemFilter)) return false;
+    // "בודק מוסמך" בכותרת — מצטלב עם המצב והסוג ("וגם"). ⚠️ אתר בלי בקר **כן** נכלל כאן:
+    // בשבילו הוא קיים במערכת (בודק, תחזוקה ומשימות).
+    if (!matchesComplianceView(site, complianceView)) return false;
     if (searchQuery && !fuzzyMatch(`${site.site_name} ${site.code}`, searchQuery)) return false;
     return true;
   });
@@ -59,7 +74,10 @@ function OperatorView({ sites, loading, error, onRetry, activeFilters = [], type
           <span className="op-stale-detail">{error}</span>
         </div>
       )}
-      <SiteGrid sites={ordered} onSiteClick={onSiteClick} />
+      {/* רק תחום שנבחר בו משהו בכותרת — הנורה שלו מצוירת בכרטיסים של הלוח (ורק שם: טבלת המפקח לא מושפעת) */}
+      <LampAreasContext.Provider value={lampAreas}>
+        <SiteGrid sites={ordered} onSiteClick={onSiteClick} />
+      </LampAreasContext.Provider>
     </div>
   );
 }

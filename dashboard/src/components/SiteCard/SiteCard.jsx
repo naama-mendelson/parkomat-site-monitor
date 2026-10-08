@@ -11,7 +11,8 @@ import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
 import FixFlowLink from "../FixFlowLink/FixFlowLink.jsx";        // פיילוט FixFlow — ראה services/fixflow.js
 import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילוט FixFlow
-import ComplianceLights, { MiniMark } from "../Compliance/ComplianceLights";
+import ComplianceLights, { LampAreasContext, MiniMark } from "../Compliance/ComplianceLights";
+import { COMPLIANCE_AREAS } from "../../utils/compliance";
 import { useTasks } from "../Tasks/TasksContext";
 import { TASK_KINDS, TASK_KIND_LABEL } from "../../services/dataSource";
 import "../Tasks/Tasks.css";
@@ -594,6 +595,66 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   );
 
 
+  // משימות האתר — שני כפתורים, כל אחד עם מספר הפתוחות שלו (בעלת המוצר, 06/10/2026:
+  // "משימות קשרי לקוחות וטכני… עבור כל כרטיס"). בכרטיס המורחב, ובכרטיס של אתר ללא בקר.
+  const taskButtons = tasks && (
+    <div className="tk-site-btns">
+      {TASK_KINDS.map((k) => {
+        const n = tasks.bySite[site.id]?.[k] ?? 0;
+        return (
+          <button key={k} type="button" className="tk-site-btn" data-kind={k}
+            onClick={(e) => { e.stopPropagation(); tasks.openSite(site, k); }}
+            aria-label={`משימות ${TASK_KIND_LABEL[k]}${n ? ` — ${n} פתוחות` : ""}`}>
+            {TASK_KIND_LABEL[k]}
+            {n > 0 && <span className="tk-count" aria-hidden="true">{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  // ============================================================
+  // ⚠️ אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד
+  // ============================================================
+  // בעלת המוצר, על מתקני סוטפין: "אתר לא מקושר למתקן עצמו… אבל כן קיים, כן נדרש בודק
+  // וכן תחזוקה ומשימות". אין לו מצב: status במסד נשאר 'no_comm' (ברירת המחדל), ולכן
+  // אין צ'יפ, אין צבע מצב, אין פעולות וזמינות, אין "תקוע" ואין שורת תקלה. הכרטיס אומר
+  // "ללא בקר מחובר" במפורש — אחרת הוא נקרא כאתר מנותק, וזה בדיוק מה שהוא לא.
+  // ⚠️ ואין כרטיס מורחב: כל מה שיש בו הוא מדדים של בקר. מה שיש לאתר כזה — כאן.
+  if (site.monitored === false) {
+    return (
+      // ⚠️ הנורות כאן תמיד — גם כשבבורר "בודק מוסמך" בכותרת נבחר "בלי" (בעלת המוצר, 08/10/2026). לכרטיס
+      // הזה אין לחיצה ואין כרטיס מורחב: הנורה היא הדרך היחידה מהלוח לעמוד הבודק ולתחזוקה, ואתר כזה
+      // קיים במערכת רק בשבילם. ההקשר כאן דורס את זה שהלוח מספק.
+      <LampAreasContext.Provider value={COMPLIANCE_AREAS}>
+      <div className={`site-card density-${density} is-unmonitored`} data-code={site.code}
+           onMouseEnter={() => onHover?.(site.code)}>
+        <div className="card-header">
+          <span className="card-name">
+            <span ref={name.ref} className="card-name-text"
+                  title={name.trimmed ? site.site_name : undefined}>{name.text}</span>
+            {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} />}
+          </span>
+          {!isMini && <span className="card-code">#{site.code}</span>}
+        </div>
+        {isMini ? (
+          <span className="mini-dot-wrap">
+            <span className="mini-dot mini-dot--unmonitored" role="img" aria-label="ללא בקר מחובר" />
+            <MiniMark compliance={site.compliance} onOpen={openTab} />
+          </span>
+        ) : (
+          <div className="card-status-row">
+            <span className="unmonitored-tag">ללא בקר מחובר</span>
+            {site.compliance !== undefined &&
+              <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
+          </div>
+        )}
+        {!isMini && taskButtons}
+      </div>
+      </LampAreasContext.Provider>
+    );
+  }
+
   // ===== מורחב: גדול, ברור, עם כל המידע =====
   if (expanded) {
     return (
@@ -706,23 +767,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
 
-        {/* משימות האתר — שני כפתורים, כל אחד עם מספר הפתוחות שלו (בעלת המוצר, 06/10/2026:
-            "משימות קשרי לקוחות וטכני… עבור כל כרטיס") */}
-        {tasks && (
-          <div className="tk-site-btns">
-            {TASK_KINDS.map((k) => {
-              const n = tasks.bySite[site.id]?.[k] ?? 0;
-              return (
-                <button key={k} type="button" className="tk-site-btn" data-kind={k}
-                  onClick={(e) => { e.stopPropagation(); tasks.openSite(site, k); }}
-                  aria-label={`משימות ${TASK_KIND_LABEL[k]}${n ? ` — ${n} פתוחות` : ""}`}>
-                  {TASK_KIND_LABEL[k]}
-                  {n > 0 && <span className="tk-count" aria-hidden="true">{n}</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {taskButtons}
 
         <button
           className="exp-open"

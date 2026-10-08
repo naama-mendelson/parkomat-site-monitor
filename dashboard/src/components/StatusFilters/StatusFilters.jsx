@@ -11,6 +11,8 @@ function StatusFilters({ sites, activeFilters = [], onFilterChange, trailing = n
     counts[s] = 0;
   }
   for (const site of sites) {
+    // אתר בלי בקר מחובר אינו בשום מצב — לא נספר ב"אין תקשורת" (ראה OperatorView)
+    if (site.monitored === false) continue;
     // ⚠️ המונה סופר בדיוק את מה שהסינון יחזיר. מונה שאומר "3" וסינון
     // שמראה 4 הוא בדיוק הדבר שגורם להפסיק לסמוך על שניהם.
     const shown = site.displayStatus ?? site.status;

@@ -13,6 +13,8 @@ import assert from "node:assert/strict";
 import {
   toCompliance, stateLabel, lightTitle, markFor, markVisible, draftStale, lampState, machineLampLabel,
   ALL_AREAS, COMPLIANCE_AREAS, PM_ENABLED, worstSeverity, severity, GLYPH, LIGHT_LABEL,
+  COMPLIANCE_FILTER_ROWS, complianceFilterKey, complianceFilterCounts,
+  DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView, complianceActiveCount,
 } from "../../dashboard/src/utils/compliance.js";
 import { COMPLIANCE_STATES, COMPLIANCE_COLORS } from "../../dashboard/src/utils/constants.js";
 import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
@@ -365,4 +367,137 @@ test("תחזוקה כבויה: הבודק עדיין קובע את הסימן", 
   const c = toCompliance(row({ inspection_state: "expired", inspection_validity_state: "expired",
     inspection_valid_until: "2026-10-01", inspection_days_left: -3, pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33 }));
   assert.deepEqual(markFor(c), { state: "expired", tab: "inspection", stale: false });
+});
+
+// ---------------------------------------------------------------
+// סרגל הסינון בצד הלוח (08/10/2026)
+// ---------------------------------------------------------------
+const site = (over = {}, id = 1) => ({ id, compliance: toCompliance(row(over)) });
+
+test("סרגל: המפתח הוא מצב המנורה, ו'אין תסקיר' נפרד מ'לא בתוקף' — כמו התווית בכרטיס", () => {
+  for (const st of COMPLIANCE_STATES) {
+    assert.equal(complianceFilterKey("inspection", toCompliance(row({ inspection_state: st }))), st, st);
+  }
+  const missing = toCompliance(row({ inspection_state: "expired", inspection_missing: true, inspection_valid_until: null }));
+  assert.equal(complianceFilterKey("inspection", missing), "missing");
+  assert.equal(stateLabel("inspection", missing), LIGHT_LABEL.inspection.missing, "הכרטיס אומר 'אין תסקיר בודק' — והסרגל סופר אותו שם");
+  // none + missing = אפור "אין נתונים" (לפני תאריך העלייה לאוויר) — לא אדום
+  assert.equal(complianceFilterKey("inspection", toCompliance(row({ inspection_state: "none", inspection_missing: true }))), "none");
+  assert.equal(complianceFilterKey("pm", toCompliance(row({ pm_state: "expired", pm_missing: true }))), "missing");
+  assert.equal(complianceFilterKey("pm", toCompliance(row({ pm_state: "soon" }))), "soon");
+  // לא נטען / null / undefined / מצב שאינו מוכר — כולם "לא נטען", כמו ה-"?" על המנורה
+  for (const c of [toCompliance(null), null, undefined, toCompliance(row({ inspection_state: "brand_new" }))]) {
+    assert.equal(complianceFilterKey("inspection", c), "unknown");
+  }
+});
+
+test("סרגל: לכל מצב שורה (חוץ מ'אין נתונים' ו'לא נטען'), לכל שורה מנורה עם גליף, ואין מפתח כפול", () => {
+  for (const area of ALL_AREAS) {
+    const keys = COMPLIANCE_FILTER_ROWS[area].map((r) => r.key);
+    assert.equal(new Set(keys).size, keys.length, `${area}: מפתח כפול`);
+    assert.ok(keys.includes("missing"), area);
+    // ⚠️ בעלת המוצר, 08/10/2026: "תעיף את זה, זה לא קיים"
+    assert.ok(!keys.includes("none") && !keys.includes("unknown"), `${area}: 'אין נתונים' / 'לא נטען' חזרו לסרגל`);
+    for (const r of COMPLIANCE_FILTER_ROWS[area]) {
+      assert.ok(GLYPH[r.swatch], `${area}/${r.key}: אין גליף למנורה ${r.swatch}`);
+      assert.ok(r.label?.length >= 2, `${area}/${r.key}: אין תווית`);
+    }
+  }
+  // ⚠️ מצב של הבודק בלי שורה = אתרים שאי אפשר לבחור בהם, ושהמונים לא סופרים
+  for (const st of COMPLIANCE_STATES.filter((x) => x !== "none")) {
+    assert.ok(COMPLIANCE_FILTER_ROWS.inspection.some((r) => r.key === st), `אין שורה ל-${st}`);
+  }
+  for (const st of ["ok", "soon", "expired"]) {
+    assert.ok(COMPLIANCE_FILTER_ROWS.pm.some((r) => r.key === st), `תחזוקה: אין שורה ל-${st}`);
+  }
+  // הסדר מהחמור לקל — "לא בתוקף" ראשון, "בתוקף" אחרי כל מה שדורש טיפול
+  const order = COMPLIANCE_FILTER_ROWS.inspection.map((r) => r.swatch);
+  for (let i = 1; i < order.length; i++) assert.ok(severity(order[i - 1]) >= severity(order[i]), order.join(","));
+});
+
+// מצב הסרגל: לכל תחום { show, only } — סומן בכותרת, ואילו מצבים נבחרו (ריק = "הכל")
+const view = (insp = {}, pm = {}) => ({ inspection: { show: true, only: [], ...insp }, pm: { show: true, only: [], ...pm } });
+
+test("סרגל: ברירת המחדל — שום תחום לא מסומן: כל אתר עובר, ואין נורות בלוח", () => {
+  const sites = [site({ inspection_state: "expired" }, 1), site({ pm_state: "soon" }, 2), { id: 3, compliance: toCompliance(null) }, { id: 4 }];
+  for (const v of [DEFAULT_COMPLIANCE_VIEW, undefined, null, {}, { inspection: {} }]) {
+    assert.deepEqual(sites.filter((x) => matchesComplianceView(x, v, ALL_AREAS)).map((x) => x.id), [1, 2, 3, 4], JSON.stringify(v));
+    // ⚠️ "מופיעה רק כשמסמנים" (בעלת המוצר, 08/10/2026) — בלי סימון אין נורה
+    assert.deepEqual(lampAreasFor(v, ALL_AREAS), [], JSON.stringify(v));
+    assert.equal(complianceActiveCount(v, ALL_AREAS), 0);
+  }
+  // סומן, "הכל" — הנורה מופיעה, ועדיין כל האתרים (גם אלה שאין להם אריח)
+  assert.deepEqual(sites.filter((x) => matchesComplianceView(x, view(), ALL_AREAS)).map((x) => x.id), [1, 2, 3, 4]);
+  assert.deepEqual(lampAreasFor(view(), ALL_AREAS), ALL_AREAS);
+  assert.deepEqual(lampAreasFor(view({}, { show: false }), ALL_AREAS), ["inspection"]);
+  assert.deepEqual(lampAreasFor(view()), COMPLIANCE_AREAS, "בלי ארגומנט — רק התחומים המוצגים באתר");
+});
+
+test("סרגל: בחירה כמו בכותרת — רק המצבים שנבחרו; תחום לא מסומן אינו מסנן", () => {
+  const sites = [
+    site({ inspection_state: "expired" }, 1),
+    site({ inspection_state: "expired", inspection_missing: true }, 2),
+    site({ inspection_state: "ok", pm_state: "expired" }, 3),
+    site({ inspection_state: "overdue", pm_state: "ok" }, 4),
+    { id: 5, compliance: toCompliance(null) },
+    site({ inspection_state: "none", inspection_missing: true }, 6),
+  ];
+  const ids = (v, areas = ALL_AREAS) => sites.filter((x) => matchesComplianceView(x, v, areas)).map((x) => x.id);
+  assert.deepEqual(ids(view({ only: ["expired"] })), [1], "'לא בתוקף' אינו מחזיר את 'אין תסקיר'");
+  assert.deepEqual(ids(view({ only: ["expired", "missing"] })), [1, 2], "כמה אריחים — 'או'");
+  assert.deepEqual(ids(view({ only: ["ok", "overdue"] })), [3, 4]);
+  // ⚠️ אתר בלי אריח (לא נטען / אין נתונים) — רק תחת "הכל"
+  assert.deepEqual(ids(view()), [1, 2, 3, 4, 5, 6]);
+  assert.ok(!ids(view({ only: COMPLIANCE_FILTER_ROWS.inspection.map((r) => r.key) })).some((id) => id === 5 || id === 6),
+    "גם כשכל האריחים נבחרו — 'הכל' הוא האריח היחיד שמכיל אותם");
+  // ⚠️ תחום לא מסומן: לא מסנן גם אם נשארה בו בחירה, ולא מצויר
+  const off = view({ show: false, only: ["expired"] });
+  assert.deepEqual(ids(off), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(lampAreasFor(off, ALL_AREAS), ["pm"]);
+  // "וגם" בין התחומים: 3 — בודק בתוקף + תחזוקה לא בתוקף; 4 — בודק עבר מועד + תחזוקה בתוקף
+  assert.deepEqual(ids(view({ only: ["ok", "overdue"] }, { only: ["expired"] })), [3]);
+  assert.deepEqual(ids(view({}, { only: ["expired"] })), [3], "רק התחזוקה מסננת");
+  // ⚠️ תחזוקה כבויה: בחירה שנשארה בה אינה מסננת, ואינה נורה מוצגת
+  assert.deepEqual(ids(view({}, { only: ["expired"] }), ["inspection"]), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(lampAreasFor(view(), ["inspection"]), ["inspection"]);
+  // המונה בכותרת: תחום שנבחר בו משהו = 1, כמו כל בורר (לא משנה מה נבחר); תחום כבוי — 0
+  assert.equal(complianceActiveCount(view({}, { show: false }), ALL_AREAS), 1);
+  assert.equal(complianceActiveCount(view({ only: ["ok"] }, { only: ["expired"] }), ALL_AREAS), 2);
+  assert.equal(complianceActiveCount(view({ show: false, only: ["ok"] }, { show: false }), ALL_AREAS), 0);
+  assert.equal(complianceActiveCount(view({}, { only: ["ok"] }), ["inspection"]), 1, "תחזוקה כבויה אינה נספרת");
+});
+
+test("סרגל: כל מונה שווה למה שהאריח מציג, והסכום (עם האתרים בלי אריח) — לכל האתרים", () => {
+  const states = [...COMPLIANCE_STATES, "brand_new"];
+  const sites = states.flatMap((st, i) => [
+    site({ inspection_state: st, pm_state: ["ok", "soon", "expired", "none"][i % 4] }, i * 3),
+    site({ inspection_state: st, inspection_missing: true, pm_state: "expired", pm_missing: i % 2 === 0 }, i * 3 + 1),
+  ]).concat([{ id: 999, compliance: toCompliance(null) }]);
+  const counts = complianceFilterCounts(sites, ALL_AREAS);
+  for (const area of ALL_AREAS) {
+    // בלי אריח: "אין נתונים" (none, גם עם missing) ו"לא נטען" (null, ומצב שאינו מוכר — brand_new)
+    const unlisted = sites.filter((x) => ["none", "unknown"].includes(complianceFilterKey(area, x.compliance))).length;
+    assert.ok(unlisted >= 3, `${area}: יש אתרים בלי אריח בתרחיש (${unlisted})`);
+    let sum = 0;
+    for (const r of COMPLIANCE_FILTER_ROWS[area]) {
+      const v = { ...view({ show: false }, { show: false }), [area]: { show: true, only: [r.key] } };
+      const shownN = sites.filter((x) => matchesComplianceView(x, v, ALL_AREAS)).length;
+      assert.equal(counts[area][r.key], shownN, `${area}/${r.key}: מונה ${counts[area][r.key]}, האריח מציג ${shownN}`);
+      sum += shownN;
+    }
+    assert.equal(sum + unlisted, sites.length, `${area}: כל אתר באריח אחד בדיוק, או בלי אריח`);
+    assert.ok(Object.values(counts[area]).every(Number.isFinite), `${area}: מונה לא מספר`);
+  }
+  assert.deepEqual(Object.keys(complianceFilterCounts(sites, ["inspection"])), ["inspection"]);
+});
+
+test("סימן ה-mini מכבד נורה מוסתרת: בודק מוסתר — רק התחזוקה; בלי תחומים — אין סימן", () => {
+  const c = toCompliance(row({ inspection_state: "expired", pm_state: "soon" }));
+  assert.deepEqual(markFor(c, ALL_AREAS), { state: "expired", tab: "inspection", stale: false });
+  assert.deepEqual(markFor(c, ["pm"]), { state: "soon", tab: "pm", stale: false }, "האדום של הבודק המוסתר אינו חוזר דרך הסימן");
+  assert.deepEqual(markFor(toCompliance(row({ pm_state: "ok" })), ["pm"]), { state: "ok", tab: "pm", stale: false });
+  assert.equal(markFor(c, []), null);
+  assert.equal(markVisible(markFor(c, [])), false);
+  assert.deepEqual(markFor(toCompliance(null), ["pm"]), { state: "unknown", tab: "pm", stale: false }, "'?' פותח לשונית שקיימת");
+  assert.deepEqual(markFor(toCompliance(null)), { state: "unknown", tab: "inspection", stale: false });
 });

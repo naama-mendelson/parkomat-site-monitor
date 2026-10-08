@@ -27,6 +27,10 @@ export function toSupervisorShape({ siteRows, statsRows, uptimeRows, globalsRows
   const globals = by(globalsRows);
 
   const sites = (siteRows || [])
+    // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו בסטטיסטיקה: אין לו מצב, פעולות או זמינות, וה-'no_comm'
+    // שבמסד הוא ברירת מחדל — בלי הסינון הוא היה נספר ב"מנותקים" ומוריד את ממוצע הזמינות.
+    // ⚠️ סינון **כאן** ולא בתצוגה: מנהל הבקרה וההנהלה (executiveDirect) בונים מאותן שורות.
+    .filter((s) => s.monitored !== false)
     // אותו מיון שהשרת מחזיר (getAllSites → ORDER BY code). בלי זה הטבלה
     // מופיעה בסדר אחר בשני מצבי המתג, וזה נראה כמו נתונים אחרים.
     .slice()

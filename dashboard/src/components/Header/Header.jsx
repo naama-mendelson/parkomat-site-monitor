@@ -12,6 +12,8 @@ import HelpPanel from "../HelpPanel/HelpPanel";
 import { isInstalledApp } from "../../services/pushDirect";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
+import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
+import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
 import AlertBell from "../AlertBell/AlertBell";
@@ -38,6 +40,8 @@ function Header({
   darkMode,
   onToggleDarkMode,
   onAdmin,
+  complianceView,
+  onComplianceViewChange,
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
   // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
@@ -168,7 +172,8 @@ function Header({
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
-    (tierFilter && tierFilter !== "all" ? 1 : 0);
+    (tierFilter && tierFilter !== "all" ? 1 : 0) +
+    complianceActiveCount(complianceView);
 
   return (
     <header className="app-header">
@@ -293,15 +298,22 @@ function Header({
           activeFilters={activeFilters}
           onFilterChange={onFilterChange}
           trailing={
-            <SiteFilterTile
-              sites={sites}
-              typeFilter={typeFilter}
-              systemFilter={systemFilter}
-              tierFilter={tierFilter}
-              onTypeChange={onTypeFilterChange}
-              onSystemChange={onSystemFilterChange}
-              onTierChange={onTierFilterChange}
-            />
+            <>
+              <SiteFilterTile
+                sites={sites}
+                typeFilter={typeFilter}
+                systemFilter={systemFilter}
+                tierFilter={tierFilter}
+                onTypeChange={onTypeFilterChange}
+                onSystemChange={onSystemFilterChange}
+                onTierChange={onTierFilterChange}
+              />
+              {/* "בודק מוסמך" — נפתח לרשימה, בוחרים מה לראות, נסגר; בחירה מדליקה גם את הנורה בכרטיסים
+                  (בעלת המוצר, 08/10/2026) */}
+              {onComplianceViewChange && (
+                <ComplianceFilters sites={sites} value={complianceView} onChange={onComplianceViewChange} />
+              )}
+            </>
           }
         />
         </div>

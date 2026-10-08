@@ -14,14 +14,25 @@
 // ⚠️ ומנורה **לא נעלמת** כשהסטטוס לא נטען. היא הופכת ל-"?" מקווקו. מנורה
 // חסרה נראית בדיוק כמו "אין מה לדווח" — וזה הלקח של 17/09, כשהמסך הפסיק
 // להתעדכן חמישה ימים בלי שאיש שם לב.
+//
+// ⚠️ ההסתרה היחידה היא בחירה מפורשת: בלוח, הנורה של תחום מצוירת רק אחרי בחירה בבורר "בודק מוסמך"
+// שבכותרת (08/10/2026). היא מגיעה דרך LampAreasContext, ולא מנתונים חסרים.
+import { createContext, useContext } from "react";
 import { COMPLIANCE_COLORS } from "../../utils/constants";
 import {
-  COMPLIANCE_AREAS, GLYPH, PM_ENABLED, draftStale, isAwaiting, lampState, lightAria, lightTitle, markFor, markVisible,
+  AREA_NAME, COMPLIANCE_AREAS, GLYPH, draftStale, isAwaiting, lampState, lightAria, lightTitle, markFor, markVisible,
   stateLabel,
 } from "../../utils/compliance";
 import { AreaIcon } from "./icons";
 import "./ComplianceLights.css";
 
+/**
+ * אילו נורות מצוירות. ברירת המחדל — COMPLIANCE_AREAS (התחזוקה מוסתרת באתר החי). הלוח
+ * (OperatorView) מספק כאן את התחומים שנבחר בהם משהו בכותרת; כל מקום אחר — טבלת מנהל הבקרה,
+ * למשל — מקבל את ברירת המחדל ואינו מושפע מהבחירה.
+ * ⚠️ הקשר ולא prop: כך SiteGrid ו-SiteCard לא צריכים להעביר הלאה משהו שאינו שלהם.
+ */
+export const LampAreasContext = createContext(COMPLIANCE_AREAS);
 
 function colorVars(state) {
   const c = COMPLIANCE_COLORS[state];
@@ -100,13 +111,14 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
 export default function ComplianceLights({ compliance, density = "normal", onOpen, nowIso }) {
   // ⚠️ undefined בלבד, ולא כל ערך ריק: undefined = "המסלול הזה לא קיים"
   // (מצב שרת). {unknown:true} = "קיים ולא נטען" — ואז דווקא מציירים "?".
-  if (compliance === undefined) return null;
+  const areas = useContext(LampAreasContext);
+  if (compliance === undefined || areas.length === 0) return null;
   const now = nowIso ?? new Date().toISOString();
   const showText = density === "normal" || density === "expanded";
   return (
-    <span className={`cl-lights cl-lights--${density}`} role="group" aria-label={PM_ENABLED ? "בודק מוסמך ותחזוקה מונעת" : "בודק מוסמך"}>
-      {/* ⚠️ COMPLIANCE_AREAS ולא רשימה קבועה: התחזוקה המונעת מוסתרת באתר החי (utils/compliance) */}
-      {COMPLIANCE_AREAS.map((area) => (
+    <span className={`cl-lights cl-lights--${density}`} role="group" aria-label={areas.map((a) => AREA_NAME[a]).join(" ו")}>
+      {/* ⚠️ מההקשר ולא רשימה קבועה: התחזוקה המונעת מוסתרת באתר החי, ובלוח — רק מה שנבחר בכותרת */}
+      {areas.map((area) => (
         <Lamp key={area} area={area} compliance={compliance} showText={showText} nowIso={now} onOpen={onOpen} />
       ))}
     </span>
@@ -119,7 +131,7 @@ export default function ComplianceLights({ compliance, density = "normal", onOpe
  * שחור-לבן, ירוק ואפור אינם מצוירים: ריבוע על כל כרטיס ברשת של 50 אתרים היה רק רעש.
  */
 export function MiniMark({ compliance, onOpen, nowIso }) {
-  const m = markFor(compliance);
+  const m = markFor(compliance, useContext(LampAreasContext));
   if (!markVisible(m)) return null;
   const now = nowIso ?? new Date().toISOString();
   return (

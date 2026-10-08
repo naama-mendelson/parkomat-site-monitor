@@ -356,6 +356,30 @@ CREATE TRIGGER inspection_defect_photos_guard BEFORE UPDATE OR DELETE ON inspect
 -- 1.3 תחזוקה מונעת — טבלאות
 -- ============================================================
 
+-- ============================================================
+-- רשימות תחזוקה — משותפת, לפי סוג מתקן, לסוטפין — ושיוך לאתר (07/10/2026)
+-- ============================================================
+-- עד כאן הייתה רשימה **אחת** לכל האתרים (D15). בעלת המוצר: "יש דברים שמשותפים כמעט
+-- לכל האתרים, ויש פעולות תחזוקה שרלוונטיות לסוג המתקן" — ולאתר חדש: "תצטרכי לשאול
+-- איזו תחזוקה לצרף לו, לרוב התשובה תהיה כמו פרויקט אחר".
+--
+-- ⚠️ **אתר בלי שיוך מקבל את רשימת ברירת המחדל (is_default) — וזו בדיוק ההתנהגות
+-- הקודמת.** הרשימה הגלובלית הפכה לרשימת ברירת המחדל, כל פריט קיים שויך אליה, ושום
+-- אתר לא משנה את מה שהוא מקבל עד שמשייכים אותו במפורש.
+CREATE TABLE IF NOT EXISTS pm_templates (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL CONSTRAINT pm_templates_name CHECK (length(btrim(name)) BETWEEN 2 AND 60),
+  seq INTEGER NOT NULL DEFAULT 0,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TEXT NOT NULL, updated_by TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pm_templates_name ON pm_templates (lower(btrim(name))) WHERE active;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pm_templates_default ON pm_templates (is_default) WHERE is_default;
+INSERT INTO pm_templates (name, seq, is_default, updated_at, updated_by)
+SELECT 'משותף', 0, true, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'מערכת'
+ WHERE NOT EXISTS (SELECT 1 FROM pm_templates t WHERE t.is_default);
+
 CREATE TABLE IF NOT EXISTS pm_checklist_items (
   id SERIAL PRIMARY KEY,
   seq INTEGER NOT NULL,
@@ -371,6 +395,35 @@ CREATE TABLE IF NOT EXISTS pm_checklist_items (
        (kind = 'check' AND min_photos = 0)
     OR (kind <> 'check' AND required AND min_photos >= 1)
     OR (kind <> 'check' AND NOT required AND min_photos = 0))
+);
+
+-- כל פריט שייך לרשימה. פריט קיים (מלפני 07/10/2026), או פריט שנכתב בלי רשימה →
+-- רשימת ברירת המחדל: "הרשימה הגלובלית" של קודם היא היא רשימת ברירת המחדל.
+CREATE OR REPLACE FUNCTION app.pm_default_template_id() RETURNS integer
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT t.id FROM pm_templates t WHERE t.is_default
+$$;
+REVOKE ALL ON FUNCTION app.pm_default_template_id() FROM PUBLIC;
+ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS template_id INTEGER REFERENCES pm_templates(id);
+ALTER TABLE pm_checklist_items ALTER COLUMN template_id SET DEFAULT app.pm_default_template_id();
+UPDATE pm_checklist_items SET template_id = app.pm_default_template_id() WHERE template_id IS NULL;
+ALTER TABLE pm_checklist_items ALTER COLUMN template_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pm_checklist_items_template ON pm_checklist_items(template_id) WHERE active;
+
+-- קבוצה בתוך רשימה (07/10/2026): "יחידת כוח", "מעלית אנכית". במסמך סוטפין ביקשו שהביקור
+-- יוצג כשורות (מעלית / שאטל / דולי / לובי) שנפתחות בלחיצה ונהיות ירוקות כשהכול בוצע.
+-- ריק = הפריט בקבוצה בשם הרשימה — כך רשימה בלי קבוצות היא קבוצה אחת.
+ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS section TEXT;
+ALTER TABLE pm_checklist_items DROP CONSTRAINT IF EXISTS pm_checklist_items_section;
+ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_section
+  CHECK (section IS NULL OR length(btrim(section)) BETWEEN 1 AND 60) NOT VALID;
+ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_section;
+
+-- אילו רשימות אתר מקבל. אין שורות → רשימת ברירת המחדל (app.pm_site_template_ids).
+CREATE TABLE IF NOT EXISTS pm_site_templates (
+  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  template_id INTEGER NOT NULL REFERENCES pm_templates(id) ON DELETE CASCADE,
+  PRIMARY KEY (site_id, template_id)
 );
 
 -- ⚠️ ביקור שהוגש ונמחק רך — מותר לו להישאר בלי חתימה, כי compliance_purge
@@ -424,6 +477,9 @@ CREATE TABLE IF NOT EXISTS pm_visit_items (
   CONSTRAINT pm_visit_items_owner UNIQUE (id, visit_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pm_visit_items_visit ON pm_visit_items(visit_id, seq);
+-- שם הקבוצה **בעת פתיחת הביקור** (הקבוצה של הפריט, או שם הרשימה). צילום ולא הפניה:
+-- שינוי שם ברשימה אחר כך אינו מזיז פריטים בביקור פתוח. NULL = ביקור מלפני הקבוצות.
+ALTER TABLE pm_visit_items ADD COLUMN IF NOT EXISTS section TEXT;
 
 CREATE TABLE IF NOT EXISTS pm_files (
   id BIGSERIAL PRIMARY KEY,
@@ -574,7 +630,7 @@ ALTER TABLE inspection_defects VALIDATE CONSTRAINT inspection_defects_done_shape
 DO $$ DECLARE t text; s text; BEGIN
   FOREACH t IN ARRAY ARRAY['inspection_machines','inspection_files','inspection_reports','inspection_defects',
                            'inspection_defect_photos','pm_checklist_items','pm_visits','pm_visit_items','pm_files',
-                           'compliance_history'] LOOP
+                           'compliance_history','pm_templates','pm_site_templates'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON %I FROM PUBLIC, anon, authenticated, service_role', t);
     s := NULL;
@@ -1596,6 +1652,23 @@ REVOKE ALL ON FUNCTION app.pm_may_discard(pm_visits) FROM PUBLIC;
 -- ------------------------------------------------------------
 -- pm_site — מה שהלשונית צריכה, בלי base64. זול מספיק לסקירה חוזרת (D16).
 -- ------------------------------------------------------------
+-- ------------------------------------------------------------
+-- אילו רשימות אתר מקבל — במקום אחד (07/10/2026)
+-- ------------------------------------------------------------
+-- שויך במפורש → הרשימות הפעילות שלו, לפי seq. לא שויך (או שכל מה ששויך הושבת) →
+-- רשימת ברירת המחדל. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן, אחרת
+-- הכרטיס יאמר דבר אחד והביקור יצולם מדבר אחר.
+CREATE OR REPLACE FUNCTION app.pm_site_template_ids(p_site_id integer) RETURNS integer[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT COALESCE(
+    (SELECT array_agg(t.id ORDER BY t.seq, t.id)
+       FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
+      WHERE st.site_id = p_site_id AND t.active),
+    (SELECT array_agg(t.id) FROM pm_templates t WHERE t.is_default AND t.active),
+    '{}'::integer[])
+$$;
+REVOKE ALL ON FUNCTION app.pm_site_template_ids(integer) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION public.pm_site(p_site_code text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
@@ -1608,7 +1681,7 @@ BEGIN
            'started_at', v.started_at, 'last_activity_at', v.last_activity_at,
            'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                        'id', i.id, 'seq', i.seq, 'label', i.label, 'hint', i.hint, 'kind', i.kind,
-                       'required', i.required, 'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
+                       'section', i.section, 'required', i.required, 'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
                        'updated_by', i.updated_by, 'updated_at', i.updated_at,
                        'photos', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', f.id, 'client_id', f.client_id,
                                                                                'byte_size', f.byte_size) ORDER BY f.id)
@@ -1619,7 +1692,14 @@ BEGIN
   RETURN jsonb_build_object(
     'site', jsonb_build_object('id', v_site, 'code', v_code, 'name', v_name),
     'status', (SELECT to_jsonb(r) FROM app.compliance_rows(ARRAY[v_site], app.compliance_today()) r),
-    'template_count', (SELECT count(*)::int FROM pm_checklist_items t WHERE t.active),
+    'template_count', (SELECT count(*)::int FROM pm_checklist_items t
+                        WHERE t.active AND t.template_id = ANY (app.pm_site_template_ids(v_site))),
+    -- הרשימות שהאתר מקבל (07/10/2026), ו-templates_assigned = שויך במפורש (false = ברירת המחדל)
+    'templates', (SELECT COALESCE(jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name) ORDER BY x.o), '[]'::jsonb)
+                    FROM unnest(app.pm_site_template_ids(v_site)) WITH ORDINALITY AS x(tid, o)
+                    JOIN pm_templates t ON t.id = x.tid),
+    'templates_assigned', EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
+                                   WHERE st.site_id = v_site AND t.active),
     -- שם התצוגה של הקורא, כפי שנכתב ב-updated_by / started_by. הדפדפן מכיר רק את
     -- המייל — בלי זה עריכה של המשתמש עצמו הוצגה "עודכן ע״י <השם שלו>".
     'me', v_actor,
@@ -1664,7 +1744,7 @@ BEGIN
                FROM pm_files f WHERE f.visit_id = v.id AND f.kind = 'pdf' ORDER BY f.id LIMIT 1),
     'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                'id', i.id, 'seq', i.seq, 'label', i.label, 'hint', i.hint, 'kind', i.kind, 'required', i.required,
-               'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
+               'section', i.section, 'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
                'photos', COALESCE((SELECT jsonb_agg(f.id ORDER BY f.id) FROM pm_files f
                                     WHERE f.visit_item_id = i.id AND f.kind = 'photo'), '[]'::jsonb))
              ORDER BY i.seq, i.id) FROM pm_visit_items i WHERE i.visit_id = v.id), '[]'::jsonb));
@@ -1673,45 +1753,122 @@ REVOKE ALL ON FUNCTION public.pm_visit_detail(bigint) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_visit_detail(bigint) TO authenticated;
 
 -- ------------------------------------------------------------
--- רשימת הבדיקה הגלובלית (D15). ריקה כברירת מחדל.
+-- רשימות התחזוקה (D15 → 07/10/2026: כמה רשימות, ושיוך לאתר)
 -- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.pm_template() RETURNS jsonb
+-- ⚠️ p_template_id ריק = רשימת ברירת המחדל. כך כל קורא קיים (העורך, הבדיקות) ממשיך
+-- לעבוד על מה שהיה "הרשימה" — ורק מי שמבקש רשימה אחרת מקבל אחרת.
+CREATE OR REPLACE FUNCTION app.pm_template_resolve(p_template_id integer) RETURNS pm_templates
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE v pm_templates%ROWTYPE;
+BEGIN
+  IF p_template_id IS NULL THEN
+    SELECT t.* INTO v FROM pm_templates t WHERE t.is_default AND t.active;
+  ELSE
+    SELECT t.* INTO v FROM pm_templates t WHERE t.id = p_template_id AND t.active;
+  END IF;
+  IF v.id IS NULL THEN RAISE EXCEPTION 'רשימת התחזוקה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  RETURN v;
+END $fn$;
+REVOKE ALL ON FUNCTION app.pm_template_resolve(integer) FROM PUBLIC;
+
+DROP FUNCTION IF EXISTS public.pm_template();
+CREATE OR REPLACE FUNCTION public.pm_template(p_template_id integer DEFAULT NULL) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE v_actor text := app.require_staff(); v_t pm_templates;
+BEGIN
+  v_t := app.pm_template_resolve(p_template_id);
+  RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'seq', t.seq, 'label', t.label, 'hint', t.hint,
+                                    'section', t.section, 'kind', t.kind, 'required', t.required, 'min_photos', t.min_photos,
+                                    'updated_at', t.updated_at, 'updated_by', t.updated_by) ORDER BY t.seq, t.id)
+                     FROM pm_checklist_items t WHERE t.active AND t.template_id = v_t.id), '[]'::jsonb);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_template(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_template(integer) TO authenticated;
+
+-- כל הרשימות, לבורר בעורך ולשיוך באתר: כמה פריטים, וכמה אתרים שויכו אליה במפורש.
+CREATE OR REPLACE FUNCTION public.pm_templates_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE v_actor text := app.require_staff();
 BEGIN
-  RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'seq', t.seq, 'label', t.label, 'hint', t.hint,
-                                    'kind', t.kind, 'required', t.required, 'min_photos', t.min_photos,
-                                    'updated_at', t.updated_at, 'updated_by', t.updated_by) ORDER BY t.seq, t.id)
-                     FROM pm_checklist_items t WHERE t.active), '[]'::jsonb);
+  RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object(
+             'id', t.id, 'name', t.name, 'seq', t.seq, 'is_default', t.is_default,
+             'item_count', (SELECT count(*)::int FROM pm_checklist_items i WHERE i.active AND i.template_id = t.id),
+             'site_count', (SELECT count(*)::int FROM pm_site_templates st WHERE st.template_id = t.id))
+           ORDER BY t.is_default DESC, t.seq, t.id)
+         FROM pm_templates t WHERE t.active), '[]'::jsonb);
 END $fn$;
-REVOKE ALL ON FUNCTION public.pm_template() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pm_template() TO authenticated;
+REVOKE ALL ON FUNCTION public.pm_templates_list() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_templates_list() TO authenticated;
 
--- הרשימה שנשלחת היא מצב היעד: פריט עם id מתעדכן, בלי id נוסף, ומה שלא
--- נשלח מושבת (לא נמחק — ביקורים קיימים מצביעים עליו).
---
--- ⚠️ p_expected_at — ה-updated_at המאוחר ברשימה שהעורך טען ('' = נטענה ריקה).
--- מצב יעד שלם מעורך ישן היה מבטל בשקט שמירה של מנהל אחר: פריטים שהוסיף
--- מושבתים, ופריטים שהסיר חוזרים — וכל ביקור שייפתח אחר כך יורש את זה. לכן
--- שמירה שאינה מהגרסה הנוכחית נדחית ב-PT409. כל שמירה כותבת updated_at לכל
--- פריט פעיל, כך שהמקסימום על הפעילים הוא "מתי נשמרה הרשימה לאחרונה". NULL =
--- בלי בדיקה (קורא ישן); הדשבורד שולח תמיד.
--- ⚠️ ונעילת הטבלה: בלעדיה שתי שמירות במקביל היו קוראות את אותה גרסה ושתיהן עוברות.
---
--- ⚠️ סכום min_photos של פריטי החובה ≤ 40 — התקרה של pm_visit_photo_add (v_all >= 40).
--- רשימה שדורשת יותר הייתה נשמרת, וכל ביקור שנפתח ממנה — בכל האתרים (D15) —
--- לא היה יכול להיות מוגש לעולם: התמונה ה-41 נדחית, וההגשה מחכה לה.
--- שני המספרים חייבים לזוז יחד.
-DROP FUNCTION IF EXISTS public.pm_template_save(jsonb);
-CREATE OR REPLACE FUNCTION public.pm_template_save(p_items jsonb, p_expected_at text DEFAULT NULL) RETURNS integer
+CREATE OR REPLACE FUNCTION public.pm_template_create(p_name text) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_manager();
   v_now text := app.compliance_now_iso();
+  v_name text := btrim(COALESCE(p_name, ''));
+  v_id integer;
+BEGIN
+  IF length(v_name) NOT BETWEEN 2 AND 60 THEN
+    RAISE EXCEPTION 'שם הרשימה חייב להיות בין 2 ל-60 תווים' USING ERRCODE = 'check_violation'; END IF;
+  IF EXISTS (SELECT 1 FROM pm_templates t WHERE t.active AND lower(btrim(t.name)) = lower(v_name)) THEN
+    RAISE EXCEPTION 'כבר קיימת רשימה בשם "%"', v_name USING ERRCODE = 'PT409'; END IF;
+  INSERT INTO pm_templates (name, seq, updated_at, updated_by)
+  VALUES (v_name, COALESCE((SELECT max(t.seq) FROM pm_templates t), 0) + 1, v_now, v_actor)
+  RETURNING pm_templates.id INTO v_id;
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'template', v_id, 'create', v_actor, NULL,
+    jsonb_build_object('name', v_name), NULL);
+  PERFORM app.record_write_audit('pm.template_create', v_actor, app.current_app_role(), 'settings', 'pm_template',
+    jsonb_build_object('template_id', v_id));   -- D22: מזהים בלבד, לא השם
+  RETURN v_id;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_template_create(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_template_create(text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.pm_template_rename(p_template_id integer, p_name text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_name text := btrim(COALESCE(p_name, ''));
+  v_t pm_templates;
+BEGIN
+  v_t := app.pm_template_resolve(p_template_id);
+  IF length(v_name) NOT BETWEEN 2 AND 60 THEN
+    RAISE EXCEPTION 'שם הרשימה חייב להיות בין 2 ל-60 תווים' USING ERRCODE = 'check_violation'; END IF;
+  IF EXISTS (SELECT 1 FROM pm_templates t WHERE t.active AND t.id <> v_t.id AND lower(btrim(t.name)) = lower(v_name)) THEN
+    RAISE EXCEPTION 'כבר קיימת רשימה בשם "%"', v_name USING ERRCODE = 'PT409'; END IF;
+  UPDATE pm_templates t SET name = v_name, updated_at = app.compliance_now_iso(), updated_by = v_actor
+   WHERE t.id = v_t.id;
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'template', v_t.id, 'rename', v_actor,
+    jsonb_build_object('name', v_t.name), jsonb_build_object('name', v_name), NULL);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_template_rename(integer, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_template_rename(integer, text) TO authenticated;
+
+-- הרשימה שנשלחת היא מצב היעד **של רשימה אחת**: פריט עם id מתעדכן, בלי id נוסף,
+-- ומה שלא נשלח מושבת (לא נמחק — ביקורים קיימים מצביעים עליו).
+--
+-- ⚠️ p_expected_at — ה-updated_at המאוחר **ברשימה הזו** שהעורך טען ('' = נטענה ריקה).
+-- מצב יעד שלם מעורך ישן היה מבטל בשקט שמירה של מנהל אחר: פריטים שהוסיף
+-- מושבתים, ופריטים שהסיר חוזרים — וכל ביקור שייפתח אחר כך יורש את זה. לכן
+-- שמירה שאינה מהגרסה הנוכחית נדחית ב-PT409. NULL = בלי בדיקה (קורא ישן).
+-- ⚠️ ונעילת הטבלה: בלעדיה שתי שמירות במקביל היו קוראות את אותה גרסה ושתיהן עוברות.
+--
+-- ⚠️ סכום min_photos של פריטי החובה ≤ 40 — התקרה של pm_visit_photo_add (v_all >= 40).
+-- כאן לכל רשימה; ביקור שמצרף כמה רשימות נבדק שוב בפתיחה (pm_visit_start).
+DROP FUNCTION IF EXISTS public.pm_template_save(jsonb);
+DROP FUNCTION IF EXISTS public.pm_template_save(jsonb, text);
+CREATE OR REPLACE FUNCTION public.pm_template_save(p_items jsonb, p_expected_at text DEFAULT NULL,
+                                                   p_template_id integer DEFAULT NULL) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_now text := app.compliance_now_iso();
+  v_t pm_templates;
   v_before jsonb; v_after jsonb; v_keep integer[] := '{}';
   v_e jsonb; v_ord bigint; v_id integer; v_label text; v_hint text; v_kind text; v_req boolean; v_min integer;
-  v_n integer; v_cur text; v_who text; v_photos integer;
+  v_sec text; v_n integer; v_cur text; v_who text; v_photos integer;
 BEGIN
+  v_t := app.pm_template_resolve(p_template_id);
   IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' THEN
     RAISE EXCEPTION 'רשימת הבדיקה אינה תקינה' USING ERRCODE = 'check_violation'; END IF;
   IF jsonb_array_length(p_items) > 100 THEN
@@ -1719,15 +1876,16 @@ BEGIN
   LOCK TABLE pm_checklist_items IN SHARE ROW EXCLUSIVE MODE;
   IF p_expected_at IS NOT NULL THEN
     SELECT t.updated_at, t.updated_by INTO v_cur, v_who
-      FROM pm_checklist_items t WHERE t.active ORDER BY t.updated_at DESC, t.id DESC LIMIT 1;
+      FROM pm_checklist_items t WHERE t.active AND t.template_id = v_t.id
+     ORDER BY t.updated_at DESC, t.id DESC LIMIT 1;
     IF COALESCE(v_cur, '') <> p_expected_at THEN
       RAISE EXCEPTION 'רשימת הבדיקה עודכנה בינתיים ע״י % — יש לטעון אותה מחדש לפני השמירה',
         COALESCE(v_who, 'מנהל אחר') USING ERRCODE = 'PT409';
     END IF;
   END IF;
   SELECT COALESCE(jsonb_agg(jsonb_build_object('id', t.id, 'label', t.label, 'kind', t.kind, 'required', t.required,
-                                               'min_photos', t.min_photos) ORDER BY t.seq, t.id), '[]'::jsonb)
-    INTO v_before FROM pm_checklist_items t WHERE t.active;
+                                               'min_photos', t.min_photos, 'section', t.section) ORDER BY t.seq, t.id), '[]'::jsonb)
+    INTO v_before FROM pm_checklist_items t WHERE t.active AND t.template_id = v_t.id;
 
   FOR v_e, v_ord IN SELECT e, o FROM jsonb_array_elements(p_items) WITH ORDINALITY AS x(e, o) LOOP
     IF jsonb_typeof(v_e) <> 'object' THEN RAISE EXCEPTION 'פריט % אינו תקין', v_ord USING ERRCODE = 'check_violation'; END IF;
@@ -1739,10 +1897,13 @@ BEGIN
     v_label := btrim(COALESCE(v_e->>'label',''));
     v_hint  := NULLIF(btrim(COALESCE(v_e->>'hint','')),'');
     v_kind  := COALESCE(NULLIF(v_e->>'kind',''),'check');
+    v_sec   := NULLIF(btrim(COALESCE(v_e->>'section','')),'');
     IF length(v_label) NOT BETWEEN 2 AND 300 THEN
       RAISE EXCEPTION 'שם פריט % חייב להיות בין 2 ל-300 תווים', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_hint IS NOT NULL AND length(v_hint) > 500 THEN
       RAISE EXCEPTION 'הסבר פריט % ארוך מדי', v_ord USING ERRCODE = 'check_violation'; END IF;
+    IF v_sec IS NOT NULL AND length(v_sec) > 60 THEN
+      RAISE EXCEPTION 'שם הקבוצה בפריט % ארוך מדי (עד 60 תווים)', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_kind NOT IN ('check','photo','check_photo') THEN
       RAISE EXCEPTION 'סוג פריט % לא תקין', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_min NOT BETWEEN 0 AND 6 THEN
@@ -1754,36 +1915,76 @@ BEGIN
       RAISE EXCEPTION 'פריט רשות (%) אינו יכול לדרוש תמונות', v_ord USING ERRCODE = 'check_violation';
     END IF;
     IF v_id IS NOT NULL THEN
+      -- ⚠️ רק פריט **של הרשימה הזו**: id של פריט מרשימה אחרת היה מעביר אותו לכאן בשקט.
       UPDATE pm_checklist_items t SET seq = v_ord::int, label = v_label, hint = v_hint, kind = v_kind, required = v_req,
-             min_photos = v_min, active = true, updated_at = v_now, updated_by = v_actor
-       WHERE t.id = v_id;
-      IF NOT FOUND THEN RAISE EXCEPTION 'פריט % לא נמצא', v_ord USING ERRCODE = 'PT404'; END IF;
+             min_photos = v_min, section = v_sec, active = true, updated_at = v_now, updated_by = v_actor
+       WHERE t.id = v_id AND t.template_id = v_t.id;
+      IF NOT FOUND THEN RAISE EXCEPTION 'פריט % לא נמצא ברשימה הזו', v_ord USING ERRCODE = 'PT404'; END IF;
     ELSE
-      INSERT INTO pm_checklist_items (seq, label, hint, kind, required, min_photos, active, updated_at, updated_by)
-      VALUES (v_ord::int, v_label, v_hint, v_kind, v_req, v_min, true, v_now, v_actor)
+      INSERT INTO pm_checklist_items (template_id, seq, label, hint, kind, required, min_photos, section, active, updated_at, updated_by)
+      VALUES (v_t.id, v_ord::int, v_label, v_hint, v_kind, v_req, v_min, v_sec, true, v_now, v_actor)
       RETURNING pm_checklist_items.id INTO v_id;
     END IF;
     v_keep := v_keep || v_id;
   END LOOP;
   UPDATE pm_checklist_items t SET active = false, updated_at = v_now, updated_by = v_actor
-   WHERE t.active AND NOT (t.id = ANY (v_keep));
+   WHERE t.active AND t.template_id = v_t.id AND NOT (t.id = ANY (v_keep));
 
-  SELECT COALESCE(sum(t.min_photos), 0)::int INTO v_photos FROM pm_checklist_items t WHERE t.active AND t.required;
+  SELECT COALESCE(sum(t.min_photos), 0)::int INTO v_photos
+    FROM pm_checklist_items t WHERE t.active AND t.required AND t.template_id = v_t.id;
   IF v_photos > 40 THEN
     RAISE EXCEPTION 'סך התמונות הנדרשות בביקור (%) עולה על 40 — אף ביקור לא יוכל להיות מוגש', v_photos
       USING ERRCODE = 'check_violation';
   END IF;
 
   SELECT count(*)::int, COALESCE(jsonb_agg(jsonb_build_object('id', t.id, 'label', t.label, 'kind', t.kind,
-                                 'required', t.required, 'min_photos', t.min_photos) ORDER BY t.seq, t.id), '[]'::jsonb)
-    INTO v_n, v_after FROM pm_checklist_items t WHERE t.active;
-  PERFORM app.compliance_log(NULL, '*', 'pm', 'template', NULL, 'save', v_actor, v_before, v_after, NULL);
+                                 'required', t.required, 'min_photos', t.min_photos, 'section', t.section)
+                                 ORDER BY t.seq, t.id), '[]'::jsonb)
+    INTO v_n, v_after FROM pm_checklist_items t WHERE t.active AND t.template_id = v_t.id;
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'template', v_t.id, 'save', v_actor, v_before, v_after, NULL);
   PERFORM app.record_write_audit('pm.template_save', v_actor, app.current_app_role(), 'settings', 'pm_template',
-    jsonb_build_object('item_count', v_n));
+    jsonb_build_object('item_count', v_n, 'template_id', v_t.id));   -- D22: מזהים וספירות בלבד
   RETURN v_n;
 END $fn$;
-REVOKE ALL ON FUNCTION public.pm_template_save(jsonb, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pm_template_save(jsonb, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.pm_template_save(jsonb, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_template_save(jsonb, text, integer) TO authenticated;
+
+-- ------------------------------------------------------------
+-- שיוך רשימות לאתר — "כמו פרויקט אחר" (07/10/2026)
+-- ------------------------------------------------------------
+-- מצב יעד: הרשימות שנשלחו הן מה שהאתר מקבל מעכשיו. מערך ריק / NULL = חזרה לברירת
+-- המחדל. "כמו אתר אחר" נעשה בדפדפן: קוראים את הרשימות שלו (pm_site) ושולחים לכאן.
+-- ⚠️ ביקור שכבר נפתח אינו משתנה — הפריטים שלו צולמו ברגע הפתיחה.
+CREATE OR REPLACE FUNCTION public.pm_site_templates_set(p_site_code text, p_template_ids integer[]) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_site integer; v_code text; v_before integer[]; v_ids integer[] := COALESCE(p_template_ids, '{}');
+  v_photos integer;
+BEGIN
+  SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
+  IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_ids) x(id) WHERE NOT EXISTS
+               (SELECT 1 FROM pm_templates t WHERE t.id = x.id AND t.active)) THEN
+    RAISE EXCEPTION 'אחת הרשימות לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  SELECT COALESCE(sum(i.min_photos), 0)::int INTO v_photos
+    FROM pm_checklist_items i WHERE i.active AND i.required AND i.template_id = ANY (v_ids);
+  IF v_photos > 40 THEN
+    RAISE EXCEPTION 'הרשימות יחד דורשות % תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש', v_photos
+      USING ERRCODE = 'check_violation'; END IF;
+  SELECT COALESCE(array_agg(st.template_id ORDER BY st.template_id), '{}') INTO v_before
+    FROM pm_site_templates st WHERE st.site_id = v_site;
+  DELETE FROM pm_site_templates st WHERE st.site_id = v_site;
+  INSERT INTO pm_site_templates (site_id, template_id) SELECT DISTINCT v_site, x FROM unnest(v_ids) x;
+  PERFORM app.compliance_log(v_site, v_code, 'pm', 'site_templates', NULL, 'set', v_actor,
+    jsonb_build_object('template_ids', v_before), jsonb_build_object('template_ids', v_ids), NULL);
+  PERFORM app.record_write_audit('pm.site_templates_set', v_actor, app.current_app_role(), 'site', v_code,
+    jsonb_build_object('template_ids', v_ids));
+  PERFORM app.compliance_event(v_code, 'pm', 'site_templates');
+  RETURN cardinality(v_ids);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_site_templates_set(text, integer[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_site_templates_set(text, integer[]) TO authenticated;
 
 -- ------------------------------------------------------------
 -- pm_visit_start — טיוטה אחת לאתר; הפריטים מצולמים מהרשימה ברגע הפתיחה
@@ -1806,10 +2007,17 @@ DECLARE
   v_actor text := app.require_staff();
   v_now text := app.compliance_now_iso();
   v_site integer; v_code text; v_old pm_visits%ROWTYPE; v_id bigint; v_items integer; v_photos integer;
+  v_tpls integer[];
 BEGIN
   SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM pm_checklist_items t WHERE t.active) THEN
+  -- הרשימות של **האתר** (07/10/2026) — לא שויך → ברירת המחדל, כמו קודם
+  v_tpls := app.pm_site_template_ids(v_site);
+  IF (SELECT COALESCE(sum(t.min_photos), 0) FROM pm_checklist_items t
+       WHERE t.active AND t.required AND t.template_id = ANY (v_tpls)) > 40 THEN
+    RAISE EXCEPTION 'רשימות האתר יחד דורשות יותר מ-40 תמונות — אף ביקור לא יוכל להיות מוגש'
+      USING ERRCODE = 'check_violation'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pm_checklist_items t WHERE t.active AND t.template_id = ANY (v_tpls)) THEN
     RAISE EXCEPTION 'רשימת הבדיקה ריקה — מנהל צריך להגדיר אותה תחילה' USING ERRCODE = 'check_violation'; END IF;
 
   SELECT v.* INTO v_old FROM pm_visits v WHERE v.site_id = v_site AND v.status = 'draft' FOR UPDATE;
@@ -1850,9 +2058,16 @@ BEGIN
     SELECT v.* INTO v_old FROM pm_visits v WHERE v.site_id = v_site AND v.status = 'draft';
     RETURN QUERY SELECT v_old.id, false, v_old.started_at, v_old.last_activity_at; RETURN;
   END IF;
-  INSERT INTO pm_visit_items (visit_id, template_item_id, seq, label, hint, kind, required, min_photos)
-  SELECT v_id, t.id, t.seq, t.label, t.hint, t.kind, t.required, t.min_photos
-    FROM pm_checklist_items t WHERE t.active ORDER BY t.seq, t.id;
+  -- ⚠️ סדר הרשימות כפי שהאתר מקבל אותן, ובתוך כל רשימה — הסדר שלה. seq ממוספר מחדש
+  -- ברצף, כי כל רשימה ממספרת מ-1 ושני "פריט 1" היו מתערבבים בטופס.
+  -- section: הקבוצה של הפריט, ובלעדיה שם הרשימה — כך כל פריט בביקור חדש שייך לקבוצה.
+  INSERT INTO pm_visit_items (visit_id, template_item_id, seq, label, hint, kind, required, min_photos, section)
+  SELECT v_id, t.id, (row_number() OVER (ORDER BY x.o, t.seq, t.id))::int, t.label, t.hint, t.kind, t.required, t.min_photos,
+         COALESCE(NULLIF(btrim(t.section), ''), tp.name)
+    FROM unnest(v_tpls) WITH ORDINALITY AS x(tid, o)
+    JOIN pm_checklist_items t ON t.template_id = x.tid AND t.active
+    JOIN pm_templates tp ON tp.id = x.tid
+   ORDER BY x.o, t.seq, t.id;
   GET DIAGNOSTICS v_items = ROW_COUNT;
   PERFORM app.record_write_audit('pm.visit_start', v_actor, app.current_app_role(), 'site', v_code,
     jsonb_build_object('visit_id', v_id, 'item_count', v_items));

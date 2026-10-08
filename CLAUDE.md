@@ -1235,3 +1235,123 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   already `no_comm`). Runs take 12–17 ms, against 52 s when throttled. ⚠️ **Micro is burstable
   too.** Throttling came back at 10:52, after the resize, under the old dashboard load, so the fixes
   above are what keep it healthy, not the size alone.
+
+## Sites without a controller, and maintenance lists per type (built 07/10/2026, not yet deployed)
+
+The owner, on Sotefin facilities: *"the site isn't linked to the facility itself, because it's
+Sotefin's, but it does exist, and it does need the inspector, maintenance and tasks"*. On
+maintenance: *"some things are common to almost every site, and some maintenance actions are
+specific to the type of facility"*.
+
+- **`sites.monitored`** (default `true`; `false` = no controller connected). It is separate from
+  `control_system`: that field is the facility's operating system and decides the FixFlow
+  library, and a Sotefin facility can be connected (`סוטפין-לולק`) or not. Such a site has no
+  agent identity (`registerSiteDirect` returns before `provisionAgentDirect`). Its `status` stays
+  at the default `'no_comm'`; the dashboard ignores it:
+  - the card shows "ללא בקר מחובר" (dashed), the compliance lamps and the tasks buttons, with no
+    status chip, no metrics and no expanded card;
+  - it is not counted in the status filters and is hidden under any status filter;
+  - it sorts last;
+  - it is filtered out of `toSupervisorShape`, which also feeds the executive page;
+  - AdminPanel shows no agent-identity or "controller replaced" button for it;
+  - it is left out of the identity list.
+  The register form has a "ללא בקר מחובר" checkbox. `update_site` cannot toggle the flag yet.
+- **Maintenance lists** (`pm_templates`, `pm_checklist_items.template_id`, `pm_site_templates`).
+  The old global list became the **default list** ("משותף"). ⚠️ **A site with no assignment
+  gets the default list, exactly as before.** `app.pm_site_template_ids` is the single place
+  that resolves a site's lists. The visit snapshot orders the lists by `seq` and renumbers items
+  `1..n`. The 40-photo cap is checked per list on save and again across the site's lists, both
+  at assignment and at visit start. Existing RPCs keep working: `pm_template()` and
+  `pm_template_save(items, token)` with no list id mean the default list. Template names are
+  never written to `audit_log` (D22).
+- **Groups within a list** (`pm_checklist_items.section`, snapshotted into `pm_visit_items.section`).
+  They come from the Sotefin document: *"4 rows for the technician — lift, shuttle, dolly, lobby.
+  Tapping one opens the tasks; when all are done the row turns green and he moves to the next"*.
+  - The visit snapshots each item's group, or the list name when the item has none. So every item
+    in a new visit belongs to a group, and renaming a group later does not move items in an open
+    visit.
+  - The form groups consecutive items into rows that open on tap. A row shows done/required and
+    turns green (tint, ✓) when nothing required is missing. Only the first incomplete row starts
+    open.
+  - When an **open** row becomes *finished* (nothing required is missing and every checkbox is
+    ticked, optional ones included), it closes and the next incomplete row opens. A row whose only
+    remaining items are optional stays open, so it does not jump away from the technician.
+  - ⚠️ Items in a closed row are `hidden`, not unmounted. A PhotoPicker unmounted mid-compression
+    would lose the photo. `.pm-items { display:flex }` would override the browser's `hidden`. What
+    actually hides the row is the existing `.pm [hidden] { display:none !important }` at the top of
+    `PmTab.css`, and the probe checks real layout (`offsetHeight`), not the attribute.
+  - "Missing item" links open the row first and scroll after the render.
+  - A visit with one group, or one from before groups existed, renders flat as before, with no
+    header.
+  - In the editor, every item has a "קבוצה" field with suggestions from the list's existing groups.
+    A heading appears where a group starts. A new item inherits the last item's group.
+  - Tests:
+    - `pm-templates.test.js`: 2 tests, 10/10 SQL mutations caught.
+    - `probe-groups.mjs` in the scratchpad harness: 17/17, 12 UI mutations.
+- ⚠️ **The owner's instruction for new sites is addressed to Claude, not the UI:** *"from now on,
+  every time a facility is added you'll need to ask which maintenance to attach to it; usually
+  the answer will be like another project"*. When registering a site, **ask** which lists it gets.
+- **Pending from the owner:** the three documents to turn into lists (Kaplan 8, the rest of the
+  Sotefin facilities, "מפרט טיפול לחניונים רובוטיים"), and the codes for the 11 Sotefin sites.
+  ("אביגיל 18" doesn't exist; it is אביגיל 20, 1343, already in the system.)
+- Tests: `pm-templates.test.js` (12 tests, 10 mutations caught),
+  `register-site-unmonitored.test.js`, `sort-sites.test.js`, and `supervisor-shape.test.js`
+  (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,
+  run with `VITE_COMPLIANCE_PM=true`, 10 UI mutations caught).
+
+## "בודק מוסמך" in the header filter (built 08/10/2026, not yet deployed)
+
+Five versions in one day. The owner's words decided each one, so they are recorded:
+
+1. *"סרגל בצד של סינון שיציג רק אתרים פגים או אתרים נקיים וכו'"*. A sidebar on the board.
+2. *"תהיה אופציה בצד לסמן האם רוצים לראות בודק מוסמך... תחת כל סימון כזה יפתח תפריט"*. Her answers
+   added that every state is always listed, even at 0.
+3. *"תעיף את זה, זה לא קיים"*, about the "אין נתונים" and "לא נטען" rows. Then a narrow column in the
+   header's colour, glued to the edge, *"דומה לסינון שנמצא ב-HEADER"*.
+4. *"אני רוצה שבודק מוסמך יופיע בסינון ב-HEADER"*. And the lamp on the card *"מופיעה רק כשמסמנים"*.
+5. ⚠️ **The current one:** *"כשלוחצים על בודק מוסמך יפתח תפריט מתחת, ואז יצטרכו לבחור מה רואים,
+   ואז זה יסגר בסיום הבחירה"*. **There is no sidebar any more.**
+
+**What it is now:**
+- **The header's filter row** has a "בודק מוסמך" tile (and "תחזוקה מונעת" when `PM_ENABLED`), after
+  the type/system/tier box. It uses the status tiles' `filter-btn` class, with the area icon in place
+  of the count.
+- **The tile is a real `<select>`.** It is transparent and covers the whole tile, so a click anywhere
+  opens the list underneath, a choice closes it, and on a phone it opens as the phone's own picker.
+  That is exactly the behaviour of the three `SiteFilterTile` selects beside it. The options:
+  - "בלי בודק מוסמך" — the default;
+  - "כל האתרים (N)" — shows the lamps, filters nothing;
+  - the 7 states with their counts ("לא בתוקף (2)" …). PM has 4.
+- **One choice at a time**, like the selects beside it. The model's `only` array can hold several;
+  the UI does not offer that.
+- **The active tile names its choice** on a second line, and counts as one filter in "סינון ותצוגה ·
+  N פעילים".
+- ⚠️ **By default ("בלי"), the area's lamp is not drawn on the board's cards.** This was chosen
+  knowingly, and it is a change: before 08/10 the inspector lamp was always there. Any choice draws it.
+  The help panel says so. A refresh returns to "בלי", because nothing is persisted.
+- **The choice combines with the status and type filters (AND),** and the two areas combine with AND.
+  An unmonitored site *is* matched.
+
+| Piece | Where |
+|---|---|
+| View model (pure) | `DEFAULT_COMPLIANCE_VIEW` (`{ show: false, only: [] }` per area), `lampAreasFor`, `matchesComplianceView`, `complianceActiveCount`, `COMPLIANCE_FILTER_ROWS` / `complianceFilterKey` / `complianceFilterCounts`, in `utils/compliance.js` |
+| Hiding a lamp | `LampAreasContext` in `ComplianceLights.jsx`, provided by `OperatorView` around `SiteGrid`; `markFor` respects it too |
+| The tile | `components/ComplianceFilters/`, rendered by `Header` in the status row; state `complianceView` in `App.jsx` |
+| Tests | `compliance-ui.test.js` (5 tests, 17/17 mutations caught, run on a scratch copy); browser `e2e/probe-cf.mjs` (18) + `dbg-cf-pmoff.mjs` (3) |
+
+- **The key is the SQL state.** "אין תסקיר" is split from "לא בתוקף" by `stateLabel`'s own rule
+  (`missing`, except under `none`). An unrecognised state gets the key `unknown`.
+- ⚠️ **`none` and `unknown` have no option**, so such a site shows only under "כל האתרים". "אין
+  נתונים" cannot occur in production since go-live was set (06/10). "לא נטען" is a network failure.
+- **The context reaches only the board.** The supervisor table keeps its lamps (probe C8).
+- ⚠️ **The harness `openPage` now picks "כל האתרים" in every area by default** (`showLamps`,
+  `lamps: true`), because the old probes click lamps. `probe-cf` opens with `lamps: false`. A probe
+  that reloads must call `showLamps` again (`run.mjs` S4).
+- ⚠️ **It exposed a card bug, still fixed.** The lamp label was `nowrap`, and "בודק בתוקף · מועד תיקון
+  בעוד פחות מחודש" is longer than a 270px card, so it stuck out and gave the page a horizontal scroll.
+  `.cl-label` now wraps (`min-width: 0`).
+- ⚠️ **Found along the way, and not yet fixed: with PM enabled, tapping a site's name on a phone opens
+  the PM tab.** Chrome adjusts a touch to a nearby button, and the PM lamp's 44px hit area ends 7px
+  below the centre of the name. Measured: a touch at (215,309) became a click on `cl-lamp--soon` at
+  (214,317), while a mouse click at the same point expands the card. `probe-tasks` K4 passes with PM
+  off (57/57) and fails with it on. Fix this before enabling PM.

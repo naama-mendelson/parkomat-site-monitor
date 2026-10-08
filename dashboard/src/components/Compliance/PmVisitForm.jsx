@@ -360,6 +360,61 @@ export default function PmVisitForm({
   const stuckN = ob.mine.stuck.length;
   const waitN = ob.mine.waiting;
 
+  // ---------------- קבוצות (07/10/2026) ----------------
+  // במסמך סוטפין: "4 שורות לביצוע הטכנאי — מעלית, שאטל, דולי, לובי. לחיצה פותחת פירוט; אם
+  // ביצע את כולם השורה ירוקה, ואז הוא ייכנס לשורה הבאה". קבוצה = רצף פריטים עם אותו section,
+  // שצולם בפתיחת הביקור (הקבוצה של הפריט, או שם הרשימה). קבוצה אחת, או ביקור מלפני הקבוצות —
+  // רשימה אחת בלי כותרת, כמו קודם.
+  // ⚠️ פריטים של קבוצה סגורה נשארים מורכבים (hidden) ולא מוסרים: PhotoPicker שמתפרק באמצע
+  // דחיסה היה מאבד את התמונה.
+  const groups = [];
+  for (const m of merged) {
+    const name = m.it.section || "";
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.items.push(m);
+    else groups.push({ key: m.id, name, items: [m] });
+  }
+  for (const g of groups) {
+    g.required = g.items.filter((m) => m.it.required).length;
+    g.missing = g.items.filter((m) => m.missing).length;
+    g.done = g.missing === 0;
+    // "סיים את השורה" = אין חובה חסרה וגם כל וי (כולל רשות) סומן — רק אז עוברים לבאה,
+    // כדי לא לסגור לטכנאי קבוצה שבה עוד נשאר לו פריט רשות.
+    g.finished = g.done && g.items.every((m) => m.it.kind === "photo" || m.checked);
+  }
+  const grouped = groups.length > 1 && groups.some((g) => g.name);
+  const [openGroups, setOpenGroups] = useState(() => {
+    const first = groups.find((g) => !g.done);
+    return new Set(first ? [first.key] : []);
+  });
+  const toggleGroup = (key) => setOpenGroups((s) => {
+    const n = new Set(s);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
+  // מעבר לשורה הבאה: קבוצה **פתוחה** שהסתיימה עכשיו נסגרת, והבאה שלא הושלמה נפתחת.
+  // רק במעבר (לא-גמור → גמור) — קבוצה שנפתחה מחדש אחרי שהושלמה נשארת פתוחה.
+  const finishedSig = groups.map((g) => (g.finished ? "1" : "0")).join("");
+  const prevFinished = useRef(null);
+  useEffect(() => {
+    const before = prevFinished.current;
+    prevFinished.current = new Map(groups.map((g) => [g.key, g.finished]));
+    if (!before || !grouped) return;
+    const g = groups.find((x) => x.finished && before.get(x.key) === false && openGroups.has(x.key));
+    if (!g) return;
+    const i = groups.indexOf(g);
+    const next = groups.slice(i + 1).find((x) => !x.done) || groups.find((x) => !x.done);
+    setOpenGroups((s) => {
+      const n = new Set(s);
+      n.delete(g.key);
+      if (next) n.add(next.key);
+      return n;
+    });
+    requestAnimationFrame(() => document.getElementById(`pm-group-${visitId}-${g.key}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [finishedSig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [scrollTo, setScrollTo] = useState(null);
+
   // ---------------- סיום וחתימה ----------------
   const range = submitDateRange(draft.started_at);
   const [performerName, setPerformerName] = useState(() => readStore("localStorage", NAME_KEY) || "");
@@ -497,7 +552,22 @@ export default function PmVisitForm({
   };
 
   // גלילה **ופוקוס**: קורא מסך או מקלדת ממשיכים מהפריט, לא מתחתית הטופס
+  // ⚠️ פריט בקבוצה סגורה מוסתר — קודם פותחים אותה, וגוללים אחרי הרינדור (scrollTo).
   const goToItem = (id) => {
+    const g = groups.find((x) => x.items.some((m) => m.id === String(id)));
+    if (grouped && g && !openGroups.has(g.key)) {
+      setOpenGroups((s) => new Set(s).add(g.key));
+      setScrollTo(String(id));
+      return;
+    }
+    scrollToItem(id);
+  };
+  useEffect(() => {
+    if (scrollTo == null) return;
+    scrollToItem(scrollTo);
+    setScrollTo(null);
+  }, [scrollTo, openGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scrollToItem = (id) => {
     const el = document.getElementById(`pm-item-${visitId}-${id}`);
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -512,6 +582,104 @@ export default function PmVisitForm({
   if (waitN > 0) pill = { cls: "pending", text: `${countText(waitN, "שינוי אחד ממתין", "שינויים ממתינים")} לסנכרון${ob.draining ? " · שולח…" : ""}` };
   else if (stuckN > 0) pill = { cls: "error", text: `${countText(stuckN, "שינוי אחד נדחה", "שינויים נדחו")} ע״י השרת` };
   else pill = { cls: "ok", text: "✓ כל השינויים נשמרו בשרת" };
+
+  const renderItem = (m) => (
+    <li key={m.id} id={`pm-item-${visitId}-${m.id}`}
+      className={`pm-item${m.missing ? " pm-item--todo" : ""}${m.status?.cls === "error" ? " pm-item--error" : ""}`}>
+      <div className="pm-item-head">
+        {m.it.kind !== "photo" ? (
+          <label className="pm-check">
+            <input type="checkbox" className="pm-checkbox" checked={m.checked} disabled={lock}
+              onChange={(e) => toggle(m.id, e.target.checked)} />
+            <span className="pm-check-label">{m.it.label}</span>
+          </label>
+        ) : (
+          <div className="pm-check pm-check--photo">
+            <span className="pm-check-ico"><CameraIcon size={20} /></span>
+            <span className="pm-check-label">{m.it.label}</span>
+          </div>
+        )}
+      </div>
+      {m.it.hint && <p className="pm-hint">{m.it.hint}</p>}
+
+      <div className="pm-tags">
+        {m.it.required
+          ? <span className="pm-tag pm-tag--req">חובה</span>
+          : <span className="pm-tag">רשות</span>}
+        {m.it.kind !== "check" && (
+          <span className={`pm-tag${m.it.min_photos > 0 && m.photoN < m.it.min_photos ? " pm-tag--short" : ""}`}>
+            {m.it.min_photos > 0 ? `${m.photoN}/${m.it.min_photos} תמונות` : `${m.photoN} תמונות`}
+          </span>
+        )}
+      </div>
+
+      {m.it.kind !== "check" && (
+        <div className="pm-photos">
+          <PhotoPicker
+            max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
+            initial={initialByItem.get(m.id)}
+            disabled={lock}
+            gone={gone}
+            rejected={m.rejected}
+            onPick={({ clientId, compressed }) => { localThumbs.current.set(clientId, compressed.thumb); }}
+            upload={async ({ clientId, compressed }) => {
+              localThumbs.current.set(clientId, compressed.thumb);
+              const r = await enqueuePhoto(visitId, m.it.id, clientId, compressed);
+              kick();
+              return r;
+            }}
+            onRemove={(p) => removeServerOrPending(
+              p.clientId && !String(p.clientId).startsWith("id:") ? p.clientId : null, p.id ?? null)}
+            onChange={(s) => onPickerChange(m.id, s)}
+          />
+          {m.orphans.length > 0 && (
+            <ul className="pp-list pm-orphans" aria-label="תמונות שממתינות במכשיר">
+              {m.orphans.map((ph) => {
+                const refused = m.rejected.has(ph.clientId);
+                return (
+                  <li key={ph.clientId} className={`pp-item ${refused ? "pp-item--failed" : "pp-item--queued"}`}>
+                    {ph.thumb
+                      ? <img className="pp-thumb" src={`data:image/jpeg;base64,${ph.thumb}`} alt="" />
+                      : <span className="pp-thumb pp-thumb--empty" aria-hidden="true" />}
+                    <span className="pp-status">{refused ? "השרת דחה את התמונה — ראו למעלה" : "נשמר במכשיר · ממתין לסנכרון"}</span>
+                    <button type="button" className="pp-remove" aria-label="הסרת התמונה" title="הסרה" disabled={lock}
+                      onClick={() => removeServerOrPending(ph.clientId, null).catch(() => {})}>×</button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {noteOpen.has(m.id) || m.note ? (
+        <label className="pm-field pm-note">
+          <span>הערה</span>
+          <textarea className="pm-input pm-textarea" rows={2} maxLength={ITEM_NOTE_MAX} value={m.note}
+            disabled={lock} autoFocus={justOpened === m.id}
+            onFocus={() => onNoteFocus(m.id, m.note)}
+            onChange={(e) => onNoteChange(m.id, e.target.value)}
+            onBlur={() => onNoteBlur(m.id)} />
+        </label>
+      ) : (
+        // ⚠️ הכפתור מתחלף בשדה — בלי פוקוס על השדה, בכפפות צריך עוד הקשה
+        // כדי להתחיל להקליד, ומקלדת / קורא מסך נופלים ל-body.
+        <button type="button" className="pm-btn pm-btn--ghost pm-btn--inline" disabled={lock}
+          onClick={() => { setNoteOpen((s) => new Set(s).add(m.id)); setJustOpened(m.id); }}>
+          + הוספת הערה
+        </button>
+      )}
+
+      <div className="pm-item-foot">
+        {m.status && <span className={`pm-status pm-status--${m.status.cls}`}>{m.status.text}</span>}
+        {m.byOther && (
+          <span className="pm-by">
+            עודכן ע״י {m.byOther}{m.it.updated_at ? ` · ${formatStampIL(m.it.updated_at)}` : ""}
+          </span>
+        )}
+      </div>
+    </li>
+  );
 
   return (
     <div className="pm-form">
@@ -599,105 +767,33 @@ export default function PmVisitForm({
       )}
 
       {/* ===== הפריטים ===== */}
-      <ol className="pm-items">
-        {merged.map((m) => (
-          <li key={m.id} id={`pm-item-${visitId}-${m.id}`}
-            className={`pm-item${m.missing ? " pm-item--todo" : ""}${m.status?.cls === "error" ? " pm-item--error" : ""}`}>
-            <div className="pm-item-head">
-              {m.it.kind !== "photo" ? (
-                <label className="pm-check">
-                  <input type="checkbox" className="pm-checkbox" checked={m.checked} disabled={lock}
-                    onChange={(e) => toggle(m.id, e.target.checked)} />
-                  <span className="pm-check-label">{m.it.label}</span>
-                </label>
-              ) : (
-                <div className="pm-check pm-check--photo">
-                  <span className="pm-check-ico"><CameraIcon size={20} /></span>
-                  <span className="pm-check-label">{m.it.label}</span>
-                </div>
-              )}
-            </div>
-            {m.it.hint && <p className="pm-hint">{m.it.hint}</p>}
-
-            <div className="pm-tags">
-              {m.it.required
-                ? <span className="pm-tag pm-tag--req">חובה</span>
-                : <span className="pm-tag">רשות</span>}
-              {m.it.kind !== "check" && (
-                <span className={`pm-tag${m.it.min_photos > 0 && m.photoN < m.it.min_photos ? " pm-tag--short" : ""}`}>
-                  {m.it.min_photos > 0 ? `${m.photoN}/${m.it.min_photos} תמונות` : `${m.photoN} תמונות`}
-                </span>
-              )}
-            </div>
-
-            {m.it.kind !== "check" && (
-              <div className="pm-photos">
-                <PhotoPicker
-                  max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
-                  initial={initialByItem.get(m.id)}
-                  disabled={lock}
-                  gone={gone}
-                  rejected={m.rejected}
-                  onPick={({ clientId, compressed }) => { localThumbs.current.set(clientId, compressed.thumb); }}
-                  upload={async ({ clientId, compressed }) => {
-                    localThumbs.current.set(clientId, compressed.thumb);
-                    const r = await enqueuePhoto(visitId, m.it.id, clientId, compressed);
-                    kick();
-                    return r;
-                  }}
-                  onRemove={(p) => removeServerOrPending(
-                    p.clientId && !String(p.clientId).startsWith("id:") ? p.clientId : null, p.id ?? null)}
-                  onChange={(s) => onPickerChange(m.id, s)}
-                />
-                {m.orphans.length > 0 && (
-                  <ul className="pp-list pm-orphans" aria-label="תמונות שממתינות במכשיר">
-                    {m.orphans.map((ph) => {
-                      const refused = m.rejected.has(ph.clientId);
-                      return (
-                        <li key={ph.clientId} className={`pp-item ${refused ? "pp-item--failed" : "pp-item--queued"}`}>
-                          {ph.thumb
-                            ? <img className="pp-thumb" src={`data:image/jpeg;base64,${ph.thumb}`} alt="" />
-                            : <span className="pp-thumb pp-thumb--empty" aria-hidden="true" />}
-                          <span className="pp-status">{refused ? "השרת דחה את התמונה — ראו למעלה" : "נשמר במכשיר · ממתין לסנכרון"}</span>
-                          <button type="button" className="pp-remove" aria-label="הסרת התמונה" title="הסרה" disabled={lock}
-                            onClick={() => removeServerOrPending(ph.clientId, null).catch(() => {})}>×</button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            {noteOpen.has(m.id) || m.note ? (
-              <label className="pm-field pm-note">
-                <span>הערה</span>
-                <textarea className="pm-input pm-textarea" rows={2} maxLength={ITEM_NOTE_MAX} value={m.note}
-                  disabled={lock} autoFocus={justOpened === m.id}
-                  onFocus={() => onNoteFocus(m.id, m.note)}
-                  onChange={(e) => onNoteChange(m.id, e.target.value)}
-                  onBlur={() => onNoteBlur(m.id)} />
-              </label>
-            ) : (
-              // ⚠️ הכפתור מתחלף בשדה — בלי פוקוס על השדה, בכפפות צריך עוד הקשה
-              // כדי להתחיל להקליד, ומקלדת / קורא מסך נופלים ל-body.
-              <button type="button" className="pm-btn pm-btn--ghost pm-btn--inline" disabled={lock}
-                onClick={() => { setNoteOpen((s) => new Set(s).add(m.id)); setJustOpened(m.id); }}>
-                + הוספת הערה
-              </button>
-            )}
-
-            <div className="pm-item-foot">
-              {m.status && <span className={`pm-status pm-status--${m.status.cls}`}>{m.status.text}</span>}
-              {m.byOther && (
-                <span className="pm-by">
-                  עודכן ע״י {m.byOther}{m.it.updated_at ? ` · ${formatStampIL(m.it.updated_at)}` : ""}
-                </span>
-              )}
-            </div>
-          </li>
-        ))}
-      </ol>
+      {grouped ? (
+        <div className="pm-groups">
+          {groups.map((g) => {
+            const isOpen = openGroups.has(g.key);
+            const listId = `pm-group-items-${visitId}-${g.key}`;
+            return (
+              <section key={g.key} id={`pm-group-${visitId}-${g.key}`}
+                className={`pm-group${g.done ? " pm-group--done" : ""}${isOpen ? " pm-group--open" : ""}`}>
+                <button type="button" className="pm-group-head" aria-expanded={isOpen} aria-controls={listId}
+                  onClick={() => toggleGroup(g.key)}>
+                  <span className="pm-group-mark" aria-hidden="true">{g.done ? "✓" : ""}</span>
+                  <span className="pm-group-name">{g.name || "כללי"}</span>
+                  <span className="pm-group-count">
+                    {g.required > 0 ? `${g.required - g.missing}/${g.required}` : `${g.items.length} רשות`}
+                  </span>
+                  <span className="pm-group-chev" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
+                </button>
+                <ol className="pm-items" id={listId} hidden={!isOpen}>
+                  {g.items.map(renderItem)}
+                </ol>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <ol className="pm-items">{merged.map(renderItem)}</ol>
+      )}
 
       {/* ===== סיום וחתימה ===== */}
       <section className="pm-card pm-footer" ref={footerRef}>

@@ -56,6 +56,7 @@ import PmVisitForm from "./PmVisitForm";
 import PmVisitView from "./PmVisitView";
 import PmHistoricalUpload from "./PmHistoricalUpload";
 import PmTemplateEditor from "./PmTemplateEditor";
+import PmSiteLists from "./PmSiteLists";
 import { PmLamp } from "./PmCommon";
 import {
   DISCARD_IDLE_MS, agoText, countText, idleMs, readMe, readStore, sameName, submitReqKey, writeMe, writeStore,
@@ -483,6 +484,12 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
           <span>{c.unknown ? "הסטטוס לא נטען" : statusLine(pm)}</span>
         </div>
       </section>
+
+      {/* אילו רשימות תחזוקה האתר מקבל (07/10/2026) — רק כשאין טופס פתוח */}
+      {!formOpen && Array.isArray(data?.templates) && (
+        <PmSiteLists code={site.code} templates={data.templates} assigned={!!data.templates_assigned}
+          isManager={isManager} onChanged={() => load({ silent: true })} />
+      )}
 
       {notice && (
         <div className={`pm-banner pm-banner--closable pm-banner--${notice.kind === "ok" ? "ok" : "warn"}`} role="status"

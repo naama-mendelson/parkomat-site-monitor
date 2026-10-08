@@ -1,0 +1,49 @@
+/* components/ComplianceFilters/ComplianceFilters.css — אריח "בודק מוסמך" בסינון שבכותרת */
+
+/* ⚠️ מחלקת filter-btn של מוני המצב (StatusFilters.css) — אותו אריח, אותו מצב פעיל. כאן רק מה שנוסף:
+   הבורר השקוף שמכסה את האריח, והשורה שמראה מה נבחר. */
+.cf-area-btn {
+  position: relative;
+  cursor: pointer;
+}
+
+/* הסמל של התחום במקום המספר */
+.cf-area-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.7rem;
+}
+
+/* מה נבחר — "לא בתוקף (2)" / "כל האתרים". בלי זה אריח פעיל לא אומר מה הוא מסנן. */
+.cf-choice {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* ⚠️ הבורר עצמו — שקוף, ומכסה את כל האריח: לחיצה בכל מקום פותחת את הרשימה מתחת. opacity ולא
+   display:none — בורר מוסתר אינו נפתח ואינו נגיש. */
+.cf-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px; /* בטלפון: פחות מ-16px גורם לדפדפן להגדיל את הדף בפתיחה */
+}
+
+/* הרשימה עצמה — צבעי הנושא, לא הכחול של הכותרת (בחלק מהדפדפנים option יורש את הצבע הלבן) */
+.cf-select option {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
+/* מיקוד מקלדת — הבורר שקוף, אז המסגרת על האריח */
+.cf-area-btn:focus-within {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}

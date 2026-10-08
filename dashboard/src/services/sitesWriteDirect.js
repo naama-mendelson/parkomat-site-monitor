@@ -75,12 +75,19 @@ export async function registerSiteDirect(payload = {}) {
     // שנשלחו, ולכן מפתח שהמסד עוד לא מכיר (לפני שהוחל writes.postgres.sql)
     // היה מפיל כל רישום — גם רישום שלא בחר מערכת בכלל.
     ...(payload.control_system ? { p_control_system: String(payload.control_system) } : {}),
+    // אתר בלי בקר מחובר (07/10/2026) — **רק כשהוא כזה**, מאותה סיבה בדיוק: רישום רגיל
+    // אינו שולח את המפתח, ולכן אינו תלוי בכך שהמסד כבר מכיר אותו.
+    ...(payload.monitored === false ? { p_monitored: false } : {}),
   });
 
   if (error) throw new Error(messageFor(error, "רישום האתר נכשל"));
 
   const row = Array.isArray(data) ? data[0] : data;
   const site = { id: row?.id ?? null, code: row?.code, site_name: row?.site_name };
+
+  // ⚠️ אתר בלי בקר מחובר — אין מחשב באתר, ולכן אין זהות סוכן ואין סיסמה. זהות שנוצרת לחינם
+  // הייתה מופיעה ב"זהויות האתרים" כסוכן שמעולם לא התחבר — בדיוק מה שמחפשים שם כתקלה.
+  if (payload.monitored === false) return { ok: true, site, agent: null, agentError: null };
 
   // ============================================================
   // ⚠️ הזהות נוצרת כאן, מיד, ולא בפקודה שצריך לזכור
@@ -288,7 +295,9 @@ export async function listSiteIdentitiesDirect() {
   assertConfigured();
   const [{ data: users, error: uErr }, { data: sites, error: sErr }, { data: beats }] = await Promise.all([
     supabase.from("app_users").select("id, email, is_active, site_id").eq("role", "agent"),
-    supabase.from("sites").select("id, code, site_name"),
+    // ⚠️ "*" ולא רשימת עמודות: `monitored` נוספה ב-07/10/2026, ורשימה מפורשת הייתה
+    // מפילה את המסך הזה מול מסד שעוד לא הוחל עליו השינוי.
+    supabase.from("sites").select("*"),
     supabase.from("alive").select("site_id, seen_at, agent_version"),
   ]);
   if (uErr || sErr) throw new Error(uErr?.message || sErr?.message);
@@ -296,6 +305,8 @@ export async function listSiteIdentitiesDirect() {
   const byId = new Map((users ?? []).map((u) => [u.site_id, u]));
   const beatById = new Map((beats ?? []).map((b) => [b.site_id, b]));
   return (sites ?? [])
+    // אתר בלי בקר מחובר — אין לו סוכן, ולכן אין לו מקום ברשימת זהויות הסוכנים
+    .filter((s) => s.monitored !== false)
     .map((s) => {
       const u = byId.get(s.id);
       const b = beatById.get(s.id);

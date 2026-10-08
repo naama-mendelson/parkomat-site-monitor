@@ -315,10 +315,37 @@ export async function fetchPmVisit(visitId) {
   return rpcT("pm_visit_detail", { p_visit_id: visitId }, TIMEOUT.normal);
 }
 
-/** רשימת הבדיקה הפעילה: [{id,seq,label,hint,kind,required,min_photos,updated_at,updated_by}] */
-export async function fetchPmTemplate() {
-  const data = await rpcT("pm_template", {}, TIMEOUT.normal);
+/**
+ * פריטי רשימת בדיקה: [{id,seq,label,hint,kind,required,min_photos,updated_at,updated_by}]
+ * @param {number|null} [templateId] — null = רשימת ברירת המחדל (מה שהיה "הרשימה" לפני 07/10/2026)
+ */
+export async function fetchPmTemplate(templateId = null) {
+  const data = await rpcT("pm_template", templateId == null ? {} : { p_template_id: templateId }, TIMEOUT.normal);
   return Array.isArray(data) ? data : [];
+}
+
+/** כל רשימות התחזוקה: [{id,name,seq,is_default,item_count,site_count}] — ברירת המחדל ראשונה. */
+export async function fetchPmTemplates() {
+  const data = await rpcT("pm_templates_list", {}, TIMEOUT.normal);
+  return Array.isArray(data) ? data : [];
+}
+
+/** רשימה חדשה (ריקה). מנהל בלבד. @returns {number} המזהה שלה */
+export async function createPmTemplate(name) {
+  return Number(await rpcT("pm_template_create", { p_name: name }, TIMEOUT.normal));
+}
+
+/** שינוי שם של רשימה. מנהל בלבד. */
+export async function renamePmTemplate(templateId, name) {
+  await rpcT("pm_template_rename", { p_template_id: templateId, p_name: name }, TIMEOUT.normal);
+}
+
+/**
+ * אילו רשימות האתר מקבל — מצב יעד. [] = חזרה לברירת המחדל. מנהל בלבד.
+ * ⚠️ ביקור שכבר פתוח אינו משתנה; הרשימות החדשות חלות מהביקור הבא.
+ */
+export async function setPmSiteTemplates(code, templateIds) {
+  return Number(await rpcT("pm_site_templates_set", { p_site_code: code, p_template_ids: templateIds }, TIMEOUT.normal));
 }
 
 /**
@@ -330,8 +357,12 @@ export async function fetchPmTemplate() {
  *   עורך ישן היה מבטל בשקט את השמירה שלו (מצב היעד כולו נשלח).
  * @returns {number} מספר הפריטים הפעילים
  */
-export async function savePmTemplate(items, expectedAt = null) {
-  return Number(await rpcT("pm_template_save", { p_items: items, p_expected_at: expectedAt }, TIMEOUT.normal)) || 0;
+export async function savePmTemplate(items, expectedAt = null, templateId = null) {
+  return Number(await rpcT("pm_template_save", {
+    p_items: items, p_expected_at: expectedAt,
+    // ⚠️ רק כשנבחרה רשימה: בלי המפתח, השמירה היא של ברירת המחדל — כמו לפני 07/10/2026
+    ...(templateId == null ? {} : { p_template_id: templateId }),
+  }, TIMEOUT.normal)) || 0;
 }
 
 /**

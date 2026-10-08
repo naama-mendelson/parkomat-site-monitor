@@ -19,6 +19,9 @@ function statusRank(site) {
   // חייב לצוף למעלה, גם אם השנייה מחזיקה אותו זמין.
   //
   // באתר חד-מערכתי השניים זהים, ולכן שום דבר שם לא משתנה.
+  // ⚠️ אתר בלי בקר מחובר (07/10/2026) — אין לו מצב, ולכן אחרון: ה-'no_comm' שבמסד הוא
+  // ברירת מחדל ולא מידע, ובלי זה הוא היה מתמיין בין המנותקים האמיתיים.
+  if (site.monitored === false) return 7;
   switch (site.displayStatus ?? site.status) {
     case "error":       return 0;
     case "maintenance": return 1;

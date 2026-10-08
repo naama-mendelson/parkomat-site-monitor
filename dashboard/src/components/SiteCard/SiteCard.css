@@ -890,3 +890,28 @@
   color: var(--err-text, #b23c3c);
   font-weight: 600;
 }
+
+/* ===== אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד =====
+   ⚠️ ניטרלי בכוונה: בלי צבע מצב בפס ובלי צ'יפ מצב. אפור ומקווקו — כדי שלא ייקרא
+   "אין תקשורת" (שהוא אפור **מלא**), ושיהיה ברור במבט שזה סוג אחר של אתר. */
+.site-card.is-unmonitored {
+  border-inline-start: 4px dashed var(--border-color);
+  cursor: default;
+}
+.unmonitored-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border-color);
+  align-self: flex-start;
+}
+.mini-dot--unmonitored {
+  background: transparent;
+  border: 2px dashed var(--text-secondary);
+  box-sizing: border-box;
+}
+.site-card.is-unmonitored .tk-site-btns { margin-top: 2px; }

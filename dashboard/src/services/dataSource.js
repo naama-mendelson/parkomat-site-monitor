@@ -885,6 +885,7 @@ export {
   saveDefect, deleteDefect, addDefectPhoto, deleteDefectPhoto, markDefectDone, reopenDefect,
   fetchComplianceThumbs, fetchComplianceFile,
   fetchPmSite, fetchPmVisit, fetchPmTemplate, savePmTemplate,
+  fetchPmTemplates, createPmTemplate, renamePmTemplate, setPmSiteTemplates,
   startPmVisit, checkPmItem, notePmItem, addPmPhoto, deletePmPhoto,
   submitPmVisit, discardPmVisit, uploadPmHistorical, deletePmVisit, pmOutboxSenders,
   fetchComplianceStorage, fetchComplianceOrphans, reattachCompliance, purgeCompliance,

@@ -120,3 +120,14 @@
 .btn-ghost:hover:not(:disabled) {
   background: var(--border-color);
 }
+
+/* אתר בלי בקר מחובר (07/10/2026) */
+.addsite-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.addsite-check input { width: 18px; height: 18px; flex-shrink: 0; }

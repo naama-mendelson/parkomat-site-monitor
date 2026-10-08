@@ -175,12 +175,23 @@
   padding: 0 5px;
 }
 
+/* ⚠️ נשברת לשורה שנייה ולא חורגת מהכרטיס (08/10/2026). "בודק בתוקף · מועד תיקון בעוד פחות מחודש"
+   ארוכה מכרטיס של 270px; עם nowrap היא יצאה מהכרטיס ונתנה לדף כולו גלילה אופקית — נמדד אחרי
+   שסרגל הסינון בצד צמצם את העמודות, אבל היא נגעה בקצה גם בלעדיו. min-width: 0 — בלעדיו פריט
+   flex אינו מתכווץ מתחת לרוחב הטקסט שלו, וה-wrap לא קורה. */
 .cl-label {
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-  white-space: nowrap;
+  line-height: 1.3;
+  text-align: start;
 }
+
+.cl-lights--normal,
+.cl-lights--expanded { max-width: 100%; }
+.cl-lights--normal .cl-lamp,
+.cl-lights--expanded .cl-lamp { max-width: 100%; }
 
 .cl-await {
   font-size: 11px;

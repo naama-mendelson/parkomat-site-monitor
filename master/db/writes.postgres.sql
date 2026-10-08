@@ -490,7 +490,9 @@ CREATE OR REPLACE FUNCTION public.register_site(
   -- ספריית התקלות ב-FixFlow, `"מערכת|פרופיל"`. ריק = תיגזר אוטומטית.
   p_fixflow_profile text DEFAULT NULL,
   -- מערכת ההפעלה: לולק / ביטנקם / סוטפין / סוטפין-לולק. ריק = לא הוגדר.
-  p_control_system  text DEFAULT NULL
+  p_control_system  text DEFAULT NULL,
+  -- false = אתר בלי בקר מחובר (07/10/2026): בודק, תחזוקה ומשימות בלבד. ראה sites.monitored.
+  p_monitored       boolean DEFAULT true
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -529,12 +531,13 @@ BEGIN
   END IF;
 
   INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier, fixflow_profile,
-                     control_system)
+                     control_system, monitored)
   VALUES (p_code, v_name,
           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier,
           app.check_fixflow_profile(p_fixflow_profile),
-          app.check_control_system(p_control_system))
+          app.check_control_system(p_control_system),
+          COALESCE(p_monitored, true))
   RETURNING sites.id INTO v_id;
 
   -- ⚠️ ספריית FixFlow והמערכת נכנסות לביקורת: שתיהן קובעות לאיזה נוהל מוקדן
@@ -544,7 +547,8 @@ BEGIN
                                  jsonb_build_object('site_name', v_name, 'tier', v_tier,
                                                     'plc_type', v_plc, 'is_new', p_is_new,
                                                     'fixflow_profile', p_fixflow_profile,
-                                                    'control_system', p_control_system));
+                                                    'control_system', p_control_system,
+                                                    'monitored', COALESCE(p_monitored, true)));
   PERFORM app.record_write_event(p_code, 'site-added',
                                  jsonb_build_object('type','site-added','code',p_code,
                                                     'siteName',v_name));
@@ -755,11 +759,11 @@ $fn$;
 -- ⚠️ ואפילו אם היה עובר: GRANT על חתימה שאינה קיימת פירושו שלמשתמשת אין
 -- הרשאה על הפונקציה החדשה, וכל עריכת אתר מהדפדפן מחזירה "permission denied".
 -- `tools/check-writes-sql-parses.js` תופס את שניהם.
-REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text, text)      FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.delete_site(text)                              FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text, text)      TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;
 

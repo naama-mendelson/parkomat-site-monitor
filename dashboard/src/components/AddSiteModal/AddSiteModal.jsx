@@ -23,6 +23,8 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [controlSystem, setControlSystem] = useState("");
   const [tier, setTier] = useState("basic");
   const [fixflowProfile, setFixflowProfile] = useState("");   // פיילוט FixFlow
+  // אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד; בלי זהות סוכן
+  const [noController, setNoController] = useState(false);
 
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -54,6 +56,7 @@ function AddSiteModal({ onClose, onSuccess }) {
         control_system: controlSystem || undefined,
         // ⚠️ ריק = תיגזר אוטומטית משם האתר או מסוג המכונה. פיילוט FixFlow.
         fixflow_profile: fixflowProfile || undefined,
+        ...(noController ? { monitored: false } : {}),
       });
 
       // ============================================================
@@ -227,6 +230,14 @@ function AddSiteModal({ onClose, onSuccess }) {
                 <option key={c.key} value={c.key}>{c.label}</option>
               ))}
             </select>
+          </label>
+
+          {/* ⚠️ אתר בלי בקר מחובר (07/10/2026): בעלת המוצר, על מתקני סוטפין — "אתר לא מקושר
+              למתקן עצמו… אבל כן קיים, כן נדרש בודק וכן תחזוקה ומשימות". לא מסומן כברירת
+              מחדל: רוב האתרים מחוברים, ואתר מחובר שנרשם בטעות כך לא היה מקבל זהות סוכן. */}
+          <label className="addsite-check">
+            <input type="checkbox" checked={noController} onChange={(e) => setNoController(e.target.checked)} />
+            <span>ללא בקר מחובר — בודק, תחזוקה ומשימות בלבד</span>
           </label>
 
           {/* פיילוט FixFlow — ספריית התקלות של האתר. ⚠️ כאן ולא רק בעריכה:
