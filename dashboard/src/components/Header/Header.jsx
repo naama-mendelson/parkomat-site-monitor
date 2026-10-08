@@ -165,7 +165,24 @@ function Header({
     // 250ms מכסות את תזוזת הפריסה ואת האינרציה שאחרי הלחיצה, והן קצרות
     // מכדי שמישהו יספיק לגלול בכוונה ולצפות שייסגר.
     const readyAt = performance.now() + 250;
-    const close = () => { if (performance.now() >= readyAt) setFiltersOpen(false); };
+    // ============================================================
+    // ⚠️ ולא כל אירוע scroll הוא גלילה של המשתמשת (08/10/2026)
+    // ============================================================
+    // פתיחת רשימת "בודק מוסמך" בתוך התפריט יורה scroll על המסמך **בלי שהמסמך זז** (נמדד ב-Chrome,
+    // גם בלי focus). מי שפתחה את התפריט וחשבה שנייה לפני הנגיעה — מעבר לתקופת החסד — ראתה את כל
+    // התפריט נסגר עם הרשימה, מתחת לאצבע. ולכן:
+    //   • גלילה **בתוך הכותרת** (הרשימה גוללת בתוך עצמה בטלפון נמוך) — אינה "סיימתי עם התפריט";
+    //   • scroll על המסמך שלא הזיז אותו — אינו גלילה.
+    // גלילה אמיתית — של המסמך, או של רשת הכרטיסים (שם היא קורית בפועל) — עדיין סוגרת.
+    const startY = window.scrollY;
+    const close = (e) => {
+      if (performance.now() < readyAt) return;
+      const t = e.target;
+      if (t instanceof Element && t.closest(".app-header")) return;
+      const doc = t === document || t === document.documentElement || t === document.body;
+      if (doc && Math.abs(window.scrollY - startY) < 8) return;
+      setFiltersOpen(false);
+    };
     window.addEventListener("scroll", close, { passive: true, capture: true });
     return () => window.removeEventListener("scroll", close, { capture: true });
   }, [filtersOpen]);

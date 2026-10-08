@@ -979,8 +979,11 @@ Rules that are easy to break and expensive to notice:
   parses (an unreadable value fails instead of passing as NaN), ink ≥ 4.5:1 on its fill as seen over
   the card, any two states ΔE ≥ 25 in fill or border, and every glyph is different — 6 mutations,
   all caught. ⚠️ The defect-count badge is always a neutral outline (owner: *"למה העיגול אדום? זה
-  מפריע"*); the lamp's colour already says whether one is overdue. PmTab's own `.pm-lamp--*` is
-  still a solid, hard-coded fill (hidden behind `PM_ENABLED`) — align it before enabling PM.
+  מפריע"*); the lamp's colour already says whether one is overdue. PmTab's lamp (`PmLamp` in
+  `PmCommon.jsx`) had three solid, hard-coded fills. **Aligned 08/10/2026:** it now takes the same
+  `COMPLIANCE_COLORS` variables, inline, like the inspector page. ⚠️ `PmCommon.jsx` imports
+  `ComplianceLights.css` itself, because the `--cl-*` variables live there. Without it, a tab rendered
+  with no cards (the PM harness) drew "expiring" in black and white.
 - **Changing a table later:** never edit a CHECK inside `CREATE TABLE IF NOT EXISTS` — production
   skips the whole statement. Use `DROP CONSTRAINT IF EXISTS` + `ADD … NOT VALID` + `VALIDATE`
   (pattern in the file header). The apply-sql dry run now compares constraints, triggers, RLS,
@@ -1391,8 +1394,83 @@ Five versions in one day. The owner's words decided each one, so they are record
   and none of them appeared in the 16 gaps. Only their functions and some constraints did. `--apply`
   runs the full `db.init()`, so they were created, but before applying, check
   `information_schema.columns` / `.tables` by hand. Do not read "16 gaps" as the whole change.
-- ⚠️ **Found along the way, and not yet fixed: with PM enabled, tapping a site's name on a phone opens
-  the PM tab.** Chrome adjusts a touch to a nearby button, and the PM lamp's 44px hit area ends 7px
-  below the centre of the name. Measured: a touch at (215,309) became a click on `cl-lamp--soon` at
-  (214,317), while a mouse click at the same point expands the card. `probe-tasks` K4 passes with PM
-  off (57/57) and fails with it on. Fix this before enabling PM.
+- ⚠️ **Found along the way, fixed the same day: with PM enabled, tapping a site's name on a phone
+  opened the PM tab.** Chrome adjusts a touch to the nearest *tap target*. A `<span>` is not one,
+  because React listens at the root, not on the card. The PM lamp's 44px hit area ends 7px below the
+  centre of the name. Measured: a touch at (215,309) became a click on `cl-lamp--soon` at (214,317),
+  while a mouse click at the same point expanded the card.
+  - **Proved before fixing:** a native click listener on the name (injected in the harness) stopped the
+    snapping, and `cursor: pointer` did not.
+  - **The fix:** the name is now a real `<button class="card-name-text card-name-btn">` with no handler
+    of its own, so the click bubbles to the card as before. It is styled exactly like the span (no
+    padding, so `useFitName`'s measurement is unchanged), and a card can now be opened from the
+    keyboard.
+  - **Verified:** `probe-tasks` K4 with PM **on** is 57/57; it failed before.
+
+## Defect-fix PDF for the certified inspector (built 08/10/2026)
+
+The owner: *"כשמתקנים ליקוי ומעלים תמונה — שייווצר מסמך PDF עם הליקוי והתמונה שמראה את התיקון, שאפשר
+יהיה להוריד ולשלוח לבודק המוסמך"*. She first chose one document per defect. Before it shipped she changed
+it: *"כשיש כמה ליקויים, כשמוסיפים עוד תיקון לעוד ליקוי — שיצטרף לאותו PDF"*. Her answers:
+
+- **One document for all the fixes of the machine's current inspection.** A new report means a new
+  document.
+- **A fix marked done without a photo is included,** labelled "לא צורפה תמונה".
+
+| Piece | Where |
+|---|---|
+| PDF writer (pure, no dependency) | `dashboard/src/utils/pdfImages.js` — `jpegPagesToPdf`, `pdfTextString` |
+| Which fixes, what the page says, layout (pure) + drawing (browser) | `dashboard/src/utils/defectPdf.js` — `fixesForPdf`, `summaryFacts`, `fixFacts`, `fixesPdfFileName`, `planPages`, `wrapWords`, `layoutPhotos`, `fitContain`; `buildFixesPdf` |
+| The button | `FixesPdfButton` in `components/Compliance/DefectRows.jsx`, in the head of each machine's "בוצעו" list (`DoneList` in `InspectionTab.jsx`) |
+| Tests | `master/tests/defect-pdf.test.js` (14, 29/29 mutations caught on a scratch copy; the output is opened with pdfjs); browser `e2e/probe-defect-pdf.mjs` (10) |
+
+- **"Joins the same PDF" means the document is rebuilt from every fix on each download, not a file that
+  gets edited.** No stored copy can drift from the screen, and nothing is added to the database. Report
+  PDFs already live there.
+- **One button per machine, next to "בוצעו (N)"**: "הורדת PDF לבודק (k)". It stays visible while the list
+  is collapsed. k counts the defects fixed in the field. One closed by a clean follow-up report is left
+  out, because the inspector already saw it. The order is the fix order, oldest first, so a new fix
+  joins at the end.
+- **The page is drawn on a `<canvas>` and packed as one JPEG per page.** JS PDF libraries do not lay out
+  bidirectional text, so Hebrew comes out reversed or needs hand-reversed strings plus an embedded font.
+  The browser draws "בוצע ב-08/10/2026 ע״י משה" correctly (`direction = "rtl"`).
+  - **The cost:** the text in the PDF cannot be selected or searched. For evidence sent to an inspector,
+    that is acceptable.
+  - **No library:** a PDF of JPEG pages is a few dozen lines (`DCTDecode`).
+  - The title metadata is UTF-16BE.
+- **Layout:**
+  - The brand band with the logo, then the title "דיווח תיקון ליקויים" ("ליקוי" for one).
+  - On page 1 only, a summary table: site + code, machine (multi-machine sites only, key alone when
+    there is no label), the report or reports, and the number of fixes.
+  - Then one compact block per fix: "ליקוי n מתוך N", the defect highlighted, then due / fixed / by in
+    two columns, then the note.
+  - A "מתסקיר" line appears per fix only when the fixes come from more than one report.
+  - Photos: one fills the width, several go in two columns, first on the right, top-aligned. Max 460px
+    with several fixes, 560px with one.
+
+  `planPages` keeps every fix whole on one page. It shrinks photos to 280px to fit, then breaks the page.
+  The first fix on a page is never pushed to an empty page. Each page is packed to JPEG and released as
+  soon as it is drawn, because a phone may hold twenty photos.
+- **Photos are fetched only on click** (`fetchComplianceFile('defect_photo', …)`, one after another),
+  and the builder is a dynamic import. The file is named `תיקון-ליקויים-<code>-<last fix day>.pdf`.
+  Dates are Israel days.
+- ⚠️ **Node needs the `.js` in `import … from "./compliance.js"`.** Vite resolves without it. pdfjs 6 has
+  no `doc.destroy()`: destroy the loading task.
+- The harness serves `dashboard/public` now (`publicDir`). Without it the logo was missing from the
+  harness and from the PDF.
+
+## ⚠️ Opening the "בודק מוסמך" list closed the whole filter panel on a phone (fixed 08/10/2026)
+
+Found while re-running `probe-cf` after the harness started serving the logo. It failed 2 runs out of 3.
+
+**The cause:** opening the custom list fires a `scroll` event on the document **without the document
+moving**. That was measured in Chrome, and it happens even with `focus` disabled. `Header.jsx` closes
+"סינון ותצוגה" on any scroll once its 250ms grace period has passed. So anyone who opened the panel,
+paused for a second, then tapped "בודק מוסמך" saw the whole panel close with the list under their
+finger. The earlier passes were timing luck: the tap landed inside the grace period.
+
+**The fix is in the header's rule, not the list.** It ignores a document scroll that did not move the
+document (< 8px) and any scroll inside `.app-header`. The second matters because the list scrolls
+inside itself on a short phone. A real scroll, of the document or of the card grid, still closes the
+panel. `probe-cf` P1b (a late tap, after 1.2s) and P7 (a real wheel scroll closes the panel) pin both
+directions, three runs in a row.

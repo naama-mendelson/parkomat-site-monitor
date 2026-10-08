@@ -5,8 +5,9 @@
 // כל אחת) — ממכסת תעבורה שכבר חרגה (CLAUDE.md, "The gates run against
 // production"). ושורה שבוצעה בתסקיר חוזר נקי (בלי תמונה) לא שואלת בכלל.
 import { useEffect, useRef, useState } from "react";
-import { fetchComplianceThumbs } from "../../services/dataSource";
+import { fetchComplianceFile, fetchComplianceThumbs } from "../../services/dataSource";
 import { formatDateIL, formatDayMonth } from "../../utils/compliance";
+import { fixesForPdf } from "../../utils/defectPdf";
 import { daysBetween, ilDateOf, KIND_LABEL } from "./InspectionUtils";
 import { InspectionMenu } from "./InspectionDialog";
 
@@ -112,6 +113,64 @@ export function DefectRow({ defect, today, isManager, showSource, onMarkDone, on
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * "הורדת PDF לבודק" — מסמך אחד עם כל התיקונים של התסקיר הנוכחי של המתקן (בעלת המוצר, 08/10/2026: "כשמוסיפים
+ * עוד תיקון לעוד ליקוי — שיצטרף לאותו PDF"). המסמך נבנה מחדש בכל הורדה, ולכן תיקון חדש פשוט מופיע בו.
+ * ⚠️ נבנה בדפדפן מהנתונים השמורים, ולא נשמר במסד: התמונות המלאות נשלפות רק כשלוחצים — לא בפתיחת העמוד
+ * (תעבורה) — אחת אחרי השנייה, והבנאי עצמו נטען רק אז (import דינמי).
+ * @param {{defects: object[], site: object, machineLabel?: string|null, byId: Map}} p — defects: הבוצעו של המחזור
+ */
+export function FixesPdfButton({ defects, site, machineLabel = null, byId }) {
+  const [state, setState] = useState("idle");          // idle | busy | error
+  const fixes = fixesForPdf(defects);
+  if (!site || fixes.length === 0) return null;
+  const run = async () => {
+    setState("busy");
+    const urls = [];
+    try {
+      const items = [];
+      for (const d of fixes) {
+        const photoUrls = [];
+        if (d.current_photos > 0) {
+          for (const t of await fetchComplianceThumbs("defect", d.id)) {
+            const url = (await fetchComplianceFile("defect_photo", t.id)).blobUrl;
+            urls.push(url);
+            photoUrls.push(url);
+          }
+        }
+        const r = byId?.get(d.reportId);
+        items.push({ defect: d, photoUrls, report: r ? { inspected_on: r.inspected_on, kindLabel: KIND_LABEL[r.kind] } : null });
+      }
+      const { buildFixesPdf, fixesPdfFileName } = await import("../../utils/defectPdf");
+      const blob = await buildFixesPdf({ site, machineLabel, fixes: items });
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = fixesPdfFileName({ site, defects: fixes });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // ⚠️ לא מיד: בחלק מהדפדפנים ההורדה מתחילה אחרי שהלחיצה חזרה, וכתובת שבוטלה = קובץ ריק
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+      setState("idle");
+    } catch {
+      setState("error");
+    } finally {
+      urls.forEach((u) => URL.revokeObjectURL(u));   // כבר צוירו לתוך המסמך
+    }
+  };
+  return (
+    <span className="it-pdf">
+      <button type="button" className="it-btn it-btn--small it-pdf-btn" onClick={run}
+        disabled={state === "busy"} aria-busy={state === "busy"}
+        title={fixes.length === 1 ? "מסמך עם הליקוי שתוקן והתמונות" : `מסמך אחד עם ${fixes.length} הליקויים שתוקנו והתמונות`}>
+        {state === "busy" ? "מכין את המסמך…" : `הורדת PDF לבודק (${fixes.length})`}
+      </button>
+      {state === "error" && <span className="it-error" role="alert">המסמך לא הופק — אפשר לנסות שוב</span>}
+    </span>
   );
 }
 

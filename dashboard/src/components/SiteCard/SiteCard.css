@@ -102,6 +102,27 @@
   min-width: min(6rem, 100%);
 }
 
+/* שם האתר הוא כפתור (ראה SiteCard.jsx — נגיעה בטלפון שקפצה לנורה). נראה בדיוק כמו ה-span שהיה:
+   בלי רקע, מסגרת וריפוד — useFitName מודד את clientWidth ואת הגופן, וריפוד היה משנה את המדידה. */
+.card-name-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.card-name-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .vip-badge {
   color: #facc15;
   font-size: 0.95em;

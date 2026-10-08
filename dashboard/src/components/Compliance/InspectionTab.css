@@ -452,6 +452,10 @@
 }
 .it-done-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
+/* "בוצעו (N)" והכפתור למסמך לבודק — באותה שורה, נשברים בטלפון */
+.it-donelist-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.it-pdf { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
 .it-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .it-thumb {
   display: inline-flex;

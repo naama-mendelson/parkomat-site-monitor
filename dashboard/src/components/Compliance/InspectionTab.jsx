@@ -34,7 +34,7 @@ import { ClipboardCheckIcon } from "./icons";
 import { COMPLIANCE_COLORS, COMPLIANCE_STATES } from "../../utils/constants";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { InspectionMenu, InspectionReasonDialog } from "./InspectionDialog";
-import { DefectDoneRow, DefectRow } from "./DefectRows";
+import { DefectDoneRow, DefectRow, FixesPdfButton } from "./DefectRows";
 import DefectCloseDialog from "./DefectCloseDialog";
 import DefectEditDialog from "./DefectEditDialog";
 import InspectionReportEdit from "./InspectionReportEdit";
@@ -64,14 +64,18 @@ function Lamp({ state, label, small = false }) {
   );
 }
 
-function DoneList({ items, byId, isManager, onReopen, onOpenPhoto }) {
+function DoneList({ items, byId, isManager, onReopen, onOpenPhoto, site, machineLabel }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="it-donelist">
-      <button type="button" className="it-collapse it-collapse--inline" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <span>בוצעו ({items.length})</span>
-        <span aria-hidden="true">{open ? "▴" : "▾"}</span>
-      </button>
+      {/* ⚠️ הכפתור ליד "בוצעו" ולא בתוך הרשימה: הוא מסמך של כל התיקונים, וגלוי גם כשהרשימה מקופלת */}
+      <div className="it-donelist-head">
+        <button type="button" className="it-collapse it-collapse--inline" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          <span>בוצעו ({items.length})</span>
+          <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+        </button>
+        <FixesPdfButton defects={items} site={site} machineLabel={machineLabel} byId={byId} />
+      </div>
       {open && (
         <ul className="it-list it-rows">
           {items.map((d) => (
@@ -519,7 +523,9 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                 )}
                 {cy.done.length > 0 && (
                   <DoneList items={cy.done} byId={derived.byId} isManager={isManager}
-                    onReopen={onReopen} onOpenPhoto={openPhoto} />
+                    onReopen={onReopen} onOpenPhoto={openPhoto}
+                    // במסמך לבודק השורה כבר נקראת "מתקן" — "מתקן 30245" היה חוזר על המילה; שם המתקן נשאר אם יש
+                    site={site} machineLabel={!groupHeaders ? null : cy.machine.label ? machineTitle(cy.machine) : String(cy.machine.key)} />
                 )}
               </div>
             );

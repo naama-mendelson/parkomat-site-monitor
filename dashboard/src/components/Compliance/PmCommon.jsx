@@ -1,6 +1,10 @@
 // components/Compliance/PmCommon.jsx — חלקים קטנים שחוזרים בלשונית התחזוקה המונעת.
 import { useEffect, useId, useRef, useState } from "react";
 import { GLYPH } from "../../utils/compliance";
+import { COMPLIANCE_COLORS } from "../../utils/constants";
+// ⚠️ המשתנים (--cl-*) מוגדרים שם. בלי הייבוא הזה המנורה תלויה בכך שכרטיס כלשהו כבר טען אותם — ובלעדיו
+// "עומדת לפוג" יצאה שחור-לבן (נמדד ברתמת התחזוקה, שמציירת את הלשונית בלי כרטיסים).
+import "./ComplianceLights.css";
 import { WrenchIcon } from "./icons";
 import { REASON_MAX } from "./PmUtils";
 
@@ -8,10 +12,16 @@ import { REASON_MAX } from "./PmUtils";
  * מנורת התחזוקה המונעת בראש הלשונית — אותו אייקון ואותו גליף כמו בכרטיס,
  * כדי שמי שלחץ על המנורה בכרטיס יזהה אותה כאן. ⚠️ הצבע אינו הסימן היחיד:
  * הגליף (✓ ! ✕ ○ ?) נושא את המצב גם בשחור-לבן.
+ *
+ * ⚠️ והצבעים — אותם משתנים כמו המנורה בכרטיס ובעמוד הבודק (COMPLIANCE_COLORS → ComplianceLights.css),
+ * לא עותק כאן. עד 08/10/2026 היו כאן שלושה מילויים קשיחים (ירוק/ענבר/אדום מלאים): "בתוקף" היה ירוק
+ * מלא בלשונית ושחור-לבן בכרטיס — שני צבעים לאותו מצב, על אותו אתר.
  */
 export function PmLamp({ state = "unknown" }) {
+  const c = COMPLIANCE_COLORS[state];
   return (
-    <span className={`pm-lamp pm-lamp--${state}`} aria-hidden="true">
+    <span className={`pm-lamp pm-lamp--${state}`} aria-hidden="true"
+      style={c ? { background: c.bg, borderColor: c.border, color: c.ink } : undefined}>
       <WrenchIcon size={15} />
       <span className="pm-lamp-glyph">{GLYPH[state] ?? "?"}</span>
     </span>
