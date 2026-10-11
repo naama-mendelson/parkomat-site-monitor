@@ -24,6 +24,9 @@ import { KIND_LABEL } from "./InspectionUtils";
  */
 export default function DefectEditDialog({ defect, report, onSaved, onClose, onDirtyChange }) {
   const adding = !defect;
+  // ⚠️ תקופתי שסומן "אין ליקויים" (11/10/2026): הוספה מורידה את הסימון — ואין דרך חזרה,
+  // כי ליקוי שנרשם (גם אם נמחק) חוסם סימון נקי מחדש. אומרים את שניהם לפני השמירה.
+  const unclean = adding && !!report?.declared_clean && report?.kind === "periodic";
   const [clientId] = useState(newId);
   const [body, setBody] = useState(defect?.body ?? "");
   const [urgent, setUrgent] = useState(!!defect?.urgent);
@@ -70,7 +73,7 @@ export default function DefectEditDialog({ defect, report, onSaved, onClose, onD
       if (adding) {
         firstSent.current ??= now;
         const sent = firstSent.current;
-        const id = await saveDefect({ reportId: report.id, defectId: null, ...sent, clientId });
+        const id = await saveDefect({ reportId: report.id, defectId: null, ...sent, clientId, unclean });
         if (sent.body !== now.body || sent.urgent !== now.urgent || sent.dueOn !== now.dueOn) {
           await saveDefect({ reportId: report.id, defectId: id, ...now });
         }
@@ -101,6 +104,11 @@ export default function DefectEditDialog({ defect, report, onSaved, onClose, onD
       <form id="it-defect-form" className="it-form" onSubmit={submit}>
         {report && (
           <p className="it-muted">{KIND_LABEL[report.kind] ?? "תסקיר"} מ-{formatDateIL(report.inspected_on)}</p>
+        )}
+        {unclean && (
+          <p className="it-banner it-banner--warn it-unclean" role="note">
+            התסקיר סומן "אין ליקויים". הוספת ליקוי תוריד את הסימון, ולא יהיה אפשר להחזיר אותו.
+          </p>
         )}
         <label className="it-field">
           <span className="it-label">תיאור הליקוי</span>

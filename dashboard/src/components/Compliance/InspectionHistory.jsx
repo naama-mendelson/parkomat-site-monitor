@@ -13,7 +13,6 @@ import {
   FIELD_LABEL, KIND_LABEL, SOURCE_TAG, byDateDesc, gapPart, historyActionLabel, historyValue, machineTitle,
   openInCycleUpTo, outcomeParts,
 } from "./InspectionUtils";
-import { InspectionMenu } from "./InspectionDialog";
 import { DefectDoneRow, PartsText } from "./DefectRows";
 
 function groupHistory(reports) {
@@ -44,6 +43,9 @@ function groupHistory(reports) {
 function ReportCard({ report, parent, followups, allReports, isManager, onViewFile, onEdit, onDelete, onCloseByReport, onOpenPhoto, nested }) {
   const r = report;
   const [open, setOpen] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
+  // ההסבר שייך ללחיצה: כשהבדיקות החוזרות נמחקו הוא נסגר — ואינו חוזר לבד (כ-alert) כשמגיעה חוזרת חדשה
+  useEffect(() => { if (!followups?.length) setDeleteBlocked(false); }, [followups?.length]);
   const defects = r.defects || [];
   const doneN = defects.filter((d) => d.status === "done").length;
   const validDate = r.valid_until ?? r.effective_valid_until ?? null;
@@ -64,16 +66,34 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
           title={purged ? "הקובץ נמחק סופית" : undefined} onClick={() => onViewFile(r)}>
           צפייה במסמך
         </button>
+        {/* ⚠️ כפתורים גלויים ולא תפריט ⋯ (בעלת המוצר, 11/10/2026: "אופציה למחוק דוח שעלה כבר או
+            לערוך את התאריכים שלו"). שתי הפעולות היו כאן — מאחורי ⋯ בלי מילה, בתחתית העמוד. */}
         {isManager && (
-          <InspectionMenu label="פעולות על התסקיר" items={[
-            { label: "עריכת פרטים", onSelect: () => onEdit(r, parent) },
-            // ⚠️ השרת מסרב למחוק תקופתי שיש לו בדיקות חוזרות חיות — אומרים זאת לפני
-            // שהמנהל מקליד סיבה, לא אחרי (followups הם אותה רשימה שהשרת בודק)
-            { label: "מחיקה", danger: true, onSelect: () => onDelete(r, followups?.length || 0) },
-            toClose > 0 && { label: `סגירת הליקויים בתסקיר הזה (${toClose})`, onSelect: () => onCloseByReport(r, toClose) },
-          ]} />
+          <>
+            <button type="button" className="it-btn it-btn--small" onClick={() => onEdit(r, parent)}>עריכה</button>
+            {/* ⚠️ השרת מסרב למחוק תקופתי שיש לו בדיקות חוזרות חיות — אומרים זאת לפני שהמנהל
+                מקליד סיבה, לא אחרי (followups הם אותה רשימה שהשרת בודק) */}
+            <button type="button" className="it-btn it-btn--small it-btn--danger-text"
+              aria-describedby={deleteBlocked && followups?.length ? `it-del-why-${r.id}` : undefined}
+              onClick={() => (followups?.length ? setDeleteBlocked(true) : onDelete(r))}>
+              מחיקה
+            </button>
+            {toClose > 0 && (
+              <button type="button" className="it-btn it-btn--small" onClick={() => onCloseByReport(r, toClose)}>
+                סגירת הליקויים בתסקיר הזה ({toClose})
+              </button>
+            )}
+          </>
         )}
       </div>
+      {/* ההסבר ליד הכפתור: עד 11/10/2026 הוא הופיע כהודעה בראש העמוד, מעל מי שגלל עד ההיסטוריה */}
+      {deleteBlocked && followups?.length > 0 && (
+        <p id={`it-del-why-${r.id}`} className="it-report-line it-late it-del-why" role="alert">
+          {followups.length === 1
+            ? "יש לתסקיר הזה בדיקה חוזרת — יש למחוק אותה קודם"
+            : `יש לתסקיר הזה ${followups.length} בדיקות חוזרות — יש למחוק אותן קודם`}
+        </p>
+      )}
 
       <p className="it-report-line">
         {r.kind === "followup" && !r.valid_until ? (
@@ -200,7 +220,23 @@ function ChangeRow({ h }) {
     ));
   } else if (h.entity === "defect") {
     const body = after?.body ?? before?.body;
-    if (body) detail = <span className="it-log-field">"{body}"</span>;
+    // ⚠️ בעריכה — גם מה השתנה. מועד תיקון שזז עם תאריך הבדיקה (11/10/2026) נרשם בלי גוף הליקוי,
+    // ובלי השורה הזו הוא היה מופיע כ"עריכת ליקוי" ריקה.
+    const changed = h.action === "update" && after
+      ? Object.keys(after).filter((f) => f !== "body" && JSON.stringify(before?.[f] ?? null) !== JSON.stringify(after[f] ?? null))
+      : [];
+    if (body || changed.length) {
+      detail = (
+        <>
+          {body && <span className="it-log-field">"{body}"</span>}
+          {changed.map((f) => (
+            <span key={f} className="it-log-field">
+              {FIELD_LABEL[f] ?? f}: {historyValue(f, before?.[f])} ← {historyValue(f, after[f])}
+            </span>
+          ))}
+        </>
+      );
+    }
   } else if (h.entity === "machine" && after?.machine_key) {
     detail = <span className="it-log-field">מתקן {after.machine_key}</span>;
   } else if (Array.isArray(after?.defect_ids ?? before?.defect_ids)) {

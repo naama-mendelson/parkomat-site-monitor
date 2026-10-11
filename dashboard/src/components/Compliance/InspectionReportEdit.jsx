@@ -65,6 +65,17 @@ export default function InspectionReportEdit({ report, parent, onSaved, onClose,
 
   const declaring = changes.declared_clean === true;
   const undeclaring = changes.declared_clean === false;
+  // ⚠️ מועדי התיקון זזים עם תאריך הבדיקה (בעלת המוצר, 11/10/2026) — בשרת, אותו מספר ימים, לכל
+  // ליקוי חי של התסקיר הזה, גם שבוצע (מתי בוצע — לא זז). כאן רק אומרים כמה ובכמה, לפני השמירה.
+  const withDue = (r.defects || []).filter((d) => d.due_on).length;
+  const shiftDays = changes.inspected_on && r.inspected_on ? daysBetween(r.inspected_on, changes.inspected_on) : 0;
+  const shiftText = !shiftDays || !withDue ? "" : (() => {
+    const n = Math.abs(shiftDays);
+    const by = n === 1 ? "ביום אחד" : `ב-${n} ימים`;
+    return withDue === 1
+      ? `מועד התיקון של הליקוי ${shiftDays > 0 ? "יידחה" : "יוקדם"} ${by}`
+      : `מועדי התיקון של ${withDue} הליקויים ${shiftDays > 0 ? "יידחו" : "יוקדמו"} ${by}`;
+  })();
 
   const problems = [];
   if (!form.inspected_on) problems.push("תאריך בדיקה");
@@ -122,6 +133,7 @@ export default function InspectionReportEdit({ report, parent, onSaved, onClose,
             <span className="it-label">תאריך בדיקה</span>
             <input data-autofocus className="it-input it-input--date" type="date" max={today} value={form.inspected_on}
               onChange={(e) => set("inspected_on", e.target.value)} />
+            {shiftText && <span className="it-hint it-shift">{shiftText}</span>}
           </label>
           <div className="it-field">
             <label className="it-label" htmlFor="it-edit-valid">בתוקף עד</label>

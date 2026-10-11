@@ -50,7 +50,9 @@ import {
 } from "../../utils/compliance";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { InspectionDialog } from "./InspectionDialog";
-import { byDateDesc, daysBetween, fmtMB, hasDraggedFiles, machineTitle, openInCycleUpTo } from "./InspectionUtils";
+import {
+  KIND_LABEL, byDateDesc, daysBetween, fmtMB, hasDraggedFiles, machineTitle, openInCycleUpTo, sameDatesReport,
+} from "./InspectionUtils";
 import "./InspectionTab.css";
 
 const NEW = "__new__";
@@ -380,11 +382,28 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
   const asArchive = isOld && oldPick === "archive";
   const clean = !!f && !asArchive && f.defectsChoice === "none";
   const withDefects = !!f && !asArchive && f.defectsChoice === "some";
+  // ============================================================
+  // ⚠️ "קובץ זה כבר קיים" (בעלת המוצר, 11/10/2026)
+  // ============================================================
+  // "אם מעלים קובץ והתאריכים קיימים כבר אז לכתוב קובץ זה כבר קיים". אותו מתקן, אותו תאריך בדיקה
+  // ואותה בדיקה הבאה כמו תסקיר חי, מכל סוג — גם כשהקובץ עצמו אחר (סריקה אחרת, עותק מהמייל). אותו
+  // כלל בשרת (inspection_upload); כאן — מיד כשהתאריכים ידועים, לא אחרי שמילאו את כל הטופס. בבדיקה
+  // חוזרת שיורשת תוקף (ריק) — מול ריק, כמו מה שנשלח. כדי להחליף: מוחקים את הקיים ומעלים שוב.
+  // ⚠️ לא אחרי כשל לא ודאי (locked): אם הניסיון הראשון נשמר, הרשימה כבר כוללת אותו — והבדיקה הייתה
+  // חוסמת את "נסה שוב" מול התסקיר של עצמו. השרת מבחין: replay של אותה בקשה, או כפילות אמיתית.
+  // ⚠️ ורק כשהבדיקה יכולה להתאים למה שיישלח: תקופתי (וגם דוח ישן) בלי "הבדיקה הבאה" נדחה בשרת לפני
+  // הבדיקה הזו — ובלי התנאי, חוזרת שיורשת (ריק) מאותו יום הייתה מוצגת כ"כפולה" באמצע ההקלדה.
+  const dupOf = f && !locked && (f.valid_until || f.kind === "followup")
+    ? sameDatesReport(reports, machineKey, f.inspected_on, f.valid_until) : null;
+  // קובץ עם כמה תסקירים: הקיים נשמר מהקובץ הזה עצמו (בלוק קודם) — העצה היא מתקן אחר, לא מחיקה
+  const dupSameFile = !!dupOf && !!fileId && dupOf.file?.id === fileId;
 
   const problems = [];
   // בעיה שנוגעת לתאריך הבדיקה (השדה שלו גלוי תמיד מאז 11/10/2026)
   const inspProblem = (msg) => { problems.push(msg); };
   if (f) {
+    // גם בשורת "כדי לשמור" — היא ליד הכפתור החסום, וההודעה עצמה למעלה, מתחת לתאריכים
+    if (dupOf) problems.push("קובץ זה כבר קיים");
     if (!f.inspected_on) inspProblem("תאריך הבדיקה");
     else if (f.inspected_on > today) inspProblem("תאריך הבדיקה בעתיד");
     else if (f.inspected_on < "2000-01-01") inspProblem("תאריך בדיקה לא תקין");
@@ -677,8 +696,10 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
             {/* ---- מתקן — רק כשיש באתר מתקנים להבחין ביניהם ---- */}
             {/* ⚠️ "מתקן" — רק כשבאמת יש מה לבחור (בעלת המוצר, 11/10/2026: "שלא יהיה כתוב מתקן בכלל").
                 מתקן פעיל יחיד, או אתר בלי מתקנים — נבחר לבד (makeForm), וזה כל 67 האתרים היום. כמה
-                מתקנים פעילים, או רק מתקנים שהוצאו משימוש — אדם בוחר, אחרת דוח היה נרשם למתקן הלא נכון. */}
-            {f.kind === "periodic" && machines.length > 0 && activeMachineCount !== 1 && (
+                מתקנים פעילים, או רק מתקנים שהוצאו משימוש — אדם בוחר, אחרת דוח היה נרשם למתקן הלא נכון.
+                ⚠️ וגם בקובץ עם כמה תסקירים (blocks): כל בלוק הוא מתקן משלו, ובלי השדה הבלוק השני נשמר
+                לבד לאותו מתקן כמו הראשון — ובאותם תאריכים נחסם כ"קובץ זה כבר קיים" בלי שום דרך לצאת. */}
+            {f.kind === "periodic" && ((machines.length > 0 && activeMachineCount !== 1) || !!blocks) && (
               <div className="it-grid2">
                 <label className="it-field">
                   <span className="it-label">מתקן</span>
@@ -746,6 +767,20 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
                 </span>
               )}
             </div>
+            {/* ⚠️ הנוסח של בעלת המוצר (11/10/2026): "קובץ זה כבר קיים". מתחת לתאריכים — הם מה שנבדק,
+                ותיקון שלהם (אם הוקלדו לא נכון) מעלים את ההודעה. */}
+            {dupOf && (
+              <div className="iu-dup" role="alert">
+                <p className="it-error">קובץ זה כבר קיים</p>
+                <p className="it-hint">
+                  {dupSameFile
+                    ? "התסקיר הקודם מהקובץ הזה כבר נשמר למתקן הזה עם אותם תאריכים — לבחור מתקן אחר."
+                    : dupOf.kind === "followup"
+                      ? `בדיקה חוזרת מ-${formatDateIL(dupOf.inspected_on)} כבר שמורה עם אותם תאריכים. כדי להחליף אותה — למחוק אותה בהיסטוריית התסקירים ולהעלות שוב.`
+                      : `${KIND_LABEL[dupOf.kind] ?? "תסקיר"} מ-${formatDateIL(dupOf.inspected_on)} כבר שמור עם אותם תאריכים. כדי להחליף אותו — למחוק אותו בהיסטוריית התסקירים ולהעלות שוב.`}
+                </p>
+              </div>
+            )}
 
             {/* ⚠️ אדם מאשר את התאריך — הוא קובע את צבע המנורה ואת ההתראות. התווית
                 חוזרת על הערך עצמו, כדי שהאישור יהיה על מה שמוצג ולא על "הטופס". */}

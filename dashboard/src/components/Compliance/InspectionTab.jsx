@@ -262,11 +262,9 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
     confirmLabel: "הוצאה משימוש", danger: true,
     run: async (reason) => { await retireMachine(code, m.key, reason); return "המתקן הוצא משימוש"; },
   });
-  const onDeleteReport = (r, followups = 0) => followups > 0 ? flash(
-    followups === 1
-      ? "יש לתסקיר הזה בדיקה חוזרת — יש למחוק אותה קודם"
-      : `יש לתסקיר הזה ${followups} בדיקות חוזרות — יש למחוק אותן קודם`,
-  ) : askReason({
+  // ⚠️ תקופתי עם בדיקות חוזרות אינו מגיע לכאן: כפתור "מחיקה" בכרטיס מסביר זאת ליד עצמו (11/10/2026),
+  // והשרת מסרב בכל מקרה
+  const onDeleteReport = (r) => askReason({
     title: `מחיקת ${KIND_LABEL[r.kind] ?? "תסקיר"} מ-${formatDateIL(r.inspected_on)}`,
     message: [
       "התסקיר יוסר מהרשימה ומהנורה. הפעולה נרשמת בהיסטוריה עם הסיבה.",

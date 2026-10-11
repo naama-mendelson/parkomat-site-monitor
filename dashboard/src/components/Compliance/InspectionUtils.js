@@ -101,16 +101,30 @@ export function deriveInspection(data) {
       reports: reps,
       open: defects.filter((d) => d.status === "open").sort(byDue),
       done: defects.filter((d) => d.status === "done").sort(byDoneDesc),
-      // "הוספת ליקוי" — לדוח **האחרון** במחזור, ורק אם הוא לא סומן נקי (השרת
-      // דוחה הוספה לדוח נקי). ⚠️ לא "האחרון שאינו נקי": אחרי בדיקה חוזרת נקייה
-      // זה היה מציע להוסיף ליקוי לתקופתי הישן — ופותח מחדש מחזור שהבודק סגר.
-      // ליקוי חדש אחרי תסקיר נקי מגיע עם תסקיר חדש.
-      addTarget: reps[0] && !reps[0].declared_clean ? reps[0] : null,
+      // "הוספת ליקוי" — לדוח **האחרון** במחזור. ⚠️ לא "האחרון שאינו נקי": אחרי בדיקה
+      // חוזרת נקייה זה היה מציע להוסיף ליקוי לתקופתי הישן — ופותח מחדש מחזור שהבודק סגר.
+      // ליקוי חדש אחרי בדיקה חוזרת נקייה מגיע עם תסקיר חדש.
+      // ⚠️ תקופתי שסומן נקי ("אין ליקויים") — כן (בעלת המוצר, 11/10/2026): הליקוי הראשון
+      // מוריד את הסימון, והחלון אומר זאת (p_unclean בשרת, רק בתקופתי).
+      addTarget: reps[0] && (!reps[0].declared_clean || reps[0].kind === "periodic") ? reps[0] : null,
       latest: reps[0] ?? null,
     };
   });
 
   return { reports, machines, active, byId, cycles, multi: machines.length > 1 };
+}
+
+/**
+ * "קובץ זה כבר קיים" (בעלת המוצר, 11/10/2026): תסקיר חי של אותו מתקן עם אותו תאריך בדיקה ואותה
+ * בדיקה הבאה — מכל סוג. אותו כלל כמו inspection_upload. `validUntil` ריק = בדיקה חוזרת שיורשת
+ * תוקף, והיא נמדדת מול תוקף ריק (כמו IS NOT DISTINCT FROM בשרת).
+ * @returns {object|null} התסקיר הקיים
+ */
+export function sameDatesReport(reports, machineKey, inspectedOn, validUntil) {
+  if (!machineKey || !inspectedOn) return null;
+  const valid = validUntil || null;
+  return (reports || []).find((r) => r.machine_key === machineKey && r.inspected_on === inspectedOn
+    && (r.valid_until ?? null) === valid) ?? null;
 }
 
 /**

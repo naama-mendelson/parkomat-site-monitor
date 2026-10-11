@@ -273,11 +273,15 @@ test("7 · תוקף: חובה בתקופתי; 'document' רק כשהתאריך �
   const parsed = (validUntil, validitySource = "document") =>
     ({ parser: "t", parsed: { inspectedAt: addDays(TODAY, -10), validUntil, validitySource } });
   const src = async (r) => (await sup(`SELECT validity_source FROM inspection_reports WHERE id=$1`, [r.report_id]))[0].validity_source;
-  assert.equal(await src(await periodic(s, { valid: v, parse: parsed(v) })), "document");
-  assert.equal(await src(await periodic(s, { valid: v, parse: parsed(addDays(v, 1)) })), "manual");
-  assert.equal(await src(await periodic(s, { valid: v, parse: parsed(v, "next_inspection") })), "next_inspection");
-  assert.equal(await src(await periodic(s, { valid: v, parse: parsed(addDays(v, -3), "next_inspection") })), "manual");
-  assert.equal(await src(await periodic(s, { valid: v })), "manual");
+  // ⚠️ כל העלאה ביום בדיקה אחר: אותו מתקן + אותם שני תאריכים = "קובץ זה כבר קיים" (11/10/2026).
+  // המקור תלוי רק בתוקף מול המפוענח, ולכן יום הבדיקה אינו משנה את מה שנבדק כאן.
+  let day = -10;
+  const at = () => addDays(TODAY, day--);
+  assert.equal(await src(await periodic(s, { insp: at(), valid: v, parse: parsed(v) })), "document");
+  assert.equal(await src(await periodic(s, { insp: at(), valid: v, parse: parsed(addDays(v, 1)) })), "manual");
+  assert.equal(await src(await periodic(s, { insp: at(), valid: v, parse: parsed(v, "next_inspection") })), "next_inspection");
+  assert.equal(await src(await periodic(s, { insp: at(), valid: v, parse: parsed(addDays(v, -3), "next_inspection") })), "manual");
+  assert.equal(await src(await periodic(s, { insp: at(), valid: v })), "manual");
 });
 
 test("8 · בדיקה חוזרת יורשת (NULL), ועריכת תאריך האב כלפי מטה צובעת את האתר אדום", { skip }, async () => {
@@ -315,7 +319,9 @@ test("10 · דחיות העלאה", { skip }, async () => {
                    VALUES ($1, 'x', 'application/pdf', 'JVBERi0' || repeat('A', 13981017), 1, 'm', 'x', 'x')`, [s.id]), "23514");
   const file = pdf();
   await periodic(s, { file, machine: "1" });
-  await fails(periodic(s, { file, machine: "1" }), "PT409");
+  // ⚠️ אותם בתים בתאריכים אחרים — אחרת "קובץ זה כבר קיים" (לפי התאריכים, 11/10/2026) עונה ראשון,
+  // ובדיקת ה-md5 הייתה נשארת בלי בדיקה בכלל: הקוד זהה (PT409), וההודעה היא מה שמבחין
+  await fails(periodic(s, { file, machine: "1", insp: addDays(TODAY, -11) }), "PT409", /כבר הועלה למתקן הזה/);
   const files = async () => (await sup(`SELECT count(*)::int n FROM inspection_files WHERE site_id=$1`, [s.id]))[0].n;
   const before = await files();
   const second = await periodic(s, { file, machine: "2" });
@@ -325,8 +331,10 @@ test("10 · דחיות העלאה", { skip }, async () => {
     "23514", /לאשר במפורש/);
   await fails(upload(s.code, { kind: "periodic", inspected_on: addDays(TODAY, -3), valid_until: addDays(TODAY, 300),
     confirm_clean: true }, { defects: [{ body: "ליקוי" }] }), "23514", /סומן נקי/);
-  await fails(periodic(s, { defects: [{ body: "ליקוי א" }, { body: "ליקוי ב", due_on: "not-a-date" }] }), "23514", /ליקוי 2/);
-  await fails(periodic(s, { defects: [{ body: "ליקוי א", urgent: "maybe" }] }), "23514", /ליקוי 1/);
+  // ימי בדיקה אחרים — כדי שהדחייה תהיה על הליקוי ולא על "קובץ זה כבר קיים"
+  await fails(periodic(s, { insp: addDays(TODAY, -12), defects: [{ body: "ליקוי א" }, { body: "ליקוי ב", due_on: "not-a-date" }] }),
+    "23514", /ליקוי 2/);
+  await fails(periodic(s, { insp: addDays(TODAY, -13), defects: [{ body: "ליקוי א", urgent: "maybe" }] }), "23514", /ליקוי 1/);
 });
 
 test("11 · replay: אותו client_id פעמיים — תסקיר אחד, והשני replayed", { skip }, async () => {
@@ -1381,16 +1389,18 @@ test("6 · audit_log: מזהים, ספירות ושמות שדות בלבד — 
     "inspector_name", "inspector_license", "machine_no", "note", "machine_key", "body", "urgent", "due_on"]);
   const ENUMS = { kind: new Set(["periodic", "followup", "inspection_file", "pm_visit"]),
     validity_source: new Set(["document", "next_inspection", "manual", "inherited"]) };
-  const COUNTS = new Set(["defects", "closed", "photos", "item_count", "reports", "files", "visits", "history", "reopened"]);
+  const COUNTS = new Set(["defects", "closed", "photos", "item_count", "reports", "files", "visits", "history", "reopened",
+    "due_shifted"]);
   const bad = [];
   for (const r of rows) {
     for (const [k, v] of Object.entries(r.details ?? {})) {
       const ok = k.endsWith("_id") ? Number.isInteger(v)
         : COUNTS.has(k) ? Number.isInteger(v)
+        : k === "shift_days" ? Number.isInteger(v)          // הזזת מועדי התיקון — שלילי מותר
         : k === "bytes" ? (v === null || Number.isInteger(v))
         : k in ENUMS ? ENUMS[k].has(v)
         : k === "machine_key" ? (typeof v === "string" && v.length <= 40)
-        : k === "declared_clean" ? typeof v === "boolean"
+        : k === "declared_clean" || k === "unclean" ? typeof v === "boolean"
         : k === "fields" ? (Array.isArray(v) && v.every((x) => FIELD_NAMES.has(x)))
         : false;
       if (!ok) bad.push(`${r.action}:${k}=${JSON.stringify(v).slice(0, 60)}`);
@@ -1577,8 +1587,10 @@ test("51 · דוח ישן: רק אם נבדק לפני הבדיקה האחרונ
     [a.report_id, JSON.stringify({ inspected_on: addDays(TODAY, -400) })]);
   // בדיקה חוזרת אינה משתייכת לדוח ישן
   await fails(followup(s, a.report_id), "23514", /אין תסקיר תקופתי/);
-  // אותו PDF לאותו מתקן — פעם כישן ופעם כרגיל — כפילות
-  await fails(periodic(s, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35), file: fileA }), "PT409");
+  // אותו PDF לאותו מתקן — פעם כישן ופעם כרגיל — כפילות. ⚠️ בתאריכים אחרים ועם ההודעה של ה-md5:
+  // באותם תאריכים "קובץ זה כבר קיים" (11/10/2026) עונה ראשון באותו PT409, והכלל הזה (ישן ורגיל הם
+  // אותו מסמך) היה נשאר בלי שום בדיקה
+  await fails(periodic(s, { insp: addDays(TODAY, -401), valid: addDays(TODAY, -36), file: fileA }), "PT409", /כבר הועלה למתקן הזה/);
 
   // התסקיר הרגיל: הדוח הישן הוא ה"קודם" שלו
   const j = await siteJson(s.code);
@@ -1614,4 +1626,229 @@ test("51 · דוח ישן: רק אם נבדק לפני הבדיקה האחרונ
   await rpc(MGR, `SELECT public.inspection_report_delete($1, 'הועלה בטעות')`, [wp.report_id]);
   await fails(rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`,
     [wa.report_id, JSON.stringify({ inspected_on: addDays(TODAY, -101) })]), "23514", /נבדק לפני הבדיקה האחרונה/);
+});
+
+// ============================================================
+// 11/10/2026 — "קובץ זה כבר קיים", מועדי תיקון שזזים עם תאריך הבדיקה, וליקוי לתקופתי נקי
+// ============================================================
+
+test("52 · 'קובץ זה כבר קיים': אותו מתקן + אותו תאריך בדיקה + אותה בדיקה הבאה — כל סוג, גם בקובץ אחר", { skip }, async () => {
+  const s = await newSite();
+  const insp = addDays(TODAY, -30), valid = addDays(TODAY, 300);
+  const fileP = pdf();
+  const p = await periodic(s, { insp, valid, file: fileP });
+  // קובץ אחר (סריקה אחרת) — ה-md5 לא היה תופס; התאריכים כן
+  await fails(periodic(s, { insp, valid }), "PT409", /^קובץ זה כבר קיים$/);
+  // אותם בתים ואותם תאריכים — אותה הודעה, ולא של ה-md5: התאריכים נבדקים לפני הקובץ
+  await fails(periodic(s, { insp, valid, file: fileP }), "PT409", /^קובץ זה כבר קיים$/);
+  // בדיקה חוזרת עם אותם תאריכים — אותה בדיקה
+  await fails(upload(s.code, { kind: "followup", followup_of: p.report_id, inspected_on: insp, valid_until: valid,
+    confirm_clean: true }), "PT409", /קובץ זה כבר קיים/);
+  // תאריך אחד שונה — לא כפילות
+  const other = await periodic(s, { insp: addDays(TODAY, -29), valid });
+  assert.ok(other.report_id);
+  const other2 = await periodic(s, { insp, valid: addDays(TODAY, 301) });
+  assert.ok(other2.report_id);
+  // מתקן אחר — לא כפילות
+  const m2 = await periodic(s, { insp, valid, machine: "2" });
+  assert.ok(m2.report_id);
+  // replay של אותה בקשה אינו "כפילות": אותו client_id מחזיר את התסקיר הקיים
+  const meta = { client_id: uuid(), kind: "periodic", inspected_on: addDays(TODAY, -40), valid_until: valid, confirm_clean: true };
+  const a = await upload(s.code, meta);
+  const b = await upload(s.code, meta);
+  assert.deepEqual({ id: b.report_id, replayed: b.replayed }, { id: a.report_id, replayed: true });
+  // מחיקה מפנה את המקום — כך מחליפים: מוחקים ומעלים שוב
+  await rpc(MGR, `SELECT public.inspection_report_delete($1, 'יוחלף בסריקה טובה יותר')`, [a.report_id]);
+  const again = await periodic(s, { insp: addDays(TODAY, -40), valid });
+  assert.ok(again.report_id);
+
+  // בדיקה חוזרת שיורשת תוקף (NULL) — מול NULL: אותה חוזרת פעמיים נחסמת, וחוזרת עם תוקף משלה לא
+  const t = await newSite();
+  const tp = await periodic(t, { insp: addDays(TODAY, -100), valid: addDays(TODAY, 200), defects: [{ body: "שלט" }] });
+  await followup(t, tp.report_id, { insp: addDays(TODAY, -5) });
+  await fails(followup(t, tp.report_id, { insp: addDays(TODAY, -5) }), "PT409", /קובץ זה כבר קיים/);
+  const own = await followup(t, tp.report_id, { insp: addDays(TODAY, -5), valid: addDays(TODAY, 365) });
+  assert.ok(own.report_id, "חוזרת עם תוקף משלה — תאריכים אחרים");
+
+  // דוח ישן: אותם תאריכים כמו דוח ישן קיים — נחסם
+  const u = await newSite();
+  await periodic(u, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300) });
+  await archive(u, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35) });
+  await fails(archive(u, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35) }), "PT409", /קובץ זה כבר קיים/);
+});
+
+test("53 · עריכה שמשווה תאריכים (או מתקן) לתסקיר חי אחר — נחסמת; עריכה שאינה נוגעת בהם — לא", { skip }, async () => {
+  const s = await newSite();
+  const a = await periodic(s, { insp: addDays(TODAY, -300), valid: addDays(TODAY, 65) });
+  const b = await periodic(s, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 355) });
+  const edit = (id, meta) => rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`, [id, JSON.stringify(meta)]);
+  await fails(edit(b.report_id, { inspected_on: addDays(TODAY, -300), valid_until: addDays(TODAY, 65) }), "PT409", /כבר קיים תסקיר/);
+  // תאריך אחד בלבד שווה — מותר
+  await edit(b.report_id, { inspected_on: addDays(TODAY, -300), valid_until: addDays(TODAY, 66) });
+  // ⚠️ שינוי של תאריך אחד בלבד שמשווה לתסקיר אחר — גם הוא נבדק (בכל אחד משני הכיוונים)
+  await fails(edit(b.report_id, { valid_until: addDays(TODAY, 65) }), "PT409", /כבר קיים תסקיר/);
+  const e = await periodic(s, { insp: addDays(TODAY, -301), valid: addDays(TODAY, 65) });
+  await fails(edit(e.report_id, { inspected_on: addDays(TODAY, -300) }), "PT409", /כבר קיים תסקיר/);
+  // ⚠️ ומתקן אחר אינו כפילות — גם בעריכה: תסקיר של מתקן 2 מקבל את התאריכים של תסקיר במתקן 1
+  const g = await periodic(s, { insp: addDays(TODAY, -302), valid: addDays(TODAY, 65), machine: "2" });
+  await edit(g.report_id, { inspected_on: addDays(TODAY, -300) });
+  // והעברה למתקן שיש בו תסקיר עם אותם תאריכים — נחסמת
+  const c = await periodic(s, { insp: addDays(TODAY, -50), valid: addDays(TODAY, 300), machine: "2" });
+  const d = await periodic(s, { insp: addDays(TODAY, -50), valid: addDays(TODAY, 300) });
+  await fails(edit(d.report_id, { machine_key: "2" }), "PT409", /כבר קיים תסקיר/);
+  // עריכה שאינה נוגעת בתאריכים ובמתקן — אינה נבדקת
+  await edit(a.report_id, { note: "הערה" });
+  // תסקיר שנמחק אינו חוסם עריכה
+  await rpc(MGR, `SELECT public.inspection_report_delete($1, 'הועלה בטעות')`, [c.report_id]);
+  await edit(d.report_id, { machine_key: "2" });
+
+  // ⚠️ העברת תקופתי למתקן אחר מעבירה איתו את הבדיקות החוזרות — וגם הן נבדקות שם
+  const t = await newSite();
+  const tp = await periodic(t, { insp: addDays(TODAY, -100), valid: addDays(TODAY, 200), machine: "1" });
+  await followup(t, tp.report_id, { insp: addDays(TODAY, -5) });
+  const tp2 = await periodic(t, { insp: addDays(TODAY, -90), valid: addDays(TODAY, 210), machine: "2" });
+  await followup(t, tp2.report_id, { insp: addDays(TODAY, -5) });
+  await fails(edit(tp.report_id, { machine_key: "2" }), "PT409", /לבדיקה חוזרת של התסקיר/);
+  await edit(tp.report_id, { machine_key: "3" });   // מתקן בלי התנגשות — עובר, עם החוזרת
+  assert.equal((await sup(`SELECT count(*)::int n FROM inspection_reports WHERE site_id=$1 AND machine_key='3'`, [t.id]))[0].n, 2);
+});
+
+test("54 · עריכת תאריך הבדיקה מזיזה את מועדי התיקון של כל הליקויים החיים של התסקיר — גם שבוצעו (לא את מתי בוצעו); לא של חוזרת ולא שנמחקו", { skip }, async () => {
+  const s = await newSite();
+  const insp = addDays(TODAY, -400);
+  const p = await periodic(s, { insp, valid: addDays(TODAY, -35),
+    defects: [{ body: "רגיל" }, { body: "דחוף", urgent: true }, { body: "יבוצע", due_on: addDays(TODAY, -300) }] });
+  const [d1, d2, d3] = await defectsOf(p.report_id);
+  // אחד מסומן בוצע (היום) — 300 ימים "אחרי המועד" לפי התאריך השגוי
+  await rpc(MGR, `SELECT public.inspection_defect_done($1, 'משה', NULL, $2::uuid)`, [d3.id, uuid()]);
+  const f = await followup(s, p.report_id, { insp: addDays(TODAY, -100), defects: [{ body: "של החוזרת" }] });
+  const [fd] = await defectsOf(f.report_id);
+  const due = async (id) => (await sup(`SELECT due_on::text d FROM inspection_defects WHERE id=$1`, [id]))[0].d;
+  const doneAt = async (id) => (await sup(`SELECT done_at FROM inspection_defects WHERE id=$1`, [id]))[0].done_at;
+  const lateOf = async (id) => {
+    const j = (await one(MGR, `SELECT public.inspection_site($1) j`, [s.code])).j;
+    return j.reports.flatMap((r) => r.defects || []).find((d) => d.id === id)?.late_days ?? null;
+  };
+  const before = { d1: await due(d1.id), d2: await due(d2.id), d3: await due(d3.id), fd: await due(fd.id), d3done: await doneAt(d3.id) };
+  assert.deepEqual([before.d1, before.d2], [addDays(insp, 45), insp]);
+  assert.equal(await lateOf(d3.id), 300);
+
+  // +200: קדימה, והחוזרת (‎-100) עדיין אחרי התקופתי (‎-200)
+  await rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, 'תאריך שגוי')`,
+    [p.report_id, JSON.stringify({ inspected_on: addDays(insp, 200) })]);
+  assert.equal(await due(d1.id), addDays(before.d1, 200));
+  assert.equal(await due(d2.id), addDays(before.d2, 200), "דחוף — עדיין ביום הבדיקה");
+  // ⚠️ גם ליקוי שבוצע (בעלת המוצר, 11/10/2026): המועד שלו נגזר מאותו תאריך שגוי. מתי בוצע — לא זז,
+  // ו"N ימים אחרי המועד" נמדד עכשיו מול התאריך הנכון
+  assert.equal(await due(d3.id), addDays(before.d3, 200), "ליקוי שבוצע — המועד זז");
+  assert.equal(await doneAt(d3.id), before.d3done, "מתי בוצע — לא זז");
+  assert.equal(await lateOf(d3.id), 100);
+  assert.equal(await due(fd.id), before.fd, "ליקוי של הבדיקה החוזרת — לפי התאריך שלה");
+  // היסטוריית שינויים: שורה לכל ליקוי שזז, עם הסיבה; והיומן — כמה ובכמה ימים
+  const hist = await sup(`SELECT entity_id::int id, before->>'due_on' b, after->>'due_on' a FROM compliance_history
+                           WHERE entity = 'defect' AND action = 'update' AND reason = 'מועד התיקון זז עם תאריך הבדיקה'
+                             AND entity_id = ANY($1::bigint[]) ORDER BY entity_id`, [[d1.id, d2.id, d3.id, fd.id]]);
+  assert.deepEqual(hist.map((h) => [h.id, h.b, h.a]), [
+    [d1.id, before.d1, addDays(before.d1, 200)], [d2.id, before.d2, addDays(before.d2, 200)],
+    [d3.id, before.d3, addDays(before.d3, 200)]]);
+  const lastAudit = async () => (await sup(`SELECT details FROM audit_log WHERE action = 'inspection.report_update'
+                                             AND (details->>'report_id')::int = $1 ORDER BY id DESC LIMIT 1`, [p.report_id]))[0].details;
+  const a1 = await lastAudit();
+  assert.deepEqual({ n: a1.due_shifted, d: a1.shift_days }, { n: 3, d: 200 });
+
+  // אחורה (‎-10) — אותו כלל בכיוון ההפוך
+  await rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`,
+    [p.report_id, JSON.stringify({ inspected_on: addDays(insp, 190) })]);
+  assert.equal(await due(d1.id), addDays(before.d1, 190));
+  assert.equal(await due(d2.id), addDays(before.d2, 190));
+  assert.equal(await due(d3.id), addDays(before.d3, 190));
+  // עריכה שאינה נוגעת בתאריך הבדיקה — אינה מזיזה דבר
+  await rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`,
+    [p.report_id, JSON.stringify({ valid_until: addDays(insp, 190 + 365) })]);
+  assert.equal(await due(d1.id), addDays(before.d1, 190));
+  const a2 = await lastAudit();
+  assert.deepEqual({ n: a2.due_shifted, d: a2.shift_days }, { n: 0, d: 0 });
+  // ליקוי שנמחק אינו זז
+  await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [d1.id]);
+  await rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`,
+    [p.report_id, JSON.stringify({ inspected_on: addDays(insp, 180) })]);
+  assert.equal(await due(d1.id), addDays(before.d1, 190), "ליקוי שנמחק — נשאר");
+  assert.equal(await due(d2.id), addDays(before.d2, 180));
+  assert.equal(await due(d3.id), addDays(before.d3, 180));
+});
+
+test("55 · תקופתי שסומן 'אין ליקויים': הוספת ליקוי רק עם p_unclean — מורידה את הסימון, נרשמת, ואין דרך חזרה", { skip }, async () => {
+  const s = await newSite();
+  const p = await periodic(s, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300) });   // נקי
+  const add = (reportId, unclean, client = uuid()) => one(MGR,
+    `SELECT public.inspection_defect_save($1, NULL, 'מעקה רופף', false, NULL, $2::uuid, $3) id`, [reportId, client, unclean]);
+  // בלי הדגל — הסירוב הישן (מסך שלא ראה שהתסקיר סומן נקי אינו מוריד את הסימון בשקט)
+  await fails(add(p.report_id, false), "23514", /סומן נקי/);
+  assert.equal((await status(s.id)).c, "clean");
+  const client = uuid();
+  const r = await add(p.report_id, true, client);
+  assert.ok(r.id);
+  const row = (await sup(`SELECT declared_clean FROM inspection_reports WHERE id=$1`, [p.report_id]))[0];
+  assert.equal(row.declared_clean, false);
+  assert.equal((await status(s.id)).open, 1);
+  // replay של אותה הוספה — אותו ליקוי, לא שניים
+  const again = await add(p.report_id, true, client);
+  assert.equal(again.id, r.id);
+  assert.equal((await defectsOf(p.report_id)).length, 1);
+  // נרשם: הסימון ירד בגלל ליקוי, והיומן אומר unclean
+  const h = await sup(`SELECT before, after, reason FROM compliance_history WHERE entity = 'report' AND entity_id = $1
+                        AND action = 'update' ORDER BY id`, [p.report_id]);
+  assert.deepEqual(h.at(-1), { before: { declared_clean: true }, after: { declared_clean: false }, reason: "נוסף ליקוי" });
+  const audit = (await sup(`SELECT details FROM audit_log WHERE action = 'inspection.defect_save'
+                             AND (details->>'defect_id')::int = $1 ORDER BY id LIMIT 1`, [r.id]))[0].details;
+  assert.equal(audit.unclean, true);
+  // ⚠️ אין דרך חזרה — גם אחרי מחיקת הליקוי (D7: ליקוי שנרשם, גם אם נמחק, חוסם "נקי")
+  await rpc(MGR, `SELECT public.inspection_defect_delete($1, 'הוזן בטעות')`, [r.id]);
+  await fails(rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, 'בדיקה')`,
+    [p.report_id, JSON.stringify({ declared_clean: true })]), "23514", /נרשמו ליקויים/);
+
+  // בדיקה חוזרת נקייה — גם עם הדגל: הבודק סגר את המחזור, ליקוי חדש מגיע עם תסקיר חדש
+  const t = await newSite();
+  const tp = await periodic(t, { insp: addDays(TODAY, -100), valid: addDays(TODAY, 200), defects: [{ body: "שלט" }] });
+  const tf = await followup(t, tp.report_id, { insp: addDays(TODAY, -5), close: true });
+  await fails(add(tf.report_id, true), "23514", /סומן נקי/);
+  assert.equal((await sup(`SELECT declared_clean FROM inspection_reports WHERE id=$1`, [tf.report_id]))[0].declared_clean, true);
+  // ודוח ישן — אף פעם לא נקי ואין לו ליקויים, גם עם הדגל
+  const u = await newSite();
+  await periodic(u, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300) });
+  const ua = await archive(u);
+  await fails(add(ua.report_id, true), "23514", /לא רושמים ליקויים/);
+  // ותקופתי שאינו נקי — הדגל אינו משנה דבר
+  const v = await newSite();
+  const vp = await periodic(v, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300), defects: [{ body: "שלט אזהרה" }] });
+  const vr = await add(vp.report_id, true);
+  assert.ok(vr.id);
+  assert.equal((await sup(`SELECT count(*)::int n FROM compliance_history WHERE entity = 'report' AND entity_id = $1
+                            AND reason = 'נוסף ליקוי'`, [vp.report_id]))[0].n, 0, "לא נרשמה הורדת סימון שלא קרתה");
+  // ⚠️ הדגל חל רק בהוספה: עריכה של ליקוי קיים אינה מורידה "נקי". המצב "נקי עם ליקוי" אינו נוצר
+  // דרך ה-RPC (D7), ולכן נבנה כאן ישירות — רק כדי לוודא שהעריכה לא נכנסת לענף של ההוספה.
+  const w = await newSite();
+  const wp = await periodic(w, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300), defects: [{ body: "קיים" }] });
+  await sup(`UPDATE inspection_reports SET declared_clean = true WHERE id = $1`, [wp.report_id]);
+  const [wd] = await defectsOf(wp.report_id);
+  await fails(one(MGR, `SELECT public.inspection_defect_save($1, $2, 'נערך', false, NULL, NULL, true) id`, [wp.report_id, wd.id]),
+    "23514", /סומן נקי/);
+  assert.equal((await sup(`SELECT declared_clean FROM inspection_reports WHERE id=$1`, [wp.report_id]))[0].declared_clean, true);
+
+  // ⚠️ רק כשהתקופתי עדיין האחרון במחזור (כמו addTarget): מסך ישן שמציע את הכפתור אחרי שהעלו בינתיים
+  // בדיקה חוזרת או תקופתי חדש — מקבל את הסירוב ולא פותח מחזור סגור
+  const x = await newSite();
+  const xp = await periodic(x, { insp: addDays(TODAY, -100), valid: addDays(TODAY, 200) });   // נקי
+  await followup(x, xp.report_id, { insp: addDays(TODAY, -5) });
+  await fails(add(xp.report_id, true), "23514", /סומן נקי/);
+  const y = await newSite();
+  const y1 = await periodic(y, { insp: addDays(TODAY, -300), valid: addDays(TODAY, 65) });     // נקי, הוחלף
+  const y2 = await periodic(y, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 355) });     // נקי, הנוכחי
+  await fails(add(y1.report_id, true), "23514", /סומן נקי/);
+  assert.ok((await add(y2.report_id, true)).id, "התקופתי הנוכחי — כן");
+  // תקופתי של מתקן אחר אינו "חדש ממנו"
+  const z = await newSite();
+  const z1 = await periodic(z, { insp: addDays(TODAY, -300), valid: addDays(TODAY, 65), machine: "1" });
+  await periodic(z, { insp: addDays(TODAY, -10), valid: addDays(TODAY, 355), machine: "2" });
+  assert.ok((await add(z1.report_id, true)).id);
 });

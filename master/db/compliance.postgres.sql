@@ -1141,8 +1141,13 @@ BEGIN
          AND r.inspected_on <= v_insp
        ORDER BY r.inspected_on DESC, r.id DESC LIMIT 1;
     END IF;
+    -- ⚠️ FOR SHARE (11/10/2026): נעילת שורת האב **לפני** נעילת "קובץ זה כבר קיים" למטה. עריכת האב
+    -- נועלת את השורה ואחר כך את אותה נעילה — ובלי זה, ה-FK של הבדיקה החוזרת (KEY SHARE על האב)
+    -- היה נתקע מאחורי העריכה בזמן שהעריכה מחכה לנעילה שההעלאה מחזיקה: deadlock. וגם תאריך האב,
+    -- המתקן ו"לא נמחק" נקראים כך טריים מול עריכה או מחיקה שלו באותו רגע.
     SELECT r.machine_key, r.inspected_on, r.machine_no INTO v_mk, v_parent_insp, v_pno FROM inspection_reports r
-     WHERE r.id = v_parent AND r.site_id = v_site AND r.kind = 'periodic' AND r.deleted_at IS NULL;
+     WHERE r.id = v_parent AND r.site_id = v_site AND r.kind = 'periodic' AND r.deleted_at IS NULL
+       FOR SHARE;
     IF v_mk IS NULL THEN
       RAISE EXCEPTION 'אין תסקיר תקופתי למתקן לשייך אליו את הבדיקה החוזרת' USING ERRCODE = 'check_violation'; END IF;
     -- אב מפורש ומתקן מפורש שאינם מסכימים — שגיאה, לא דריסה שקטה של המתקן שנבחר
@@ -1193,6 +1198,34 @@ BEGIN
   END IF;
   IF v_close AND (v_kind <> 'followup' OR NOT v_clean) THEN
     RAISE EXCEPTION 'סגירת ליקויים אפשרית רק בתסקיר חוזר נקי' USING ERRCODE = 'check_violation'; END IF;
+
+  -- ⚠️ "קובץ זה כבר קיים" (בעלת המוצר, 11/10/2026: "אם מעלים קובץ והתאריכים קיימים כבר אז לכתוב
+  -- קובץ זה כבר קיים"). אותו מתקן + אותו תאריך בדיקה + אותה בדיקה הבאה = אותה בדיקה, גם כשהקובץ
+  -- אחר (סריקה אחרת, עותק מהמייל) — ואז בדיקת ה-md5 למטה לא תופסת אותו. כל סוג: תקופתי, חוזרת
+  -- וישן. דוח שנמחק אינו חוסם, וכך מחליפים: מוחקים את הקיים ומעלים שוב. בדיקה חוזרת שיורשת
+  -- תוקף (NULL) נבדקת מול NULL. לפני הקובץ — כדי שהעלאה כפולה תקבל את ההודעה הזו גם כשהבתים זהים.
+  -- הנעילה: שתי העלאות של אותו מתקן באותו רגע היו עוברות שתיהן את ה-EXISTS. לפי אתר+מתקן, ולא
+  -- FOR UPDATE על שורת האתר — עליה הקליטה מהאתרים מחזיקה נעילה.
+  -- ⚠️ "אותם תאריכים" = הערכים השמורים: בדיקה חוזרת שיורשת (NULL) אינה זהה לחוזרת עם תאריך מפורש
+  -- שווה לתוקף האב. זו בחירה: לפי התוקף ה"אפקטיבי", חוזרת באותו יום כמו התקופתי שלה (מותרת) הייתה
+  -- נחסמת כ"כפולה" שלו. אותו כלל בטופס (sameDatesReport).
+  PERFORM pg_advisory_xact_lock(hashtext('inspection_dates:' || v_site || ':' || v_mk));
+  -- ⚠️ ניסיון חוזר שחפף למקור (התשובה אבדה בזמן שהמקור עוד רץ): הוא עבר את בדיקת ה-replay למעלה
+  -- לפני שהמקור נשמר, וחיכה כאן לנעילה שהמקור החזיק. עכשיו המקור שמור — replay, ולא "קובץ זה כבר
+  -- קיים" על התסקיר של עצמו (הטופס מדלג על הבדיקה שלו בדיוק במצב הזה, ומסתמך על התשובה מכאן).
+  DECLARE v_rid bigint; v_rfid bigint; v_rvalid date;
+  BEGIN
+    SELECT r.id, r.file_id, r.valid_until INTO v_rid, v_rfid, v_rvalid FROM inspection_reports r WHERE r.client_id = v_client;
+    IF v_rid IS NOT NULL THEN
+      SELECT count(*)::int INTO v_cnt FROM inspection_defects d WHERE d.report_id = v_rid AND d.deleted_at IS NULL;
+      SELECT count(*)::int INTO v_closed FROM inspection_defects d WHERE d.closed_by_report_id = v_rid;
+      RETURN QUERY SELECT v_rid, v_rfid, v_rvalid, v_cnt, v_closed, true; RETURN;
+    END IF;
+  END;
+  IF EXISTS (SELECT 1 FROM inspection_reports r
+              WHERE r.site_id = v_site AND r.machine_key = v_mk AND r.deleted_at IS NULL
+                AND r.inspected_on = v_insp AND r.valid_until IS NOT DISTINCT FROM v_valid) THEN
+    RAISE EXCEPTION 'קובץ זה כבר קיים' USING ERRCODE = 'PT409'; END IF;
 
   IF p_file IS NOT NULL THEN
     v_mime := p_file->>'mime'; v_data := p_file->>'data';               -- חילוץ אחד
@@ -1285,6 +1318,7 @@ DECLARE
   v_reason text := NULLIF(btrim(COALESCE(p_reason,'')),'');
   v_fields text[] := '{}'; v_before jsonb := '{}'::jsonb; v_after jsonb := '{}'::jsonb;
   v_parent_insp date; v_min_child date; v_live integer; v_code text; f text; v_reopened integer := 0;
+  v_shift integer := 0; v_shifted integer := 0; v_sd record;
 BEGIN
   IF p_meta IS NULL OR jsonb_typeof(p_meta) <> 'object' THEN
     RAISE EXCEPTION 'פרטי התסקיר אינם תקינים' USING ERRCODE = 'check_violation'; END IF;
@@ -1360,6 +1394,26 @@ BEGIN
       USING ERRCODE = 'check_violation'; END IF;
   IF v_old.kind = 'archive' AND v_new.declared_clean THEN
     RAISE EXCEPTION 'דוח ישן אינו מסומן נקי — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;
+  -- אותה כפילות כמו בהעלאה ("קובץ זה כבר קיים", 11/10/2026): עריכה שמשווה את התאריכים (או
+  -- המתקן) לתסקיר חי אחר של אותו מתקן הייתה יוצרת בדיוק את מה שההעלאה חוסמת. אותה נעילה.
+  IF v_new.inspected_on IS DISTINCT FROM v_old.inspected_on OR v_new.valid_until IS DISTINCT FROM v_old.valid_until
+     OR v_new.machine_key IS DISTINCT FROM v_old.machine_key THEN
+    PERFORM pg_advisory_xact_lock(hashtext('inspection_dates:' || COALESCE(v_old.site_id, 0) || ':' || v_new.machine_key));
+    IF EXISTS (SELECT 1 FROM inspection_reports r
+                WHERE r.site_id = v_old.site_id AND r.machine_key = v_new.machine_key AND r.deleted_at IS NULL
+                  AND r.id <> v_old.id AND r.inspected_on = v_new.inspected_on
+                  AND r.valid_until IS NOT DISTINCT FROM v_new.valid_until) THEN
+      RAISE EXCEPTION 'כבר קיים תסקיר עם אותו תאריך בדיקה ואותה בדיקה הבאה למתקן הזה' USING ERRCODE = 'PT409'; END IF;
+    -- והבדיקות החוזרות שעוברות איתו למתקן החדש (למטה, בלי בדיקה משלהן) — גם הן
+    IF v_new.machine_key IS DISTINCT FROM v_old.machine_key AND EXISTS (
+         SELECT 1 FROM inspection_reports c
+           JOIN inspection_reports r ON r.site_id = v_old.site_id AND r.machine_key = v_new.machine_key
+                                    AND r.deleted_at IS NULL AND r.inspected_on = c.inspected_on
+                                    AND r.valid_until IS NOT DISTINCT FROM c.valid_until
+          WHERE c.followup_of = v_old.id AND c.deleted_at IS NULL) THEN
+      RAISE EXCEPTION 'לבדיקה חוזרת של התסקיר יש כבר תסקיר עם אותם תאריכים במתקן %', v_new.machine_key
+        USING ERRCODE = 'PT409'; END IF;
+  END IF;
 
   -- D7: "נקי" רק בתסקיר שמעולם לא נרשם בו ליקוי, ועם סיבה (זה מה שסוגר מחזור).
   -- ⚠️ גם ליקוי שנמחק נספר: "מחיקה בסיבה 'טופל' + סימון התסקיר המקורי נקי" הדליקה ירוק בלי
@@ -1412,8 +1466,28 @@ BEGIN
   v_code := app.compliance_code(v_old.site_id, v_old.site_code);
   PERFORM app.compliance_log(v_old.site_id, v_old.site_code, 'inspection', 'report', v_old.id, 'update',
                              v_actor, v_before, v_after, v_reason);
+
+  -- ⚠️ מועדי התיקון זזים עם תאריך הבדיקה (בעלת המוצר, 11/10/2026). due_on נשמר בהוספת הליקוי
+  -- (תאריך הבדיקה + ימים), ולכן תיקון של תאריך בדיקה שגוי השאיר אותם על התאריך הישן — ב-1118
+  -- שבעה ליקויים נראו שנה "אחרי המועד". כל ליקוי חי של התסקיר הזה, **גם שבוצע** (בעלת המוצר, אותו
+  -- יום): המועד נגזר מהתאריך השגוי באותה מידה. בלי זה תיקון שנעשה בזמן הוצג "355 ימים אחרי המועד",
+  -- וליקוי שנפתח מחדש (D24) חזר עם מועד שעבר מזמן וצבע את הנורה כתום. מתי בוצע (done_at) — לא זז.
+  -- ליקוי שנמחק — לא; ולבדיקה חוזרת יש תאריך משלה. כל ליקוי נרשם בהיסטוריית השינויים.
+  IF v_new.inspected_on <> v_old.inspected_on THEN
+    v_shift := v_new.inspected_on - v_old.inspected_on;
+    FOR v_sd IN UPDATE inspection_defects d SET due_on = d.due_on + v_shift
+                 WHERE d.report_id = v_old.id AND d.deleted_at IS NULL AND d.due_on IS NOT NULL
+                 RETURNING d.id, d.due_on LOOP
+      PERFORM app.compliance_log(v_old.site_id, v_old.site_code, 'inspection', 'defect', v_sd.id, 'update', v_actor,
+        jsonb_build_object('due_on', v_sd.due_on - v_shift), jsonb_build_object('due_on', v_sd.due_on),
+        'מועד התיקון זז עם תאריך הבדיקה');
+      v_shifted := v_shifted + 1;
+    END LOOP;
+  END IF;
+
   PERFORM app.record_write_audit('inspection.report_update', v_actor, app.current_app_role(), 'site', v_code,
-    jsonb_build_object('report_id', v_old.id, 'fields', to_jsonb(v_fields), 'reopened', v_reopened));
+    jsonb_build_object('report_id', v_old.id, 'fields', to_jsonb(v_fields), 'reopened', v_reopened,
+                       'due_shifted', v_shifted, 'shift_days', v_shift));
   PERFORM app.compliance_event(v_code, 'inspection', 'report_update');
 END $fn$;
 REVOKE ALL ON FUNCTION public.inspection_report_update(bigint, jsonb, text) FROM PUBLIC, anon;
@@ -1483,16 +1557,20 @@ GRANT EXECUTE ON FUNCTION public.inspection_machine_retire(text, text, text) TO 
 -- ------------------------------------------------------------
 -- ⚠️ D23: יצירה נושאת p_client_id (uuid שנוצר פעם אחת במסך). תגובה שאבדה ונשלחה
 -- שוב מחזירה את אותו ליקוי — לא ליקוי שני שרק מנהל יכול להסיר, ורק עם סיבה.
--- ⚠️ החתימה השתנתה: ה-DROP מוחק את הישנה (5 פרמטרים), אחרת היו שתיים חיות.
+-- ⚠️ החתימה השתנתה פעמיים: ה-DROPים מוחקים את הישנות (5 ו-6 פרמטרים), אחרת היו שתיים חיות —
+-- ו-PostgREST מסרב לקריאה כששתי פונקציות באותו שם מתאימות לה. מסך ישן שולח 6 פרמטרים, והשביעי
+-- (p_unclean) ברירת מחדל false — כך הוא ממשיך לעבוד בדיוק כמו קודם.
 DROP FUNCTION IF EXISTS public.inspection_defect_save(bigint, bigint, text, boolean, date);
+DROP FUNCTION IF EXISTS public.inspection_defect_save(bigint, bigint, text, boolean, date, uuid);
 CREATE OR REPLACE FUNCTION public.inspection_defect_save(p_report_id bigint, p_defect_id bigint, p_body text,
-                                                         p_urgent boolean, p_due_on date, p_client_id uuid DEFAULT NULL)
+                                                         p_urgent boolean, p_due_on date, p_client_id uuid DEFAULT NULL,
+                                                         p_unclean boolean DEFAULT false)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_manager();
   v_body text := NULLIF(btrim(COALESCE(p_body,'')),'');
   v_r inspection_reports%ROWTYPE; v_d inspection_defects%ROWTYPE; v_id bigint; v_code text; v_seq integer;
-  v_fields text[] := '{}'; v_prev_report bigint;
+  v_fields text[] := '{}'; v_prev_report bigint; v_unclean boolean := false;
 BEGIN
   IF v_body IS NULL OR length(v_body) < 2 OR length(v_body) > 2000 THEN
     RAISE EXCEPTION 'תיאור הליקוי חייב להיות בין 2 ל-2000 תווים' USING ERRCODE = 'check_violation'; END IF;
@@ -1507,7 +1585,31 @@ BEGIN
   SELECT r.* INTO v_r FROM inspection_reports r WHERE r.id = p_report_id FOR UPDATE;
   IF NOT FOUND OR v_r.deleted_at IS NOT NULL THEN RAISE EXCEPTION 'התסקיר לא נמצא' USING ERRCODE = 'PT404'; END IF;
   IF v_r.declared_clean THEN
-    RAISE EXCEPTION 'התסקיר סומן נקי — יש לבטל את הסימון בעריכת התסקיר' USING ERRCODE = 'check_violation'; END IF;
+    -- ⚠️ תקופתי שהועלה "אין ליקויים" (בעלת המוצר, 11/10/2026): הוספת ליקוי מורידה את הסימון —
+    -- רק באישור מפורש (p_unclean, מהחלון שאומר זאת), ורק בתקופתי. בבדיקה חוזרת נקייה הבודק סגר
+    -- את המחזור, וליקוי חדש אחריה מגיע עם תסקיר חדש. בלי הדגל — הסירוב הישן: מסך שלא ראה
+    -- שמישהו סימן את התסקיר נקי בינתיים אינו מוריד את הסימון בשקט.
+    -- ⚠️ ואין דרך חזרה: ליקוי שנרשם (גם אם נמחק) חוסם סימון נקי מחדש (D7). החלון אומר זאת.
+    -- ⚠️ ורק כשהתקופתי הוא עדיין **האחרון במחזור** — אותו כלל כמו addTarget במסך: אין לו בדיקה
+    -- חוזרת חיה, ואין תקופתי חדש ממנו לאותו מתקן (סדר המחזור: תאריך, ואז מזהה). מסך ישן שעוד מציע
+    -- את הכפתור אחרי שהעלו בינתיים חוזרת או תסקיר חדש — מקבל את הסירוב, ולא פותח מחזור סגור.
+    IF p_defect_id IS NULL AND COALESCE(p_unclean, false) AND v_r.kind = 'periodic'
+       AND NOT EXISTS (SELECT 1 FROM inspection_reports c WHERE c.followup_of = v_r.id AND c.deleted_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM inspection_reports n
+                        WHERE n.site_id = v_r.site_id AND n.machine_key = v_r.machine_key AND n.kind = 'periodic'
+                          AND n.deleted_at IS NULL AND n.id <> v_r.id
+                          AND (n.inspected_on, n.id) > (v_r.inspected_on, v_r.id)) THEN
+      UPDATE inspection_reports r SET declared_clean = false, updated_at = app.compliance_now_iso(), updated_by = v_actor
+       WHERE r.id = v_r.id;
+      PERFORM app.compliance_log(v_r.site_id, v_r.site_code, 'inspection', 'report', v_r.id, 'update', v_actor,
+        jsonb_build_object('declared_clean', true), jsonb_build_object('declared_clean', false), 'נוסף ליקוי');
+      -- D24 במקום אחד: מה שהתסקיר סגר נפתח. בתקופתי אין כאלה — סוגרת רק בדיקה חוזרת נקייה.
+      PERFORM app.inspection_reopen_closed_by(v_r.id, v_actor, 'נוסף ליקוי');
+      v_unclean := true;
+    ELSE
+      RAISE EXCEPTION 'התסקיר סומן נקי — יש לבטל את הסימון בעריכת התסקיר' USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
   IF v_r.kind = 'archive' THEN
     RAISE EXCEPTION 'בדוח ישן לא רושמים ליקויים — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;
   v_code := app.compliance_code(v_r.site_id, v_r.site_code);
@@ -1541,12 +1643,12 @@ BEGIN
     v_id := v_d.id;
   END IF;
   PERFORM app.record_write_audit('inspection.defect_save', v_actor, app.current_app_role(), 'site', v_code,
-    jsonb_build_object('defect_id', v_id, 'report_id', v_r.id, 'fields', to_jsonb(v_fields)));
+    jsonb_build_object('defect_id', v_id, 'report_id', v_r.id, 'fields', to_jsonb(v_fields), 'unclean', v_unclean));
   PERFORM app.compliance_event(v_code, 'inspection', 'defect_save');
   RETURN v_id;
 END $fn$;
-REVOKE ALL ON FUNCTION public.inspection_defect_save(bigint, bigint, text, boolean, date, uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.inspection_defect_save(bigint, bigint, text, boolean, date, uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.inspection_defect_save(bigint, bigint, text, boolean, date, uuid, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.inspection_defect_save(bigint, bigint, text, boolean, date, uuid, boolean) TO authenticated;
 
 -- ------------------------------------------------------------
 -- inspection_defect_delete — מחיקה רכה; רק ליקוי פתוח שאין לו אף תמונה

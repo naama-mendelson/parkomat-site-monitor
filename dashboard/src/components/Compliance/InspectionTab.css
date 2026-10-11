@@ -146,6 +146,9 @@
 .it-btn--danger-solid:hover:not(:disabled) { background: var(--it-solid-red); filter: brightness(1.08); }
 
 .it-btn--small { min-height: 32px; padding: 0 10px; font-size: 0.8em; }
+/* "מחיקה" גלויה בכרטיס התסקיר (11/10/2026) — טקסט אדום במסגרת רגילה: ברור שזו מחיקה, בלי מילוי שצועק */
+.it-btn--danger-text { color: var(--it-ink-red); }
+.it-btn--danger-text:hover:not(:disabled) { border-color: color-mix(in srgb, var(--it-ink-red) 60%, transparent); }
 /* "סימון כבוצע" — מסגרת בצבע הקישור ולא מילוי: הפעולה הראשית בשורה, בלי לצעוק */
 .it-btn--done {
   color: var(--it-ink-link);
@@ -717,7 +720,9 @@ select.it-input { padding-block: 0; }
 
 .it-report-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
 .it-report-title {
-  flex: 1;
+  /* ⚠️ בסיס אמיתי ולא 0 (11/10/2026): עם "עריכה" ו"מחיקה" גלויים, flex:1 (בסיס 0) לא היה שובר את
+     הכפתורים לשורה שנייה בטלפון — והתאריך נדחס מתחת ל"צפייה במסמך". נמדד: בלי חפיפה מ-320 עד 900px. */
+  flex: 1 1 9em;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -1033,6 +1038,9 @@ fieldset.iu-form-col { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 /* דוח ישן או תסקיר רגיל — רק כשהבדיקה הבאה שבמסמך עברה (11/10/2026). שתי שורות, בלי מסגרת. */
 .iu-old { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* "קובץ זה כבר קיים" (11/10/2026) — מתחת לתאריכים; השורה השנייה אומרת מה הקיים ואיך מחליפים */
+.iu-dup { display: flex; flex-direction: column; gap: 2px; }
+.iu-dup p { margin: 0; }
 .iu-old legend { padding: 0; margin-bottom: 4px; }
 
 /* ליקויים בטופס ההעלאה — שורה = שדה טקסט אחד, ו"תוך כמה ימים" אחד לכולם */

@@ -1023,6 +1023,88 @@ Rules that are easy to break and expensive to notice:
     `insp/harness/probe-prev.mjs` (28). ⚠️ The two added lines in the status card push the page
     down by about 30px. `insp/run` A7 now scrolls to the thumbnail, because they load lazily via
     IntersectionObserver, and the `probe-page` P1 threshold is 460.
+- ⚠️ **Actions on a report that was already uploaded, and "קובץ זה כבר קיים" (11/10/2026).**
+  - **The request:** *"אופציה למחוק דוח שעלה כבר או לערוך את התאריכים שלו או להוסיף ליקויים או כל
+    דבר. אם מעלים קובץ והתאריכים קיימים כבר אז לכתוב קובץ זה כבר קיים"*.
+  - **Measured first:** editing and deleting already existed, behind an unlabeled "⋯" on each row of
+    "היסטוריית תסקירים", near the bottom of the page (about 900px down on a phone). No report had
+    ever been deleted in production. "+ הוספת ליקוי" was hidden whenever the newest report was
+    clean, which is every report uploaded with "אין ליקויים".
+  - **The owner chose four changes, all as recommended:**
+    1. **"קובץ זה כבר קיים" blocks the upload.** The rule: same site + machine, same `inspected_on`
+       and same `valid_until` (NULL-safe) as a live report, of any kind (periodic, follow-up,
+       archive). A different file of the same inspection is caught, unlike the md5 check.
+       - The form shows it live under the two dates (`sameDatesReport`, `.iu-dup`) and disables
+         saving. ⚠️ The form skips the check after an uncertain failure (`locked`). Otherwise the
+         report it had just saved would block its own "נסה שוב". The server tells a replay from a
+         real duplicate.
+       - `inspection_upload` enforces it before the file is handled. A same-bytes, same-dates upload
+         therefore gets this message, not the md5 one. It runs under
+         `pg_advisory_xact_lock(hashtext('inspection_dates:'||site||':'||machine))`. It is the first
+         transaction-scoped advisory lock in the SQL files. `db/single-instance.js` takes a
+         session-level one with a two-int key, a separate key space. It is not `FOR UPDATE` on
+         `sites`, because ingestion holds that row.
+       - ⚠️ **Lock order: row first, then the advisory lock**, as `inspection_report_update` does
+         (`FOR UPDATE` on the report). A follow-up upload therefore reads its parent `FOR SHARE`
+         *before* the advisory lock. The other order was a deadlock: the follow-up's FK takes
+         `KEY SHARE` on the parent, behind an edit that was itself waiting for the advisory lock.
+       - After the lock, the upload repeats the `client_id` lookup. A retry that overlapped its
+         still-running original gets `replayed`, not "קובץ זה כבר קיים" about its own report.
+       - Neither the lock nor that second lookup can be tested in PGlite, because the tests run
+         one at a time.
+       - "Same dates" means the **stored** values. A follow-up that inherits (NULL) is not the same
+         as one with an explicit date equal to its parent's validity. This is deliberate: comparing
+         effective validity would block a legitimate same-day follow-up as a "duplicate" of its
+         own periodic.
+       - A deleted report does not block. That is how you replace one: delete it, then upload again.
+       - `inspection_report_update` refuses an edit of dates or machine that would collide with
+         another live report ("כבר קיים תסקיר עם אותו תאריך בדיקה ואותה בדיקה הבאה למתקן הזה").
+         Moving a periodic to another machine also checks the follow-ups that move with it.
+         `compliance_reattach` still has no such check. It is a rare path (orphans of a deleted site).
+       - Production had no such duplicates when this was added.
+    2. **"עריכה" and "מחיקה" are visible buttons on every history row**, beside "צפייה במסמך". The
+       "⋯" menu is gone from `InspectionHistory`. Deleting a periodic that has live follow-ups
+       explains why under the row itself (`.it-del-why`). It used to flash a notice at the top of the
+       page, out of view for someone scrolled down to the history.
+    3. **"+ הוספת ליקוי" also appears when the newest report of the cycle is a clean periodic.**
+       - The first defect removes the clean mark, atomically. This needs a new
+         `p_unclean boolean DEFAULT false` on `inspection_defect_save`. The 6-arg signature is
+         dropped, because two live copies make PostgREST refuse the call. The UI sends the flag only
+         when it is true, so an ordinary add also works against a database without it.
+       - Without the flag the old refusal stands. A stale screen cannot silently un-mark a report
+         someone else marked clean.
+       - A clean **follow-up** stays blocked, even with the flag: the inspector closed that cycle,
+         and a new defect comes with a new report.
+       - The flag is honoured only while the periodic is still the newest of its cycle: no live
+         follow-up, and no later live periodic for the same machine. This is the same rule as
+         `addTarget`. A stale screen that still offers the button after someone uploaded a follow-up
+         or a newer report gets the refusal, so it cannot reopen a closed cycle.
+       - The dialog says it cannot be undone (`.it-unclean`). D7 counts deleted defects too, so after
+         this the only way back to clean is to delete the report and upload it again.
+    4. **Editing `inspected_on` shifts the `due_on` of every live (non-deleted) defect of that report
+       by the same number of days, done defects included.**
+       - ⚠️ **Done defects too** (owner, same day, on a second question). The first version shifted
+         open defects only, and that was the option she had chosen. The review then showed what it
+         cost:
+         - A done defect's deadline comes from the same wrong date. After a one-year correction, a
+           fix made on time read "355 ימים אחרי המועד".
+         - A done defect reopened later (D24) came back already overdue and turned the lamp orange.
+       - `done_at` (when it was fixed) never moves.
+       - A follow-up's own defects (it has its own date) and deleted defects do not move.
+       - Each shift is a `compliance_history` row with the reason "מועד התיקון זז עם תאריך הבדיקה".
+         `ChangeRow` now prints what changed in a defect update ("לתיקון עד: X ← Y"). Before, it
+         printed only the body, so a shift would have shown as an empty "עריכת ליקוי".
+       - The audit row carries `due_shifted` / `shift_days`.
+       - The edit dialog says how many dates move and by how much (`.it-shift`). Before this,
+         correcting a date left every due date on the old one. That is why seven defects at 1118
+         had to be moved by hand.
+  - **Tests:**
+    - SQL tests 52–55.
+    - Tests 7 and 10 were moved to distinct inspection days. ⚠️ Test 10's md5 case now uses another
+      date and asserts the md5 *message*. With equal dates, the new check answered first with the
+      same PT409, and the md5 path was left untested while the test still passed.
+    - Test 6 accepts the new audit keys.
+    - `inspection-actions.test.js` (`sameDatesReport`, `addTarget`).
 - **Nothing in "בוצע" is required** (owner, 06/10/2026: *"אופציונלי — להמשיך גם בלי להעלות
   תמונה"*, then *"שיוכלו לעשות סמן כבוצע בלי למלא את הכל"*). An empty performer name records the
   signed-in user — `app.actor_display_name()`, from the verified identity, never the request — so
@@ -1110,9 +1192,11 @@ Rules that are easy to break and expensive to notice:
     - 1097, 1355 and 1118: the rule's mistakes.
     - 1400: an old report she uploaded that morning, where the signing date, three days later, was saved
       over the correct suggestion.
-    - ⚠️ **Editing `inspected_on` does not move defect due dates.** `due_on` is stored at insert. So
-      the 7 open defects at 1118 were moved too, by the same shift, through `inspection_defect_save`
-      (one year later). A UI edit of an inspection date leaves them where they were.
+    - ⚠️ **At the time, editing `inspected_on` did not move defect due dates** (`due_on` is stored
+      at insert). So the 7 open defects at 1118 were moved by hand, by the same shift, through
+      `inspection_defect_save` (one year later). **Since later that day, `inspection_report_update`
+      moves them itself** (see *Actions on a report that was already uploaded* below). Do not shift
+      due dates by hand after a date edit any more: they would move twice.
 - ⚠️ **Since 11/10/2026 the form shows BOTH dates, as visible fields: "תאריך הבדיקה" above
   "הבדיקה הבאה".** There is no "מתקן" field on a one-machine site.
   - The owner's words: *"שלא יהיה כתוב מתקן בכלל, במקום זה יהיה כתוב מתי הבדיקה התבצעה, כמו

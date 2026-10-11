@@ -212,12 +212,15 @@ export async function closeDefectsByReport(reportId, reason = null) {
 /**
  * הוספה (defectId=null, clientId חובה) או עריכה של ליקוי פתוח. מנהל בלבד.
  * `dueOn` null בהוספה = השרת מחשב; null בעריכה = ללא שינוי.
+ * `unclean` — הוספה לתקופתי שסומן "אין ליקויים": מורידה את הסימון (11/10/2026). נשלח רק
+ * כשהוא true, כך שהוספה רגילה עובדת גם מול מסד שעוד לא קיבל את הפרמטר.
  * @returns {number} מזהה הליקוי
  */
-export async function saveDefect({ reportId, defectId = null, body, urgent = false, dueOn = null, clientId = null }) {
+export async function saveDefect({ reportId, defectId = null, body, urgent = false, dueOn = null, clientId = null, unclean = false }) {
   const id = await rpcT("inspection_defect_save", {
     p_report_id: reportId, p_defect_id: defectId, p_body: body,
     p_urgent: urgent, p_due_on: dueOn || null, p_client_id: clientId,
+    ...(unclean ? { p_unclean: true } : {}),
   }, TIMEOUT.normal);
   return Number(id);
 }
