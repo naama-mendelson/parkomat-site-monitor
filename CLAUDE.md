@@ -1037,6 +1037,22 @@ Rules that are easy to break and expensive to notice:
   then stays (`showInsp`, latched), only when there is no suggestion or it does not fit: empty,
   in the future, more than ~2 years before the next date, or before the periodic report it
   follows. Without the latch, fixing the field would make it vanish mid-edit.
+  ⚠️ **Since 11/10/2026 the inspection date is confirmed by a person too, though its field stays
+  hidden.**
+  - The owner asked: *"להוסיף את תאריך הבדיקה לאישור ידני"*.
+  - The confirmation line now always reads "בדקתי מול המסמך: נבדק ב-X שינוי, הבדיקה הבאה Y".
+    "שינוי" opens the field (`showInsp`).
+  - The button sits inside the `<label>`, so it calls `preventDefault`; otherwise the click would
+    tick the box.
+  - Editing the date clears the confirmation, as before.
+  - Why: measured that day, all 67 reports in production had `inspected_on` exactly as parsed and
+    never seen by anyone. That date sets the report order, the fix deadlines and "נעשה N ימים אחרי
+    שהתסקיר הקודם פג".
+  - Harness: `probe-dates` T1 now expects both dates, and T7 covers the link (the tick stays,
+    the field opens, an edit clears the confirmation, the edited date is the one sent).
+    `insp/run` B1 was updated the same way.
+  - ⚠️ `e2e/probe-insp-drop` is stale since 06/10: it waits for the inspector inside the site
+    window, which has been a full page since then.
 - **Defects: a select with no default** — "אין ליקויים" / "יש ליקויים". "יש" opens one text input
   per defect, typed by hand from the document beside the form; Enter or "+ עוד ליקוי" adds the
   next (never a second empty one). **"תוך כמה ימים לתקן" is required and has no default** — 45 was
