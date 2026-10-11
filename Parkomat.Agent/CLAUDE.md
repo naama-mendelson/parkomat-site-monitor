@@ -408,6 +408,14 @@ in as many words ("אילוץ ברירות מחדל בכל התקנה"), and
 `Reset_ClearsEverythingThatCanBeDerivedAgain` pins it. So IP, port and registers return to
 their defaults on every upgrade, and that is a decision, not a bug.
 
+⚠️ **Out of date since 1.0.48 — the code wins.** `BuildResetConfig` now keeps the whole PLC
+identity across an install: IP, port, all registers including system 2's (`ModeRegister2`,
+`CardRegister2`) and `FaultTextRegister`, plus the site id and the Supabase password.
+`TheSitePlcIdentitySurvivesAnUpgrade` pins it, and `Reset_ClearsEverythingThatCanBeDerivedAgain`
+no longer checks the PLC block. An over-install (no uninstall first) needs nothing retyped. What
+still resets: site name, poll interval, NTP settings, `FaultTextMaxChars`, HiveMQ host/port.
+The paragraph above and the heading are kept because the transport reasoning below still holds.
+
 **Transport is carried through anyway, and the asymmetry is the point:**
 
 - A wrong **address** fails loudly — the log says timeout, the tray icon goes grey — and it
