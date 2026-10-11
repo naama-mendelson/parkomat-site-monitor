@@ -624,7 +624,9 @@ ALTER TABLE inspection_defects VALIDATE CONSTRAINT inspection_defects_done_shape
 
 -- ⚠️ "דוח ישן" (kind = 'archive') — מ-11/10/2026. בעלת המוצר: "אני רוצה שיהיה ניתן לעלות דוחות ישנים
 -- כדי שישמרו בהיסטוריה. בדוחות אלו לא ישמר האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה. וכשמעלים
--- כזה דוח יהיה צריך לאשר את התאריכים כמו כל דוח". והבחירה מוצעת רק כשהדוח פג (בחירתה).
+-- כזה דוח יהיה צריך לאשר את התאריכים כמו כל דוח". והבחירה ("זוהה קובץ ישן, לשמור?") מוצעת רק כשתאריך
+-- הבדיקה מוקדם מהבדיקה האחרונה של אותו מתקן ("כאשר תאריך הבדיקה שהתבצעה קטן מהתאריך האחרון שהבדיקה
+-- התבצעה") — ולא לפי תוקף, כמו בגרסה הראשונה של אותו יום.
 -- ⚠️ **סוג שלישי ולא דגל, בכוונה:** כל שאילתה שמסננת kind = 'periodic' — המחזור והנורה
 -- (compliance_machine_rows), אב לבדיקה חוזרת, החזרת מתקן משימוש — מדלגת עליו מעצמה. דגל היה
 -- דורש "AND NOT archived" בכל אחת, וזו שתישכח היא זו שתצבע נורה מדוח ישן.
@@ -1155,10 +1157,14 @@ BEGIN
     -- ⚠️ D5: אין ברירת מחדל של שנה. כפתור "+12 חודשים" בממשק שולח תאריך, והוא נרשם 'manual'.
     IF v_valid IS NULL THEN
       RAISE EXCEPTION 'יש להזין את תאריך התוקף מהמסמך' USING ERRCODE = 'check_violation'; END IF;
-    -- ⚠️ דוח ישן — רק כשהבדיקה הבאה שבו כבר עברה (ביום עצמו עדיין בתוקף, כמו compliance_light).
-    -- דוח בתוקף שנשמר "להיסטוריה" לא היה צובע את הנורה, והאתר היה נראה בלי תסקיר בזמן שיש לו.
-    IF v_kind = 'archive' AND v_valid >= v_today THEN
-      RAISE EXCEPTION 'דוח ישן — רק דוח שהבדיקה הבאה שבו כבר עברה. תסקיר בתוקף מעלים כתסקיר רגיל'
+    -- ⚠️ דוח ישן — רק כשתאריך הבדיקה שלו **מוקדם מהבדיקה האחרונה של אותו מתקן** (כל סוג: תקופתי,
+    -- חוזרת, ישן). בעלת המוצר, 11/10/2026: "לא כשתאריך הבדיקה הבאה עבר, אלא כאשר תאריך הבדיקה
+    -- שהתבצעה קטן מהתאריך האחרון שהבדיקה התבצעה". כך תמיד יש דוח חדש יותר שקובע את הנורה — ודוח
+    -- ישן אינו יכול להעלים את המצב הנוכחי. מתקן בלי שום דוח — אין "ישן".
+    IF v_kind = 'archive' AND NOT EXISTS (
+         SELECT 1 FROM inspection_reports r
+          WHERE r.site_id = v_site AND r.machine_key = v_mk AND r.deleted_at IS NULL AND r.inspected_on > v_insp) THEN
+      RAISE EXCEPTION 'דוח ישן — רק דוח שנבדק לפני הבדיקה האחרונה של המתקן'
         USING ERRCODE = 'check_violation'; END IF;
   END IF;
 
@@ -1343,9 +1349,14 @@ BEGIN
   IF v_new.valid_until IS NOT NULL
      AND (v_new.valid_until <= v_new.inspected_on OR v_new.valid_until > v_new.inspected_on + 800) THEN
     RAISE EXCEPTION 'תאריך התוקף חייב להיות אחרי תאריך הבדיקה ועד כשנתיים ממנו' USING ERRCODE = 'check_violation'; END IF;
-  -- דוח ישן (11/10/2026): גם בעריכה — רק כשהבדיקה הבאה כבר עברה, ולעולם לא "נקי"
-  IF v_old.kind = 'archive' AND v_new.valid_until >= app.compliance_today() THEN
-    RAISE EXCEPTION 'דוח ישן — רק דוח שהבדיקה הבאה שבו כבר עברה. תסקיר בתוקף מעלים כתסקיר רגיל'
+  -- דוח ישן (11/10/2026): גם בעריכה — תאריך הבדיקה (או המתקן) שנערך חייב להישאר מוקדם מבדיקה אחרת
+  -- של אותו מתקן, ולעולם לא "נקי"
+  IF v_old.kind = 'archive'
+     AND (v_new.inspected_on IS DISTINCT FROM v_old.inspected_on OR v_new.machine_key IS DISTINCT FROM v_old.machine_key)
+     AND NOT EXISTS (SELECT 1 FROM inspection_reports r
+                      WHERE r.site_id = v_old.site_id AND r.machine_key = v_new.machine_key AND r.deleted_at IS NULL
+                        AND r.id <> v_old.id AND r.inspected_on > v_new.inspected_on) THEN
+    RAISE EXCEPTION 'דוח ישן — רק דוח שנבדק לפני הבדיקה האחרונה של המתקן'
       USING ERRCODE = 'check_violation'; END IF;
   IF v_old.kind = 'archive' AND v_new.declared_clean THEN
     RAISE EXCEPTION 'דוח ישן אינו מסומן נקי — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;

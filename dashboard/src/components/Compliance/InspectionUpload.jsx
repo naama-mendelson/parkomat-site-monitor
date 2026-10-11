@@ -367,11 +367,15 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
   // ============================================================
   // ⚠️ דוח ישן — היסטוריה בלבד (בעלת המוצר, 11/10/2026)
   // ============================================================
-  // "בדוחות אלו לא ישמר האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה". הבחירה מוצעת רק
-  // כשהבדיקה הבאה שבמסמך כבר עברה (בחירתה), כמו השרת: valid_until < היום. דוח ישן נשמר בלי
-  // ליקויים ובלי "נקי", ואינו צובע את הנורה (kind = 'archive' — compliance.postgres.sql).
-  const expired = !!f && f.kind === "periodic" && !!f.valid_until && f.valid_until < today;
-  const asArchive = expired && f.oldChoice === "archive";
+  // "בדוחות אלו לא ישמר האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה". "זוהה קובץ ישן, לשמור?"
+  // מוצע רק כשתאריך הבדיקה **מוקדם מהבדיקה האחרונה של אותו מתקן** — כל סוג דוח ("כאשר תאריך הבדיקה
+  // שהתבצעה קטן מהתאריך האחרון שהבדיקה התבצעה"; גרסה ראשונה הציעה לפי תוקף, והיא תוקנה). אותו כלל
+  // בשרת (inspection_upload). דוח ישן נשמר בלי ליקויים ובלי "נקי", ואינו צובע את הנורה.
+  const latestInsp = machineKey
+    ? reports.filter((r) => r.machine_key === machineKey).reduce((m, r) => (r.inspected_on > m ? r.inspected_on : m), "")
+    : "";
+  const isOld = !!f && f.kind === "periodic" && !!f.inspected_on && !!latestInsp && f.inspected_on < latestInsp;
+  const asArchive = isOld && f.oldChoice === "archive";
   const clean = !!f && !asArchive && f.defectsChoice === "none";
   const withDefects = !!f && !asArchive && f.defectsChoice === "some";
 
@@ -393,7 +397,7 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     if (f.kind === "followup" && parent && f.inspected_on && f.inspected_on < parent.inspected_on) {
       inspProblem("בדיקה חוזרת אינה יכולה להיות לפני התסקיר התקופתי");
     }
-    if (expired && !f.oldChoice) problems.push("תשובה ל\"זוהה קובץ ישן, לשמור?\"");
+    if (isOld && !f.oldChoice) problems.push("תשובה ל\"זוהה קובץ ישן, לשמור?\"");
     if (!asArchive && !f.defectsChoice) problems.push("יש ליקויים או אין");
     if (withDefects) {
       if (f.defects.length === 0) problems.push("לפחות ליקוי אחד");
@@ -762,8 +766,8 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
               </span>
             </label>
 
-            {/* ---- דוח ישן — רק כשהבדיקה הבאה שבמסמך כבר עברה; בלי בחירה מראש (11/10/2026) ---- */}
-            {expired && (
+            {/* ---- דוח ישן — רק כשנבדק לפני הבדיקה האחרונה של המתקן; בלי בחירה מראש (11/10/2026) ---- */}
+            {isOld && (
               // ⚠️ הנוסח של בעלת המוצר (11/10/2026): "זוהה קובץ ישן, לשמור?" — ועדיין שתי תשובות, בלי בחירה מראש
               <fieldset className="iu-old" role="radiogroup" aria-label="זוהה קובץ ישן, לשמור?">
                 <legend className="it-label">זוהה קובץ ישן, לשמור?</legend>
