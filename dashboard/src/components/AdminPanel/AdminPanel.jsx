@@ -14,7 +14,6 @@ import { LIFT_CONSOLES, LIFT_TYPES, liftLabel, liftNeedsConsole, liftProblem } f
 import { useAdmin } from "../../hooks/useAdmin";
 import { copyText } from "../../utils/clipboard";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
-import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AdminPanel.css";
 import Logo from "../Logo/Logo";
 
@@ -113,7 +112,6 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
       plcType: site.plc_type ?? "",
       controlSystem: site.control_system ?? "",
       initialControlSystem: site.control_system ?? "",
-      fixflowProfile: site.fixflow_profile ?? "",   // פיילוט FixFlow
       // סוג המעלית והקונזול (11/10/2026) — כדי להשלים אתרים שנרשמו לפני השדה
       liftType: site.lift_type ?? "",
       liftConsole: site.lift_console ?? "",
@@ -153,9 +151,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
         plc_type: draft.plcType,
         // ⚠️ רק כששונתה — ריק כששונתה פירושו "נקה". undefined = אל תיגע.
         control_system: draft.controlSystem !== draft.initialControlSystem ? draft.controlSystem : undefined,
-        // ⚠️ נשלח תמיד, גם ריק — מאותה סיבה בדיוק כמו סוג המתקן: ריק הוא
-        // "חזור לגזירה האוטומטית", ובלי שליחה אי אפשר לבטל בחירה. פיילוט FixFlow.
-        fixflow_profile: draft.fixflowProfile,
+        // ⚠️ אין fixflow_profile (11/10/2026, "תעיף את זה. שזה יעשה אוטומטי בכל מקרה"): הספרייה נגזרת
+        // תמיד אוטומטית. בלי המפתח updateSiteDirect אינו שולח p_fixflow_profile, והשרת אינו נוגע.
         // סוג מעלית וקונזול — רק כששונו. החלפת סוג שולחת גם את הקונזול (בסוג בלי קונזול השרת
         // מוחק אותו); שינוי קונזול לבד — רק אותו.
         ...(liftChanged && draft.liftType ? { lift_type: draft.liftType, lift_console: draft.liftConsole } : {}),
@@ -547,14 +544,6 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                           </select>
                         </label>
                       )}
-                      <FixFlowPicker
-                        // ⚠️ עם הטיוטה, לא עם השמור: שינוי מערכת או סוג בטופס חייב
-                        // לשנות מיד את היעד האוטומטי שמוצג מתחת — אחרת רואים את
-                        // התוצאה הישנה ושומרים משהו אחר.
-                        site={{ ...s, plc_type: draft.plcType || null, control_system: draft.controlSystem || null }}
-                        value={draft.fixflowProfile}
-                        onChange={(v) => setDraft({ ...draft, fixflowProfile: v })}
-                      />
                       <p className="adm-warn">
                         ⚠ שינוי הקוד משנה את נתיב ה-MQTT. הסוכן באתר חייב להתעדכן גם הוא,
                         אחרת הודעותיו יידחו.

@@ -8,7 +8,6 @@ import { copyText } from "../../utils/clipboard";
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { LIFT_CONSOLES, LIFT_TYPES, liftNeedsConsole, liftProblem } from "../../../../shared/lift-types.mjs";
-import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AddSiteModal.css";
 
 // קוד חוקי — חייב להתאים לכלל שה-Master אוכף. הקוד נכנס כמות שהוא לנתיב ה-MQTT
@@ -21,7 +20,6 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [siteName, setSiteName] = useState("");
   const [plcType, setPlcType] = useState("");
   const [controlSystem, setControlSystem] = useState("");
-  const [fixflowProfile, setFixflowProfile] = useState("");   // פיילוט FixFlow
   // אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד; בלי זהות סוכן
   const [noController, setNoController] = useState(false);
   // סוג המעלית והקונזול (11/10/2026) — חובה; הקונזול רק בסוגים שפותחים אותו (1, 2, 6)
@@ -58,8 +56,8 @@ function AddSiteModal({ onClose, onSuccess }) {
         site_name: trimmedName,
         plc_type: plcType.trim() || undefined,
         control_system: controlSystem || undefined,
-        // ⚠️ ריק = תיגזר אוטומטית משם האתר או מסוג המכונה. פיילוט FixFlow.
-        fixflow_profile: fixflowProfile || undefined,
+        // ⚠️ אין fixflow_profile (11/10/2026, "תעיף את זה. שזה יעשה אוטומטי בכל מקרה"): ספריית התקלות
+        // נגזרת תמיד אוטומטית — משם האתר או מסוג המתקן והמערכת (shared/fixflow-profiles.mjs).
         ...(noController ? { monitored: false } : {}),
         lift_type: liftType,
         ...(liftNeedsConsole(liftType) ? { lift_console: liftConsole } : {}),
@@ -268,17 +266,6 @@ function AddSiteModal({ onClose, onSuccess }) {
             <input type="checkbox" checked={noController} onChange={(e) => setNoController(e.target.checked)} />
             <span>ללא בקר מחובר — בודק, תחזוקה ומשימות בלבד</span>
           </label>
-
-          {/* פיילוט FixFlow — ספריית התקלות של האתר. ⚠️ כאן ולא רק בעריכה:
-              אתר שנרשם בלי בחירה מציג "אין ספריית תקלות" עד שמישהו יזכור
-              לחזור אליו, וזה בדיוק סוג המשימה שנשכחת. */}
-          <div className="addsite-field">
-            <FixFlowPicker
-              site={{ code: code.trim(), plc_type: plcType.trim() || null, control_system: controlSystem || null }}
-              value={fixflowProfile}
-              onChange={setFixflowProfile}
-            />
-          </div>
 
           {error && <div className="addsite-error" role="alert">{error}</div>}
 

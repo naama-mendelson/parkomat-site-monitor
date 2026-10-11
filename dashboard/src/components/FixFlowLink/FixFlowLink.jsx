@@ -4,9 +4,7 @@
 // היחידה לשאר הדשבורד היא שורה אחת ב-SiteCard. זו דרישת התכנון: "אם לא אהיה
 // מרוצה תעיף את כל ה-FixFlow מהאתר".
 import React, { useState } from "react";
-import FixFlowAssign from "./FixFlowAssign.jsx";
 import FixFlowFrame from "./FixFlowFrame.jsx";
-import { useSavedAssignment, rememberAssignment } from "./savedAssignment.js";
 import { fixflowLinkFor, fixflowSolutionFor, FIXFLOW_ENABLED } from "../../services/fixflow.js";
 import "./FixFlowLink.css";
 
@@ -20,16 +18,13 @@ import "./FixFlowLink.css";
 
 export default function FixFlowLink({ site, faultText }) {
   // ⚠️ ההוק לפני כל `return` מוקדם — React אוסר קריאה מותנית להוקים.
-  const [assigning, setAssigning] = useState(false);
   const [open, setOpen] = useState(false);
-  // ⚠️ הבחירה שנשמרה זה עתה מוחזקת בחנות משותפת, כדי שהכפתור **והפאנל** יתעדכנו **מיד**.
-  // בלי זה היה צריך לרענן את הדף כדי לראות שהשיוך תפס, ומי שלא רואה תוצאה
-  // מניח שזה לא נשמר ומנסה שוב.
-  const effective = useSavedAssignment(site);
-  const onSaved = (v) => rememberAssignment(site, v);
+  // ⚠️ אין יותר שיוך ידני מהכרטיס (11/10/2026, בעלת המוצר: "תעיף את זה. שזה יעשה אוטומטי בכל
+  // מקרה"): הספרייה נגזרת תמיד — משם האתר או מסוג המתקן והמערכת. אתר שהגזירה נכשלת בו מתוקן
+  // בעריכת האתר (סוג מתקן, מערכת) או במיפוי ב-shared/fixflow-profiles.mjs — לא בבחירה על האתר.
   if (!FIXFLOW_ENABLED) return null;
 
-  const link = fixflowLinkFor(effective, faultText);
+  const link = fixflowLinkFor(site, faultText);
   if (!link) return null;
 
   // ============================================================
@@ -42,35 +37,17 @@ export default function FixFlowLink({ site, faultText }) {
   // ⚠️ **ורק בהתאמה ודאית.** כשאין — חוזרים לרשימה המדורגת, שהיא עדיין
   // התשובה הנכונה. קפיצה ל"הכי קרוב" הייתה פותחת נוהל של תקלה אחרת, וכל
   // הצעדים בו נראים סבירים.
-  // ⚠️ `effective` ולא `site`: אחרי שיוך מחדש הכפתור פתח את נוהל הספרייה הקודמת.
-  const solution = faultText ? fixflowSolutionFor(effective, faultText) : null;
+  const solution = faultText ? fixflowSolutionFor(site, faultText) : null;
 
   // ⚠️ מצב שאינו "ok" מוצג כטקסט מושבת ולא מוסתר. הסתרה הייתה משאירה את המוקדן
   // בלי מושג למה באתר אחד יש כפתור ובאחר אין — ובמקרה של `no-type` הסיבה היא
   // שדה חסר שהוא **יכול** למלא בעצמו.
   if (link.status !== "ok") {
     return (
-      <>
-        {/* ⚠️ כפתור ולא טקסט מושבת. הסיבה שהאתר בלי ספרייה ניתנת לתיקון
-            בשתי לחיצות, והמקום שבו מגלים אותה הוא בדיוק המקום שבו כדאי
-            לתקן — אחרת זה נדחה ונשכח. */}
-        <button
-          className="ffl ffl-off ffl-fix"
-          title={`${link.reason} — לחצי כדי לשייך ספרייה`}
-          onClick={(e) => { e.stopPropagation(); setAssigning(true); }}
-        >
-          <span className="ffl-icon" aria-hidden="true">📚</span>
-          <span className="ffl-text">שייכי ספריית תקלות</span>
-        </button>
-        {assigning && (
-          <FixFlowAssign
-            site={effective}
-            reason={link.reason}
-            onClose={() => setAssigning(false)}
-            onSaved={onSaved}
-          />
-        )}
-      </>
+      <span className="ffl ffl-off" title={link.reason}>
+        <span className="ffl-icon" aria-hidden="true">📚</span>
+        <span className="ffl-text">אין ספריית תקלות</span>
+      </span>
     );
   }
 
@@ -78,28 +55,11 @@ export default function FixFlowLink({ site, faultText }) {
   // היא נראית בדיוק כמו "אין תקלות ידועות לאתר הזה", וזה הכשל הכי שקט כאן.
   // שלושה אתרים במצב הזה היום (מצבט X), וכולם ממתינים לייצוא מסמכי Google.
   if (link.docs === 0) {
-    // ⚠️ גם ספרייה ריקה ניתנת לשינוי מכאן. לפעמים היא ריקה כי המסמכים טרם
-    // יוצאו מהכונן — ואז אין מה לעשות — ולפעמים כי האתר משויך לספרייה הלא
-    // נכונה. מהכרטיס אי אפשר לדעת מי משניהם, ולכן עדיף לאפשר.
     return (
-      <>
-        <button
-          className="ffl ffl-off ffl-fix"
-          title="אין ספריית תקלות עם תוכן לאתר הזה — לחצי כדי לשייך"
-          onClick={(e) => { e.stopPropagation(); setAssigning(true); }}
-        >
-          <span className="ffl-icon" aria-hidden="true">📚</span>
-          <span className="ffl-text">שייכי ספריית תקלות</span>
-        </button>
-        {assigning && (
-          <FixFlowAssign
-            site={effective}
-            reason="אין ספריית תקלות עם תוכן לאתר הזה."
-            onClose={() => setAssigning(false)}
-            onSaved={onSaved}
-          />
-        )}
-      </>
+      <span className="ffl ffl-off" title="אין ספריית תקלות עם תוכן לאתר הזה">
+        <span className="ffl-icon" aria-hidden="true">📚</span>
+        <span className="ffl-text">ספריית תקלות ריקה</span>
+      </span>
     );
   }
 
@@ -138,32 +98,6 @@ export default function FixFlowLink({ site, faultText }) {
       />
     )}
 
-    {/* ============================================================
-        ⚠️ שינוי שיוך זמין **תמיד**, גם כשהקישור עובד
-        ============================================================
-        קישור שעובד ומוביל לספרייה הלא נכונה גרוע מקישור שבור: השבור אומר
-        שהוא שבור, והשגוי נראה תקין וכל הצעדים בו סבירים. נמדד: הזורע 2
-        קושר אוטומטית ל-`שאטל דולי` לפי דמיון שם — ואין שום דרך מהכרטיס
-        לדעת אם זה נכון, ובוודאי לא לתקן.
-        ⚠️ ולכן הוא **קטן ונפרד** מהכפתור הראשי. הפעולה באירוע היא לפתוח
-        את הנוהל; שינוי הגדרות הוא לא, והוא לא צריך להתחרות עליה. */}
-    <button
-      className="ffl-edit"
-      title={`משויך ל: ${link.system} / ${link.profile}${link.docs ? ` · ${link.docs} מסמכים` : ""} — לחצי לשינוי`}
-      aria-label="שינוי ספריית התקלות"
-      onClick={(e) => { e.stopPropagation(); setAssigning(true); }}
-    >
-      ✎
-    </button>
-
-    {assigning && (
-      <FixFlowAssign
-        site={effective}
-        reason={`משויך כרגע ל-${link.system} / ${link.profile}${link.docs ? ` · ${link.docs} מסמכים` : ""}.`}
-        onClose={() => setAssigning(false)}
-        onSaved={onSaved}
-      />
-    )}
     </>
   );
 }

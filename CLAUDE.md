@@ -1801,3 +1801,40 @@ Her decisions the same day:
   that already has a type gets no "— לבחור —" in the edit row.
 - The `master` server arm does not know the field. It is retired, and the direct arm is the only
   one in use.
+
+## FixFlow is always automatic; the supervisor table sorts by failure rate (11/10/2026)
+
+The owner, pointing at the "יעד ב-FixFlow" picker: *"תעיף את זה. שזה יעשה אוטומטי בכל מקרה"*. In
+the same message: *"שהעמוד מנהל בקרה שהאתרים ימוינו לפי אחוז כשל"*.
+
+**FixFlow: no manual choice anywhere.**
+- **Removed:**
+  - the picker in add-site and in the admin edit row;
+  - the card's "שייכי ספריית תקלות" and its "✎".
+  - `FixFlowPicker.jsx`, `FixFlowAssign.jsx`, `savedAssignment.js` and its test are deleted.
+- A card whose derivation fails shows "אין ספריית תקלות". The reason is in the title, for example
+  "לא הוגדר סוג מכונה". The fix is the site's machine type or system, or the mapping. It is no longer
+  a choice on the site.
+- **Measured before removing.** 13 of 69 sites had a manual `fixflow_profile`:
+  - 7: automatic gave the identical target;
+  - 3 (1212, 1376, 3501): the same library and document count. The only difference is a library
+    link instead of a FixFlow-site link, and those sites have no site overrides;
+  - 3502: automatic would pick a different library;
+  - 1200 and 1342: automatic failed.
+- **The owner chose "automatic for all", and three fixes keep the same libraries:**
+  - **A new mapping, `doli` + ביטנקם → `דולי ביטנקם`.** The evidence: אהרונסון 40 (1200) is filed
+    under it in FixFlow. It also gives 1222 a library; it had none.
+  - **3502 (אנטיגונוס 13) gets `plc_type` = `matzbet-x`.** The owner said the recorded Y was wrong;
+    its manual choice was the X library, as at אנטיגונוס 11.
+  - **1342 (שפר 20-22) gets `matzbet-x` and `control_system` = לולק.** That is how FixFlow files it.
+    Its name did not match because of "22-20" against "20-22".
+- After the 13 choices were cleared, 68 of 69 sites resolve. **1418 (פייבל 17)** has no machine
+  type; it had no library before either.
+- ⚠️ **Order matters:** clear the choices only after the dashboard with the new mapping is live.
+  Otherwise 1200 has no library in between.
+- `sites.fixflow_profile` and `update_site(p_fixflow_profile)` stay in place: `resolveChosen` still
+  honours a value. Nothing in the UI sets one any more.
+
+**The supervisor table** (`SupervisorView`) now opens sorted by **אחוז כשל, high to low**. Ties
+(most sites are at 0%) fall back to the old urgency order (`compareSitesByPriority`: status → tier).
+Clicking a header still sorts by that column.

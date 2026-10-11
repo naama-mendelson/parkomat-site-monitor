@@ -37,9 +37,10 @@ const complianceSeverity = (c) => worstSeverity(c);
 
 function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
   const [period, setPeriod] = useState("week");
-  // ברירת המחדל: מיון לפי דחיפות (מצב → דרגה → אחוז כשל) — כמו תצוגת הכרטיסים.
+  // ⚠️ ברירת המחדל: אחוז כשל, מהגבוה לנמוך (בעלת המוצר, 11/10/2026: "שהאתרים ימוינו לפי אחוז
+  // כשל"). עד אז — דחיפות (מצב → דרגה → אחוז כשל), כמו תצוגת הכרטיסים; היא נשארה כשובר שוויון.
   // לחיצה על כותרת עמודה עוברת למיון לפי אותה עמודה.
-  const [sortKey, setSortKey] = useState("priority");
+  const [sortKey, setSortKey] = useState("failureRate");
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilters, setStatusFilters] = useState([]);   // בחירה מרובה — ריק = הכל
   const [query, setQuery] = useState("");
@@ -90,8 +91,9 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
     const dir = sortDir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
       const av = a[sortKey], bv = b[sortKey];
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av ?? "").localeCompare(String(bv ?? ""), "he") * dir;
+      // ⚠️ שוויון (רוב האתרים ב-0% כשל) — לפי סדר הדחיפות, ולא לפי סדר ההגעה מהשרת
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir || compareSitesByPriority(a, b);
+      return String(av ?? "").localeCompare(String(bv ?? ""), "he") * dir || compareSitesByPriority(a, b);
     });
   }, [data, liveStatus, statusFilters, query, sortKey, sortDir]);
 

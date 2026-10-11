@@ -23,16 +23,13 @@
 // וההתאמה נעשית בדפדפן. עצי הטיפול נשארו בחוץ — הם 3.7MB.
 import React from "react";
 import { fixflowSolutionFor, FIXFLOW_ENABLED } from "../../services/fixflow.js";
-import { useSavedAssignment } from "./savedAssignment.js";
 import "./FixFlowLink.css";
 
 export default function FixFlowSolution({ site, faultText }) {
-  // ⚠️ השיוך שנשמר זה עתה — אחרת אזהרת הבטיחות הייתה של הספרייה הקודמת.
-  // ההוק לפני כל `return` מוקדם.
-  const effective = useSavedAssignment(site);
+  // (בלי "שיוך שנשמר זה עתה" — אין יותר שיוך ידני, 11/10/2026; הספרייה נגזרת תמיד מהאתר)
   if (!FIXFLOW_ENABLED || !faultText) return null;
 
-  const hit = fixflowSolutionFor(effective, faultText);
+  const hit = fixflowSolutionFor(site, faultText);
   // ⚠️ אין התאמה — אין פאנל, ובשקט. הכפתור הרגיל "תקלות ופתרונות" נשאר,
   // והמוקדן מגיע לרשימה. פאנל שאומר "לא נמצא נוהל" היה רעש קבוע על 53%
   // מהתקלות, ומי שרואה אותו פעמיים מפסיק לקרוא גם את זה שכן נמצא.
