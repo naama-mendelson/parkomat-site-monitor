@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { keepLastService, SERVICE_FIELDS } from "../../dashboard/src/utils/serviceMerge.js";
+import { keepLastService, keepLastTier, SERVICE_FIELDS } from "../../dashboard/src/utils/serviceMerge.js";
 
 const good = (code, over = {}) => ({
   code, status: "ready", tier: "vip", uptime: 99.1, failureRate: 2.5, serviceAgreement: "vip",
@@ -34,24 +34,24 @@ test("כשל — שדות השירות מהשליפה הקודמת, וכל הש�
 test("⚠️ כשלים רצופים — הערך שהועבר נשמר שוב, לא חוזרים ל'בסיסי' בכשל השני", () => {
   const first = keepLastService([good("1")], [failed("1")]);
   const second = keepLastService(first, [failed("1")]);
-  assert.equal(second[0].tier, "vip");
+  assert.equal(second[0].serviceAgreement, "vip");
   assert.equal(second[0].uptime, 99.1);
 });
 
 test("אין ערך ידוע (טעינה ראשונה שנכשלה, או אתר חדש) — ברירת המחדל נשארת", () => {
-  assert.equal(keepLastService([], [failed("1")])[0].tier, "basic");
-  assert.equal(keepLastService(null, [failed("1")])[0].tier, "basic");
-  assert.equal(keepLastService([good("2")], [failed("1")])[0].tier, "basic");
+  assert.equal(keepLastService([], [failed("1")])[0].uptime, 97.0);
+  assert.equal(keepLastService(null, [failed("1")])[0].uptime, 97.0);
+  assert.equal(keepLastService([good("2")], [failed("1")])[0].uptime, 97.0);
   // כשל קודם בלי ערך שהועבר אינו "ערך ידוע". ⚠️ ברירת מחדל *שונה* בשליפה
   // הקודמת (הדרגה הידנית שונתה בינתיים) — אחרת העתקה בטעות לא הייתה נראית,
   // כי שתי ברירות המחדל זהות. מוטציה שהפכה את התנאי ל-false עברה ירוק כך.
-  assert.equal(keepLastService([failed("1", { tier: "extended" })], [failed("1")])[0].tier, "basic");
+  assert.equal(keepLastService([failed("1", { uptime: 95 })], [failed("1")])[0].uptime, 97.0);
 });
 
 test("שליפה תקינה אחרי כשל — הערכים החדשים, לא הישנים", () => {
   const kept = keepLastService([good("1")], [failed("1")]);
-  const fresh = [good("1", { tier: "extended", uptime: 98 })];
-  assert.equal(keepLastService(kept, fresh)[0].tier, "extended");
+  const fresh = [good("1", { uptime: 98 })];
+  assert.equal(keepLastService(kept, fresh)[0].uptime, 98);
 });
 
 test("⚠️ כל שדה ש-sitesDirect גוזר מ-svc נמצא ב-SERVICE_FIELDS", () => {
@@ -65,4 +65,47 @@ test("⚠️ כל שדה ש-sitesDirect גוזר מ-svc נמצא ב-SERVICE_FIEL
   }
   assert.ok(derived.size >= 6, `נמצאו רק ${derived.size} שדות — הסריקה עצמה שבורה`);
   for (const f of derived) assert.ok(SERVICE_FIELDS.includes(f), `${f} נגזר מ-svc ואינו ב-SERVICE_FIELDS`);
+});
+
+// ============================================================
+// הדרגה — מ-site_service_links, וכשל שלה בלבד מפעיל את השמירה (11/10/2026)
+// ============================================================
+const tierOk = (code, tier) => ({ code, status: "ready", tier, tierStale: false });
+const tierFailed = (code, tier = "basic") => ({ code, status: "error", tier, tierStale: true });
+
+test("⚠️ כשל של שעות השירות אינו דורס את הדרגה — היא טרייה מהלוח", () => {
+  // החיבור ברמזור שינה את הדרגה ל-VIP; שעות השירות (הטבלה) עוד ישנות או נכשלו.
+  const out = keepLastService([good("1", { tier: "unlinked" })], [failed("1", { tier: "vip" })]);
+  assert.equal(out[0].tier, "vip", "keepLastService החזיר את 'לא חובר' הישן");
+  assert.ok(!SERVICE_FIELDS.includes("tier"));
+});
+
+test("keepLastTier — בלי כשל, אותו מערך", () => {
+  const next = [tierOk("1", "vip")];
+  assert.equal(keepLastTier([tierOk("1", "basic")], next), next);
+});
+
+test("keepLastTier — כשל: הדרגה מהשליפה הקודמת, וכל השאר מהחדשה", () => {
+  const out = keepLastTier([tierOk("1", "vip")], [tierFailed("1")]);
+  assert.equal(out[0].tier, "vip");
+  assert.equal(out[0].status, "error");
+  assert.equal(out[0].tierKept, true);
+});
+
+test("⚠️ keepLastTier — כשלים רצופים: הערך שהועבר נשמר שוב", () => {
+  const first = keepLastTier([tierOk("1", "vip")], [tierFailed("1")]);
+  assert.equal(keepLastTier(first, [tierFailed("1")])[0].tier, "vip");
+});
+
+test("keepLastTier — אין ערך ידוע: ברירת המחדל נשארת", () => {
+  assert.equal(keepLastTier([], [tierFailed("1")])[0].tier, "basic");
+  assert.equal(keepLastTier(null, [tierFailed("1")])[0].tier, "basic");
+  assert.equal(keepLastTier([tierOk("2", "vip")], [tierFailed("1")])[0].tier, "basic");
+  // כשל קודם בלי ערך שהועבר אינו "ערך ידוע" — וברירת מחדל *שונה* בקודמת, כדי שהעתקה תיראה
+  assert.equal(keepLastTier([tierFailed("1", "extended")], [tierFailed("1")])[0].tier, "basic");
+});
+
+test("keepLastTier — שליפה תקינה אחרי כשל: הערך החדש", () => {
+  const kept = keepLastTier([tierOk("1", "vip")], [tierFailed("1")]);
+  assert.equal(keepLastTier(kept, [tierOk("1", "extended")])[0].tier, "extended");
 });

@@ -462,3 +462,46 @@ GRANT EXECUTE ON FUNCTION public.tl_delete_row(bigint)                        TO
 GRANT EXECUTE ON FUNCTION public.tl_move_row(bigint, double precision)        TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_set_cell(bigint, text, jsonb)             TO authenticated;
 GRANT EXECUTE ON FUNCTION public.tl_paste_rows(jsonb, text)                   TO authenticated;
+
+-- ============================================================
+-- ⚠️ כל שינוי בלוח שולח אירוע 'service_link' — אחד לטרנזקציה (11/10/2026)
+-- ============================================================
+-- סוג השירות שעל כרטיס האתר נגזר מהלוח (public.site_service_links). בלי האירוע, חיבור
+-- אתר לשורה שלו ברמזור לא הגיע לאף מסך עד הטעינה החיה הבאה (5 דקות), ובמסך של מי
+-- שחיבר — רק אם הקוד שלו זכר לרענן. עכשיו App טוען את הרשימה מחדש על האירוע.
+--
+-- ⚠️ **טריגר ולא קריאה בכל פונקציית tl_*:** תשע פונקציות כותבות ללוח (ועוד כלי הייבוא),
+-- וזו שתישכח היא בדיוק זו שהשינוי שלה לא יגיע. הטריגר תופס את כולן — גם עתידיות.
+--
+-- ⚠️ **אחד לטרנזקציה, לא לפקודה.** tl_paste_rows מכניס שורה-שורה בלולאה, כלומר הדבקה של
+-- 50 שורות הייתה 50 אירועים ו-50 הודעות לכל מסך פתוח. הדגל מקומי לטרנזקציה (is_local).
+--
+-- ⚠️ על כל לוח, גם המכפילים: בטריגר ברמת פקודה אין שורות לבדוק. העלות — טעינה חיה אחת
+-- מיותרת על עריכה ידנית בלוח המכפילים; אין cron שכותב ללוח.
+CREATE OR REPLACE FUNCTION app.tl_board_changed()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  IF COALESCE(current_setting('app.tl_event_sent', true), '') <> '1' THEN
+    PERFORM set_config('app.tl_event_sent', '1', true);
+    PERFORM app.record_write_event('*', 'service_link',
+      jsonb_build_object('type', 'service_link', 'table', TG_TABLE_NAME));
+  END IF;
+  RETURN NULL;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.tl_board_changed() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS tl_rows_changed ON traffic_light_rows;
+CREATE TRIGGER tl_rows_changed
+  AFTER INSERT OR UPDATE OR DELETE ON traffic_light_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION app.tl_board_changed();
+
+DROP TRIGGER IF EXISTS tl_columns_changed ON traffic_light_columns;
+CREATE TRIGGER tl_columns_changed
+  AFTER INSERT OR UPDATE OR DELETE ON traffic_light_columns
+  FOR EACH STATEMENT EXECUTE FUNCTION app.tl_board_changed();

@@ -46,9 +46,10 @@ export function statsDueOnReturn(lastStatsAt, now = Date.now()) {
 // כל 5 דקות: "0 פעולות", זמינות "—", ומסלול "בסיסי" לאתר VIP.
 // ⚠️ שדה שיתווסף שם ולא כאן יקפוץ לברירת המחדל — tests/site-sync.test.js בודק את
 // הרשימה מול sitesDirect.
+// ⚠️ **"tier" יצא מכאן (11/10/2026).** הדרגה נגזרת עכשיו מ-site_service_links בכל טעינה,
+// גם החיה — העתקה מהמסך הייתה דורסת את הערך הטרי בישן, וחיבור ברמזור לא היה נראה.
 export const STATS_FIELDS = [
   "statsAt",
-  "tier",
   "failureRate",
   "serviceOperations",
   "serviceErrors",

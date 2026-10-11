@@ -17,8 +17,9 @@
 
 // כל השדות ש-sitesDirect גוזר מ-`site_uptime_service`. שדה שיתווסף שם ולא כאן
 // יקפוץ שוב לברירת המחדל בכל כשל — ולכן הרשימה נבדקת ב-tests/service-merge.test.js.
+// ⚠️ "tier" יצא מכאן (11/10/2026): הוא מגיע מ-site_service_links ולא מ-site_uptime_service,
+// וכשל של שעות השירות אינו נוגע בו. לכשל של הקריאה ההיא — keepLastTier למטה.
 export const SERVICE_FIELDS = [
-  "tier",
   "uptime",
   "failureRate",
   "serviceAgreement",
@@ -44,5 +45,27 @@ export function keepLastService(prev, next) {
     const kept = {};
     for (const f of SERVICE_FIELDS) kept[f] = old[f];
     return { ...s, ...kept, serviceKept: true };
+  });
+}
+
+// ============================================================
+// הדרגה — אותו כלל, למקור שלה (11/10/2026)
+// ============================================================
+// הדרגה נגזרת מ-site_service_links בכל טעינה. כשהקריאה נכשלה (`tierStale`), effectiveTier
+// נופלת ל-`sites.tier` ("בסיסי" אצל כמעט כולם) — בדיוק הקפיצה שתוארה למעלה. לכן: הערך מהשליפה
+// הקודמת שהצליחה, וגם לאורך כשלים רצופים; בלי ערך ידוע — ברירת המחדל נשארת.
+/**
+ * @param {Array|null} prev  הרשימה שעל המסך
+ * @param {Array} next       השליפה החדשה (אתר עם `tierStale: true` = הקריאה נכשלה)
+ * @returns {Array} next, ובאתרים שנכשלו — הדרגה מהשליפה הקודמת שהצליחה
+ */
+export function keepLastTier(prev, next) {
+  if (!Array.isArray(next) || !next.some((s) => s && s.tierStale)) return next;
+  const byCode = new Map((Array.isArray(prev) ? prev : []).map((s) => [s.code, s]));
+  return next.map((s) => {
+    if (!s || !s.tierStale) return s;
+    const old = byCode.get(s.code);
+    if (!old || (old.tierStale && !old.tierKept)) return s;
+    return { ...s, tier: old.tier, tierKept: true };
   });
 }

@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchSitesList } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
 import { mergeCompliance, complianceFailed, complianceFetched } from "../utils/complianceMerge.js";
-import { keepLastService } from "../utils/serviceMerge.js";
+import { keepLastService, keepLastTier } from "../utils/serviceMerge.js";
 import { keepLastStats, statsMissing } from "../utils/siteSync.js";
 
 // ⚠️ כל כמה זמן הרשימה שולפת גם את רמזורי הבודק/התחזוקה. הם משתנים לכל היותר
@@ -140,7 +140,8 @@ export function useSites({ hold = false } = {}) {
         setSites((prev) => {
           // טעינה חיה — שדות הסטטיסטיקה מהרשימה שעל המסך (siteSync), ואז:
           // כשל בשעות השירות — הערך האחרון הידוע, לא "בסיסי" ו-24/7 לדקה (serviceMerge)
-          const { list, missing } = mergeCompliance(prev, keepLastService(prev, keepLastStats(prev, data)), startedAt, patchedAt.current);
+          const merged = keepLastTier(prev, keepLastService(prev, keepLastStats(prev, data)));
+          const { list, missing } = mergeCompliance(prev, merged, startedAt, patchedAt.current);
           // אתר חדש (או שנוסף מאז הסבב האחרון) — הסבב הבא שולף רמזורים, לא בעוד 5 דקות
           if (missing) lastComplianceAt.current = 0;
           return list;

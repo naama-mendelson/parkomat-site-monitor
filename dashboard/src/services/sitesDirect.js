@@ -82,7 +82,7 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   //
   // ⚠️ **ובלי נפילה לחישוב חי.** טבלה ריקה (ה-cron לא רץ) תציג "0 פעולות", וזה
   // בכוונה: נפילה שקטה לחישוב במסך היא בדיוק מה שהיה מחזיר את העומס בלי שאיש ידע.
-  const [sitesRes, metricsRes, globalsRes, compRes] = await Promise.all([
+  const [sitesRes, metricsRes, globalsRes, compRes, linksRes] = await Promise.all([
     supabase.from("sites").select("*"),
     withStats
       ? supabase.from("site_card_metrics").select("site_id, computed_at, stats, prev, uptime, svc")
@@ -95,6 +95,15 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     // לכל היותר פעם ביום (או באירוע — ואז App שולף שורה אחת). useSites מבקש
     // אותה פעם בכמה דקות; כשלא התבקשה — `compliance: null` = "השאר את הקודם".
     withCompliance ? supabase.rpc("site_compliance", { p_site_ids: null }) : Promise.resolve(null),
+    // ============================================================
+    // ⚠️ סוג השירות — מהלוח עצמו, **בכל טעינה** (11/10/2026)
+    // ============================================================
+    // בעלת המוצר: "ברגע שמחברים אתר לשורת הסוג שירות שלו — שישתנה ישר הכיתוב 'לא חובר'".
+    // התג נגזר מ-`svc` של site_card_metrics, שה-cron מרענן פעם ב-10 דקות ושנקרא רק בכניסה
+    // לדף — ולכן חיבור ברמזור לא שינה אותו. site_service_links סורקת את הלוח בלבד (זול),
+    // ו-App טוען מחדש על אירוע 'service_link' שהלוח שולח (traffic-light.postgres.sql).
+    // ⚠️ אינה קטלנית: כשל משאיר את הדרגה האחרונה הידועה (keepLastTier ב-utils/serviceMerge).
+    supabase.rpc("site_service_links"),
   ]);
 
   // השורות השמורות → אותם ארבעה "תשובות RPC" שהמיפוי למטה קרא תמיד. svc קיים רק
@@ -126,6 +135,8 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   // עובד; אתר בלי ערך פשוט ממשיך להציג 24/7. `svcRes.error` לא נכלל
   // ב-`failed` למעלה מאותה סיבה בדיוק.
   const svcById = new Map(((svcRes && svcRes.data) || []).map((r) => [r.site_id, r]));
+  const linksFailed = Boolean(linksRes?.error);
+  const linkById = new Map(((!linksFailed && linksRes?.data) || []).map((r) => [r.site_id, r]));
   const prevById    = new Map((prevRes.data     || []).map((r) => [r.site_id, r]));
   // ⚠️ `compError` נשמר על כל אתר ולא נבלע: מנורה עם "?" וסיבה בחלונית
   // הריחוף אומרת "לא יודעים", ומנורה שנעלמת בשקט נראית כמו "אין מה לדווח".
@@ -156,8 +167,9 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       statsSkipped: !withStats,
       statsAt: withStats ? (computedAt.get(site.id) ?? null) : null,
       // ⚠️ רמת השירות מגיעה מהרמזור, ואתר בלי שורה בו הוא "לא חובר" —
-      // ראה `effectiveTier`.
-      tier: effectiveTier(svc, Boolean(svcRes?.error), site.tier),
+      // ראה `effectiveTier`. ⚠️ מ-site_service_links (עכשיו), לא מהטבלה השמורה — ראה למעלה.
+      tier: effectiveTier(linkById.get(site.id) || null, linksFailed, site.tier),
+      tierStale: linksFailed,
       // ⚠️ **הדרגה שבמסד, בנפרד.** טופס העריכה נזרע מ-`tier` ושלח אותו תמיד,
       // ולכן שינוי שם של אתר מחובר **כתב את דרגת ההסכם לתוך `sites.tier`** —
       // והדרגה הידנית אבדה לצמיתות, גם אחרי ניתוק מהרמזור.

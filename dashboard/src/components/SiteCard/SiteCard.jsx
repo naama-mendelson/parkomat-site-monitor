@@ -144,6 +144,13 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const label = siteStatusLabel({ ...site, status });
   const isMini = density === "mini";
   const isNormal = density === "normal";
+  // ⚠️ ב-compact קוד האתר יורד לקצה השמאלי של שורת המצב, ותג ההסכם תופס את מקומו בשורת השם
+  // (בעלת המוצר, 11/10/2026: "שיופיע בשורה של שם האתר"). נמדד על 69 השמות האמיתיים: שורת שם
+  // של 165–192px אינה מחזיקה שם + תג + קוד — 46 מ-79 שמות קוצרו והתג עלה על הקוד. התג
+  // במקום הקוד (34px מול 35–49px של VIP / מורחב / בסיסי) כמעט אינו לוקח מהשם.
+  const codeInRow = density === "compact"
+    ? <span className="card-code card-code--row">#{site.code}</span>
+    : null;
   // מנורת בודק/תחזוקה פותחת את חלון האתר **על הלשונית שלה**, לא על הסקירה.
   const openTab = (tab) => onOpenDetail?.(site.code, tab);
 
@@ -634,8 +641,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <span ref={name.ref} className="card-name-text"
                   title={name.trimmed ? site.site_name : undefined}>{name.text}</span>
             {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} />}
+            {!isMini && <TierBadge tier={site.tier} />}
           </span>
-          {!isMini && <span className="card-code">#{site.code}</span>}
+          {isNormal && <span className="card-code">#{site.code}</span>}
         </div>
         {isMini ? (
           <span className="mini-dot-wrap">
@@ -647,6 +655,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <span className="unmonitored-tag">ללא בקר מחובר</span>
             {site.compliance !== undefined &&
               <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
+            {codeInRow}
           </div>
         )}
         {!isMini && taskButtons}
@@ -835,11 +844,18 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
               ⚠️ ותג הדרגה אמר "בסיסי" ב**כל** 21 הכרטיסים: אפס מידע מבחין,
               על חשבון הדבר היחיד שכן מבחין ביניהם. השם הוא הזיהוי; אם רק
-              אחד מהם יכול להיות גלוי, זה הוא. */}
+              אחד מהם יכול להיות גלוי, זה הוא.
+
+              ⚠️ **תג ההסכם חזר ל-compact (11/10/2026), בשורת השם — החלטת בעלת המוצר.**
+              "אני רוצה שיופיע ההסכם שירות על כל כרטיס בכל מצב", ואחר כך "בשורה של שם
+              האתר". מעל 60 אתרים הרשת תמיד compact (וגם בטלפון), כלומר התג לא נראה באף
+              כרטיס סגור. והוא כבר אינו "בסיסי" בכולם — הוא מגיע מהרמזור. ⚠️ השם עדיין
+              גובר: התג תופס את מקום הקוד, שיורד לשורת המצב (`codeInRow`), רצפת הרוחב של השם
+              ו-useFitName לא השתנו, ותג הסוג נשאר ב-normal בלבד. */}
           {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} />}
-          {isNormal && <TierBadge tier={site.tier} />}
+          {!isMini && <TierBadge tier={site.tier} />}
         </span>
-        {!isMini && <span className="card-code">#{site.code}</span>}
+        {isNormal && <span className="card-code">#{site.code}</span>}
       </div>
 
       {isMini ? (
@@ -862,14 +878,16 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <MiniMark compliance={site.compliance} onOpen={openTab} />
           </span>
         </>
-      ) : site.compliance === undefined ? (
+      ) : site.compliance === undefined && !codeInRow ? (
         statusTag
       ) : (
-        // ⚠️ עטיפה רק כשיש רמזורים: במצב שרת (compliance === undefined) הכרטיס
-        // נשאר זהה לחלוטין למה שהיה — בלי שורה ריקה ובלי שינוי פריסה.
+        // ⚠️ עטיפה רק כשיש רמזורים או קוד בשורה: במצב שרת (compliance === undefined)
+        // כרטיס normal נשאר זהה לחלוטין למה שהיה — בלי שורה ריקה ובלי שינוי פריסה.
         <div className="card-status-row">
           {statusTag}
-          <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />
+          {site.compliance !== undefined &&
+            <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
+          {codeInRow}
         </div>
       )}
 

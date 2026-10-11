@@ -1474,3 +1474,47 @@ document (< 8px) and any scroll inside `.app-header`. The second matters because
 inside itself on a short phone. A real scroll, of the document or of the card grid, still closes the
 panel. `probe-cf` P1b (a late tap, after 1.2s) and P7 (a real wheel scroll closes the panel) pin both
 directions, three runs in a row.
+
+## The service agreement on every card, and "לא חובר" changes the moment a site is linked (11/10/2026)
+
+The owner asked for two things: *"אני רוצה שיופיע ההסכם שירות על כל כרטיס בכל מצב"*, then
+*"שיופיע בשורה של שם האתר"*. She also asked: *"ברגע שמחברים אתר לשורת הסוג שירות שלו — שישתנה ישר
+הכיתוב 'לא חובר'"*.
+
+**The badge (`TierBadge`) is now on every card, on the site-name row.**
+- **Before:** it was missing on every collapsed card in production. The grid always switches to
+  compact above 60 sites (the phone is compact too), and the badge was normal-only. It was also
+  missing on unmonitored cards.
+- **In compact, the badge takes the site code's place, and the code moves to the left end of the
+  status row** (`codeInRow`). Both were measured on the 69 real names (`real=1` in the harness).
+  With the badge *and* the code on the name row, 46 of 79 names lost their city part and the badge
+  overlapped the code at every width, even 1920. With the swap, VIP matches the old layout and
+  "מורחב" goes from 10 to 21 trimmed names at 1280. No name is cut, and the smallest font is 11.5px.
+- **A smaller badge in compact** (`.density-compact .tier-badge`), and a lower name floor there
+  (4.75rem). Without the lower floor, "תחזוקה בלבד" (76px) and "לא בשירות" (65px) spilled out of
+  the card at 1280. Neither label exists in production today: all 69 sites are vip, ext or basic.
+- **The normal density is unchanged.** The type badge stays normal-only.
+
+**Why "לא חובר" did not change, and the fix.**
+- **The cause:** since 07/10 the tier came from `svc` in `site_card_metrics`, which the cron
+  refreshes every 10 minutes and the screen reads only on page entry. `ServiceAgreement.onLinked`
+  did reload the list, but it read the stale value. Linking directly in the board did not reload
+  anything at all.
+- **`public.site_service_links()`** (`service-hours.postgres.sql`) returns only the link: the board
+  scan, with no hours. `sitesDirect` calls it on **every** load, live loads included. So `tier` has
+  left `STATS_FIELDS` and `SERVICE_FIELDS`, and a failed call keeps the last known tier
+  (`tierStale` → `keepLastTier`). ⚠️ The function duplicates the matching in `site_uptime_service`.
+  `tests/service-links.test.js` compares the two on one board full of edge cases, so a change to
+  one without the other fails.
+- **A statement trigger on both board tables** (`traffic-light.postgres.sql`,
+  `app.tl_board_changed`) publishes `events.type='service_link'`, **once per transaction**:
+  `tl_paste_rows` inserts row by row, so per-statement firing would mean one event per pasted row.
+  `App` does a live reload on that event (no stats, no `dataVersion`). A trigger rather than nine
+  `tl_*` edits, so a future writer cannot forget it.
+- **What still lags:** availability within service hours comes from the table until the next cron
+  run (≤10 min). Only the label is immediate.
+
+Tests: `service-links.test.js` (7; 5 of 5 SQL mutations caught), `service-merge.test.js` and
+`sites-direct-cache.test.js` (updated, plus `keepLastTier` and the fresh-tier cases). Browser:
+`e2e/probe-tier-all.mjs` (34/34; 27/27 with `REAL=1`); `dbg-tier-gap.mjs` / `dbg-tier-names.mjs`
+measure trimming and overflow. The harness mock no longer puts `tier` in `LIVE_DEFAULTS`.

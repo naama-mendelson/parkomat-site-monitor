@@ -54,11 +54,12 @@ function fake(over = {}) {
     }],
     site_globals: [{ site_id: 1, last_fault_at: null }, { site_id: 2, last_fault_at: null }],
     site_compliance: [],
+    site_service_links: [{ site_id: 1, agreement: "vip", plan: "vip" }],
     ...over,
   };
   globalThis.__fake = {
     from(t) { return { select(cols) { calls.push(`from:${t}`); return Promise.resolve(data[t] instanceof Error ? { data: null, error: data[t] } : { data: data[t], error: null }); } }; },
-    rpc(fn) { calls.push(`rpc:${fn}`); return Promise.resolve({ data: data[fn] ?? [], error: null }); },
+    rpc(fn) { calls.push(`rpc:${fn}`); return Promise.resolve(data[fn] instanceof Error ? { data: null, error: data[fn] } : { data: data[fn] ?? [], error: null }); },
   };
   return calls;
 }
@@ -67,7 +68,7 @@ test("⚠️ טעינה עם סטטיסטיקות — טבלה אחת, ואף א
   const { fetchSitesDirect } = await load();
   const calls = fake();
   await fetchSitesDirect("x", "y", "z", { withStats: true, withCompliance: true });
-  assert.deepEqual(calls.sort(), ["from:site_card_metrics", "from:sites", "rpc:site_compliance", "rpc:site_globals"]);
+  assert.deepEqual(calls.sort(), ["from:site_card_metrics", "from:sites", "rpc:site_compliance", "rpc:site_globals", "rpc:site_service_links"]);
   for (const fn of ["site_stats", "site_uptime", "site_uptime_service"]) {
     assert.ok(!calls.includes(`rpc:${fn}`), `${fn} נקראה מהמסך`);
   }
@@ -116,4 +117,39 @@ test("⚠️ כשל בקריאת הטבלה — שגיאה גלויה, לא '0 �
   const { fetchSitesDirect } = await load();
   fake({ site_card_metrics: Object.assign(new Error("relation does not exist"), { code: "42P01" }) });
   await assert.rejects(fetchSitesDirect("x", "y", "z", { withStats: true }), /relation does not exist/);
+});
+
+// ============================================================
+// ⚠️ סוג השירות — מ-site_service_links בכל טעינה, לא מהטבלה השמורה (11/10/2026)
+// ============================================================
+// בעלת המוצר: "ברגע שמחברים אתר לשורת הסוג שירות שלו — שישתנה ישר הכיתוב 'לא חובר'".
+// הטבלה מתרעננת פעם ב-10 דקות; הלוח עצמו — מיד.
+const tierLib = () => import(pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/tier.js")).href);
+
+test("⚠️ טעינה חיה — הדרגה טרייה מהלוח (בלי הטבלה)", async () => {
+  const { fetchSitesDirect } = await load();
+  const calls = fake({ site_service_links: [{ site_id: 2, agreement: "ext", plan: null }] });
+  const [a, b] = await fetchSitesDirect("x", "y", "z", { withStats: false, withCompliance: false });
+  assert.ok(calls.includes("rpc:site_service_links"), "הטעינה החיה לא קראה את החיבורים");
+  assert.equal(b.tier, "extended", "חובר עכשיו ברמזור — ועדיין לא מוצג");
+  const { TIER_UNLINKED } = await import(pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/constants.js")).href);
+  assert.equal(a.tier, TIER_UNLINKED, "אין לו שורה בלוח");
+  assert.equal(a.tierStale, false);
+});
+
+test("⚠️ הלוח גובר על הטבלה — אתר שנותק עכשיו אינו נשאר VIP 10 דקות", async () => {
+  const { fetchSitesDirect } = await load();
+  const { effectiveTier } = await tierLib();
+  fake({ site_service_links: [] });            // הטבלה עוד אומרת vip (svc)
+  const [a] = await fetchSitesDirect("x", "y", "z", { withStats: true });
+  assert.equal(a.tier, effectiveTier(null, false, "basic"));
+  assert.equal(a.uptime, 99.1, "הזמינות לפי שעות השירות נשארת מהטבלה עד ה-cron");
+});
+
+test("⚠️ כשל בקריאת החיבורים — הרשימה נטענת, והדרגה מסומנת לשמירה (tierStale)", async () => {
+  const { fetchSitesDirect } = await load();
+  fake({ site_service_links: Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }) });
+  const [a] = await fetchSitesDirect("x", "y", "z", { withStats: false });
+  assert.equal(a.tierStale, true);
+  assert.equal(a.tier, "basic", "בלי ערך ידוע — sites.tier, ו-keepLastTier מחליף בקודם");
 });

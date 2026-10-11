@@ -127,6 +127,8 @@ export function needsRefetch(msg) {
   if (msg.type === "compliance") return false;
   // משימות — אותו דבר: אין בהן אף מדד של רשימת האתרים (App מרענן את המספרים בלבד)
   if (msg.type === "tasks") return false;
+  // הלוח ברמזור — App טוען טעינה חיה בעצמו; טעינה מלאה (ו-dataVersion) מיותרת
+  if (msg.type === "service_link") return false;
 
   if (msg.type === "operation") {
     return msg.startEnd === "end" && !msg.isAnomaly;

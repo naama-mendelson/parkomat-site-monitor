@@ -515,3 +515,74 @@ COMMENT ON FUNCTION public.site_uptime_service(integer[], text, text) IS
 
 REVOKE ALL ON FUNCTION public.site_uptime_service(integer[], text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.site_uptime_service(integer[], text, text) TO authenticated;
+
+-- ============================================================
+-- public.site_service_links — לאיזו שורה ברמזור כל אתר מחובר, **עכשיו**
+-- ============================================================
+-- ⚠️ **נולדה מבקשה של בעלת המוצר (11/10/2026):** "ברגע שמחברים אתר לשורת הסוג שירות
+-- שלו — שישתנה ישר הכיתוב 'לא חובר'". התג בכרטיס נגזר מ-agreement/plan של
+-- site_uptime_service, ומאז 07/10 היא נקראת מ-site_card_metrics — שה-cron מרענן פעם
+-- ב-10 דקות, והמסך קורא רק בכניסה לדף. כלומר "הרשימה נטענת מחדש מיד" אחרי חיבור
+-- (ServiceAgreement.onLinked) קראה ערך ישן, והתג נשאר "לא חובר" עד 10 דקות + כניסה לדף.
+--
+-- ⚠️ **כאן רק החיבור — בלי שעות, בלי מקטעים ובלי פעולות.** סריקה של הלוח בלבד (עשרות
+-- שורות), ולכן זולה מספיק לכל טעינה חיה. הזמינות לפי שעות השירות נשארת בטבלה, ומתעדכנת
+-- בריצת ה-cron הבאה.
+--
+-- ⚠️ **אותה התאמה בדיוק כמו ב-site_uptime_service** (tl_keys / tl_codes / DISTINCT ON לפי
+-- position, id), ו-tests/service-links.test.js משווה בין השתיים על אותו לוח. שינוי באחת
+-- בלי השנייה — אדום: אחרת התג היה אומר הסכם אחד והזמינות נמדדת לפי אחר.
+CREATE OR REPLACE FUNCTION public.site_service_links()
+RETURNS TABLE (
+  site_id   integer,
+  agreement text,
+  plan      text
+)
+LANGUAGE sql
+STABLE
+AS $fn$
+WITH tl_keys AS (
+  SELECT
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'קוד אתר'
+       ORDER BY position, id LIMIT 1) AS k_code,
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'להתייחס כ'
+       ORDER BY position, id LIMIT 1) AS k_kind,
+    (SELECT key FROM traffic_light_columns WHERE board = 'robotic' AND label = 'סוג הסכם שירות במקור'
+       ORDER BY position, id LIMIT 1) AS k_plan
+),
+tl_codes AS (
+  SELECT c.code, r.position, r.id,
+         r.cells ->> k.k_kind AS served_raw,
+         r.cells ->> k.k_plan AS plan_raw
+    FROM traffic_light_rows r
+    CROSS JOIN tl_keys k
+    CROSS JOIN LATERAL unnest(string_to_array(
+             replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')), chr(32), ''), chr(9), ''),
+             ',')) AS c(code)
+   WHERE r.board = 'robotic'
+),
+tl_plan AS (
+  SELECT DISTINCT ON (code) code, lower(btrim(plan_raw)) AS plan
+    FROM tl_codes
+   WHERE btrim(coalesce(plan_raw, '')) <> ''
+   ORDER BY code, position, id
+),
+tl_served AS (
+  SELECT DISTINCT ON (code) code, lower(btrim(served_raw)) AS served
+    FROM tl_codes
+   WHERE btrim(coalesce(served_raw, '')) <> ''
+   ORDER BY code, position, id
+)
+SELECT s.id, v.served, p.plan
+  FROM sites s
+  LEFT JOIN tl_plan   p ON p.code = s.code
+  LEFT JOIN tl_served v ON v.code = s.code
+ WHERE COALESCE(p.plan, v.served) IS NOT NULL
+ ORDER BY s.id;
+$fn$;
+
+COMMENT ON FUNCTION public.site_service_links() IS
+  'השירות והמסלול של כל אתר שחובר ברמזור — אותה התאמה כמו site_uptime_service, בלי החישוב. לתג בכרטיס.';
+
+REVOKE ALL ON FUNCTION public.site_service_links() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_service_links() TO authenticated;
