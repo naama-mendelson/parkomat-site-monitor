@@ -1,5 +1,6 @@
-/* components/Tasks/Tasks.css — משימות: החלון, ושני הכפתורים בכרטיס האתר.
-   שורות עם קו דק ולא קופסה בתוך קופסה; כפתור "בוצע" במסגרת ולא במילוי (כמו בעמוד הבודק). */
+/* components/Tasks/Tasks.css — משימות: החלון (לביצוע / בטיפול / בוצעו), והכפתור בכרטיס האתר.
+   שורות עם קו דק ולא קופסה בתוך קופסה; כפתורים במסגרת ולא במילוי (כמו בעמוד הבודק);
+   צבע רק לסימן המצב — גוון ולא מילוי. */
 
 /* ---------------- החלון ---------------- */
 .tk-overlay {
@@ -16,7 +17,7 @@
 
 .tk-dialog {
   width: 100%;
-  max-width: 920px;
+  max-width: 780px;
   background: var(--bg-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
@@ -45,10 +46,9 @@
 }
 
 /* ---------------- הוספה ---------------- */
-.tk-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-add { display: flex; flex-direction: column; gap: 8px; }
+.tk-add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tk-input {
-  flex: 1 1 320px;
-  min-width: 0;
   min-height: 40px;
   padding: 0 12px;
   border-radius: 10px;
@@ -57,8 +57,34 @@
   color: var(--text-primary);
   font: inherit;
 }
-.tk-input:focus-visible, .tk-btn:focus-visible, .tk-close:focus-visible,
-.tk-collapse:focus-visible, .tk-site-btn:focus-visible {
+.tk-add-row .tk-btn--primary { margin-inline-start: auto; }
+
+/* הסוג — שתי גלולות, אחת נבחרת; בלי ברירת מחדל */
+.tk-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.tk-kind-opt { position: relative; cursor: pointer; }
+.tk-kind-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.tk-kind-opt span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.86em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tk-kind-opt input:checked + span {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+}
+
+.tk-input:focus-visible, .tk-btn:focus-visible, .tk-close:focus-visible, .tk-link:focus-visible,
+.tk-collapse:focus-visible, .tk-site-btn:focus-visible, .tk-card-btn:focus-visible,
+.tk-kind-opt input:focus-visible + span {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -78,88 +104,145 @@
 }
 .tk-btn:disabled { opacity: 0.5; cursor: default; }
 .tk-btn--primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
-.tk-btn--done {
+
+/* פעולות בשורה — קטנות ובמסגרת */
+.tk-btn--start, .tk-btn--done {
   min-height: 32px;
   padding: 0 12px;
   font-size: 0.82em;
+  background: transparent;
+}
+.tk-btn--start {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
-  background: transparent;
+}
+.tk-btn--done {
+  color: var(--status-ready);
+  border-color: color-mix(in srgb, var(--status-ready) 45%, var(--border-color));
 }
 /* לחיצה ראשונה — מבקש אישור (לא הפיך): ירוק שקוף, כמו "בתוקף" */
 .tk-btn--done.is-confirm {
-  color: var(--status-ready);
-  border-color: color-mix(in srgb, var(--status-ready) 60%, transparent);
-  background: color-mix(in srgb, var(--status-ready) 10%, transparent);
+  border-color: color-mix(in srgb, var(--status-ready) 70%, transparent);
+  background: color-mix(in srgb, var(--status-ready) 12%, transparent);
 }
 
 .tk-error { margin: 0; color: var(--status-error); font-weight: 600; font-size: 0.88em; }
-.tk-link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
-.tk-muted { color: var(--text-secondary); font-size: 0.86em; }
-.tk-empty { margin: 4px 0; color: var(--text-secondary); }
-.tk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-
-/* ---------------- הטבלה ---------------- */
-.tk-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.tk-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
-.tk-table th {
-  text-align: start;
-  font-weight: 700;
-  color: var(--text-secondary);
-  font-size: 0.86em;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-color);
-}
-.tk-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
-.tk-table tr:last-child td { border-bottom: 0; }
-.tk-c-date { white-space: nowrap; color: var(--text-secondary); direction: ltr; text-align: end; width: 1%; }
-.tk-c-body { overflow-wrap: anywhere; line-height: 1.45; }
-.tk-c-act { width: 1%; text-align: end; }
-
-/* ---------------- בוצעו ---------------- */
-.tk-done { border-top: 1px solid var(--border-color); padding-top: 6px; }
-.tk-collapse {
+.tk-link {
   background: none;
   border: 0;
-  padding: 6px 0;
-  color: var(--text-secondary);
+  padding: 0;
+  color: var(--accent);
   font: inherit;
-  font-weight: 700;
-  font-size: 0.88em;
+  text-decoration: underline;
   cursor: pointer;
-  min-height: 36px;
 }
-.tk-done-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tk-done-row {
+.tk-link:disabled { opacity: 0.5; cursor: default; }
+.tk-muted { color: var(--text-secondary); font-size: 0.86em; }
+.tk-empty { margin: 4px 0; color: var(--text-secondary); }
+
+/* ---------------- שלושת החלקים ---------------- */
+.tk-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.tk-sec { display: flex; flex-direction: column; min-width: 0; }
+.tk-sec-head, .tk-collapse {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 0;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0 6px;
+  font-size: 0.92em;
+  font-weight: 800;
+  color: var(--text-primary);
   border-bottom: 1px solid var(--border-color);
 }
-.tk-done-row:last-child { border-bottom: 0; }
-.tk-done-body { color: var(--text-secondary); overflow-wrap: anywhere; }
-.tk-check { color: var(--status-ready); font-weight: 800; }
+.tk-sec-n {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.tk-collapse {
+  width: 100%;
+  min-height: 36px;
+  background: none;
+  border-top: 0;
+  border-inline: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: start;
+}
+.tk-chev { margin-inline-start: auto; color: var(--text-secondary); }
+.tk-more { margin: 6px 0 0; }
 
-/* ---------------- טלפון: שורה = כרטיס קטן ---------------- */
+/* סימן המצב: טבעת ריקה — לביצוע; טבעת עם נקודה — בטיפול; ✓ — בוצעו */
+.tk-mark {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 2px solid var(--text-muted);
+}
+.tk-sec[data-state="in_progress"] .tk-mark {
+  border-color: var(--status-warning);
+  background: radial-gradient(circle, var(--status-warning) 0 2.5px, transparent 3px);
+}
+.tk-sec[data-state="done"] .tk-mark { border: 0; width: auto; height: auto; border-radius: 0; }
+.tk-sec[data-state="done"] .tk-mark::before { content: "✓"; color: var(--status-ready); font-weight: 900; }
+
+/* ---------------- שורה ---------------- */
+.tk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.tk-row:last-child { border-bottom: 0; }
+.tk-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tk-text { margin: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.tk-row[data-state="done"] .tk-text { color: var(--text-secondary); }
+.tk-check { color: var(--status-ready); font-weight: 800; }
+.tk-meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  line-height: 1.5;
+}
+.tk-kind {
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.tk-step { display: inline-flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.tk-arrow { color: var(--text-muted); }
+.tk-when { white-space: nowrap; }
+.tk-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tk-unstart { font-size: 0.82em; white-space: nowrap; }
+
+/* ---------------- טלפון ---------------- */
 @media (max-width: 640px) {
   .tk-overlay { padding: 0; align-items: stretch; }
   .tk-dialog { border-radius: 0; min-height: 100%; padding: 12px; }
-  .tk-btn--primary { flex: 0 0 auto; }
-  .tk-table thead { display: none; }
-  .tk-table, .tk-table tbody, .tk-table tr, .tk-table td { display: block; width: auto; }
-  .tk-table tr { padding: 10px 0; border-bottom: 1px solid var(--border-color); }
-  .tk-table tr:last-child { border-bottom: 0; }
-  .tk-table td { border: 0; padding: 2px 0; text-align: start; }
-  .tk-table td[data-label]:not(.tk-c-body)::before { content: attr(data-label) ": "; color: var(--text-secondary); font-size: 0.86em; }
-  .tk-c-date { direction: rtl; }
-  .tk-c-act { padding-top: 6px; }
-  .tk-btn--done { min-height: 40px; width: 100%; }
+  .tk-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .tk-actions { justify-content: flex-end; }
+  .tk-btn--start, .tk-btn--done { min-height: 40px; flex: 1 1 0; }
+  .tk-unstart { min-height: 40px; padding: 0 6px; }
+  .tk-kind-opt span { min-height: 40px; }
 }
 
-/* ---------------- שני הכפתורים בכרטיס האתר ---------------- */
-.tk-site-btns { display: flex; gap: 8px; }
-.tk-site-btns .tk-site-btn { flex: 1 1 0; }
+/* ---------------- הכפתור בכרטיס המורחב ---------------- */
 .tk-site-btn {
   display: inline-flex;
   align-items: center;
@@ -190,4 +273,46 @@
 }
 @media (max-width: 640px) {
   .tk-site-btn { min-height: 40px; }
+}
+
+/* ---------------- הכפתור בכרטיס הסגור ----------------
+   ⚠️ קטן ושקט: הוא בכל כרטיס בלוח (70 ויותר), ולכן מסגרת דקה וטקסט מעומעם; המספר — רק כשיש
+   משימה פתוחה, ובצבע. בקצה שורת המצב, צמוד לקוד האתר (.card-row-end ב-SiteCard.css). שטח
+   הלחיצה — ::before של 32px (44 במגע), כמו המנורות: 20px היא מטרה שאצבע מפספסת. */
+.tk-card-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  margin: 0;
+  padding: 0 7px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tk-card-btn::before {
+  content: "";
+  position: absolute;
+  inset-inline: -5px;
+  top: 50%;
+  height: 32px;
+  transform: translateY(-50%);
+}
+.tk-card-btn.has-open {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+}
+.tk-card-n { font-weight: 800; }
+@media (pointer: coarse) {
+  .tk-card-btn::before { height: 44px; }
 }

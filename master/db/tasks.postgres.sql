@@ -1,24 +1,30 @@
 -- ============================================================
--- db/tasks.postgres.sql — משימות: קשרי לקוחות וטכני, כלליות או של אתר
+-- db/tasks.postgres.sql — משימות של אתר: לביצוע → בטיפול → בוצעה, עם ההיסטוריה המלאה
 -- ============================================================
 -- בעלת המוצר, 06/10/2026: "יש המון משימות שנפתחות כל יום בשירות" — לקשרי לקוחות
 -- ("להודיע ללקוח שהוא לא חנה כמו שצריך") ולטכני ("יש לגרז… להחליף…", בעיקר לאתר
 -- ספציפי).
 --
--- ⚠️ **לכל כרטיס, שני כפתורים** (בעלת המוצר, 06/10/2026: "משימות קשרי לקוחות וטכני זה
--- אותו דבר ואני רוצה עבור כל כרטיס"): כל משימה שייכת לאתר אחד ולסוג אחד —
--- 'customer' או 'technical' — וכל כפתור פותח את הטבלה של האתר מאותו סוג. גרסה
--- ראשונה עם שני כפתורים כלליים בכותרת נבנתה באותו יום ונזנחה לפני שעלתה.
+-- ⚠️ **כפתור אחד לכל אתר, ושלושה מצבים** (בעלת המוצר, 11/10/2026: "שלכל אתר יהיה כפתור
+-- משימות... שלוש אופציות 1- משימה שצריך לעשות 2- משימה בתהליך 3- משימה שנעשתה... ושיראו את
+-- כל ההסטוריה של המשימות"). מ-06/10 היו לכל כרטיס שני כפתורים, אחד לכל סוג; עכשיו חלון
+-- אחד לאתר, והסוג — 'customer' או 'technical' — הוא תכונה של המשימה, שנבחרת בהוספה.
+-- (גרסה ראשונה עם שני כפתורים כלליים בכותרת נבנתה ב-06/10 ונזנחה לפני שעלתה.)
 --
--- ⚠️ **משימה לא נמחקת** — היא מסומנת "בוצעה" (מי ומתי) ויורדת לאזור מקופל.
--- אין כאן DELETE בכלל, גם לא למנהל: מה שנפתח ונסגר הוא היסטוריה של השירות.
+-- ⚠️ **המצב נגזר ולא נשמר:** done_at → בוצעה; אחרת started_at → בטיפול; אחרת לביצוע.
+-- עמודת "מצב" הייתה מאפשרת 'done' בלי מי ומתי — מצב שאסור שיהיה אפשר לבטא.
+--
+-- ⚠️ **משימה לא נמחקת, ו"בוצעה" סופי** — אין כאן DELETE ואין פתיחה מחדש, גם לא למנהל: מה
+-- שנפתח ונסגר הוא היסטוריה של השירות. "בטיפול" כן הפיך ("החזרה לביצוע"), ולכן ההיסטוריה
+-- יושבת ב-task_history ולא בעמודות: started_* הן המצב של עכשיו, והחזרה מאפסת אותן — היומן
+-- זוכר שהמשימה הייתה בטיפול, אצל מי ומתי.
 --
 -- ⚠️ **מי מסמן "בוצעה" — עדיין לא הוחלט** ("נראה אחרי זה", 06/10/2026). הבקשה
 -- המקורית: רק משתמש קשרי לקוחות מסמן משימת קשרי לקוחות. במערכת אין היום צוותים,
 -- רק תפקידים. עד שיוחלט: כל איש צוות מסמן, ושמו נרשם (ייחוס, לא חסימה — כמו
 -- בתחזוקה). ההגבלה תהיה שינוי במקום **אחד**: app.can_close_task.
 --
--- מוסכמות: כמו compliance.postgres.sql — טבלה סגורה (RLS בלי מדיניות, בלי הרשאות),
+-- מוסכמות: כמו compliance.postgres.sql — טבלאות סגורות (RLS בלי מדיניות, בלי הרשאות),
 -- כל גישה דרך RPC עם app.require_staff(), תאריכים TEXT ב-ISO-UTC, אירוע ב-events
 -- לכל כתיבה (type='tasks') כדי שכל מסך פתוח יתעדכן.
 
@@ -37,6 +43,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   done_by_user    INTEGER
 );
 
+-- "בטיפול" (11/10/2026) — מי לקח ומתי. נוסף אחרי היצירה, ולכן כאן ולא ב-CREATE TABLE.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by_user INTEGER;
+
 -- ⚠️ אילוצים בשם, מחוץ ל-CREATE TABLE — אחרת שינוי עתידי לא יגיע לייצור (ראו compliance)
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_kind_chk;
 ALTER TABLE tasks ADD CONSTRAINT tasks_kind_chk CHECK (kind IN ('customer', 'technical')) NOT VALID;
@@ -48,32 +59,70 @@ ALTER TABLE tasks VALIDATE CONSTRAINT tasks_body_chk;
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_done_chk;
 ALTER TABLE tasks ADD CONSTRAINT tasks_done_chk CHECK ((done_at IS NULL) = (done_by IS NULL)) NOT VALID;
 ALTER TABLE tasks VALIDATE CONSTRAINT tasks_done_chk;
+-- וכך גם בטיפול
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_started_chk;
+ALTER TABLE tasks ADD CONSTRAINT tasks_started_chk CHECK ((started_at IS NULL) = (started_by IS NULL)) NOT VALID;
+ALTER TABLE tasks VALIDATE CONSTRAINT tasks_started_chk;
 
 CREATE UNIQUE INDEX IF NOT EXISTS tasks_client_uq ON tasks (client_id);
 CREATE INDEX IF NOT EXISTS tasks_open_idx ON tasks (kind, created_at) WHERE done_at IS NULL;
 CREATE INDEX IF NOT EXISTS tasks_site_idx ON tasks (site_id) WHERE done_at IS NULL;
 CREATE INDEX IF NOT EXISTS tasks_done_idx ON tasks (done_at) WHERE done_at IS NOT NULL;
 
--- סגורה: RLS בלי מדיניות, ובלי הרשאות לאף תפקיד של PostgREST
+-- ============================================================
+-- ההיסטוריה — שורה לכל מעבר: נפתחה, לטיפול, הוחזרה לביצוע, בוצעה
+-- ============================================================
+-- ⚠️ בלי ON DELETE: משימה לא נמחקת, ומחיקה ידנית של משימה שיש לה היסטוריה תיכשל בקול
+-- במקום להעלים את ההיסטוריה איתה.
+CREATE TABLE IF NOT EXISTS task_history (
+  id            BIGSERIAL PRIMARY KEY,
+  task_id       BIGINT NOT NULL REFERENCES tasks(id),
+  action        TEXT NOT NULL,
+  actor         TEXT NOT NULL,                   -- שם מזוהה, כמו created_by
+  actor_user_id INTEGER,
+  at            TEXT NOT NULL
+);
+ALTER TABLE task_history DROP CONSTRAINT IF EXISTS task_history_action_chk;
+ALTER TABLE task_history ADD CONSTRAINT task_history_action_chk
+  CHECK (action IN ('created', 'started', 'unstarted', 'done')) NOT VALID;
+ALTER TABLE task_history VALIDATE CONSTRAINT task_history_action_chk;
+CREATE INDEX IF NOT EXISTS task_history_task_idx ON task_history (task_id, id);
+
+-- סגורות: RLS בלי מדיניות, ובלי הרשאות לאף תפקיד של PostgREST
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_history ENABLE ROW LEVEL SECURITY;
 DO $$
-DECLARE r text;
+DECLARE r text; t text;
 BEGIN
-  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-      EXECUTE format('REVOKE ALL ON tasks FROM %I', r);
-      EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM %I', pg_get_serial_sequence('tasks', 'id'), r);
-    END IF;
+  FOREACH t IN ARRAY ARRAY['tasks', 'task_history'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
+        EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM %I', pg_get_serial_sequence(t, 'id'), r);
+      END IF;
+    END LOOP;
+    EXECUTE format('REVOKE ALL ON %I FROM PUBLIC', t);
   END LOOP;
-  REVOKE ALL ON tasks FROM PUBLIC;
 END $$;
+
+-- משימה שנוצרה לפני היומן (06/10–11/10) מקבלת את מה שהעמודות שלה יודעות: נפתחה, ואם
+-- נסגרה — בוצעה. ⚠️ רק למשימה שאין לה אף שורה, כך שהחלה חוזרת אינה מכפילה.
+INSERT INTO task_history (task_id, action, actor, actor_user_id, at)
+SELECT t.id, v.action, v.actor, v.uid, v.at
+  FROM tasks t
+ CROSS JOIN LATERAL (VALUES (1, 'created', t.created_by, t.created_by_user, t.created_at),
+                            (2, 'started', t.started_by, t.started_by_user, t.started_at),
+                            (3, 'done',    t.done_by,    t.done_by_user,    t.done_at)) v(n, action, actor, uid, at)
+ WHERE v.at IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM task_history h WHERE h.task_id = t.id)
+ ORDER BY t.id, v.n;
 
 -- ============================================================
 -- מי רשאי לסמן "בוצעה" — המקום היחיד
 -- ============================================================
 -- ⚠️ כרגע: כל איש צוות. כשבעלת המוצר תחליט על צוותים (קשרי לקוחות / טכני), כאן
 -- נבדק השיוך — ושום מקום אחר לא צריך להשתנות: tasks_list מחזיר can_close לכל שורה,
--- והמסך מציג את הכפתור לפיו.
+-- והמסך מציג את הכפתור לפיו. ("לטיפול" ו"החזרה לביצוע" — לכל איש צוות: הם לא סוגרים.)
 CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT app.is_staff()
@@ -87,27 +136,48 @@ RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, app, pg_tem
 $$;
 REVOKE ALL ON FUNCTION app.task_event(text, text, text) FROM PUBLIC;
 
+-- שורת היסטוריה. ⚠️ כאן ולא ב-audit_log: audit_log קריא לכל משתמש פעיל ומחזיק מזהים בלבד.
+CREATE OR REPLACE FUNCTION app.task_log(p_task bigint, p_action text, p_actor text, p_at text)
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  INSERT INTO task_history (task_id, action, actor, actor_user_id, at)
+  VALUES (p_task, p_action, p_actor, app.current_app_user(), p_at);
+$$;
+REVOKE ALL ON FUNCTION app.task_log(bigint, text, text, text) FROM PUBLIC;
+
 -- ============================================================
 -- קריאה
 -- ============================================================
 -- ⚠️ jsonb יחיד ולא RETURNS TABLE: PostgREST חותך ב-1,000 שורות בשקט, ומשימות שבוצעו
--- רק מצטברות. כאן: כל הפתוחות, 200 האחרונות שבוצעו, ומספר כל שבוצעו — המסך מראה
--- "בוצעו (N)" נכון גם כשלא כולן נשלחו.
-CREATE OR REPLACE FUNCTION public.tasks_list(p_kind text DEFAULT NULL, p_site_code text DEFAULT NULL)
+-- רק מצטברות. כאן: כל הפתוחות (לביצוע ובטיפול, לפי state), ומאלה שבוצעו — p_done_limit
+-- האחרונות (NULL = כולן: "שיראו את כל ההסטוריה"), ו-done_total, כך שהמסך יודע כמה יש.
+-- לכל משימה — history: כל המעברים שלה, מהראשון לאחרון.
+-- ⚠️ המפתחות open / done / done_total נשארו כמו לפני שלושת המצבים: חבילה ישנה בדפדפן
+-- ממשיכה לעבוד (משימה בטיפול נראית אצלה פתוחה, וזה נכון).
+DROP FUNCTION IF EXISTS public.tasks_list(text, text);
+CREATE OR REPLACE FUNCTION public.tasks_list(p_kind text DEFAULT NULL, p_site_code text DEFAULT NULL,
+                                             p_done_limit integer DEFAULT 200)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_site integer;
   v_code text := NULLIF(btrim(COALESCE(p_site_code, '')), '');
+  -- פעם אחת לסוג, לא לכל שורה (can_close_task קורא את app_users)
+  v_close_c boolean;
+  v_close_t boolean;
 BEGIN
   PERFORM app.require_staff();
   IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
     RAISE EXCEPTION 'סוג משימה לא מוכר: %', p_kind USING ERRCODE = 'check_violation';
   END IF;
+  IF p_done_limit IS NOT NULL AND p_done_limit < 0 THEN
+    RAISE EXCEPTION 'מספר משימות לא תקין: %', p_done_limit USING ERRCODE = 'check_violation';
+  END IF;
   IF v_code IS NOT NULL THEN
     SELECT s.id INTO v_site FROM sites s WHERE s.code = v_code;
     IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', v_code USING ERRCODE = 'PT404'; END IF;
   END IF;
+  v_close_c := app.can_close_task('customer');
+  v_close_t := app.can_close_task('technical');
   RETURN (
     WITH f AS (
       SELECT t.*, s.code AS cur_code, s.site_name AS cur_name
@@ -115,28 +185,40 @@ BEGIN
        WHERE (p_kind IS NULL OR t.kind = p_kind)
          AND (v_site IS NULL OR t.site_id = v_site)
     ),
+    -- ⚠️ החיתוך לפני בניית השורות: ההיסטוריה נשלפת רק למשימות שנשלחות
+    pick AS (
+      SELECT f.*, false AS is_done FROM f WHERE f.done_at IS NULL
+      UNION ALL
+      (SELECT f.*, true FROM f WHERE f.done_at IS NOT NULL
+        ORDER BY f.done_at DESC, f.id DESC LIMIT p_done_limit)
+    ),
     row_of AS (
-      SELECT f.id, f.done_at, f.created_at,
-             jsonb_build_object('id', f.id, 'kind', f.kind,
-               'site_code', COALESCE(f.cur_code, f.site_code), 'site_name', f.cur_name,
-               'body', f.body, 'created_by', f.created_by, 'created_at', f.created_at,
-               'done_at', f.done_at, 'done_by', f.done_by, 'can_close', app.can_close_task(f.kind)) AS j
-        FROM f
+      SELECT p.id, p.is_done, p.done_at, p.created_at,
+             jsonb_build_object('id', p.id, 'kind', p.kind,
+               'state', CASE WHEN p.done_at IS NOT NULL THEN 'done'
+                             WHEN p.started_at IS NOT NULL THEN 'in_progress' ELSE 'todo' END,
+               'site_code', COALESCE(p.cur_code, p.site_code), 'site_name', p.cur_name,
+               'body', p.body, 'created_by', p.created_by, 'created_at', p.created_at,
+               'started_at', p.started_at, 'started_by', p.started_by,
+               'done_at', p.done_at, 'done_by', p.done_by,
+               'can_close', CASE p.kind WHEN 'customer' THEN v_close_c ELSE v_close_t END,
+               'history', COALESCE((SELECT jsonb_agg(jsonb_build_object('action', h.action, 'by', h.actor, 'at', h.at)
+                                                     ORDER BY h.at, h.id)
+                                      FROM task_history h WHERE h.task_id = p.id), '[]'::jsonb)) AS j
+        FROM pick p
     )
     SELECT jsonb_build_object(
       -- "טבלה צומחת": הוותיקה למעלה, החדשה נוספת בסוף
-      'open', COALESCE((SELECT jsonb_agg(r.j ORDER BY r.created_at, r.id) FROM row_of r WHERE r.done_at IS NULL), '[]'::jsonb),
-      'done', COALESCE((SELECT jsonb_agg(x.j ORDER BY x.done_at DESC, x.id DESC)
-                          FROM (SELECT r.j, r.done_at, r.id FROM row_of r WHERE r.done_at IS NOT NULL
-                                 ORDER BY r.done_at DESC, r.id DESC LIMIT 200) x), '[]'::jsonb),
-      'done_total', (SELECT count(*) FROM row_of r WHERE r.done_at IS NOT NULL)
+      'open', COALESCE((SELECT jsonb_agg(r.j ORDER BY r.created_at, r.id) FROM row_of r WHERE NOT r.is_done), '[]'::jsonb),
+      'done', COALESCE((SELECT jsonb_agg(r.j ORDER BY r.done_at DESC, r.id DESC) FROM row_of r WHERE r.is_done), '[]'::jsonb),
+      'done_total', (SELECT count(*) FROM f WHERE f.done_at IS NOT NULL)
     )
   );
 END $fn$;
-REVOKE ALL ON FUNCTION public.tasks_list(text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.tasks_list(text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.tasks_list(text, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tasks_list(text, text, integer) TO authenticated;
 
--- מספרי המשימות הפתוחות — שורה לכל אתר×סוג (שני הכפתורים בכל כרטיס).
+-- מספרי המשימות הפתוחות (לביצוע + בטיפול) — שורה לכל אתר×סוג; הכרטיס מחבר את שני הסוגים.
 -- ⚠️ לעולם אינה זורקת: מי שאינו צוות מקבל אפס שורות (כמו site_compliance) — הכפתורים
 -- נטענים יחד עם רשימת האתרים, ושגיאה כאן לא תפיל אותה.
 DROP FUNCTION IF EXISTS public.task_counts();
@@ -164,6 +246,7 @@ DECLARE
   v_body text := btrim(COALESCE(p_body, ''));
   v_code text := NULLIF(btrim(COALESCE(p_site_code, '')), '');
   v_client uuid := COALESCE(p_client_id, gen_random_uuid());
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_site integer;
   v_id bigint;
 BEGIN
@@ -179,9 +262,9 @@ BEGIN
   SELECT t.id INTO v_id FROM tasks t WHERE t.client_id = v_client;
   IF v_id IS NOT NULL THEN RETURN v_id; END IF;      -- שליחה חוזרת
   INSERT INTO tasks (client_id, kind, site_id, site_code, body, created_by, created_by_user, created_at)
-  VALUES (v_client, p_kind, v_site, v_code, v_body, v_actor, app.current_app_user(),
-          to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+  VALUES (v_client, p_kind, v_site, v_code, v_body, v_actor, app.current_app_user(), v_now)
   RETURNING tasks.id INTO v_id;
+  PERFORM app.task_log(v_id, 'created', v_actor, v_now);
   -- ⚠️ ביומן: מזהים בלבד, לא גוף המשימה (audit_log קריא לכל משתמש פעיל)
   PERFORM app.record_write_audit('task.add', v_actor, app.current_app_role(), 'task', v_id::text,
     jsonb_build_object('kind', p_kind, 'site_code', v_code));
@@ -191,7 +274,56 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.task_add(text, text, text, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.task_add(text, text, text, uuid) TO authenticated;
 
--- "בוצעה": מי ומתי. אידמפוטנטי — סימון שני מחזיר את הסימון הראשון ולא דורס את שמו.
+-- "לטיפול": מי ומתי. ⚠️ משימה שכבר בטיפול — מחזירים את הקיים ולא דורסים את מי שלקח
+-- (שני אנשים שלחצו יחד: הראשון לקח, והשני רואה אצל מי). משימה שבוצעה — PT409.
+CREATE OR REPLACE FUNCTION public.task_start(p_id bigint)
+RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_staff();
+  v_t tasks%ROWTYPE;
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'המשימה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  IF v_t.done_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר בוצעה' USING ERRCODE = 'PT409'; END IF;
+  IF v_t.started_at IS NOT NULL THEN RETURN v_t.started_at; END IF;
+  UPDATE tasks SET started_at = v_now, started_by = v_actor, started_by_user = app.current_app_user()
+   WHERE tasks.id = p_id;
+  PERFORM app.task_log(p_id, 'started', v_actor, v_now);
+  PERFORM app.record_write_audit('task.start', v_actor, app.current_app_role(), 'task', p_id::text,
+    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
+  PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'start');
+  RETURN v_now;
+END $fn$;
+REVOKE ALL ON FUNCTION public.task_start(bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.task_start(bigint) TO authenticated;
+
+-- "החזרה לביצוע": בטיפול → לביצוע. העמודות מתאפסות, וההיסטוריה זוכרת. משימה שעוד לא
+-- בטיפול — כלום (אידמפוטנטי); משימה שבוצעה — PT409 ("בוצעה" סופי).
+CREATE OR REPLACE FUNCTION public.task_unstart(p_id bigint)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_staff();
+  v_t tasks%ROWTYPE;
+  v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'המשימה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  IF v_t.done_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר בוצעה' USING ERRCODE = 'PT409'; END IF;
+  IF v_t.started_at IS NULL THEN RETURN; END IF;
+  UPDATE tasks SET started_at = NULL, started_by = NULL, started_by_user = NULL WHERE tasks.id = p_id;
+  PERFORM app.task_log(p_id, 'unstarted', v_actor, v_now);
+  PERFORM app.record_write_audit('task.unstart', v_actor, app.current_app_role(), 'task', p_id::text,
+    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
+  PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'unstart');
+END $fn$;
+REVOKE ALL ON FUNCTION public.task_unstart(bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.task_unstart(bigint) TO authenticated;
+
+-- "בוצעה": מי ומתי — מלביצוע או מבטיפול. אידמפוטנטי: סימון שני מחזיר את הסימון הראשון ולא
+-- דורס את שמו. started_* נשארות: המשימה הייתה בטיפול, וזה חלק ממה שקרה לה.
 CREATE OR REPLACE FUNCTION public.task_done(p_id bigint)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
@@ -207,6 +339,7 @@ BEGIN
     RAISE EXCEPTION 'אין הרשאה לסמן משימה זו כבוצעה' USING ERRCODE = 'insufficient_privilege';
   END IF;
   UPDATE tasks SET done_at = v_now, done_by = v_actor, done_by_user = app.current_app_user() WHERE tasks.id = p_id;
+  PERFORM app.task_log(p_id, 'done', v_actor, v_now);
   PERFORM app.record_write_audit('task.done', v_actor, app.current_app_role(), 'task', p_id::text,
     jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
   PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'done');

@@ -893,5 +893,5 @@ export {
 
 // ⚠️ **משימות — אותו כלל, בלי זרוע שרת.** במצב שרת הכפתורים מוסתרים (App, SiteCard).
 export {
-  TASK_KINDS, TASK_KIND_LABEL, fetchTasks, fetchTaskCounts, addTask, markTaskDone,
+  TASK_KINDS, TASK_KIND_LABEL, fetchTasks, fetchTaskCounts, addTask, startTask, unstartTask, markTaskDone,
 } from "./tasksDirect";

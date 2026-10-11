@@ -65,7 +65,7 @@ function App() {
   const [complianceRev, setComplianceRev] = useState({});
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
   const [trafficOpen, setTrafficOpen] = useState(false);        // לוח הרמזור
-  // משימות: מספרי הפתוחות לכל אתר×סוג (שני כפתורים בכרטיס), החלון הפתוח ({site, kind}), ומונה אירועים
+  // משימות: מספרי הפתוחות לכל אתר (הכפתור בכרטיס), החלון הפתוח ({site}), ומונה אירועים
   const [taskCounts, setTaskCounts] = useState(null);
   const [tasksOpen, setTasksOpen] = useState(null);
   const [tasksRev, setTasksRev] = useState(0);
@@ -194,7 +194,7 @@ function App() {
     return () => clearInterval(id);
   }, [loadTaskCounts]);
   const tasksCtx = useDirect && taskCounts
-    ? { bySite: taskCounts.bySite, openSite: (site, kind) => setTasksOpen({ site, kind }) }
+    ? { bySite: taskCounts.bySite, openSite: (site) => setTasksOpen({ site }) }
     : null;
 
   const scheduleComplianceRefresh = useCallback((code) => {

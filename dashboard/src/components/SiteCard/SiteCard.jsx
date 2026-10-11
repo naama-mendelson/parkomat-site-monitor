@@ -15,7 +15,6 @@ import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילו�
 import ComplianceLights, { LampAreasContext, MiniMark } from "../Compliance/ComplianceLights";
 import { COMPLIANCE_AREAS } from "../../utils/compliance";
 import { useTasks } from "../Tasks/TasksContext";
-import { TASK_KINDS, TASK_KIND_LABEL } from "../../services/dataSource";
 import "../Tasks/Tasks.css";
 
 // ==========================================================
@@ -607,22 +606,32 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   );
 
 
-  // משימות האתר — שני כפתורים, כל אחד עם מספר הפתוחות שלו (בעלת המוצר, 06/10/2026:
-  // "משימות קשרי לקוחות וטכני… עבור כל כרטיס"). בכרטיס המורחב, ובכרטיס של אתר ללא בקר.
-  const taskButtons = tasks && (
-    <div className="tk-site-btns">
-      {TASK_KINDS.map((k) => {
-        const n = tasks.bySite[site.id]?.[k] ?? 0;
-        return (
-          <button key={k} type="button" className="tk-site-btn" data-kind={k}
-            onClick={(e) => { e.stopPropagation(); tasks.openSite(site, k); }}
-            aria-label={`משימות ${TASK_KIND_LABEL[k]}${n ? ` — ${n} פתוחות` : ""}`}>
-            {TASK_KIND_LABEL[k]}
-            {n > 0 && <span className="tk-count" aria-hidden="true">{n}</span>}
-          </button>
-        );
-      })}
-    </div>
+  // ============================================================
+  // משימות האתר — כפתור אחד, עם מספר הפתוחות (לביצוע + בטיפול)
+  // ============================================================
+  // בעלת המוצר, 11/10/2026: "שלכל אתר יהיה כפתור משימות" — ובחרה כפתור אחד (לא אחד לכל סוג,
+  // כמו מ-06/10), וגם בכרטיס הסגור, כדי שלא צריך לפתוח אותו. בכרטיס הסגור — גלולה קטנה בשורת
+  // המצב; במורחב — כפתור רגיל. ⚠️ stopPropagation: אחרת הלחיצה מבעבעת לכרטיס ומקפלת/פותחת אותו.
+  const openTasks = tasks?.bySite[site.id]?.open ?? 0;
+  const tasksLabel = `משימות${openTasks ? ` — ${openTasks} פתוחות` : ""}`;
+  const openTasksDialog = (e) => { e.stopPropagation(); tasks.openSite(site); };
+  const taskPill = tasks && !isMini && (
+    <button type="button" className={`tk-card-btn${openTasks ? " has-open" : ""}`}
+      onClick={openTasksDialog} aria-label={tasksLabel}>
+      משימות{openTasks > 0 && <span className="tk-card-n" aria-hidden="true">{openTasks}</span>}
+    </button>
+  );
+  const taskButton = tasks && (
+    <button type="button" className="tk-site-btn" onClick={openTasksDialog} aria-label={tasksLabel}>
+      משימות
+      {openTasks > 0 && <span className="tk-count" aria-hidden="true">{openTasks}</span>}
+    </button>
+  );
+  // ⚠️ "משימות" וקוד האתר — קבוצה אחת בקצה שורת המצב. בלוח בלי נורות היא נכנסת בשורה (נמדד:
+  // 57 + 107 מתוך 180px); כשאין מקום — נורות הבודק, או שעון תקלה ארוך — שתיהן יורדות שורה יחד,
+  // ולא הקוד לבדו מתחת ל"משימות".
+  const rowEnd = (taskPill || codeInRow) && (
+    <span className="card-row-end">{taskPill}{codeInRow}</span>
   );
 
   // ============================================================
@@ -660,10 +669,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <span className="unmonitored-tag">ללא בקר מחובר</span>
             {site.compliance !== undefined &&
               <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
-            {codeInRow}
+            {rowEnd}
           </div>
         )}
-        {!isMini && taskButtons}
       </div>
       </LampAreasContext.Provider>
     );
@@ -781,7 +789,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
 
-        {taskButtons}
+        {taskButton}
 
         <button
           className="exp-open"
@@ -883,16 +891,16 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <MiniMark compliance={site.compliance} onOpen={openTab} />
           </span>
         </>
-      ) : site.compliance === undefined && !codeInRow ? (
+      ) : site.compliance === undefined && !codeInRow && !taskPill ? (
         statusTag
       ) : (
-        // ⚠️ עטיפה רק כשיש רמזורים או קוד בשורה: במצב שרת (compliance === undefined)
-        // כרטיס normal נשאר זהה לחלוטין למה שהיה — בלי שורה ריקה ובלי שינוי פריסה.
+        // ⚠️ עטיפה רק כשיש רמזורים, משימות או קוד בשורה: במצב שרת (compliance === undefined,
+        // ובלי משימות) כרטיס normal נשאר זהה לחלוטין למה שהיה — בלי שורה ריקה ובלי שינוי פריסה.
         <div className="card-status-row">
           {statusTag}
           {site.compliance !== undefined &&
             <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
-          {codeInRow}
+          {rowEnd}
         </div>
       )}
 

@@ -1,4 +1,4 @@
-// tests/tasks.test.js — משימות (קשרי לקוחות / טכני), על Postgres 17 מקומי.
+// tests/tasks.test.js — משימות של אתר (לביצוע → בטיפול → בוצעה; קשרי לקוחות / טכני), על Postgres 17 מקומי.
 //
 // רצות על `db.init()` האמיתי (tests/helpers/local-pg.js) — אותם קבצים, אותן הרשאות,
 // אותו RLS. אף שורה לא נוגעת בייצור. הזהויות נזרעות כמו ב-compliance.test.js, כולל
@@ -38,9 +38,12 @@ async function newSite(name) {
 }
 const add = async (uid, kind, body, site = null, client = uuid()) =>
   Number((await one(uid, `SELECT public.task_add($1, $2, $3, $4::uuid) AS id`, [kind, body, site, client])).id);
-const list = async (uid, kind = null, site = null) =>
-  (await one(uid, `SELECT public.tasks_list($1, $2) AS j`, [kind, site])).j;
+const list = async (uid, kind = null, site = null, limit = 200) =>
+  (await one(uid, `SELECT public.tasks_list($1, $2, $3::int) AS j`, [kind, site, limit])).j;
 const done = async (uid, id) => (await one(uid, `SELECT public.task_done($1) AS d`, [id])).d;
+const start = async (uid, id) => (await one(uid, `SELECT public.task_start($1) AS s`, [id])).s;
+const unstart = async (uid, id) => one(uid, `SELECT public.task_unstart($1)`, [id]);
+const findIn = (j, id) => [...j.open, ...j.done].find((t) => Number(t.id) === id);
 const counts = async (uid) => rpc(uid, `SELECT kind, site_id, open FROM public.task_counts() ORDER BY kind NULLS LAST, site_id`);
 
 before(async () => {
@@ -65,23 +68,32 @@ test("T1 · anon: אף RPC של משימות אינו ניתן להרצה, וה�
   const fns = await sup(`SELECT p.oid::regprocedure::text sig, has_function_privilege('anon', p.oid, 'EXECUTE') anon
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND (p.proname LIKE 'task\\_%' OR p.proname = 'tasks_list')`);
-  assert.equal(fns.length, 4, JSON.stringify(fns));
+  // tasks_list, task_add, task_counts, task_start, task_unstart, task_done
+  assert.equal(fns.length, 6, JSON.stringify(fns));
   assert.deepEqual(fns.filter((f) => f.anon).map((f) => f.sig), []);
   await fails(h.as("anon", null, (tx) => tx.query(`SELECT public.tasks_list(NULL, NULL)`)), "42501", /permission denied/);
-  // גם מנהל אינו קורא את הטבלה ישירות — רק דרך ה-RPC
+  // גם מנהל אינו קורא את הטבלאות ישירות — רק דרך ה-RPC (ההיסטוריה כמו המשימות)
   for (const uid of [MGR, OPR, AGT]) {
-    await fails(rpc(uid, `SELECT * FROM tasks`), "42501", /permission denied/);
-    await fails(rpc(uid, `DELETE FROM tasks`), "42501", /permission denied/);
+    for (const t of ["tasks", "task_history"]) {
+      await fails(rpc(uid, `SELECT * FROM ${t}`), "42501", /permission denied/);
+      await fails(rpc(uid, `DELETE FROM ${t}`), "42501", /permission denied/);
+    }
   }
-  const grants = await sup(`SELECT grantee, privilege_type FROM information_schema.role_table_grants
-                             WHERE table_name = 'tasks' AND grantee IN ('anon','authenticated','service_role','PUBLIC')`);
+  const grants = await sup(`SELECT table_name, grantee, privilege_type FROM information_schema.role_table_grants
+                             WHERE table_name IN ('tasks', 'task_history') AND grantee IN ('anon','authenticated','service_role','PUBLIC')`);
   assert.deepEqual(grants, []);
+  // וגם אם הרשאה תחזור יום אחד — RLS בלי מדיניות לא מחזיר שורה
+  const rls = await sup(`SELECT relname FROM pg_class WHERE relname IN ('tasks', 'task_history') AND relrowsecurity ORDER BY relname`);
+  assert.deepEqual(rls.map((r) => r.relname), ["task_history", "tasks"]);
 });
 
 test("T2 · סוכן, מושבת וזהות הקליטה: כל RPC נדחה ב-42501, וספירות — אפס שורות ולא שגיאה", { skip }, async () => {
   for (const uid of [AGT, OFF, INT]) {
     await fails(list(uid), "42501");
     await fails(add(uid, "customer", "לא אמור להיכנס"), "42501");
+    await fails(start(uid, 1), "42501");
+    await fails(unstart(uid, 1), "42501");
+    await fails(done(uid, 1), "42501");
     assert.deepEqual(await counts(uid), [], "הכפתורים נטענים עם רשימת האתרים — שגיאה כאן הייתה מפילה אותה");
   }
   assert.equal((await sup(`SELECT count(*)::int n FROM tasks`))[0].n, 0);
@@ -133,7 +145,7 @@ test("T5 · בוצעה: מי ומתי; סימון שני לא דורס את הש
   await fails(sup(`UPDATE tasks SET done_by = NULL WHERE id = $1`, [id]), "23514");
 });
 
-test("T6 · סדר: פתוחות מהוותיקה לחדשה (טבלה צומחת), בוצעו — מהאחרונה; 200 אחרונות + המספר הכולל", { skip }, async () => {
+test("T6 · סדר: פתוחות מהוותיקה לחדשה (טבלה צומחת), בוצעו — מהאחרונה; 200 כברירת מחדל, NULL — כולן", { skip }, async () => {
   const s = await newSite();
   const ids = [];
   for (const [i, body] of ["ראשונה", "שנייה", "שלישית"].entries()) {
@@ -152,6 +164,20 @@ test("T6 · סדר: פתוחות מהוותיקה לחדשה (טבלה צומח�
   assert.equal(j.done.length, 200);
   assert.equal(Number(j.done_total), 205);
   assert.equal(j.done[0].body, "ישנה 205", "האחרונה שבוצעה — ראשונה");
+  // "שיראו את כל ההסטוריה": בלי תקרה — כולן, באותו סדר
+  j = await list(OPR, null, s2.code, null);
+  assert.equal(j.done.length, 205);
+  assert.deepEqual([j.done[0].body, j.done.at(-1).body], ["ישנה 205", "ישנה 1"]);
+  j = await list(OPR, null, s2.code, 3);
+  assert.deepEqual(j.done.map((t) => t.body), ["ישנה 205", "ישנה 204", "ישנה 203"]);
+  assert.equal(Number(j.done_total), 205, "המספר הכולל לא תלוי בתקרה");
+  // ⚠️ התקרה חלה על שבוצעו בלבד — פתוחה לעולם לא נחתכת
+  j = await list(OPR, null, s.code, 0);
+  assert.equal(j.open.length, 3);
+  await fails(list(OPR, null, s2.code, -1), "23514", /לא תקין/);
+  // חבילה ישנה בדפדפן קוראת בשני פרמטרים — עדיין עובד (ברירת המחדל 200)
+  const old = (await one(OPR, `SELECT public.tasks_list($1, $2) AS j`, [null, s2.code])).j;
+  assert.equal(old.done.length, 200);
 });
 
 test("T7 · משימות של אתר: שני הסוגים, רק של האתר; אתר שלא קיים — PT404", { skip }, async () => {
@@ -166,15 +192,18 @@ test("T7 · משימות של אתר: שני הסוגים, רק של האתר; �
   await fails(list(MGR, null, "NOPE"), "PT404");
 });
 
-test("T8 · ספירות לכפתורים: פתוחות בלבד, שורה לכל אתר×סוג", { skip }, async () => {
+test("T8 · ספירות לכפתורים: פתוחות בלבד (גם בטיפול), שורה לכל אתר×סוג", { skip }, async () => {
+  await sup(`DELETE FROM task_history`);
   await sup(`DELETE FROM tasks`);
   const s = await newSite();
   const t = await newSite();
   await add(OPR, "customer", "ק1", s.code);
   await add(OPR, "customer", "ק2", s.code);
   await add(OPR, "technical", "ט1", s.code);
-  await add(OPR, "technical", "ט2", t.code);
+  const taken = await add(OPR, "technical", "ט2", t.code);
+  await start(OPR2, taken);                  // בטיפול — עדיין פתוחה, ונספרת
   const closed = await add(OPR, "technical", "ט3", t.code);
+  await start(OPR, closed);
   await done(OPR, closed);
   const c = await counts(MGR);
   assert.deepEqual(c.map((r) => [r.kind, r.site_id, r.open]).sort(),
@@ -188,14 +217,19 @@ test("T9 · כל כתיבה מפרסמת אירוע (type='tasks') לעדכון 
   const s = await newSite();
   const before = Number((await sup(`SELECT COALESCE(max(id), 0) m FROM events`))[0].m);
   const id = await add(OPR, "technical", "סוד-גוף-המשימה", s.code);
+  await start(OPR, id);
+  await start(OPR2, id);                     // כבר בטיפול — לא כתיבה, ולכן לא אירוע ולא יומן
+  await unstart(MGR, id);
+  await unstart(MGR, id);                    // כבר לביצוע — כנ"ל
   await done(MGR, id);
   const s2 = await newSite();
   await add(OPR, "customer", "לאתר אחר", s2.code);
   const ev = await sup(`SELECT site_code, type, payload FROM events WHERE id > $1 ORDER BY id`, [before]);
   assert.deepEqual(ev.map((e) => [e.type, e.site_code, e.payload.action, e.payload.kind]),
-    [["tasks", s.code, "add", "technical"], ["tasks", s.code, "done", "technical"], ["tasks", s2.code, "add", "customer"]]);
-  const audit = await sup(`SELECT action, details::text d FROM audit_log WHERE action LIKE 'task.%' AND target_id = $1 ORDER BY at`, [String(id)]);
-  assert.deepEqual(audit.map((a) => a.action), ["task.add", "task.done"]);
+    [["tasks", s.code, "add", "technical"], ["tasks", s.code, "start", "technical"], ["tasks", s.code, "unstart", "technical"],
+     ["tasks", s.code, "done", "technical"], ["tasks", s2.code, "add", "customer"]]);
+  const audit = await sup(`SELECT action, details::text d FROM audit_log WHERE action LIKE 'task.%' AND target_id = $1 ORDER BY id`, [String(id)]);
+  assert.deepEqual(audit.map((a) => a.action), ["task.add", "task.start", "task.unstart", "task.done"]);
   assert.ok(audit.every((a) => !a.d.includes("סוד-גוף-המשימה")), "audit_log קריא לכל משתמש פעיל — רק מזהים");
 });
 
@@ -228,10 +262,119 @@ test("T12 · הקובץ אידמפוטנטי — החלה שנייה לא נכש
   const fs = require("node:fs"), path = require("node:path");
   const sql = fs.readFileSync(path.join(__dirname, "..", "db", "tasks.postgres.sql"), "utf8");
   const n0 = (await sup(`SELECT count(*)::int n FROM tasks`))[0].n;
+  const hist = async () => (await sup(`SELECT count(*)::int n FROM task_history`))[0].n;
   await h.pg.exec(sql);
+  const h1 = await hist();
   await h.pg.exec(sql);
   assert.equal((await sup(`SELECT count(*)::int n FROM tasks`))[0].n, n0);
-  const over = await sup(`SELECT proname, count(*)::int n FROM pg_proc WHERE proname IN ('tasks_list','task_add','task_done','task_counts')
+  assert.equal(await hist(), h1, "ההשלמה של ההיסטוריה לא מכפילה בהחלה חוזרת");
+  const over = await sup(`SELECT proname, count(*)::int n FROM pg_proc
+                           WHERE proname IN ('tasks_list','task_add','task_done','task_counts','task_start','task_unstart')
                            GROUP BY proname HAVING count(*) > 1`);
-  assert.deepEqual(over, [], "שם אחד = פונקציה אחת");
+  assert.deepEqual(over, [], "שם אחד = פונקציה אחת — PostgREST מסרב לשתי חתימות");
+  const sig = await sup(`SELECT pg_get_function_identity_arguments(oid) a FROM pg_proc WHERE proname = 'tasks_list'`);
+  assert.deepEqual(sig.map((r) => r.a), ["p_kind text, p_site_code text, p_done_limit integer"]);
+});
+
+test("T13 · שלושה מצבים: לביצוע → בטיפול → בוצעה, החזרה לביצוע, וכל המעברים בהיסטוריה", { skip }, async () => {
+  const s = await newSite();
+  const id = await add(OPR, "technical", "לגרז שרשרת", s.code);
+  let t = findIn(await list(MGR, null, s.code), id);
+  assert.deepEqual({ state: t.state, at: t.started_at, by: t.started_by }, { state: "todo", at: null, by: null });
+
+  // לטיפול — מי ומתי
+  const s1 = await start(OPR2, id);
+  t = findIn(await list(MGR, null, s.code), id);
+  assert.deepEqual({ state: t.state, at: t.started_at, by: t.started_by }, { state: "in_progress", at: s1, by: "בקר שני" });
+  assert.ok((await list(MGR, null, s.code)).open.some((x) => Number(x.id) === id), "בטיפול — עדיין ברשימת הפתוחות");
+  // ⚠️ שני אנשים לחצו: הראשון לקח, והשני אינו דורס אותו
+  assert.equal(await start(MGR, id), s1);
+  assert.equal(findIn(await list(MGR, null, s.code), id).started_by, "בקר שני");
+  const uid = async () => (await sup(`SELECT started_by_user u FROM tasks WHERE id = $1`, [id]))[0].u;
+  assert.equal(await uid(), (await sup(`SELECT id FROM app_users WHERE supabase_uid = $1`, [OPR2]))[0].id);
+
+  // החזרה לביצוע: העמודות מתאפסות — כולן
+  await unstart(MGR, id);
+  t = findIn(await list(MGR, null, s.code), id);
+  assert.deepEqual({ state: t.state, at: t.started_at, by: t.started_by }, { state: "todo", at: null, by: null });
+  assert.equal(await uid(), null);
+  await unstart(MGR, id);                    // כבר לביצוע — כלום
+
+  // שוב לטיפול, ובוצעה מבטיפול
+  await start(OPR, id);
+  const d = await done(MGR, id);
+  const j = await list(MGR, null, s.code);
+  assert.ok(!j.open.some((x) => Number(x.id) === id));
+  t = j.done.find((x) => Number(x.id) === id);
+  assert.deepEqual({ state: t.state, at: t.done_at, by: t.done_by, started: t.started_by },
+    { state: "done", at: d, by: "מנהלת משימות", started: "בקר משימות" }, "started_* נשארות: המשימה הייתה בטיפול");
+  // ⚠️ ההיסטוריה זוכרת גם את מה שהעמודות כבר שכחו (הלקיחה הראשונה וההחזרה)
+  assert.deepEqual(t.history.map((x) => [x.action, x.by]), [
+    ["created", "בקר משימות"], ["started", "בקר שני"], ["unstarted", "מנהלת משימות"],
+    ["started", "בקר משימות"], ["done", "מנהלת משימות"]]);
+  assert.equal(t.history[1].at, s1);
+  assert.equal(t.history.at(-1).at, d);
+  assert.ok(t.history.every((x, i) => i === 0 || x.at >= t.history[i - 1].at), "מהראשון לאחרון");
+
+  // "בוצעה" סופי
+  await fails(start(OPR, id), "PT409", /כבר בוצעה/);
+  await fails(unstart(OPR, id), "PT409", /כבר בוצעה/);
+  assert.equal(await done(OPR, id), d);
+  assert.equal((await sup(`SELECT count(*)::int n FROM task_history WHERE task_id = $1`, [id]))[0].n, 5,
+    "פעולה שלא שינתה כלום אינה נרשמת");
+  await fails(start(OPR, 999999), "PT404", /לא נמצאה/);
+  await fails(unstart(OPR, 999999), "PT404", /לא נמצאה/);
+
+  // ישר מלביצוע לבוצעה — מותר, בלי "בטיפול"
+  const id2 = await add(OPR, "customer", "להתקשר ללקוח", s.code);
+  await done(OPR, id2);
+  const t2 = findIn(await list(MGR, null, s.code), id2);
+  assert.deepEqual({ state: t2.state, started: t2.started_at, steps: t2.history.map((x) => x.action) },
+    { state: "done", started: null, steps: ["created", "done"] });
+
+  // ⚠️ ההחלטה מי סוגר נשארת במקום אחד: מי שאינו רשאי לסגור — עדיין לוקח ומחזיר
+  await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
+             LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_manager() $$`);
+  try {
+    const id3 = await add(OPR, "technical", "להחליף נורה", s.code);
+    await start(OPR, id3);
+    await unstart(OPR, id3);
+    await fails(done(OPR, id3), "42501", /אין הרשאה/);
+  } finally {
+    await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
+               LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_staff() $$`);
+  }
+});
+
+test("T14 · משימה מלפני היומן מקבלת היסטוריה ממה שהעמודות יודעות — פעם אחת", { skip }, async () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const s = await newSite();
+  const ids = (await sup(`INSERT INTO tasks (client_id, kind, site_id, site_code, body, created_by, created_at, done_at, done_by)
+      VALUES (gen_random_uuid(), 'technical', $1, $2, 'ישנה פתוחה', 'אנה', '2026-10-07T08:00:00.000Z', NULL, NULL),
+             (gen_random_uuid(), 'customer',  $1, $2, 'ישנה שבוצעה', 'בני', '2026-10-07T09:00:00.000Z', '2026-10-08T10:00:00.000Z', 'גדי')
+      RETURNING id`, [s.id, s.code])).map((r) => Number(r.id));
+  const sql = fs.readFileSync(path.join(__dirname, "..", "db", "tasks.postgres.sql"), "utf8");
+  await h.pg.exec(sql);
+  await h.pg.exec(sql);
+  const hist = await sup(`SELECT task_id, action, actor, at FROM task_history WHERE task_id IN (${ids.join(",")}) ORDER BY task_id, id`);
+  assert.deepEqual(hist.map((r) => [Number(r.task_id), r.action, r.actor, r.at]), [
+    [ids[0], "created", "אנה", "2026-10-07T08:00:00.000Z"],
+    [ids[1], "created", "בני", "2026-10-07T09:00:00.000Z"],
+    [ids[1], "done", "גדי", "2026-10-08T10:00:00.000Z"]]);
+  const j = await list(MGR, null, s.code);
+  assert.deepEqual(findIn(j, ids[0]).history.map((x) => [x.action, x.by]), [["created", "אנה"]]);
+  // ומכאן היא ממשיכה כמו כל משימה
+  await start(OPR, ids[0]);
+  assert.deepEqual(findIn(await list(MGR, null, s.code), ids[0]).history.map((x) => x.action), ["created", "started"]);
+});
+
+test("T15 · אילוצים: בטיפול בלי מי — לא; פעולה לא מוכרת בהיסטוריה — לא; משימה עם היסטוריה לא נמחקת", { skip }, async () => {
+  const s = await newSite();
+  const id = await add(OPR, "technical", "בדיקת אילוץ", s.code);
+  await fails(sup(`UPDATE tasks SET started_at = '2026-10-11T08:00:00.000Z' WHERE id = $1`, [id]), "23514");
+  await start(OPR, id);
+  await fails(sup(`UPDATE tasks SET started_by = NULL WHERE id = $1`, [id]), "23514");
+  await fails(sup(`INSERT INTO task_history (task_id, action, actor, at) VALUES ($1, 'deleted', 'x', '2026-10-11T08:00:00.000Z')`, [id]), "23514");
+  // ⚠️ אין DELETE ב-RPC; ומחיקה ידנית נכשלת בקול במקום להעלים את ההיסטוריה איתה
+  await fails(sup(`DELETE FROM tasks WHERE id = $1`, [id]), "23503");
 });

@@ -92,9 +92,11 @@ const BOUNDED = {
   inspection_close_by_report: "כתיבה",
 
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
-  tasks_list: "jsonb יחיד — הפתוחות + 200 אחרונות שבוצעו (LIMIT ב-RPC) + done_total",
+  tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
   task_counts: "שורה לסוג (2) + שורה לאתר עם משימה פתוחה",
   task_add: "כתיבה",
+  task_start: "כתיבה",
+  task_unstart: "כתיבה",
   task_done: "כתיבה",
   inspection_defect_save: "כתיבה",
   inspection_defect_delete: "כתיבה",

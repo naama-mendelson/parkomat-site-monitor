@@ -141,6 +141,15 @@
   margin-inline-start: auto;
 }
 
+/* הקצה של שורת המצב: כפתור "משימות" + הקוד (rowEnd ב-SiteCard.jsx) — יורדים שורה יחד */
+.card-row-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.card-row-end > .card-code--row { margin-inline-start: 0; }
+
 /* ===== תג מצב ===== */
 .card-status {
   display: inline-flex;
@@ -955,4 +964,3 @@
   border: 2px dashed var(--text-secondary);
   box-sizing: border-box;
 }
-.site-card.is-unmonitored .tk-site-btns { margin-top: 2px; }

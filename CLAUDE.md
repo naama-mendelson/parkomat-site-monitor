@@ -1363,44 +1363,103 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
 
-## משימות — קשרי לקוחות וטכני (built 06/10/2026)
+## משימות — one button per site, three states, full history (built 06/10/2026, reworked 11/10/2026)
 
-The owner: *"יש המון משימות שנפתחות כל יום בשירות"* — customer-relations tasks ("tell the customer he
-parked wrong") and technical ones ("grease…, replace…", mostly per site). Two header buttons
-("משימות קשרי לקוחות", "משימות טכני", each with its open count) and a "משימות (N)" button in every
-expanded site card.
+The owner, 06/10: *"יש המון משימות שנפתחות כל יום בשירות"*. These are customer-relations tasks ("tell
+the customer he parked wrong") and technical ones ("grease…, replace…", mostly for one site). On 11/10:
+*"שלכל אתר יהיה כפתור משימות... אופציה להוסיף משימה, אופציה לעשות משימה בטיפול, אופציה לסמן V...
+שלוש אופציות... כתוב את זה יפה ושיראו את כל ההסטוריה של המשימות"*. She chose **one** button per site,
+not one per kind as on 06/10, and asked for it on the collapsed card too.
 
 | Piece | Where |
 |---|---|
-| Table + RPCs | `master/db/tasks.postgres.sql` (registered in `db.js` after compliance; applied with `tools/apply-sql.js`) |
-| SQL tests (PGlite) | `master/tests/tasks.test.js` — 12 tests, 9/9 SQL mutations killed |
-| Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js` (no server arm) |
-| UI | `components/Tasks/TasksDialog.jsx` (one dialog for a kind or a site), `TasksContext.js`, header buttons in `Header.jsx`, card button in `SiteCard.jsx` |
+| Tables + RPCs | `master/db/tasks.postgres.sql`. Tables `tasks` and `task_history`; RPCs `tasks_list`, `task_counts`, `task_add`, `task_start`, `task_unstart`, `task_done`. Registered in `db.js` after compliance; applied with `tools/apply-sql.js`. |
+| SQL tests (PGlite) | `master/tests/tasks.test.js`: 15 tests; 24/24 SQL mutations caught |
+| UI logic (pure) | `dashboard/src/utils/tasks.js`: `taskState`, `splitOpen`, `historySteps`, `openSummary`, `countsBySite`. Tested in `master/tests/tasks-ui.test.js`. |
+| Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js`. No server arm. |
+| UI | `components/Tasks/TasksDialog.jsx`, `Tasks.css`, `TasksContext.js`. The button lives in `SiteCard.jsx`: `taskPill` on the collapsed card, `taskButton` on the expanded one, and `rowEnd`. |
+| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 115 checks. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
 
 Rules that are easy to break:
 
-- **One model, not three lists** (owner's choice): every task is `customer` or `technical`, optionally
-  tied to a site. The header buttons show one kind (with a site column); the site button shows that
-  site's tasks of both kinds (with a kind column, and adding requires choosing the kind — no default).
-- **A task is never deleted.** "בוצע" records who and when and moves it to a collapsed "בוצעו (N)".
-  There is no DELETE path at all, and no reopen — so the button asks to confirm *inside itself* for
-  4 seconds (second click commits), not with a popup.
-- ⚠️ **Who may mark "done" is not decided yet** (owner: *"נראה אחרי זה"*). The request said only a
-  customer-relations user closes customer tasks — but there are no teams in the system, only roles.
-  Until decided: any staff user, and the name is recorded (attribution, not prevention — as with
-  maintenance). **The single place to change it is `app.can_close_task(kind)`**; `tasks_list` returns
-  `can_close` per row and the button follows it. T11 proves the RPC honours a stricter rule.
-- **Closed table** (RLS on, no policies, no grants), like compliance: every read/write is a
-  `SECURITY DEFINER` RPC behind `app.require_staff()`. The author is the verified display name, never
-  typed. `audit_log` gets ids only (it is readable by every active user — no task text there).
-- **`tasks_list` returns one jsonb**: all open tasks, the 200 most recent done, and `done_total`.
-  PostgREST cuts at 1,000 rows silently and done tasks only accumulate (declared in `check-row-cap`).
-- **Live:** every write publishes `events.type='tasks'`. `App` refreshes the counts (and the open
-  dialog) on it, and `sitePatch.needsRefetch` ignores it — a task never reloads the site list.
-  Counts also refresh every 5 minutes; a failed fetch keeps the last counts rather than hiding buttons.
-- **The site dialog does not collapse the card**: `SiteGrid`'s outside-click handler ignores clicks
-  inside `.tk-overlay` — otherwise closing the dialog dropped you on a collapsed card.
-- `client_id` per draft (regenerated only after success) makes a resent add a single task.
+- **The state is derived, never stored.** `done_at` set → done; otherwise `started_at` set → in
+  progress; otherwise to do. `tasks_list` returns it as `state`. A state column could say "done" with no
+  who or when.
+- **"בוצעה" is final; "בטיפול" can be undone.**
+  - There is no DELETE and no reopen.
+  - "✓ בוצע" asks to confirm *inside the button* for 4 seconds; the second click commits.
+  - "לטיפול" is one click. "החזרה לביצוע" undoes it and clears the `started_*` columns.
+  - V straight from "to do" is allowed.
+- **The history lives in `task_history`: one row per change** (`created` / `started` / `unstarted` /
+  `done`).
+  - The RPC that makes the change writes the row. A call that changes nothing (a second start, or
+    returning a task that is already "to do") writes no row, no event and no audit line.
+  - The columns hold where a task is now. The table holds everything that happened to it, including a
+    start that was later undone.
+  - The FK has no `ON DELETE`, so deleting a task by hand fails loudly and the history cannot vanish
+    with it.
+  - Tasks created before the table existed get `created` / `done` rows built from their columns. That
+    backfill is idempotent and lives in the file. Production had 0 tasks on 11/10, so it changed
+    nothing there.
+- **Two people press "לטיפול" at once: the first one keeps it.** The second call returns the existing
+  stamp and does not overwrite it.
+- **Starting or returning a task that is already done fails with PT409, "המשימה כבר בוצעה".** The dialog
+  shows the message and reloads. ⚠️ This message has its own state (`actError`). The first version put
+  it in `loadError`, and the reload that follows cleared it before anyone could read it (measured in
+  the browser).
+- **Each task has a kind, chosen when it is added, with no default.** The choice stays selected for the
+  next task in the same dialog.
+- **All the history is visible.**
+  - Every row shows its full timeline: "נפתחה … ע״י … ← הועברה לטיפול … ← בוצעה …".
+  - "בוצעו" stays collapsed (owner, 06/10: *"תיזרק למקום שלא מציג אותה, למטה"*).
+  - When opened it shows the newest 200. "הצגת כולן" fetches the rest with `p_done_limit => NULL`.
+  - The count always shows the full total.
+- **`tasks_list(p_kind, p_site_code, p_done_limit DEFAULT 200)`.**
+  - The old two-argument signature is dropped (PostgREST refuses a name with two overloads).
+  - A browser still on the old bundle calls with two arguments, and that still resolves.
+  - The keys `open` / `done` / `done_total` did not change, so an old bundle keeps working: it shows an
+    in-progress task as open, which is correct.
+  - The limit applies only to done tasks. Open tasks are never cut.
+- **The button is on every card, collapsed ones included.** Not in `mini`, which is dormant.
+  - On a collapsed card it is a quiet 20px pill, "משימות". When anything is open (to do + in progress),
+    the count appears in accent.
+  - Its hit area is 32px (44px on touch), made with `::before` like the lamps.
+  - It sits with the site code in `.card-row-end`, at the end of the status row.
+  - ⚠️ **Measured on 78 compact cards at 1371px.** Without the inspector lamps it fits: 57 + 107 of
+    180px, and cards stay 74px. With the lamps on, or with a long fault timer, the button and the code
+    move to a line of their own **together**, and cards grow to 100px. That cost is known and accepted.
+  - On the expanded card it is one "משימות" button.
+- **The input takes focus only with a mouse** (`pointer: fine`). On a phone, focusing it opens a keyboard
+  that hides the list.
+- ⚠️ **Who may mark "done" is not decided yet** (owner: *"נראה אחרי זה"*).
+  - The original request said only a customer-relations user closes customer tasks. The system has
+    roles, not teams.
+  - Until it is decided, any staff user may mark done, and the name is recorded (attribution, not
+    prevention, as with maintenance).
+  - **The single place to change it is `app.can_close_task(kind)`.** `tasks_list` returns `can_close`
+    per row, and the button follows it. T11 and T13 prove the RPC honours a stricter rule.
+  - "לטיפול" and "החזרה לביצוע" stay open to any staff user, because neither one closes a task.
+- **Closed tables** (`tasks` and `task_history`): RLS on, no policies, no grants, like compliance.
+  - Every read and write is a `SECURITY DEFINER` RPC behind `app.require_staff()`.
+  - The name recorded is the verified display name, never typed.
+  - `audit_log` gets ids only (`task.add` / `.start` / `.unstart` / `.done`), because every active user
+    can read it.
+- **`tasks_list` returns a single jsonb value.** PostgREST silently cuts responses at 1,000 rows, and
+  done tasks only accumulate. Declared in `check-row-cap`.
+- **Live updates.**
+  - Every write publishes `events.type='tasks'`, with action `add` / `start` / `unstart` / `done`.
+  - `App` refreshes the counts and any open dialog on that event.
+  - `sitePatch.needsRefetch` ignores it, so a task never reloads the site list.
+  - Counts also refresh every 5 minutes. A failed fetch keeps the last counts rather than hiding the
+    buttons.
+- **The dialog does not change the card.** Opening it from a collapsed card does not expand the card
+  (`stopPropagation`). `SiteGrid`'s outside-click handler ignores clicks inside `.tk-overlay`;
+  otherwise closing the dialog dropped you on a collapsed card.
+- `client_id` is per draft and regenerated only after a success, so an add that is sent twice creates
+  one task.
+- To restore the two-buttons version (one per kind):
+  `git show 147ac83:dashboard/src/components/Tasks/TasksDialog.jsx`, and the same for `SiteCard.jsx`
+  and `master/db/tasks.postgres.sql`.
 
 ## Dashboard statistics are computed only on page entry (07/10/2026)
 
