@@ -966,6 +966,38 @@ Rules that are easy to break and expensive to notice:
     - Only what was late is colored (`.it-late`).
   - **"Late" means against the previous expiry, not the upload date.** The historical backfill is
     uploaded months after the inspections, which would make every one of them look late.
+- **"דוח ישן" (`kind = 'archive'`) — an old report kept for history only** (owner, 11/10/2026:
+  *"שיהיה ניתן לעלות דוחות ישנים כדי שישמרו בהיסטוריה. בדוחות אלו לא ישמר האם התקלות שבו טופלו או
+  לא — רק ישמר בהיסטוריה. וכשמעלים כזה דוח יהיה צריך לאשר את התאריכים כמו כל דוח"*).
+  - **When it is offered:** only when the document's next inspection date has already passed (the
+    owner chose this over an always-visible option). The form then asks "דוח ישן — להיסטוריה בלבד /
+    תסקיר רגיל — עם מעקב ליקויים", with nothing pre-chosen. Choosing "old" hides the defects
+    question. Dates are confirmed like any report.
+  - **It is a third kind, not a flag, on purpose.** Every query that filters `kind = 'periodic'`
+    skips it by itself: the cycle and the lamp, the parent of a follow-up, and bringing a machine
+    back into use. With a flag, each of those would need an `AND NOT archived`, and the one that
+    was forgotten would colour a lamp from an old report.
+  - The constraints `inspection_reports_kind`, `inspection_reports_followup_shape`
+    (`(kind = 'followup') = (followup_of IS NOT NULL)`) and `inspection_reports_validity_shape` are
+    replaced in the 1.4א block, using the DROP / ADD NOT VALID / VALIDATE pattern.
+  - **Enforced in SQL:**
+    - Validity is required, and must already have passed (`valid_until < today`; the date itself
+      still counts as valid). An old report that is still valid would not colour the lamp, and the
+      site would look as if it had no report.
+    - No defects at upload, in `inspection_defect_save` or via "clean".
+    - Editing cannot push the validity to today or later.
+    - No follow-up can belong to it.
+    - The same PDF on the same machine as both "periodic" and "archive" is a duplicate (PT409).
+  - **It does count as "the previous report"** (`prev`, with `kind`). After a backfill it is usually
+    the previous report of the current one, and without it "נעשה N ימים אחרי שהתסקיר הקודם פג"
+    would show for no site at all. The status line then reads "דוח ישן — הליקויים לא נרשמו"
+    instead of counts. The history card reads "נשמר להיסטוריה בלבד — בלי מעקב ליקויים", and the
+    edit dialog has no "נקי" checkbox for it.
+  - A site with only old reports looks exactly like a site with no report (test 51 compares the two).
+  - Tests: SQL test 51 (8 of 8 mutations caught; M2 was re-run as a single substitution, and fails
+    on "Missing expected rejection", not on boot), `inspection-previous.test.js`, and the browser
+    probe `insp/harness/probe-archive.mjs` (27). `probe-dates` T3's document has a next date that
+    has passed, so `confirmCleanSave` picks "regular" when asked.
   - Tests: SQL test 50 (6 of 6 mutations caught; the boundary case "fixed on the due date" was added
     after a `>=` mutation survived), `inspection-previous.test.js` (4), and the browser
     `insp/harness/probe-prev.mjs` (28). ⚠️ The two added lines in the status card push the page

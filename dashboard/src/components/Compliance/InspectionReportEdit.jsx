@@ -33,7 +33,9 @@ const norm = (v) => (v == null ? "" : String(v).trim());
  */
 export default function InspectionReportEdit({ report, parent, onSaved, onClose, onDirtyChange }) {
   const r = report;
-  const periodic = r.kind === "periodic";
+  // דוח ישן (11/10/2026) — כמו תקופתי לעניין תוקף ומתקן, אבל בלי "נקי" (השרת דוחה)
+  const archive = r.kind === "archive";
+  const periodic = r.kind === "periodic" || archive;
   const [form, setForm] = useState(() => ({
     inspected_on: r.inspected_on ?? "",
     valid_until: r.valid_until ?? "",
@@ -172,7 +174,7 @@ export default function InspectionReportEdit({ report, parent, onSaved, onClose,
           <textarea className="it-input it-textarea" rows={2} maxLength={2000} value={form.note} onChange={(e) => set("note", e.target.value)} />
         </label>
 
-        {(hadDefects === 0 || r.declared_clean) && (
+        {!archive && (hadDefects === 0 || r.declared_clean) && (
           <label className="it-check">
             <input type="checkbox" checked={form.declared_clean} onChange={(e) => set("declared_clean", e.target.checked)}
               disabled={hadDefects > 0 && !r.declared_clean} />

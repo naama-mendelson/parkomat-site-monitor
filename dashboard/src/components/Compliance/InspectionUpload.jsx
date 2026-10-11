@@ -107,6 +107,8 @@ function makeForm(info, { machines, periodics, preset }) {
     deadlineDays: "",
     defects: [],
     closeOpen: false,
+    // ⚠️ "" | "archive" | "regular" — רק לתקופתי שפג, ובלי בחירה מראש (11/10/2026)
+    oldChoice: "",
   };
 }
 
@@ -362,8 +364,16 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
   const openCount = f && f.kind === "followup" && parent
     ? openInCycleUpTo(reports, parent.id, f.inspected_on || today).length
     : 0;
-  const clean = !!f && f.defectsChoice === "none";
-  const withDefects = !!f && f.defectsChoice === "some";
+  // ============================================================
+  // ⚠️ דוח ישן — היסטוריה בלבד (בעלת המוצר, 11/10/2026)
+  // ============================================================
+  // "בדוחות אלו לא ישמר האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה". הבחירה מוצעת רק
+  // כשהבדיקה הבאה שבמסמך כבר עברה (בחירתה), כמו השרת: valid_until < היום. דוח ישן נשמר בלי
+  // ליקויים ובלי "נקי", ואינו צובע את הנורה (kind = 'archive' — compliance.postgres.sql).
+  const expired = !!f && f.kind === "periodic" && !!f.valid_until && f.valid_until < today;
+  const asArchive = expired && f.oldChoice === "archive";
+  const clean = !!f && !asArchive && f.defectsChoice === "none";
+  const withDefects = !!f && !asArchive && f.defectsChoice === "some";
 
   const problems = [];
   // בעיה שנוגעת לתאריך הבדיקה — השדה המוסתר מופיע, אחרת אין איפה לתקן
@@ -383,7 +393,8 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     if (f.kind === "followup" && parent && f.inspected_on && f.inspected_on < parent.inspected_on) {
       inspProblem("בדיקה חוזרת אינה יכולה להיות לפני התסקיר התקופתי");
     }
-    if (!f.defectsChoice) problems.push("יש ליקויים או אין");
+    if (expired && !f.oldChoice) problems.push("דוח ישן או תסקיר רגיל");
+    if (!asArchive && !f.defectsChoice) problems.push("יש ליקויים או אין");
     if (withDefects) {
       if (f.defects.length === 0) problems.push("לפחות ליקוי אחד");
       // ⚠️ Number.isInteger ולא השוואה: "" נכפה ל-0 (כל ליקוי "באיחור" ביום ההעלאה),
@@ -479,7 +490,7 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     const sug = info?.suggest ?? null;
     const meta = {
       client_id: clientIdRef.current,
-      kind: f.kind,
+      kind: asArchive ? "archive" : f.kind,
       machine_key: machineKey,
       inspected_on: f.inspected_on,
       valid_until: f.valid_until || null,
@@ -751,16 +762,35 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
               </span>
             </label>
 
+            {/* ---- דוח ישן — רק כשהבדיקה הבאה שבמסמך כבר עברה; בלי בחירה מראש (11/10/2026) ---- */}
+            {expired && (
+              <fieldset className="iu-old" role="radiogroup" aria-label="דוח ישן או תסקיר רגיל">
+                <legend className="it-label">הבדיקה הבאה שבמסמך כבר עברה. לשמור אותו כ:</legend>
+                <label className="it-check">
+                  <input type="radio" name="old_choice" value="archive" checked={f.oldChoice === "archive"}
+                    onChange={() => set("oldChoice", "archive")} />
+                  <span>דוח ישן — להיסטוריה בלבד, בלי מעקב ליקויים</span>
+                </label>
+                <label className="it-check">
+                  <input type="radio" name="old_choice" value="regular" checked={f.oldChoice === "regular"}
+                    onChange={() => set("oldChoice", "regular")} />
+                  <span>תסקיר רגיל — עם מעקב ליקויים</span>
+                </label>
+              </fieldset>
+            )}
+
             {/* ---- ליקויים — בחירה של אדם, בלי ברירת מחדל ---- */}
-            <label className="it-field iu-defects-choice">
-              <span className="it-label">ליקויים</span>
-              <select className="it-input" name="defects_choice" value={f.defectsChoice}
-                onChange={(e) => chooseDefects(e.target.value)}>
-                <option value="">— לבחור —</option>
-                <option value="none">אין ליקויים</option>
-                <option value="some">יש ליקויים</option>
-              </select>
-            </label>
+            {!asArchive && (
+              <label className="it-field iu-defects-choice">
+                <span className="it-label">ליקויים</span>
+                <select className="it-input" name="defects_choice" value={f.defectsChoice}
+                  onChange={(e) => chooseDefects(e.target.value)}>
+                  <option value="">— לבחור —</option>
+                  <option value="none">אין ליקויים</option>
+                  <option value="some">יש ליקויים</option>
+                </select>
+              </label>
+            )}
 
             {clean && f.kind === "followup" && openCount > 0 && (
               <label className="it-check">

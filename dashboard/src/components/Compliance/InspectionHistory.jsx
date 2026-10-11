@@ -86,7 +86,7 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
           לליקויים של מחזור שהוחלף — מה-SQL (prev.gap_days, outcome). */}
       {/* ⚠️ span אחד בתוך השורה: .it-report-line היא flex, וכל ילד שלה היה הופך לקופסה נפרדת —
           הטקסט נשבר לחתיכות וה-" · " מאבד את הרווח שלפניו. */}
-      {r.kind === "periodic" && gapPart(r.prev?.gap_days) && (
+      {(r.kind === "periodic" || r.kind === "archive") && gapPart(r.prev?.gap_days) && (
         <p className="it-report-line it-muted"><span>נעשה <PartsText parts={[gapPart(r.prev.gap_days)]} /></span></p>
       )}
       {r.kind === "periodic" && r.superseded && r.outcome && (
@@ -107,7 +107,11 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
             ליקויים: {doneN}/{defects.length} בוצעו {open ? "▴" : "▾"}
           </button>
         ) : (
-          <span className="it-muted">{r.declared_clean ? "ללא ליקויים" : "אין ליקויים רשומים"}</span>
+          <span className="it-muted">
+            {r.kind === "archive"
+              ? "נשמר להיסטוריה בלבד — בלי מעקב ליקויים"
+              : r.declared_clean ? "ללא ליקויים" : "אין ליקויים רשומים"}
+          </span>
         )}
       </div>
 

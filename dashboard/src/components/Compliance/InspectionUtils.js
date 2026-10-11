@@ -9,7 +9,8 @@
 // קובץ בלי React — כדי שכלל only-export-components לא יחול על הרכיבים.
 import { daysText, formatDateIL, todayIL } from "../../utils/compliance";
 
-export const KIND_LABEL = { periodic: "תסקיר תקופתי", followup: "בדיקה חוזרת" };
+// archive — דוח ישן שנשמר להיסטוריה בלבד (11/10/2026): בלי ליקויים, ואינו צובע את הנורה
+export const KIND_LABEL = { periodic: "תסקיר תקופתי", followup: "בדיקה חוזרת", archive: "דוח ישן" };
 
 // D25: המקור נגזר בשרת. התגית אומרת למנהל מאיפה התאריך הגיע — "הוזן ידנית"
 // על תאריך שנראה כמו מהמסמך הוא בדיוק מה שצריך לעצור עליו.
@@ -170,7 +171,11 @@ export function gapPart(gapDays) {
 export function previousOf(periodic, byId) {
   const p = periodic?.prev;
   if (!p) return null;
-  return { inspectedOn: p.inspected_on, outcome: byId?.get(p.id)?.outcome ?? null, gap: gapPart(p.gap_days) };
+  // ⚠️ דוח ישן (archive) — אין בו ליקויים לספור; אומרים זאת במפורש במקום שורה ריקה
+  const parts = p.kind === "archive"
+    ? [{ text: "דוח ישן — הליקויים לא נרשמו" }]
+    : outcomeParts(byId?.get(p.id)?.outcome ?? null);
+  return { inspectedOn: p.inspected_on, outcome: byId?.get(p.id)?.outcome ?? null, parts, gap: gapPart(p.gap_days) };
 }
 
 /** ליקוי שתוקן אחרי המועד — "N ימים אחרי המועד". */

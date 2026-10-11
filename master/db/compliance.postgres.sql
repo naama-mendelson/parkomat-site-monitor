@@ -622,6 +622,28 @@ ALTER TABLE inspection_defects ADD CONSTRAINT inspection_defects_done_shape CHEC
       AND NOT (done_photo_id IS NOT NULL AND closed_by_report_id IS NOT NULL))) NOT VALID;
 ALTER TABLE inspection_defects VALIDATE CONSTRAINT inspection_defects_done_shape;
 
+-- ⚠️ "דוח ישן" (kind = 'archive') — מ-11/10/2026. בעלת המוצר: "אני רוצה שיהיה ניתן לעלות דוחות ישנים
+-- כדי שישמרו בהיסטוריה. בדוחות אלו לא ישמר האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה. וכשמעלים
+-- כזה דוח יהיה צריך לאשר את התאריכים כמו כל דוח". והבחירה מוצעת רק כשהדוח פג (בחירתה).
+-- ⚠️ **סוג שלישי ולא דגל, בכוונה:** כל שאילתה שמסננת kind = 'periodic' — המחזור והנורה
+-- (compliance_machine_rows), אב לבדיקה חוזרת, החזרת מתקן משימוש — מדלגת עליו מעצמה. דגל היה
+-- דורש "AND NOT archived" בכל אחת, וזו שתישכח היא זו שתצבע נורה מדוח ישן.
+-- תוקף — חובה ומאושר, כמו בתקופתי; אין לו followup_of ואין לו ליקויים (ה-RPC אוכפים).
+ALTER TABLE inspection_reports DROP CONSTRAINT IF EXISTS inspection_reports_kind;
+ALTER TABLE inspection_reports ADD CONSTRAINT inspection_reports_kind
+  CHECK (kind IN ('periodic','followup','archive')) NOT VALID;
+ALTER TABLE inspection_reports VALIDATE CONSTRAINT inspection_reports_kind;
+ALTER TABLE inspection_reports DROP CONSTRAINT IF EXISTS inspection_reports_followup_shape;
+ALTER TABLE inspection_reports ADD CONSTRAINT inspection_reports_followup_shape
+  CHECK ((kind = 'followup') = (followup_of IS NOT NULL)) NOT VALID;
+ALTER TABLE inspection_reports VALIDATE CONSTRAINT inspection_reports_followup_shape;
+ALTER TABLE inspection_reports DROP CONSTRAINT IF EXISTS inspection_reports_validity_shape;
+ALTER TABLE inspection_reports ADD CONSTRAINT inspection_reports_validity_shape CHECK (
+     (kind IN ('periodic','archive') AND valid_until IS NOT NULL AND validity_source IN ('document','next_inspection','manual'))
+  OR (kind = 'followup' AND valid_until IS NULL AND validity_source = 'inherited')
+  OR (kind = 'followup' AND valid_until IS NOT NULL AND validity_source IN ('document','next_inspection','manual'))) NOT VALID;
+ALTER TABLE inspection_reports VALIDATE CONSTRAINT inspection_reports_validity_shape;
+
 -- ============================================================
 -- 1.5 נעילה — RLS בלי מדיניות, בלי הרשאות (D2)
 -- ============================================================
@@ -980,16 +1002,19 @@ BEGIN
                    JOIN inspection_defects d ON d.report_id = c.id AND d.deleted_at IS NULL
                    CROSS JOIN LATERAL (SELECT app.inspection_done_on(d.closed_by_report_id, d.done_at) AS done_on) x
                   WHERE c.deleted_at IS NULL AND (c.id = r.id OR c.followup_of = r.id)) END,
-               'prev', CASE WHEN r.kind = 'periodic' THEN (
-                 SELECT jsonb_build_object('id', pv.id, 'inspected_on', pv.inspected_on, 'valid_until', pvu.vu,
-                                           'gap_days', r.inspected_on - pvu.vu)
+               -- ⚠️ דוח ישן נספר כ"קודם" (11/10/2026): אחרי מילוי לאחור הוא בדרך כלל הקודם של התסקיר
+               -- הנוכחי, ובלעדיו "האם החדש נעשה אחרי שהקודם פג" לא היה מוצג לאף אתר. 'kind' — כדי
+               -- שהמסך יאמר "דוח ישן" ולא ינסה לספור ליקויים שלא נרשמו.
+               'prev', CASE WHEN r.kind IN ('periodic','archive') THEN (
+                 SELECT jsonb_build_object('id', pv.id, 'kind', pv.kind, 'inspected_on', pv.inspected_on,
+                                           'valid_until', pvu.vu, 'gap_days', r.inspected_on - pvu.vu)
                    FROM inspection_reports pv
                    CROSS JOIN LATERAL (SELECT COALESCE((SELECT fu.valid_until FROM inspection_reports fu
                                                          WHERE fu.followup_of = pv.id AND fu.deleted_at IS NULL
                                                            AND fu.valid_until IS NOT NULL
                                                          ORDER BY fu.inspected_on DESC, fu.id DESC LIMIT 1),
                                                        pv.valid_until) AS vu) pvu
-                  WHERE pv.site_id = v_site AND pv.deleted_at IS NULL AND pv.kind = 'periodic'
+                  WHERE pv.site_id = v_site AND pv.deleted_at IS NULL AND pv.kind IN ('periodic','archive')
                     AND pv.machine_key = r.machine_key
                     AND (pv.inspected_on, pv.id) < (r.inspected_on, r.id)
                   ORDER BY pv.inspected_on DESC, pv.id DESC LIMIT 1) END)
@@ -1091,7 +1116,7 @@ BEGIN
 
   SELECT s.id INTO v_site FROM sites s WHERE s.code = v_code;
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
-  IF v_kind NOT IN ('periodic','followup') THEN RAISE EXCEPTION 'סוג תסקיר לא תקין' USING ERRCODE = 'check_violation'; END IF;
+  IF v_kind NOT IN ('periodic','followup','archive') THEN RAISE EXCEPTION 'סוג תסקיר לא תקין' USING ERRCODE = 'check_violation'; END IF;
   IF v_insp IS NULL OR v_insp > v_today OR v_insp < DATE '2000-01-01' THEN
     RAISE EXCEPTION 'תאריך בדיקה לא תקין' USING ERRCODE = 'check_violation'; END IF;
   IF v_dl NOT BETWEEN 0 AND 365 THEN RAISE EXCEPTION 'מועד תיקון ברירת מחדל לא תקין' USING ERRCODE = 'check_violation'; END IF;
@@ -1130,6 +1155,11 @@ BEGIN
     -- ⚠️ D5: אין ברירת מחדל של שנה. כפתור "+12 חודשים" בממשק שולח תאריך, והוא נרשם 'manual'.
     IF v_valid IS NULL THEN
       RAISE EXCEPTION 'יש להזין את תאריך התוקף מהמסמך' USING ERRCODE = 'check_violation'; END IF;
+    -- ⚠️ דוח ישן — רק כשהבדיקה הבאה שבו כבר עברה (ביום עצמו עדיין בתוקף, כמו compliance_light).
+    -- דוח בתוקף שנשמר "להיסטוריה" לא היה צובע את הנורה, והאתר היה נראה בלי תסקיר בזמן שיש לו.
+    IF v_kind = 'archive' AND v_valid >= v_today THEN
+      RAISE EXCEPTION 'דוח ישן — רק דוח שהבדיקה הבאה שבו כבר עברה. תסקיר בתוקף מעלים כתסקיר רגיל'
+        USING ERRCODE = 'check_violation'; END IF;
   END IF;
 
   -- D25: המקור נגזר בשרת. "מהמסמך" רק אם התאריך זהה לזה שפוענח.
@@ -1144,10 +1174,17 @@ BEGIN
     RAISE EXCEPTION 'רשימת ליקויים לא תקינה' USING ERRCODE = 'check_violation'; END IF;
   v_cnt := jsonb_array_length(COALESCE(p_defects,'[]'::jsonb));
   IF v_cnt > 100 THEN RAISE EXCEPTION 'יותר מ-100 ליקויים' USING ERRCODE = 'check_violation'; END IF;
-  IF v_cnt = 0 AND NOT v_clean THEN
-    RAISE EXCEPTION 'לא הוזנו ליקויים — יש לאשר במפורש שהתסקיר נקי' USING ERRCODE = 'check_violation'; END IF;
-  IF v_cnt > 0 AND v_clean THEN
-    RAISE EXCEPTION 'התסקיר סומן נקי אבל הוזנו ליקויים' USING ERRCODE = 'check_violation'; END IF;
+  IF v_kind = 'archive' THEN
+    -- דוח ישן: אין ליקויים, ואין "נקי" — הוא אינו אומר דבר על מה שטופל
+    IF v_cnt > 0 THEN
+      RAISE EXCEPTION 'בדוח ישן לא רושמים ליקויים — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;
+    v_clean := false;
+  ELSE
+    IF v_cnt = 0 AND NOT v_clean THEN
+      RAISE EXCEPTION 'לא הוזנו ליקויים — יש לאשר במפורש שהתסקיר נקי' USING ERRCODE = 'check_violation'; END IF;
+    IF v_cnt > 0 AND v_clean THEN
+      RAISE EXCEPTION 'התסקיר סומן נקי אבל הוזנו ליקויים' USING ERRCODE = 'check_violation'; END IF;
+  END IF;
   IF v_close AND (v_kind <> 'followup' OR NOT v_clean) THEN
     RAISE EXCEPTION 'סגירת ליקויים אפשרית רק בתסקיר חוזר נקי' USING ERRCODE = 'check_violation'; END IF;
 
@@ -1170,8 +1207,10 @@ BEGIN
                                      WHERE f.id = v_fid AND f.site_id = v_site AND f.purged_at IS NULL) THEN
       RAISE EXCEPTION 'קובץ התסקיר לא נמצא' USING ERRCODE = 'PT404'; END IF;
   END IF;
+  -- ⚠️ תקופתי ודוח ישן הם אותו מסמך לעניין כפילות: אותו PDF פעם כרגיל ופעם כישן — שתי שורות לבדיקה אחת
   IF EXISTS (SELECT 1 FROM inspection_reports r WHERE r.file_id = v_fid AND r.machine_key = v_mk
-              AND r.kind = v_kind AND r.deleted_at IS NULL) THEN
+              AND (r.kind = v_kind OR (r.kind IN ('periodic','archive') AND v_kind IN ('periodic','archive')))
+              AND r.deleted_at IS NULL) THEN
     RAISE EXCEPTION 'הקובץ הזה כבר הועלה למתקן הזה (קובץ %)', v_fid USING ERRCODE = 'PT409'; END IF;
 
   -- תסקיר תקופתי **חדש** למתקן שהוצא משימוש מחזיר אותו לשימוש. ⚠️ "חדש" = מאוחר מכל
@@ -1294,7 +1333,7 @@ BEGIN
   -- תוקף: ערך שנערך נרשם 'manual'; NULL מותר רק בבדיקה חוזרת ('inherited')
   IF v_new.valid_until IS DISTINCT FROM v_old.valid_until THEN
     IF v_new.valid_until IS NULL THEN
-      IF v_old.kind = 'periodic' THEN
+      IF v_old.kind IN ('periodic','archive') THEN
         RAISE EXCEPTION 'יש להזין את תאריך התוקף מהמסמך' USING ERRCODE = 'check_violation'; END IF;
       v_new.validity_source := 'inherited';
     ELSE
@@ -1304,6 +1343,12 @@ BEGIN
   IF v_new.valid_until IS NOT NULL
      AND (v_new.valid_until <= v_new.inspected_on OR v_new.valid_until > v_new.inspected_on + 800) THEN
     RAISE EXCEPTION 'תאריך התוקף חייב להיות אחרי תאריך הבדיקה ועד כשנתיים ממנו' USING ERRCODE = 'check_violation'; END IF;
+  -- דוח ישן (11/10/2026): גם בעריכה — רק כשהבדיקה הבאה כבר עברה, ולעולם לא "נקי"
+  IF v_old.kind = 'archive' AND v_new.valid_until >= app.compliance_today() THEN
+    RAISE EXCEPTION 'דוח ישן — רק דוח שהבדיקה הבאה שבו כבר עברה. תסקיר בתוקף מעלים כתסקיר רגיל'
+      USING ERRCODE = 'check_violation'; END IF;
+  IF v_old.kind = 'archive' AND v_new.declared_clean THEN
+    RAISE EXCEPTION 'דוח ישן אינו מסומן נקי — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;
 
   -- D7: "נקי" רק בתסקיר שמעולם לא נרשם בו ליקוי, ועם סיבה (זה מה שסוגר מחזור).
   -- ⚠️ גם ליקוי שנמחק נספר: "מחיקה בסיבה 'טופל' + סימון התסקיר המקורי נקי" הדליקה ירוק בלי
@@ -1452,6 +1497,8 @@ BEGIN
   IF NOT FOUND OR v_r.deleted_at IS NOT NULL THEN RAISE EXCEPTION 'התסקיר לא נמצא' USING ERRCODE = 'PT404'; END IF;
   IF v_r.declared_clean THEN
     RAISE EXCEPTION 'התסקיר סומן נקי — יש לבטל את הסימון בעריכת התסקיר' USING ERRCODE = 'check_violation'; END IF;
+  IF v_r.kind = 'archive' THEN
+    RAISE EXCEPTION 'בדוח ישן לא רושמים ליקויים — הוא נשמר להיסטוריה בלבד' USING ERRCODE = 'check_violation'; END IF;
   v_code := app.compliance_code(v_r.site_id, v_r.site_code);
 
   IF p_defect_id IS NULL THEN

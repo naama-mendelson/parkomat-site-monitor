@@ -41,7 +41,7 @@ import InspectionReportEdit from "./InspectionReportEdit";
 import InspectionUpload from "./InspectionUpload";
 import InspectionHistory from "./InspectionHistory";
 import {
-  KIND_LABEL, deriveInspection, hasDraggedFiles, ilDateOf, machineTitle, outcomeParts, previousOf, validityText,
+  KIND_LABEL, deriveInspection, hasDraggedFiles, ilDateOf, machineTitle, previousOf, validityText,
 } from "./InspectionUtils";
 import "./InspectionTab.css";
 
@@ -373,7 +373,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
               <span key={key} className="it-prev">
                 <span>
                   {derived.active.length > 1 && <strong>{machineTitle(cy.machine)}: </strong>}
-                  התסקיר הקודם ({formatDateIL(p.inspectedOn)}): <PartsText parts={outcomeParts(p.outcome)} />
+                  התסקיר הקודם ({formatDateIL(p.inspectedOn)}): <PartsText parts={p.parts} />
                 </span>
                 {p.gap && <span>התסקיר הנוכחי נעשה <PartsText parts={[p.gap]} /></span>}
               </span>

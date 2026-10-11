@@ -1487,7 +1487,7 @@ test("50 · תסקיר חדש: הקודם 'הוחלף' — לא טופל / אח�
   assert.equal(byId.get(d2.id).not_handled, false);
   assert.equal(byId.get(d3.id).late_days, null);
   assert.equal(byId.get(d4.id).late_days, null, "ביום המועד עצמו — בזמן (כמו overdue: due_on < היום)");
-  assert.deepEqual(r2.prev, { id: p1.report_id, inspected_on: addDays(TODAY, -400), valid_until: addDays(TODAY, -35), gap_days: 15 });
+  assert.deepEqual(r2.prev, { id: p1.report_id, kind: "periodic", inspected_on: addDays(TODAY, -400), valid_until: addDays(TODAY, -35), gap_days: 15 });
   assert.equal(r1.prev, null, "התסקיר הראשון — אין קודם");
   assert.deepEqual(r2.outcome, { total: 0, not_handled: 0, open: 0, done_late: 0, done_on_time: 0 });
   // ⚠️ וההתעלמות: הליקוי הישן שעבר את המועד אינו צובע את המחזור החדש
@@ -1526,4 +1526,63 @@ test("50 · תסקיר חדש: הקודם 'הוחלף' — לא טופל / אח�
   assert.equal(wa.defects[0].not_handled, false);
   assert.equal(wa.defects[0].due_state, "overdue", "המחזור של A עדיין חי — עבר מועד");
   assert.deepEqual(wa.outcome, { total: 1, not_handled: 0, open: 1, done_late: 0, done_on_time: 0 });
+});
+
+// ---------------------------------------------------------------
+// 51 · דוח ישן (kind = 'archive') — היסטוריה בלבד (11/10/2026)
+// ---------------------------------------------------------------
+// בעלת המוצר: "אני רוצה שיהיה ניתן לעלות דוחות ישנים כדי שישמרו בהיסטוריה. בדוחות אלו לא ישמר
+// האם התקלות שבו טופלו או לא — רק ישמר בהיסטוריה. וכשמעלים כזה דוח יהיה צריך לאשר את התאריכים
+// כמו כל דוח". הבחירה מוצעת רק כשהדוח פג.
+const archive = (s, o = {}) => upload(s.code, {
+  kind: "archive",
+  inspected_on: o.insp ?? addDays(TODAY, -400),
+  valid_until: "valid" in o ? o.valid : addDays(TODAY, -35),
+  machine_key: o.machine,
+}, { defects: o.defects ?? [], file: o.file });
+
+test("51 · דוח ישן: נשמר עם תאריכים בלבד, אינו צובע נורה, אין לו ליקויים — ונספר כ'קודם' לתסקיר שאחריו", { skip }, async () => {
+  const s = await newSite();
+  const empty = await newSite();
+  const fileA = pdf();
+
+  // דוח בתוקף אינו "ישן" — וגם לא ביום הבדיקה הבאה עצמו (עדיין בתוקף)
+  await fails(archive(s, { valid: addDays(TODAY, 30) }), "23514", /דוח ישן/);
+  await fails(archive(s, { insp: addDays(TODAY, -365), valid: TODAY }), "23514", /דוח ישן/);
+  await fails(archive(s, { defects: [{ body: "מעקה רופף" }] }), "23514", /לא רושמים ליקויים/);
+  await fails(archive(s, { valid: null }), "23514", /תאריך התוקף/);
+
+  const a = await archive(s, { file: fileA });
+  const row = (await sup(`SELECT kind, declared_clean, followup_of, valid_until::text vu, validity_source FROM inspection_reports WHERE id = $1`,
+    [a.report_id]))[0];
+  assert.deepEqual(row, { kind: "archive", declared_clean: false, followup_of: null, vu: addDays(TODAY, -35), validity_source: "manual" });
+  assert.equal(a.defects, 0);
+
+  // ⚠️ הנורה: אתר שיש לו רק דוח ישן נראה בדיוק כמו אתר בלי תסקיר
+  const st = await status(s.id), st0 = await status(empty.id);
+  assert.equal(st.vu, null, "דוח ישן נספר בתוקף");
+  assert.deepEqual({ s: st.s, vs: st.vs, miss: st.miss, open: st.open }, { s: st0.s, vs: st0.vs, miss: st0.miss, open: st0.open });
+
+  // אין ליקויים ואין "נקי" — גם לא בעריכה; ותוקף לא נמתח אל ההווה
+  await fails(rpc(MGR, `SELECT public.inspection_defect_save($1, NULL, 'ליקוי חדש', false, NULL)`, [a.report_id]), "23514", /לא רושמים ליקויים/);
+  await fails(rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, 'בדיקה')`,
+    [a.report_id, JSON.stringify({ declared_clean: true })]), "23514", /אינו מסומן נקי/);
+  await fails(rpc(MGR, `SELECT public.inspection_report_update($1, $2::jsonb, NULL)`,
+    [a.report_id, JSON.stringify({ valid_until: addDays(TODAY, 10) })]), "23514", /דוח ישן/);
+  // בדיקה חוזרת אינה משתייכת לדוח ישן
+  await fails(followup(s, a.report_id), "23514", /אין תסקיר תקופתי/);
+  // אותו PDF לאותו מתקן — פעם כישן ופעם כרגיל — כפילות
+  await fails(periodic(s, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35), file: fileA }), "PT409");
+
+  // תסקיר רגיל אחריו: הוא הנורה, והדוח הישן הוא ה"קודם" שלו
+  const p = await periodic(s, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300) });
+  assert.equal((await status(s.id)).s, "ok");
+  const j = await siteJson(s.code);
+  const jp = j.reports.find((r) => r.id === p.report_id);
+  const ja = j.reports.find((r) => r.id === a.report_id);
+  assert.deepEqual(jp.prev, { id: a.report_id, kind: "archive", inspected_on: addDays(TODAY, -400), valid_until: addDays(TODAY, -35), gap_days: 15 });
+  assert.equal(ja.kind, "archive");
+  assert.equal(ja.outcome, null, "לדוח ישן אין סיכום ליקויים");
+  assert.deepEqual(ja.defects, []);
+  assert.equal(j.machines[0].periodic_id, p.report_id, "המחזור הוא של התסקיר הרגיל");
 });

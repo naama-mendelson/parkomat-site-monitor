@@ -57,8 +57,14 @@ test("previousOf — הסיכום נלקח מהתסקיר הקודם עצמו, �
   const current = { id: 9, outcome: { total: 0 }, prev: { id: 7, inspected_on: "2025-03-12", valid_until: "2026-03-12", gap_days: 20 } };
   const byId = new Map([[7, prevReport], [9, current]]);
   assert.deepEqual(previousOf(current, byId), {
-    inspectedOn: "2025-03-12", outcome: prevReport.outcome, gap: { late: true, text: "20 ימים אחרי שהתסקיר הקודם פג" },
+    inspectedOn: "2025-03-12", outcome: prevReport.outcome,
+    parts: [{ late: true, text: "ליקוי אחד לא טופל" }, { text: "ליקוי אחד טופל בזמן" }],
+    gap: { late: true, text: "20 ימים אחרי שהתסקיר הקודם פג" },
   });
+  // דוח ישן (11/10/2026) — אין ליקויים לספור; השורה אומרת זאת, והפער נשאר
+  const arch = previousOf({ prev: { id: 5, kind: "archive", inspected_on: "2024-01-01", gap_days: 3 } }, new Map([[5, { id: 5, kind: "archive", outcome: null }]]));
+  assert.deepEqual(arch.parts, [{ text: "דוח ישן — הליקויים לא נרשמו" }]);
+  assert.deepEqual(arch.gap, { late: true, text: "3 ימים אחרי שהתסקיר הקודם פג" });
   assert.equal(previousOf({ id: 1, prev: null }, byId), null, "תסקיר ראשון — אין שורה");
   assert.equal(previousOf(null, byId), null);
   // הקודם נמחק / אינו בתשובה — עדיין אומרים מתי, בלי לנחש מה היה בו

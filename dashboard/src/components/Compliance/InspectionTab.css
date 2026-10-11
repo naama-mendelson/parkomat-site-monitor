@@ -1031,6 +1031,10 @@ fieldset.iu-form-col { border: 0; padding: 0; margin: 0; min-width: 0; }
    ============================================================ */
 .iu-defects-choice select { max-width: 260px; }
 
+/* דוח ישן או תסקיר רגיל — רק כשהבדיקה הבאה שבמסמך עברה (11/10/2026). שתי שורות, בלי מסגרת. */
+.iu-old { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.iu-old legend { padding: 0; margin-bottom: 4px; }
+
 /* ליקויים בטופס ההעלאה — שורה = שדה טקסט אחד, ו"תוך כמה ימים" אחד לכולם */
 .iu-deadline-field { display: flex; flex-direction: column; gap: 6px; }
 .iu-deadline-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
