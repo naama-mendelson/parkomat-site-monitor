@@ -16,6 +16,11 @@ const OPR2 = "b1000000-0000-0000-0000-000000000003";
 const AGT = "b1000000-0000-0000-0000-000000000004";
 const OFF = "b1000000-0000-0000-0000-000000000005";
 const INT = "b1000000-0000-0000-0000-000000000006";
+// רק sherut@parkomat.co.il מסמן "בוצעה" (11/10/2026). בכוונה בקר ולא מנהל: הכלל הוא החשבון,
+// לא התפקיד. ושני מתחזים — שם מוצג זהה, ומייל שמכיל את המילה.
+const SRV = "b1000000-0000-0000-0000-000000000007";
+const IMP = "b1000000-0000-0000-0000-000000000008";
+const XSR = "b1000000-0000-0000-0000-000000000009";
 
 let h;
 let seq = 0;
@@ -55,7 +60,10 @@ before(async () => {
       ('tk-op@parkomat.co.il','בקר משימות','operator',true,$2,$6),
       ('tk-op2@parkomat.co.il','בקר שני','operator',true,$3,$6),
       ('tk-off@parkomat.co.il','מושבת','operator',false,$4,$6),
-      ('tk-intake@parkomat.co.il',NULL,'operator',true,$5,$6)`, [MGR, OPR, OPR2, OFF, INT, now]);
+      ('tk-intake@parkomat.co.il',NULL,'operator',true,$5,$6),
+      ('sherut@parkomat.co.il','שירות','operator',true,$7,$6),
+      ('tk-imp@parkomat.co.il','sherut@parkomat.co.il','manager',true,$8,$6),
+      ('xsherut@parkomat.co.il','שירות','manager',true,$9,$6)`, [MGR, OPR, OPR2, OFF, INT, now, SRV, IMP, XSR]);
   const s = await newSite();
   await sup(`INSERT INTO app_users (email, role, is_active, supabase_uid, site_id, created_at)
              VALUES ('site-tk@parkomat.co.il','agent',true,$1,$2,$3)`, [AGT, s.id, now]);
@@ -108,7 +116,8 @@ test("T3 · הוספה: מי הזין (השם המזוהה, לא מוקלד), ל
   assert.equal(ca.body, "להודיע ללקוח שלא חנה כמו שצריך", "רווחים בקצוות נחתכים");
   assert.equal(ca.created_by, "בקר משימות");
   assert.equal(ca.site_code, s.code);
-  assert.equal(ca.can_close, true);
+  assert.equal(ca.can_close, false, "מנהל אחר — לא מסמן");
+  assert.equal((await list(SRV, "customer")).open.find((t) => Number(t.id) === a).can_close, true);
   const tj = await list(OPR, "technical");
   const tb = tj.open.find((t) => Number(t.id) === b);
   assert.deepEqual({ by: tb.created_by, code: tb.site_code, name: tb.site_name }, { by: "מנהלת משימות", code: s.code, name: "חניון בדיקה" });
@@ -132,13 +141,13 @@ test("T4 · שליחה חוזרת (אותו client_id) — משימה אחת", {
 
 test("T5 · בוצעה: מי ומתי; סימון שני לא דורס את השם; המשימה לא נמחקת אלא עוברת ל'בוצעו'", { skip }, async () => {
   const id = await add(OPR, "technical", "להחליף נורה בכניסה", (await newSite()).code);
-  const d1 = await done(OPR2, id);
+  const d1 = await done(SRV, id);
   const d2 = await done(MGR, id);
-  assert.equal(d1, d2, "אידמפוטנטי");
+  assert.equal(d1, d2, "אידמפוטנטי — וגם מי שאינו רשאי לסמן מקבל את הסימון הקיים, לא שגיאה");
   const j = await list(OPR, "technical");
   assert.ok(!j.open.some((t) => Number(t.id) === id));
   const t = j.done.find((x) => Number(x.id) === id);
-  assert.deepEqual({ by: t.done_by, at: t.done_at }, { by: "בקר שני", at: d1 });
+  assert.deepEqual({ by: t.done_by, at: t.done_at }, { by: "שירות", at: d1 });
   assert.equal((await sup(`SELECT count(*)::int n FROM tasks WHERE id = $1`, [id]))[0].n, 1, "לא נמחקה");
   await fails(done(OPR, 999999), "PT404", /לא נמצאה/);
   // האילוץ: בוצעה בלי מי, או מי בלי מתי — לא אפשרי גם מתחת ל-RPC
@@ -204,7 +213,7 @@ test("T8 · ספירות לכפתורים: פתוחות בלבד (גם בטיפ�
   await start(OPR2, taken);                  // בטיפול — עדיין פתוחה, ונספרת
   const closed = await add(OPR, "technical", "ט3", t.code);
   await start(OPR, closed);
-  await done(OPR, closed);
+  await done(SRV, closed);
   const c = await counts(MGR);
   assert.deepEqual(c.map((r) => [r.kind, r.site_id, r.open]).sort(),
     [["customer", s.id, 2], ["technical", s.id, 1], ["technical", t.id, 1]].sort());
@@ -221,7 +230,7 @@ test("T9 · כל כתיבה מפרסמת אירוע (type='tasks') לעדכון 
   await start(OPR2, id);                     // כבר בטיפול — לא כתיבה, ולכן לא אירוע ולא יומן
   await unstart(MGR, id);
   await unstart(MGR, id);                    // כבר לביצוע — כנ"ל
-  await done(MGR, id);
+  await done(SRV, id);
   const s2 = await newSite();
   await add(OPR, "customer", "לאתר אחר", s2.code);
   const ev = await sup(`SELECT site_code, type, payload FROM events WHERE id > $1 ORDER BY id`, [before]);
@@ -243,19 +252,35 @@ test("T10 · מחיקת אתר: המשימות נשארות עם קוד האתר
   assert.equal(j.open.find((t) => Number(t.id) === id).site_code, s.code);
 });
 
-test("T11 · הרשאת הסימון — מקום אחד (app.can_close_task), וה-RPC מכבד אותו", { skip }, async () => {
-  const id = await add(OPR, "customer", "לבדוק חסימה", (await newSite()).code);
-  // מדמים את ההחלטה העתידית: רק מנהלים מסמנים
-  await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
-             LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_manager() $$`);
-  try {
-    await fails(done(OPR, id), "42501", /אין הרשאה/);
-    assert.equal((await list(OPR, "customer")).open.find((t) => Number(t.id) === id).can_close, false, "הכפתור מוסתר לפי אותה פונקציה");
-    assert.ok(await done(MGR, id));
-  } finally {
-    await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
-               LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_staff() $$`);
+test("T11 · רק sherut@parkomat.co.il מסמן בוצעה — בשני הסוגים, לפי המייל של הזהות המאומתת", { skip }, async () => {
+  const s = await newSite();
+  const c = await add(OPR, "customer", "להתקשר ללקוח", s.code);
+  const t = await add(OPR, "technical", "לגרז שרשרת", s.code);
+  // כל אחד אחר — גם מנהל, גם מי שהשם המוצג שלו הוא המייל, גם מייל שמכיל את המילה — לא
+  for (const uid of [OPR, OPR2, MGR, IMP, XSR]) {
+    for (const id of [c, t]) await fails(done(uid, id), "42501", /אין הרשאה/);
+    assert.ok((await list(uid, null, s.code)).open.every((x) => x.can_close === false), "הכפתור מוסתר לפי אותה פונקציה");
   }
+  assert.ok((await list(SRV, null, s.code)).open.every((x) => x.can_close === true));
+  assert.ok(await done(SRV, c));
+  assert.ok(await done(SRV, t));
+  // מייל באותיות גדולות או עם רווחים — עדיין אותו חשבון
+  const t2 = await add(OPR, "technical", "להחליף נורה", s.code);
+  await sup(`UPDATE app_users SET email = ' Sherut@Parkomat.co.il ' WHERE supabase_uid = $1`, [SRV]);
+  try {
+    assert.ok(await done(SRV, t2));
+  } finally {
+    await sup(`UPDATE app_users SET email = 'sherut@parkomat.co.il' WHERE supabase_uid = $1`, [SRV]);
+  }
+  // חשבון מושבת — לא צוות, ולכן לא מסמן (ולא נכנס בכלל)
+  const t3 = await add(OPR, "customer", "לחזור ללקוח", s.code);
+  await sup(`UPDATE app_users SET is_active = false WHERE supabase_uid = $1`, [SRV]);
+  try {
+    await fails(done(SRV, t3), "42501");
+  } finally {
+    await sup(`UPDATE app_users SET is_active = true WHERE supabase_uid = $1`, [SRV]);
+  }
+  assert.equal(findIn(await list(MGR, null, s.code), t3).state, "todo");
 });
 
 test("T12 · הקובץ אידמפוטנטי — החלה שנייה לא נכשלת ולא מכפילה", { skip }, async () => {
@@ -302,16 +327,16 @@ test("T13 · שלושה מצבים: לביצוע → בטיפול → בוצעה
 
   // שוב לטיפול, ובוצעה מבטיפול
   await start(OPR, id);
-  const d = await done(MGR, id);
+  const d = await done(SRV, id);
   const j = await list(MGR, null, s.code);
   assert.ok(!j.open.some((x) => Number(x.id) === id));
   t = j.done.find((x) => Number(x.id) === id);
   assert.deepEqual({ state: t.state, at: t.done_at, by: t.done_by, started: t.started_by },
-    { state: "done", at: d, by: "מנהלת משימות", started: "בקר משימות" }, "started_* נשארות: המשימה הייתה בטיפול");
+    { state: "done", at: d, by: "שירות", started: "בקר משימות" }, "started_* נשארות: המשימה הייתה בטיפול");
   // ⚠️ ההיסטוריה זוכרת גם את מה שהעמודות כבר שכחו (הלקיחה הראשונה וההחזרה)
   assert.deepEqual(t.history.map((x) => [x.action, x.by]), [
     ["created", "בקר משימות"], ["started", "בקר שני"], ["unstarted", "מנהלת משימות"],
-    ["started", "בקר משימות"], ["done", "מנהלת משימות"]]);
+    ["started", "בקר משימות"], ["done", "שירות"]]);
   assert.equal(t.history[1].at, s1);
   assert.equal(t.history.at(-1).at, d);
   assert.ok(t.history.every((x, i) => i === 0 || x.at >= t.history[i - 1].at), "מהראשון לאחרון");
@@ -327,23 +352,16 @@ test("T13 · שלושה מצבים: לביצוע → בטיפול → בוצעה
 
   // ישר מלביצוע לבוצעה — מותר, בלי "בטיפול"
   const id2 = await add(OPR, "customer", "להתקשר ללקוח", s.code);
-  await done(OPR, id2);
+  await done(SRV, id2);
   const t2 = findIn(await list(MGR, null, s.code), id2);
   assert.deepEqual({ state: t2.state, started: t2.started_at, steps: t2.history.map((x) => x.action) },
     { state: "done", started: null, steps: ["created", "done"] });
 
-  // ⚠️ ההחלטה מי סוגר נשארת במקום אחד: מי שאינו רשאי לסגור — עדיין לוקח ומחזיר
-  await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
-             LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_manager() $$`);
-  try {
-    const id3 = await add(OPR, "technical", "להחליף נורה", s.code);
-    await start(OPR, id3);
-    await unstart(OPR, id3);
-    await fails(done(OPR, id3), "42501", /אין הרשאה/);
-  } finally {
-    await sup(`CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
-               LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$ SELECT app.is_staff() $$`);
-  }
+  // ⚠️ מי שאינו רשאי לסגור — עדיין לוקח ומחזיר
+  const id3 = await add(OPR, "technical", "להחליף נורה", s.code);
+  await start(OPR, id3);
+  await unstart(OPR, id3);
+  await fails(done(OPR, id3), "42501", /אין הרשאה/);
 });
 
 test("T14 · משימה מלפני היומן מקבלת היסטוריה ממה שהעמודות יודעות — פעם אחת", { skip }, async () => {

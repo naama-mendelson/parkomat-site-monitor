@@ -19,10 +19,9 @@
 -- יושבת ב-task_history ולא בעמודות: started_* הן המצב של עכשיו, והחזרה מאפסת אותן — היומן
 -- זוכר שהמשימה הייתה בטיפול, אצל מי ומתי.
 --
--- ⚠️ **מי מסמן "בוצעה" — עדיין לא הוחלט** ("נראה אחרי זה", 06/10/2026). הבקשה
--- המקורית: רק משתמש קשרי לקוחות מסמן משימת קשרי לקוחות. במערכת אין היום צוותים,
--- רק תפקידים. עד שיוחלט: כל איש צוות מסמן, ושמו נרשם (ייחוס, לא חסימה — כמו
--- בתחזוקה). ההגבלה תהיה שינוי במקום **אחד**: app.can_close_task.
+-- ⚠️ **רק החשבון sherut@parkomat.co.il מסמן "בוצעה"** (בעלת המוצר, 11/10/2026: "רק מי
+-- שמתחבר מתוך sherut@parkomat.co.il") — בשני הסוגים, וגם מנהל אחר לא. "לטיפול" ו"החזרה
+-- לביצוע" — לכל איש צוות. הכלל כולו במקום **אחד**: app.can_close_task.
 --
 -- מוסכמות: כמו compliance.postgres.sql — טבלאות סגורות (RLS בלי מדיניות, בלי הרשאות),
 -- כל גישה דרך RPC עם app.require_staff(), תאריכים TEXT ב-ISO-UTC, אירוע ב-events
@@ -120,12 +119,18 @@ SELECT t.id, v.action, v.actor, v.uid, v.at
 -- ============================================================
 -- מי רשאי לסמן "בוצעה" — המקום היחיד
 -- ============================================================
--- ⚠️ כרגע: כל איש צוות. כשבעלת המוצר תחליט על צוותים (קשרי לקוחות / טכני), כאן
--- נבדק השיוך — ושום מקום אחר לא צריך להשתנות: tasks_list מחזיר can_close לכל שורה,
+-- רק sherut@parkomat.co.il (11/10/2026), בשני הסוגים — p_kind נשאר כדי שכלל לפי סוג יהיה
+-- שינוי כאן בלבד. שום מקום אחר לא צריך להשתנות: tasks_list מחזיר can_close לכל שורה,
 -- והמסך מציג את הכפתור לפיו. ("לטיפול" ו"החזרה לביצוע" — לכל איש צוות: הם לא סוגרים.)
+-- ⚠️ המייל נקרא מ-app_users לפי הזהות המאומתת (כמו is_staff), לא מהאסימון ולא מהשם המוצג:
+-- full_name הוא טקסט חופשי, ומשתמש שהשם שלו "sherut@parkomat.co.il" אינו החשבון.
 CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT app.is_staff()
+     AND EXISTS (SELECT 1 FROM app_users u
+                  WHERE u.supabase_uid::text = app.current_actor()
+                    AND u.is_active
+                    AND lower(btrim(u.email)) = 'sherut@parkomat.co.il')
 $$;
 REVOKE ALL ON FUNCTION app.can_close_task(text) FROM PUBLIC;
 

@@ -1431,14 +1431,27 @@ Rules that are easy to break:
   - On the expanded card it is one "משימות" button.
 - **The input takes focus only with a mouse** (`pointer: fine`). On a phone, focusing it opens a keyboard
   that hides the list.
-- ⚠️ **Who may mark "done" is not decided yet** (owner: *"נראה אחרי זה"*).
-  - The original request said only a customer-relations user closes customer tasks. The system has
-    roles, not teams.
-  - Until it is decided, any staff user may mark done, and the name is recorded (attribution, not
-    prevention, as with maintenance).
-  - **The single place to change it is `app.can_close_task(kind)`.** `tasks_list` returns `can_close`
-    per row, and the button follows it. T11 and T13 prove the RPC honours a stricter rule.
+- ⚠️ **Only the account sherut@parkomat.co.il may mark a task "done"** (owner, 11/10/2026: *"רק מי
+  שמתחבר מתוך sherut@parkomat.co.il"*).
+  - This covers both kinds, and no other manager.
+  - Until then, any staff user could close a task. The original request (06/10) was "customer
+    tasks by customer relations", and the system has roles, not teams.
+  - **The single place is `app.can_close_task(kind)`.**
+    - It compares `app_users.email` of the **verified** identity (`supabase_uid = current_actor()`)
+      after `lower(btrim())`. It never uses the token, and never `full_name`, which is free text.
+    - `p_kind` is kept, so a per-kind rule would change only that function.
+    - `tasks_list` returns `can_close` per row. Everyone else simply has no "✓ בוצע" button.
+    - `task_done` refuses with 42501, "אין הרשאה לסמן משימה זו כבוצעה".
+    - A repeated `task_done` on a task that is already done returns the existing stamp to anyone, not
+      an error. It writes nothing.
   - "לטיפול" and "החזרה לביצוע" stay open to any staff user, because neither one closes a task.
+  - ⚠️ **The address is written in the SQL.** Renaming or deleting that account leaves nobody able to
+    close tasks, silently. The other buttons keep working.
+  - Tests:
+    - T11: a manager, a user whose display name is the address, `xsherut@`, upper case with spaces,
+      an inactive account, both kinds.
+    - 8 of 9 mutations were caught. The survivor drops `is_staff()` from the function, which is an
+      equivalent mutant: every caller already runs `require_staff()`.
 - **Closed tables** (`tasks` and `task_history`): RLS on, no policies, no grants, like compliance.
   - Every read and write is a `SECURITY DEFINER` RPC behind `app.require_staff()`.
   - The name recorded is the verified display name, never typed.
