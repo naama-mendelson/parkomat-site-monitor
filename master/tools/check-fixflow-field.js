@@ -69,8 +69,10 @@ async function main() {
     await c.query("SELECT set_config('app.user_id', $1, true)", [mgr.rows[0].uid]);
 
     // רישום אתר חדש — עם הפרמטר החדש
+    // ⚠️ בשמות ולא לפי מיקום, ועם סוג מעלית — חובה מאז 11/10/2026 (החתימה התארכה ל-10)
     await c.query(
-      `SELECT * FROM public.register_site($1,$2,$3,$4,$5,$6)`,
+      `SELECT * FROM public.register_site(p_code => $1, p_site_name => $2, p_plc_type => $3, p_tier => $4,
+         p_is_new => $5, p_fixflow_profile => $6, p_lift_type => 'serapid')`,
       [CODE, "אתר בדיקה", "doli", "basic", true, "לולק|שאטל דולי"]);
     const born = await c.query("SELECT fixflow_profile FROM sites WHERE code=$1", [CODE]);
     check("⚠️ register_site שומר את הספרייה שנבחרה",

@@ -326,7 +326,7 @@ const systemOf = async (code) =>
 
 test("רישום אתר עם מערכת — נשמרת", { skip }, async () => {
   await asManager(`SELECT * FROM public.register_site(p_code => 'CS1', p_site_name => 'גרוזנברג בדיקה',
-    p_plc_type => 'xy', p_control_system => 'ביטנקם')`);
+    p_plc_type => 'xy', p_control_system => 'ביטנקם', p_lift_type => 'serapid')`);
   assert.equal(await systemOf("CS1"), "ביטנקם");
 });
 
@@ -354,15 +354,94 @@ test("מחרוזת ריקה מנקה את המערכת", { skip }, async () => {
   assert.equal(await systemOf("CS1"), null);
 });
 
-test("רישום בצורה הישנה (בלי מערכת) עדיין עובד", { skip }, async () => {
+test("רישום בלי מערכת עדיין עובד (רק סוג המעלית חובה)", { skip }, async () => {
   await asManager(`SELECT * FROM public.register_site(p_code => 'CS2', p_site_name => 'ישן', p_plc_type => 'doli',
-    p_tier => 'basic', p_is_new => true, p_fixflow_profile => NULL)`);
+    p_tier => 'basic', p_is_new => true, p_fixflow_profile => NULL, p_lift_type => 'four-post-11kw')`);
   assert.equal(await systemOf("CS2"), null);
 });
 
 test("מפעיל אינו רשאי לשנות מערכת", { skip }, async () => {
   await assert.rejects(h.as("authenticated", USER, (tx) =>
     tx.query(`SELECT * FROM public.update_site(p_code => 'CS1', p_control_system => 'לולק')`)));
+});
+
+// ================================================================
+// sites.lift_type / lift_console — סוג המעלית והקונזול (11/10/2026)
+// ================================================================
+// בעלת המוצר: "כשמוסיפים אתר צריך 'סוג מעלית' … 1, 2, 6 — אם בוחרים באופציות האלו תיפתח השאלה
+// קונזול אורכי או קונזול רוחבי". חובה ברישום; גם בעריכה; אתר ישן נשאר NULL עד שמשלימים.
+
+const liftOf = async (code) =>
+  (await h.pg.query(`SELECT lift_type, lift_console FROM sites WHERE code = $1`, [code])).rows[0];
+
+test("סוג מעלית: חובה ברישום — בלעדיו נדחה, ובסוגים 1/2/6 גם הקונזול", { skip }, async () => {
+  await assert.rejects(asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'בלי מעלית')`),
+    /יש לבחור סוג מעלית/);
+  for (const t of ["hydraulic-piston-1", "hydraulic-piston-2", "electric"]) {
+    await assert.rejects(asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'בלי קונזול',
+      p_lift_type => $1)`, [t]), /יש לבחור קונזול/, t);
+  }
+  await assert.rejects(asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'x',
+    p_lift_type => 'hydraulic-piston-1', p_lift_console => 'diagonal')`), /קונזול לא תקין/);
+  await assert.rejects(asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'x',
+    p_lift_type => 'escalator')`), /סוג מעלית לא תקין/);
+  assert.equal(await liftOf("LT1"), undefined, "שום רישום כושל לא השאיר שורה");
+  await asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'בוכנה',
+    p_lift_type => ' hydraulic-piston-2 ', p_lift_console => 'transverse')`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "hydraulic-piston-2", lift_console: "transverse" });
+  // סוג בלי קונזול — קונזול שנשלח בכל זאת (נשאר בטופס) אינו נשמר
+  await asManager(`SELECT * FROM public.register_site(p_code => 'LT2', p_site_name => 'סרפיד',
+    p_lift_type => 'serapid', p_lift_console => 'longitudinal')`);
+  assert.deepEqual(await liftOf("LT2"), { lift_type: "serapid", lift_console: null });
+  // ⚠️ קוד כפול — "כבר רשום" לפני "מה חסר" (tools/check-writes.js בודק 409 בלי סוג מעלית)
+  await assert.rejects(asManager(`SELECT * FROM public.register_site(p_code => 'LT1', p_site_name => 'שוב')`),
+    /כבר רשום/);
+});
+
+test("סוג מעלית בעריכה: NULL אינו נוגע, אין ניקוי, החלפה מסדרת את הקונזול, קונזול לבד לסוג הקיים", { skip }, async () => {
+  const upd = (args, params) => asManager(`SELECT * FROM public.update_site(p_code => 'LT1'${args})`, params);
+  // עריכה בלי השדות — לא נוגעת (הדשבורד הישן אינו שולח אותם)
+  await upd(`, p_site_name => 'שם חדש'`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "hydraulic-piston-2", lift_console: "transverse" });
+  // קונזול לבד — לסוג הקיים
+  await upd(`, p_lift_console => 'longitudinal'`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "hydraulic-piston-2", lift_console: "longitudinal" });
+  // החלפה לסוג בלי קונזול — הקונזול נמחק (אחרת ה-CHECK היה מסרב)
+  await upd(`, p_lift_type => 'four-post-18kw'`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "four-post-18kw", lift_console: null });
+  // קונזול לבד לסוג שאין לו — אין מה לשנות
+  await upd(`, p_lift_console => 'transverse'`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "four-post-18kw", lift_console: null });
+  // החלפה לסוג שפותח את השאלה — בלי קונזול נדחה, עם קונזול נשמר
+  await assert.rejects(upd(`, p_lift_type => 'electric'`), /יש לבחור קונזול/);
+  await upd(`, p_lift_type => 'electric', p_lift_console => 'transverse'`);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "electric", lift_console: "transverse" });
+  // ⚠️ אין ניקוי — הסוג חובה
+  await assert.rejects(upd(`, p_lift_type => ''`), /שדה חובה/);
+  await assert.rejects(upd(`, p_lift_type => 'escalator'`), /סוג מעלית לא תקין/);
+  assert.deepEqual(await liftOf("LT1"), { lift_type: "electric", lift_console: "transverse" });
+  // אתר ישן בלי סוג: משלימים בעריכה
+  await h.pg.query(`INSERT INTO sites (code, site_name, status, registered_at) VALUES ('LT9','ישן','ready','2026-01-01T00:00:00.000Z')`);
+  assert.deepEqual(await liftOf("LT9"), { lift_type: null, lift_console: null });
+  await asManager(`SELECT * FROM public.update_site(p_code => 'LT9', p_lift_type => 'hydraulic-piston-1', p_lift_console => 'longitudinal')`);
+  assert.deepEqual(await liftOf("LT9"), { lift_type: "hydraulic-piston-1", lift_console: "longitudinal" });
+  // מפעיל אינו רשאי
+  await assert.rejects(h.as("authenticated", USER, (tx) =>
+    tx.query(`SELECT * FROM public.update_site(p_code => 'LT9', p_lift_type => 'serapid')`)));
+});
+
+test("⚠️ ה-CHECK בטבלה: גם בלי ה-RPC אין 'עמודים עם קונזול' או 'בוכנה בלי קונזול'", { skip }, async () => {
+  const bad = [
+    ["serapid", "longitudinal"], ["hydraulic-piston-1", null], ["electric", null],
+    [null, "transverse"], ["escalator", null], ["hydraulic-piston-1", "diagonal"],
+  ];
+  for (const [t, c] of bad) {
+    await assert.rejects(h.pg.query(`UPDATE sites SET lift_type = $1, lift_console = $2 WHERE code = 'LT2'`, [t, c]),
+      /sites_lift_shape/, `${t}/${c}`);
+  }
+  for (const [t, c] of [[null, null], ["four-post-11kw", null], ["hydraulic-piston-1", "longitudinal"], ["serapid", null]]) {
+    await h.pg.query(`UPDATE sites SET lift_type = $1, lift_console = $2 WHERE code = 'LT2'`, [t, c]);
+  }
 });
 
 // ================================================================

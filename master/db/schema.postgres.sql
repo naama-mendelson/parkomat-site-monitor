@@ -719,6 +719,29 @@ END $$;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS monitored BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- ============================================================
+-- lift_type / lift_console — סוג המעלית, והקונזול (11/10/2026)
+-- ============================================================
+-- בעלת המוצר: "כשמוסיפים אתר צריך 'סוג מעלית' … 1, 2, 6 — אם בוחרים באופציות האלו תיפתח
+-- השאלה קונזול אורכי או קונזול רוחבי". חובה ברישום (register_site); אתר שנרשם לפני כן
+-- נשאר NULL עד שישלימו אותו בעריכה. הרשימה: shared/lift-types.mjs.
+-- ⚠️ ה-CHECK הוא הצורה, ולא החובה: סוג מהרשימה או NULL; קונזול מהרשימה; וקונזול יש **בדיוק**
+-- לסוגים שיש להם (1, 2, 6) — לא לסוג אחר, ולא בלי סוג. עמודה שמחוץ ל-RPC (SQL ידני, כלי) אינה
+-- יכולה לשמור "4 עמודים עם קונזול" או "בוכנה בלי קונזול".
+-- ⚠️ DROP/ADD NOT VALID/VALIDATE ולא CHECK בתוך ADD COLUMN: אילוץ שמשתנה אחר כך היה נשאר
+-- בגרסה הראשונה שלו בייצור (ADD COLUMN IF NOT EXISTS מדלג על כל ההגדרה).
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lift_type TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lift_console TEXT;
+ALTER TABLE sites DROP CONSTRAINT IF EXISTS sites_lift_shape;
+ALTER TABLE sites ADD CONSTRAINT sites_lift_shape CHECK (
+      (lift_type IS NULL OR lift_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'four-post-18kw',
+                                          'four-post-11kw', 'serapid', 'electric'))
+  AND (lift_console IS NULL OR lift_console IN ('longitudinal', 'transverse'))
+  AND ((lift_console IS NOT NULL)
+       = COALESCE(lift_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'electric'), false))
+) NOT VALID;
+ALTER TABLE sites VALIDATE CONSTRAINT sites_lift_shape;
+
+-- ============================================================
 -- מי בפועל הכניס לתחזוקה — שם מוקלד, לצד הזהות המאומתת
 -- ============================================================
 -- ⚠️ `set_by_name` נגזר מהאסימון ולעולם לא מגוף הבקשה — זה הכלל שמפריד

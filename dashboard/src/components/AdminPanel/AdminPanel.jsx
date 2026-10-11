@@ -10,6 +10,7 @@ import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
+import { LIFT_CONSOLES, LIFT_TYPES, liftLabel, liftNeedsConsole, liftProblem } from "../../../../shared/lift-types.mjs";
 import { useAdmin } from "../../hooks/useAdmin";
 import { copyText } from "../../utils/clipboard";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
@@ -113,6 +114,11 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
       controlSystem: site.control_system ?? "",
       initialControlSystem: site.control_system ?? "",
       fixflowProfile: site.fixflow_profile ?? "",   // פיילוט FixFlow
+      // סוג המעלית והקונזול (11/10/2026) — כדי להשלים אתרים שנרשמו לפני השדה
+      liftType: site.lift_type ?? "",
+      liftConsole: site.lift_console ?? "",
+      initialLiftType: site.lift_type ?? "",
+      initialLiftConsole: site.lift_console ?? "",
     });
     setErr(null);
   }
@@ -125,6 +131,12 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
     if (!CODE_PATTERN.test(newCode)) {
       return setErr("קוד האתר: אותיות באנגלית, ספרות, מקף וקו תחתון בלבד");
     }
+    // ⚠️ סוג המעלית: אתר שעוד אין לו (נרשם לפני 11/10) אפשר לערוך בלי לבחור — אבל מי שבחר סוג
+    // שפותח את השאלה חייב לענות על הקונזול, ואתר שכבר יש לו סוג אינו מאבד אותו (השרת דוחה ניקוי).
+    const liftErr = liftProblem(draft.liftType, draft.liftConsole, { required: !!draft.initialLiftType });
+    if (liftErr) return setErr(liftErr);
+    const liftChanged = draft.liftType !== draft.initialLiftType;
+    const consoleChanged = draft.liftConsole !== draft.initialLiftConsole;
 
     setBusy(true);
     setErr(null);
@@ -144,6 +156,10 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
         // ⚠️ נשלח תמיד, גם ריק — מאותה סיבה בדיוק כמו סוג המתקן: ריק הוא
         // "חזור לגזירה האוטומטית", ובלי שליחה אי אפשר לבטל בחירה. פיילוט FixFlow.
         fixflow_profile: draft.fixflowProfile,
+        // סוג מעלית וקונזול — רק כששונו. החלפת סוג שולחת גם את הקונזול (בסוג בלי קונזול השרת
+        // מוחק אותו); שינוי קונזול לבד — רק אותו.
+        ...(liftChanged && draft.liftType ? { lift_type: draft.liftType, lift_console: draft.liftConsole } : {}),
+        ...(!liftChanged && consoleChanged ? { lift_console: draft.liftConsole } : {}),
       });
       setEditing(null);
       onChanged();
@@ -506,6 +522,31 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                           ))}
                         </select>
                       </label>
+                      {/* סוג המעלית (11/10/2026). "— לבחור —" רק לאתר שעוד אין לו סוג: אתר שכבר יש לו
+                          אינו יכול לחזור ל"בלי" (חובה), רק להחליף. */}
+                      <label>
+                        <span>סוג מעלית</span>
+                        <select name="lift_type" value={draft.liftType}
+                          onChange={(e) => setDraft({ ...draft, liftType: e.target.value,
+                            liftConsole: liftNeedsConsole(e.target.value) ? draft.liftConsole : "" })}>
+                          {!draft.initialLiftType && <option value="">— לבחור —</option>}
+                          {LIFT_TYPES.map((t) => (
+                            <option key={t.key} value={t.key}>{t.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      {liftNeedsConsole(draft.liftType) && (
+                        <label>
+                          <span>קונזול</span>
+                          <select name="lift_console" value={draft.liftConsole}
+                            onChange={(e) => setDraft({ ...draft, liftConsole: e.target.value })}>
+                            <option value="">— לבחור —</option>
+                            {LIFT_CONSOLES.map((c) => (
+                              <option key={c.key} value={c.key}>{c.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       <FixFlowPicker
                         // ⚠️ עם הטיוטה, לא עם השמור: שינוי מערכת או סוג בטופס חייב
                         // לשנות מיד את היעד האוטומטי שמוצג מתחת — אחרת רואים את
@@ -523,7 +564,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                     <div className="adm-info">
                       <span className="adm-name">{s.site_name}</span>
                       <span className="adm-meta">
-                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · {STATUS_LABELS[s.status] || s.status}
+                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · מעלית: <b>{liftLabel(s.lift_type, s.lift_console)}</b> · {STATUS_LABELS[s.status] || s.status}
                       </span>
                     </div>
                   )}

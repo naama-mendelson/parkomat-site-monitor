@@ -1748,3 +1748,48 @@ Tests: `service-links.test.js` (7; 5 of 5 SQL mutations caught), `service-merge.
 `sites-direct-cache.test.js` (updated, plus `keepLastTier` and the fresh-tier cases). Browser:
 `e2e/probe-tier-all.mjs` (34/34; 27/27 with `REAL=1`); `dbg-tier-gap.mjs` / `dbg-tier-names.mjs`
 measure trimming and overflow. The harness mock no longer puts `tier` in `LIVE_DEFAULTS`.
+
+## "סוג מעלית" and the console question on every site (built 11/10/2026)
+
+The owner: *"כשמוסיפים אתר צריך 'סוג מעלית' שיהיה SELECT … 1, 2, 6 — אם בוחרים באופציות האלו
+תיפתח השאלה קונזול אורכי או קונזול רוחבי"*.
+
+Her decisions the same day:
+- **Required when a site is registered.** For types 1, 2 and 6, the console is required too.
+- **Also in the admin edit row**, so the sites already registered can be completed. Until then
+  they stay NULL.
+
+| Piece | Where |
+|---|---|
+| The list (keys, labels, which types open the question) | `shared/lift-types.mjs`: `LIFT_TYPES`, `LIFT_CONSOLES`, `liftNeedsConsole`, `liftLabel`, `liftProblem` |
+| Columns + shape | `sites.lift_type`, `sites.lift_console`, CHECK `sites_lift_shape` (`schema.postgres.sql`) |
+| Validation | `app.check_lift_type`, `app.check_lift_console`; `register_site` (10 args) and `update_site` (9 args) in `writes.postgres.sql` |
+| UI | `AddSiteModal.jsx` (required select, plus the console select when the type opens it); `AdminPanel.jsx` (edit selects; the summary row shows `מעלית: …`) |
+| Tests | `sql-local.test.js` (3 tests; 10 of 10 SQL mutations caught on a scratch mirror), `lift-types.test.js` (compares the three copies of the list), `register-site-unmonitored.test.js` (what the data layer sends); browser `e2e/probe-lift.mjs` (51/51, 1280 light and 390 dark) |
+
+- **Keys are English and labels Hebrew**, as in `site-types`. The labels are exactly hers, in her
+  order. "הידראולית" is spelled correctly; she typed "הידרואלית".
+- ⚠️ **The list exists in three copies, and `lift-types.test.js` compares them:** the shared module,
+  the two check functions, and the table CHECK. A type added to only one of them would show in the
+  form and be refused on save, or be saved through SQL and break the screen.
+- **The CHECK enforces the shape, not the requirement.** A type is from the list or NULL; the
+  console is from the list; and a console exists **exactly** for types 1, 2 and 6. Outside the
+  RPCs (hand SQL, a tool) nothing can store "4 עמודים with a console" or "a piston without one".
+- **The requirement lives in `register_site`.** It is checked **after** the duplicate-code check:
+  `tools/check-writes.js` expects 409 for a repeated code without a lift type. That tool and
+  `check-fixflow-field.js` now register with `p_lift_type`.
+- **`update_site`:**
+  - NULL means untouched, so the old bundle and a plain rename don't affect the lift fields.
+  - An empty string is **refused**, because the field is required: you can change the type, not
+    remove it.
+  - Changing the type recomputes the console. A type without a console clears it, otherwise the
+    CHECK would refuse.
+  - A console alone changes the console of the current type.
+- **Old signatures are dropped:** `register_site` with 8 args and `update_site` with 7. Two live
+  copies make PostgREST refuse the call. The new parameters are `DEFAULT NULL`, so an old call
+  still resolves and gets a clear refusal ("יש לבחור סוג מעלית"), not "function not found".
+- **In the forms:** "— לבחור —" is not a value (unlike "לא הוגדר" for the machine type). Switching
+  to a type without a console clears the chosen console, so a hidden value is never sent. A site
+  that already has a type gets no "— לבחור —" in the edit row.
+- The `master` server arm does not know the field. It is retired, and the direct arm is the only
+  one in use.

@@ -417,6 +417,54 @@ $fn$;
 REVOKE ALL ON FUNCTION app.check_control_system(text) FROM PUBLIC;
 
 -- ============================================================
+-- app.check_lift_type / app.check_lift_console — סוג המעלית והקונזול (11/10/2026)
+-- ============================================================
+-- ⚠️ רשימה סגורה, כמו המערכת: אותם מפתחות בדיוק כמו shared/lift-types.mjs וה-CHECK
+-- sites_lift_shape (schema.postgres.sql); tests/lift-types.test.js משווה בין השלושה.
+-- ⚠️ "חובה" נאכף ב-register_site ולא כאן: NULL כאן = "לא נשלח".
+CREATE OR REPLACE FUNCTION app.check_lift_type(p_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+  v text := NULLIF(BTRIM(COALESCE(p_value, '')), '');
+BEGIN
+  IF v IS NULL THEN RETURN NULL; END IF;
+  IF v NOT IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'four-post-18kw', 'four-post-11kw',
+               'serapid', 'electric') THEN
+    RAISE EXCEPTION 'סוג מעלית לא תקין: %', v USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN v;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION app.check_lift_type(text) FROM PUBLIC;
+
+-- הקונזול שייך לסוג: בבוכנה 1, בוכנה 2 וחשמלי (1, 2, 6) — חובה, אחד משניים; בכל סוג אחר —
+-- אין קונזול, וערך שנשלח בכל זאת (נשאר בטופס מבחירה קודמת) נזרק ולא נשמר.
+CREATE OR REPLACE FUNCTION app.check_lift_console(p_type text, p_console text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+  v text := NULLIF(BTRIM(COALESCE(p_console, '')), '');
+BEGIN
+  IF p_type IS NULL OR p_type NOT IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'electric') THEN
+    RETURN NULL;
+  END IF;
+  IF v IS NULL THEN
+    RAISE EXCEPTION 'יש לבחור קונזול אורכי או קונזול רוחבי' USING ERRCODE = 'check_violation';
+  END IF;
+  IF v NOT IN ('longitudinal', 'transverse') THEN
+    RAISE EXCEPTION 'קונזול לא תקין: %', v USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN v;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION app.check_lift_console(text, text) FROM PUBLIC;
+
+-- ============================================================
 -- ============================================================
 -- app.check_fixflow_profile — ולידציה לבחירת ספריית התקלות
 -- ============================================================
@@ -480,6 +528,8 @@ DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, te
 -- חי אינו שולח אותו, ו-PostgREST מתאים קריאה עם פחות פרמטרים לפונקציה שבה
 -- השאר עם DEFAULT — כלומר הוספה לסוף אינה שוברת את מי שלא התעדכן.
 DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, text, text);
+-- ⚠️ והרביעית (8), מאז p_monitored (07/10). מאז 11/10 — עם סוג מעלית וקונזול בסוף.
+DROP FUNCTION IF EXISTS public.register_site(text, text, text, text, boolean, text, text, boolean);
 
 CREATE OR REPLACE FUNCTION public.register_site(
   p_code      text,
@@ -492,7 +542,11 @@ CREATE OR REPLACE FUNCTION public.register_site(
   -- מערכת ההפעלה: לולק / ביטנקם / סוטפין / סוטפין-לולק. ריק = לא הוגדר.
   p_control_system  text DEFAULT NULL,
   -- false = אתר בלי בקר מחובר (07/10/2026): בודק, תחזוקה ומשימות בלבד. ראה sites.monitored.
-  p_monitored       boolean DEFAULT true
+  p_monitored       boolean DEFAULT true,
+  -- סוג המעלית והקונזול (11/10/2026) — **חובה**, אבל DEFAULT NULL: כך החתימה רק מתארכת, וקריאה
+  -- בלעדיהם מקבלת סירוב ברור ("יש לבחור סוג מעלית") ולא "function not found".
+  p_lift_type       text DEFAULT NULL,
+  p_lift_console    text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -505,6 +559,8 @@ DECLARE
   v_tier  text := COALESCE(NULLIF(TRIM(COALESCE(p_tier, '')), ''), 'basic');
   v_plc   text := NULLIF(TRIM(COALESCE(p_plc_type, '')), '');
   v_id    integer;
+  v_lift  text;
+  v_console text;
 BEGIN
   -- ⚠️ אותה תבנית בדיוק כמו SITE_CODE_PATTERN בשרת. הקוד נכנס לנתיב MQTT,
   -- ותו כמו '/' או '+' שם הוא תו-בקרה של הפרוטוקול.
@@ -530,14 +586,23 @@ BEGIN
     RAISE EXCEPTION 'אתר עם קוד זה כבר רשום: %', p_code USING ERRCODE = 'PT409';
   END IF;
 
+  -- ⚠️ סוג המעלית — חובה (בעלת המוצר, 11/10/2026), והקונזול כשהסוג פותח אותו. **אחרי** בדיקת
+  -- הקוד הכפול: tools/check-writes.js בודק "אותו קוד שוב → 409" בלי סוג מעלית, ואותה תשובה
+  -- נכונה גם כאן — קודם "כבר רשום", ורק אז "מה חסר".
+  v_lift := app.check_lift_type(p_lift_type);
+  IF v_lift IS NULL THEN
+    RAISE EXCEPTION 'יש לבחור סוג מעלית' USING ERRCODE = 'check_violation';
+  END IF;
+  v_console := app.check_lift_console(v_lift, p_lift_console);
+
   INSERT INTO sites (code, site_name, registered_at, plc_type, is_new_site, tier, fixflow_profile,
-                     control_system, monitored)
+                     control_system, monitored, lift_type, lift_console)
   VALUES (p_code, v_name,
           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           v_plc, CASE WHEN p_is_new THEN 1 ELSE 0 END, v_tier,
           app.check_fixflow_profile(p_fixflow_profile),
           app.check_control_system(p_control_system),
-          COALESCE(p_monitored, true))
+          COALESCE(p_monitored, true), v_lift, v_console)
   RETURNING sites.id INTO v_id;
 
   -- ⚠️ ספריית FixFlow והמערכת נכנסות לביקורת: שתיהן קובעות לאיזה נוהל מוקדן
@@ -548,7 +613,8 @@ BEGIN
                                                     'plc_type', v_plc, 'is_new', p_is_new,
                                                     'fixflow_profile', p_fixflow_profile,
                                                     'control_system', p_control_system,
-                                                    'monitored', COALESCE(p_monitored, true)));
+                                                    'monitored', COALESCE(p_monitored, true),
+                                                    'lift_type', v_lift, 'lift_console', v_console));
   PERFORM app.record_write_event(p_code, 'site-added',
                                  jsonb_build_object('type','site-added','code',p_code,
                                                     'siteName',v_name));
@@ -575,6 +641,7 @@ $fn$;
 -- כמו "רק העדכון שבור" ולא כמו שגיאת שם.
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text);
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text, text);
+-- ⚠️ ה-DROP של 7 הפרמטרים (ממש מתחת) הוא גם המעבר של 11/10: מאז נוספו בסוף סוג מעלית וקונזול (9).
 DROP FUNCTION IF EXISTS public.update_site(text, text, text, text, text, text, text);
 
 CREATE OR REPLACE FUNCTION public.update_site(
@@ -588,7 +655,12 @@ CREATE OR REPLACE FUNCTION public.update_site(
   p_fixflow_profile text DEFAULT NULL,
   -- ⚠️ ואותה סמנטיקה גם כאן. בלעדיה דשבורד ישן, שאינו שולח את השדה, היה
   -- מוחק את המערכת בכל שמירה.
-  p_control_system  text DEFAULT NULL
+  p_control_system  text DEFAULT NULL,
+  -- סוג המעלית והקונזול (11/10/2026). NULL = לא נגעו. ⚠️ אבל **אין ניקוי**: הסוג חובה, ולכן
+  -- מחרוזת ריקה נדחית — אפשר להחליף סוג, לא למחוק אותו. קונזול לבד (בלי סוג) משנה את הקונזול
+  -- של הסוג הקיים; וסוג שאין לו קונזול מוחק את הקונזול הישן (אחרת ה-CHECK היה מסרב).
+  p_lift_type       text DEFAULT NULL,
+  p_lift_console    text DEFAULT NULL
 )
 RETURNS TABLE (id integer, code text, site_name text)
 LANGUAGE plpgsql
@@ -600,8 +672,10 @@ DECLARE
   v_id    integer;
   v_code  text;
   v_name  text;
+  v_lift  text;
+  v_cur_lift text;
 BEGIN
-  SELECT s.id, s.code, s.site_name INTO v_id, v_code, v_name
+  SELECT s.id, s.code, s.site_name, s.lift_type INTO v_id, v_code, v_name, v_cur_lift
     FROM sites s WHERE s.code = p_code;
   IF v_id IS NULL THEN
     RAISE EXCEPTION 'אתר לא נמצא: %', p_code USING ERRCODE = 'PT404';
@@ -651,13 +725,27 @@ BEGIN
      WHERE sites.id = v_id;
   END IF;
 
+  IF p_lift_type IS NOT NULL THEN
+    v_lift := app.check_lift_type(p_lift_type);
+    IF v_lift IS NULL THEN
+      RAISE EXCEPTION 'סוג המעלית הוא שדה חובה — אפשר להחליף אותו, לא למחוק' USING ERRCODE = 'check_violation';
+    END IF;
+    UPDATE sites SET lift_type = v_lift, lift_console = app.check_lift_console(v_lift, p_lift_console)
+     WHERE sites.id = v_id;
+  ELSIF p_lift_console IS NOT NULL THEN
+    -- קונזול בלבד — לסוג הקיים (אתר בלי סוג, או סוג בלי קונזול: אין מה לשנות, ונשאר NULL)
+    UPDATE sites SET lift_console = app.check_lift_console(v_cur_lift, p_lift_console)
+     WHERE sites.id = v_id;
+  END IF;
+
   PERFORM app.record_write_audit('site.update', v_actor, app.current_app_role(),
                                  'site', v_code,
                                  jsonb_build_object('from_code', p_code, 'new_code', p_new_code,
                                                     'site_name', p_site_name, 'tier', p_tier,
                                                     'plc_type', p_plc_type,
                                                     'fixflow_profile', p_fixflow_profile,
-                                                    'control_system', p_control_system));
+                                                    'control_system', p_control_system,
+                                                    'lift_type', p_lift_type, 'lift_console', p_lift_console));
   PERFORM app.record_write_event(v_code, 'site-updated',
                                  jsonb_build_object('type','site-updated','code',v_code));
 
@@ -759,12 +847,12 @@ $fn$;
 -- ⚠️ ואפילו אם היה עובר: GRANT על חתימה שאינה קיימת פירושו שלמשתמשת אין
 -- הרשאה על הפונקציה החדשה, וכל עריכת אתר מהדפדפן מחזירה "permission denied".
 -- `tools/check-writes-sql-parses.js` תופס את שניהם.
-REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text, text)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_site(text, text, text, text, text, text, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.delete_site(text)                              FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text, text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.register_site(text, text, text, text, boolean, text, text, boolean, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_site(text, text, text, text, text, text, text, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_site(text)                              TO authenticated;
 
 -- ============================================================

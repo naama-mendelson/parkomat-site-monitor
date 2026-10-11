@@ -269,8 +269,9 @@ const rpc = (fn, body, token) =>
   // ⚠️ **הבדיקה הראשונה בכלל שרושמת אתר.** ה-JS המקביל
   // (`insertSite` ב-queries.js) מפרט שש עמודות ומספק שמונה מקומות, ולכן
   // `POST /api/sites` החזיר 500 מאז ומתמיד — ואף שער לא נגע בו.
+  // ⚠️ סוג מעלית — חובה מאז 11/10/2026 (בלעדיו: 400 "יש לבחור סוג מעלית")
   const reg = await rpc("register_site",
-    { p_code: NEW_CODE, p_site_name: "אתר בדיקת שער", p_tier: "vip", p_plc_type: "doli" }, mgrToken);
+    { p_code: NEW_CODE, p_site_name: "אתר בדיקת שער", p_tier: "vip", p_plc_type: "doli", p_lift_type: "serapid" }, mgrToken);
   const rbody = await reg.json().catch(() => []);
   add("⚠️ מנהל רושם אתר", reg.status, 200);
   add("...והשורה נוצרה", Number(rbody?.[0]?.id) > 0, true);

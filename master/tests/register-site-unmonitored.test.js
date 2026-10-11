@@ -50,6 +50,29 @@ test("⚠️ אתר ללא בקר: p_monitored=false נשלח, ואין שום �
   assert.deepEqual([res.ok, res.agent, res.agentError], [true, null, null]);
 });
 
+test("סוג מעלית וקונזול (11/10/2026) נשלחים כשנבחרו; קונזול שלא נבחר — לא", async () => {
+  const { registerSiteDirect } = await load();
+  const calls = fake();
+  await registerSiteDirect({ code: "9002", site_name: "בוכנה", lift_type: "hydraulic-piston-1", lift_console: "longitudinal", monitored: false });
+  assert.equal(calls.rpc[0].args.p_lift_type, "hydraulic-piston-1");
+  assert.equal(calls.rpc[0].args.p_lift_console, "longitudinal");
+  await registerSiteDirect({ code: "9003", site_name: "סרפיד", lift_type: "serapid", monitored: false });
+  assert.equal(calls.rpc[1].args.p_lift_type, "serapid");
+  assert.ok(!("p_lift_console" in calls.rpc[1].args));
+});
+
+test("עדכון: סוג מעלית וקונזול נשלחים רק כשנמסרו — עריכת שם אינה נוגעת בהם", async () => {
+  const { updateSiteDirect } = await load();
+  const calls = fake();
+  await updateSiteDirect("9002", { site_name: "שם חדש" });
+  assert.ok(!("p_lift_type" in calls.rpc[0].args) && !("p_lift_console" in calls.rpc[0].args));
+  await updateSiteDirect("9002", { lift_type: "electric", lift_console: "transverse" });
+  assert.deepEqual([calls.rpc[1].args.p_lift_type, calls.rpc[1].args.p_lift_console], ["electric", "transverse"]);
+  await updateSiteDirect("9002", { lift_console: "longitudinal" });
+  assert.ok(!("p_lift_type" in calls.rpc[2].args));
+  assert.equal(calls.rpc[2].args.p_lift_console, "longitudinal");
+});
+
 test("רישום רגיל: בלי המפתח p_monitored, והזהות כן מונפקת (כאן — נכשלת בלי שרת, ומדווחת)", async () => {
   const { registerSiteDirect } = await load();
   const calls = fake();

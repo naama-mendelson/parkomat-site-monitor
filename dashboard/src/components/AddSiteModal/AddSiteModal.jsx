@@ -7,6 +7,7 @@ import { copyText } from "../../utils/clipboard";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
+import { LIFT_CONSOLES, LIFT_TYPES, liftNeedsConsole, liftProblem } from "../../../../shared/lift-types.mjs";
 import FixFlowPicker from "../FixFlowLink/FixFlowPicker.jsx"; // פיילוט FixFlow — להסרה: מחק שורה זו ואת <FixFlowPicker/> למטה
 import "./AddSiteModal.css";
 
@@ -23,6 +24,9 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [fixflowProfile, setFixflowProfile] = useState("");   // פיילוט FixFlow
   // אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד; בלי זהות סוכן
   const [noController, setNoController] = useState(false);
+  // סוג המעלית והקונזול (11/10/2026) — חובה; הקונזול רק בסוגים שפותחים אותו (1, 2, 6)
+  const [liftType, setLiftType] = useState("");
+  const [liftConsole, setLiftConsole] = useState("");
 
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -43,6 +47,9 @@ function AddSiteModal({ onClose, onSuccess }) {
     if (!trimmedName) {
       return setError("יש להזין שם אתר");
     }
+    // ⚠️ אותו כלל כמו השרת (register_site) — כאן רק כדי להיכשל מוקדם ובעברית ליד השדה
+    const liftErr = liftProblem(liftType, liftConsole);
+    if (liftErr) return setError(liftErr);
 
     setSaving(true);
     try {
@@ -54,6 +61,8 @@ function AddSiteModal({ onClose, onSuccess }) {
         // ⚠️ ריק = תיגזר אוטומטית משם האתר או מסוג המכונה. פיילוט FixFlow.
         fixflow_profile: fixflowProfile || undefined,
         ...(noController ? { monitored: false } : {}),
+        lift_type: liftType,
+        ...(liftNeedsConsole(liftType) ? { lift_console: liftConsole } : {}),
       });
 
       // ============================================================
@@ -222,6 +231,35 @@ function AddSiteModal({ onClose, onSuccess }) {
               ))}
             </select>
           </label>
+
+          {/* ==========================================================
+              סוג המעלית — חובה (11/10/2026)
+              ==========================================================
+              בעלת המוצר: "כשמוסיפים אתר צריך 'סוג מעלית' שיהיה SELECT … 1, 2, 6 — אם בוחרים
+              באופציות האלו תיפתח השאלה קונזול אורכי או קונזול רוחבי". הרשימה: shared/lift-types.mjs.
+              ⚠️ "— לבחור —" אינו ערך (בניגוד ל"לא הוגדר" של סוג המתקן): השדה חובה, והשרת דוחה בלעדיו.
+              החלפה לסוג בלי קונזול מנקה את הקונזול שנבחר — אחרת הוא היה נשאר בטופס בלי שדה שמראה אותו. */}
+          <label className="addsite-field">
+            <span>סוג מעלית <b className="req">*</b></span>
+            <select name="lift_type" value={liftType}
+              onChange={(e) => { setLiftType(e.target.value); if (!liftNeedsConsole(e.target.value)) setLiftConsole(""); }}>
+              <option value="">— לבחור —</option>
+              {LIFT_TYPES.map((t) => (
+                <option key={t.key} value={t.key}>{t.label}</option>
+              ))}
+            </select>
+          </label>
+          {liftNeedsConsole(liftType) && (
+            <label className="addsite-field">
+              <span>קונזול <b className="req">*</b></span>
+              <select name="lift_console" value={liftConsole} onChange={(e) => setLiftConsole(e.target.value)}>
+                <option value="">— לבחור —</option>
+                {LIFT_CONSOLES.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {/* ⚠️ אתר בלי בקר מחובר (07/10/2026): בעלת המוצר, על מתקני סוטפין — "אתר לא מקושר
               למתקן עצמו… אבל כן קיים, כן נדרש בודק וכן תחזוקה ומשימות". לא מסומן כברירת
