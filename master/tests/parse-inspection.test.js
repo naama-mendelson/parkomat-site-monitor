@@ -846,3 +846,35 @@ test("suggestInspectionDates: אין זוג חודשים — המאוחר ושל
 test("suggestInspectionDates: מרחק של יותר מ-24 חודשים אינו זוג", () => {
   assert.equal(suggestInspectionDates(["2024-03-16", "2027-03-16"]).rule, "latest");
 });
+
+// "שנה פחות יום" (11/10/2026). נמדד על 68 תסקירים בייצור: בלי זה הכלל טעה ב-3.
+// כל אחת מהבדיקות למטה היא צורה שנמצאה שם, בתאריכים אחרים.
+test("suggestInspectionDates: שנה פחות יום — לא יום החתימה שאחרי הבדיקה", () => {
+  // נבדק 05/04, הבאה 04/04 בשנה הבאה, ונחתם חודשיים אחר כך
+  assert.deepEqual(suggestInspectionDates(["2026-04-05", "2026-06-20", "2027-04-04"]),
+    { next: "2027-04-04", inspected: "2026-04-05", rule: "months_less_day", months: 12 });
+});
+
+test("suggestInspectionDates: 'פחות יום' עם הבאה גובר על 'בדיוק' עם התסקיר הקודם", () => {
+  // התסקיר הקודם שנה בדיוק לפני הבדיקה — זוג מדויק, אבל לא עם הבדיקה הבאה
+  const s = suggestInspectionDates(["2025-05-11", "2026-05-11", "2027-05-10"]);
+  assert.equal(s.inspected, "2026-05-11");
+  assert.equal(s.next, "2027-05-10");
+});
+
+test("suggestInspectionDates: 'בדיוק' לפני 'פחות יום' — לא יום ההדפסה שלמחרת", () => {
+  // הדפסה + 12 חודשים − יום = הבאה, אבל הבדיקה עצמה + 12 בדיוק = הבאה
+  assert.deepEqual(suggestInspectionDates(["2026-08-19", "2026-08-20", "2027-08-19"]),
+    { next: "2027-08-19", inspected: "2026-08-19", rule: "months", months: 12 });
+});
+
+test("suggestInspectionDates: 'בדיוק' בכל מרחק לפני 'פחות יום' במרחק קצר יותר", () => {
+  // תאריך חודש אחרי הבדיקה + 11 חודשים − יום = הבאה; 12 בדיוק מהבדיקה גובר
+  assert.deepEqual(suggestInspectionDates(["2026-09-07", "2026-10-08", "2027-09-07"]),
+    { next: "2027-09-07", inspected: "2026-09-07", rule: "months", months: 12 });
+});
+
+test("suggestInspectionDates: פחות יום מעבר לסוף חודש — 01/03 → 28/02", () => {
+  assert.deepEqual(suggestInspectionDates(["2026-03-01", "2027-02-28"]),
+    { next: "2027-02-28", inspected: "2026-03-01", rule: "months_less_day", months: 12 });
+});

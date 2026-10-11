@@ -1079,9 +1079,40 @@ Rules that are easy to break and expensive to notice:
   the text and `suggestInspectionDates` proposes the pair: **a date exactly a whole number of months
   (1–24) before a later one** — inspection → next; else the latest and the one before it. ⚠️ Not
   "latest and second latest": one real report also carries a signing date a week later and an
-  invoice-page date, and that rule picks a week-wrong inspection date. The months rule found the right pair in
-  every real report. `parseInspectionReport` is used **only** to split a multi-report file into
-  page blocks. Parser tag `dates-1`.
+  invoice-page date, and that rule picks a week-wrong inspection date. `parseInspectionReport` is
+  used **only** to split a multi-report file into page blocks. Parser tag `dates-2` (since 11/10).
+- ⚠️ **"Exactly k months" became "exactly, or k months less one day" (11/10/2026), and "the earliest
+  date" was measured and rejected.**
+  - **The question:** the owner asked *"איך תדע מה התאריך בו בוצעה הבדיקה? קח את התאריך הכי מוקדם
+    שאתה רואה במסמך"*.
+  - **How it was measured:** all 68 production reports were downloaded read-only and checked against
+    the date beside "מאשר כי ביום… בדקתי" / "תאריך הבדיקה" / "תאריך הבחינה". That label reading is
+    for measurement only and is not in the product. The PDFs stay in Supabase and the scratchpad.
+  - **The earliest date was right in only 35 of 68.** In the rest it was the inspector's licence date
+    ("תאריך הרשיון", decades old, in 10 reports) or the previous report's date ("דו"ח קודם מתאריך",
+    "תאריך בדיקה קודמת"). The owner chose the improved rule over it.
+  - **The exact-months rule was wrong in 3 of 68.** One inspector's form writes the next date as one
+    year less a day (e.g. inspected 05/04, next 04/04 the year after). With no exact pair, the rule fell back to
+    "latest and the one before", which took the signing date, months after the inspection. In another
+    report it found the exact pair previous report → this report, which put the inspection a year early.
+  - **The improved rule: for each later date (latest first), any exact pair, then any "less a day"
+    pair.** It got 68 of 68 for both dates. Each part of that order has a test that fails without it:
+    - the later date on the outside, or "previous → this, exactly" wins;
+    - exact before less-a-day, or the printing date (the day after the inspection) wins;
+    - exact **at any distance** before less-a-day. A shortest-distance-first version was tried and
+      broke one real report: a date one month after the inspection made "11 months less a day" with
+      the next date, and that beat 12 exact.
+  - Rule names are `months` / `months_less_day` / `latest`, and they go to `parse_meta.notes` as
+    `suggest_<rule>`. Tests: `parse-inspection.test.js` (5 new; 5 of 5 mutations caught on a scratch
+    copy).
+  - **Four stored dates were corrected the same day, with the owner's approval.** They went through
+    `inspection_report_update` (audited, as her identity, with the reason in the call):
+    - 1097, 1355 and 1118: the rule's mistakes.
+    - 1400: an old report she uploaded that morning, where the signing date, three days later, was saved
+      over the correct suggestion.
+    - ⚠️ **Editing `inspected_on` does not move defect due dates.** `due_on` is stored at insert. So
+      the 7 open defects at 1118 were moved too, by the same shift, through `inspection_defect_save`
+      (one year later). A UI edit of an inspection date leaves them where they were.
 - ⚠️ **Since 11/10/2026 the form shows BOTH dates, as visible fields: "תאריך הבדיקה" above
   "הבדיקה הבאה".** There is no "מתקן" field on a one-machine site.
   - The owner's words: *"שלא יהיה כתוב מתקן בכלל, במקום זה יהיה כתוב מתי הבדיקה התבצעה, כמו
