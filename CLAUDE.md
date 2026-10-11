@@ -980,8 +980,10 @@ Rules that are easy to break and expensive to notice:
     - Same day as the latest is not earlier.
     - The form computes the same rule from `inspection_site` reports (`latestInsp`, `isOld`).
   - The form then asks, in her words, **"זוהה קובץ ישן, לשמור?"**, with two answers: "כן — כדוח ישן,
-    להיסטוריה בלבד" and "לא — כתסקיר רגיל, עם מעקב ליקויים". Nothing is pre-chosen. Choosing "כן"
-    hides the defects question. Dates are confirmed like any report.
+    להיסטוריה בלבד" and "לא — כתסקיר רגיל, עם מעקב ליקויים". ⚠️ **"כן" is pre-chosen** (owner,
+    11/10/2026: *"ברירת המחדל תסמן כן כדוח ישן להיסטוריה בלבד אבל יהיה אופציה להזיז ללא"*; the
+    first version had no default). `oldPick = f.oldChoice || "archive"`. "כן" hides the defects
+    question. Dates are confirmed like any report.
   - **It is a third kind, not a flag, on purpose.** Every query that filters `kind = 'periodic'`
     skips it by itself: the cycle and the lamp, the parent of a follow-up, and bringing a machine
     back into use. With a flag, each of those would need an `AND NOT archived`, and the one that
@@ -1080,27 +1082,29 @@ Rules that are easy to break and expensive to notice:
   invoice-page date, and that rule picks a week-wrong inspection date. The months rule found the right pair in
   every real report. `parseInspectionReport` is used **only** to split a multi-report file into
   page blocks. Parser tag `dates-1`.
-- **The form shows ONE date to confirm — the next inspection** (owner: "שיהיה רק תאריך שצריך
-  לאשר וזהו"). No date buttons, no +12/+6, no note, no "הוצע: …" line (each was removed at her
-  request). ⚠️ **The inspection date is still required** — defect deadlines count from it and it
-  orders the reports — so it is taken from the pair and sent **hidden**. Its field appears, and
-  then stays (`showInsp`, latched), only when there is no suggestion or it does not fit: empty,
-  in the future, more than ~2 years before the next date, or before the periodic report it
-  follows. Without the latch, fixing the field would make it vanish mid-edit.
-  ⚠️ **Since 11/10/2026 the inspection date is confirmed by a person too, though its field stays
-  hidden.**
-  - The owner asked: *"להוסיף את תאריך הבדיקה לאישור ידני"*.
-  - The confirmation line now always reads "בדקתי מול המסמך: נבדק ב-X שינוי, הבדיקה הבאה Y".
-    "שינוי" opens the field (`showInsp`).
-  - The button sits inside the `<label>`, so it calls `preventDefault`; otherwise the click would
-    tick the box.
-  - Editing the date clears the confirmation, as before.
-  - Why: measured that day, all 67 reports in production had `inspected_on` exactly as parsed and
-    never seen by anyone. That date sets the report order, the fix deadlines and "נעשה N ימים אחרי
-    שהתסקיר הקודם פג".
-  - Harness: `probe-dates` T1 now expects both dates, and T7 covers the link (the tick stays,
-    the field opens, an edit clears the confirmation, the edited date is the one sent).
-    `insp/run` B1 was updated the same way.
+- ⚠️ **Since 11/10/2026 the form shows BOTH dates, as visible fields: "תאריך הבדיקה" above
+  "הבדיקה הבאה".** There is no "מתקן" field on a one-machine site.
+  - The owner's words: *"שלא יהיה כתוב מתקן בכלל, במקום זה יהיה כתוב מתי הבדיקה התבצעה, כמו
+    שבודקים מתי הבדיקה הבאה"*.
+  - **The history, shortest first:**
+    - 05/10: one date only (*"שיהיה רק תאריך שצריך לאשר וזהו"*). The inspection date was taken from
+      the pair and sent hidden; its field appeared only when it did not fit (`showInsp`).
+    - Morning of 11/10: it was added to the confirmation line, with a "שינוי" link (*"להוסיף את
+      תאריך הבדיקה לאישור ידני"*). Measured then: all 67 reports in production had `inspected_on`
+      exactly as parsed and never seen by anyone, and it sets the report order, the fix deadlines,
+      "נעשה N ימים אחרי שהתסקיר הקודם פג" and "זוהה קובץ ישן".
+    - Afternoon of 11/10: the field is simply always there. `showInsp` and "שינוי" are gone.
+  - The confirmation line still repeats both dates ("בדקתי מול המסמך: נבדק ב-X, הבדיקה הבאה Y"),
+    and editing either date clears it.
+  - **"מתקן" is shown only when there is something to choose:** two or more active machines, or
+    only retired ones (`activeMachineCount !== 1`). With one active machine, or none, `makeForm`
+    picks it, or "1" on a new site. That covers all 67 sites today (measured: one machine each,
+    key "1").
+  - Still no date buttons, no +12/+6, no note, no "הוצע: …" line.
+  - Harness: `probe-dates` (T1: two date inputs and both dates in the line; T7: the field is visible
+    from the start and above the next date, and an edit clears the confirmation and is what gets
+    sent). `insp/run` B1 / C1 updated to match. `probe-archive` checks "no 'מתקן' on a one-machine
+    site" and the default "כן".
   - ⚠️ `e2e/probe-insp-drop` is stale since 06/10: it waits for the inspector inside the site
     window, which has been a full page since then.
 - **Defects: a select with no default** — "אין ליקויים" / "יש ליקויים". "יש" opens one text input

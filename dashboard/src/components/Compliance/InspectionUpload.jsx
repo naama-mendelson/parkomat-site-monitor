@@ -7,14 +7,12 @@
 // תאריכים". קריאה לפי תוויות ("בתוקף עד", "מה התיקונים", "מאשר כי ביום")
 // עובדת רק על ניסוח שמישהו כבר ראה, ובודק חדש עם טופס אחר היה נקרא חלקית.
 // לכן הטופס אינו מפרש את הטקסט כלל:
-//   • מוצג **תאריך אחד** לאישור — הבדיקה הבאה ("שיהיה רק תאריך שצריך לאשר
-//     וזהו"). ההצעה (suggestInspectionDates): זוג שבו המאוחר הוא בדיוק מספר
-//     חודשים שלם אחרי המוקדם — הבאה, ותאריך הבדיקה.
-//   • תאריך הבדיקה נדרש (ממנו נספרים ימי התיקון, ולפיו הסדר בין התסקירים)
-//     ו**השדה שלו** אינו מוצג — אלא כשאין הצעה, או כשהוא אינו מסתדר (עתידי, אחרי
-//     הבאה, לפני התקופתי), או כשלוחצים "שינוי". אז השדה מופיע ונשאר (showInsp).
-//     ⚠️ אבל **הערך** מוצג תמיד בשורת האישור, ומאושר יחד עם הבאה (11/10/2026) —
-//     עד אז הוא נשלח בלי שאיש ראה אותו.
+//   • **שני תאריכים גלויים לאישור** — תאריך הבדיקה והבדיקה הבאה (11/10/2026: "במקום
+//     [מתקן] יהיה כתוב מתי הבדיקה התבצעה, כמו שבודקים מתי הבדיקה הבאה"). עד אז הוצג
+//     תאריך אחד ("שיהיה רק תאריך שצריך לאשר וזהו", 05/10), ותאריך הבדיקה נשלח מוסתר —
+//     ונמדד שבייצור אף אחד מ-67 לא נראה ע"י אדם. ההצעה (suggestInspectionDates): זוג
+//     שבו המאוחר הוא בדיוק מספר חודשים שלם אחרי המוקדם — הבאה, ותאריך הבדיקה.
+//   • תאריך הבדיקה נדרש: ממנו נספרים ימי התיקון, ולפיו הסדר בין התסקירים ו"קובץ ישן".
 //   • יש ליקויים או אין — בחירה של אדם, בלי ברירת מחדל. את הליקויים מקלידים
 //     מהמסמך שליד, שורה לכל ליקוי (כל שורה נסגרת בנפרד, ורק עם תמונה).
 //   • אישור אחד: התאריך נבדק מול המסמך. עריכת תאריך מבטלת אותו.
@@ -234,6 +232,8 @@ function PdfPreview({ file, page: wantPage, onOpenFull }) {
  */
 export default function InspectionUpload({ site, derived, preset = null, onSaved, onClose, onDirtyChange, initialFile = null }) {
   const { machines, reports } = derived;
+  // מתקן פעיל יחיד (או אף מתקן) — אין שדה "מתקן" בטופס (11/10/2026)
+  const activeMachineCount = machines.filter((m) => !m.retired_at).length;
   const periodics = useMemo(() => reports.filter((r) => r.kind === "periodic").sort(byDateDesc), [reports]);
   const machineByKey = useMemo(() => new Map(machines.map((m) => [m.key, m])), [machines]);
   const today = todayIL();
@@ -252,8 +252,6 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
   const [form, setForm] = useState(null);
   const [saveError, setSaveError] = useState("");
   const [viewer, setViewer] = useState(false);
-  // שדה תאריך הבדיקה — מוסתר כשיש הצעה; מופיע (ונשאר) כשאין, או כשהוא אינו מסתדר
-  const [showInsp, setShowInsp] = useState(false);
   const pagesRef = useRef(null);
   const [locked, setLocked] = useState(false);   // אחרי כשל לא ודאי — הניסיון החוזר זהה לראשון
   const clientIdRef = useRef(null);
@@ -271,7 +269,6 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     setInfo(inf);
     setBlockIdx(idx);
     setForm(makeForm(inf, ctx));
-    setShowInsp(!inf?.suggest?.inspected);
     setSaveError("");
     setPhase("form");
   };
@@ -375,14 +372,16 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     ? reports.filter((r) => r.machine_key === machineKey).reduce((m, r) => (r.inspected_on > m ? r.inspected_on : m), "")
     : "";
   const isOld = !!f && f.kind === "periodic" && !!f.inspected_on && !!latestInsp && f.inspected_on < latestInsp;
-  const asArchive = isOld && f.oldChoice === "archive";
+  // ⚠️ ברירת המחדל "כן — כדוח ישן" (בעלת המוצר, 11/10/2026: "אם זוהה קובץ ישן אז ברירת המחדל תסמן
+  // כן... אבל יהיה אופציה להזיז ללא"). "" = לא נגעו → כן.
+  const oldPick = f?.oldChoice || "archive";
+  const asArchive = isOld && oldPick === "archive";
   const clean = !!f && !asArchive && f.defectsChoice === "none";
   const withDefects = !!f && !asArchive && f.defectsChoice === "some";
 
   const problems = [];
-  // בעיה שנוגעת לתאריך הבדיקה — השדה המוסתר מופיע, אחרת אין איפה לתקן
-  let inspIssue = false;
-  const inspProblem = (msg) => { problems.push(msg); inspIssue = true; };
+  // בעיה שנוגעת לתאריך הבדיקה (השדה שלו גלוי תמיד מאז 11/10/2026)
+  const inspProblem = (msg) => { problems.push(msg); };
   if (f) {
     if (!f.inspected_on) inspProblem("תאריך הבדיקה");
     else if (f.inspected_on > today) inspProblem("תאריך הבדיקה בעתיד");
@@ -397,7 +396,6 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     if (f.kind === "followup" && parent && f.inspected_on && f.inspected_on < parent.inspected_on) {
       inspProblem("בדיקה חוזרת אינה יכולה להיות לפני התסקיר התקופתי");
     }
-    if (isOld && !f.oldChoice) problems.push("תשובה ל\"זוהה קובץ ישן, לשמור?\"");
     if (!asArchive && !f.defectsChoice) problems.push("יש ליקויים או אין");
     if (withDefects) {
       if (f.defects.length === 0) problems.push("לפחות ליקוי אחד");
@@ -411,7 +409,6 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     }
     if (!f.confirmDates) problems.push("אישור התאריך מול המסמך");
   }
-  useEffect(() => { if (inspIssue) setShowInsp(true); }, [inspIssue]);
 
   // ============================================================
   // הגנת סגירה
@@ -676,7 +673,10 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
             )}
 
             {/* ---- מתקן — רק כשיש באתר מתקנים להבחין ביניהם ---- */}
-            {f.kind === "periodic" && machines.length > 0 && (
+            {/* ⚠️ "מתקן" — רק כשבאמת יש מה לבחור (בעלת המוצר, 11/10/2026: "שלא יהיה כתוב מתקן בכלל").
+                מתקן פעיל יחיד, או אתר בלי מתקנים — נבחר לבד (makeForm), וזה כל 67 האתרים היום. כמה
+                מתקנים פעילים, או רק מתקנים שהוצאו משימוש — אדם בוחר, אחרת דוח היה נרשם למתקן הלא נכון. */}
+            {f.kind === "periodic" && machines.length > 0 && activeMachineCount !== 1 && (
               <div className="it-grid2">
                 <label className="it-field">
                   <span className="it-label">מתקן</span>
@@ -724,6 +724,14 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
             {dates.length === 0 && !manualReason && !moduleError && (
               <p className="it-banner it-banner--warn" role="status">לא נמצאו תאריכים במסמך — להזין אותם מהמסמך.</p>
             )}
+            {/* ⚠️ תאריך הבדיקה — **תמיד גלוי**, מעל הבאה (בעלת המוצר, 11/10/2026: "במקום [מתקן] יהיה
+                כתוב מתי הבדיקה התבצעה, כמו שבודקים מתי הבדיקה הבאה"). עד אז הוא הוסתר ונשלח מההצעה
+                (05/10: "שיהיה רק תאריך שצריך לאשר"), ונפתח רק כשלא הסתדר או ב"שינוי". */}
+            <div className="it-field">
+              <label className="it-label" htmlFor="iu-insp">תאריך הבדיקה</label>
+              <input id="iu-insp" className="it-input it-input--date" type="date" max={today} value={f.inspected_on}
+                onChange={(e) => set("inspected_on", e.target.value)} name="inspected_on" />
+            </div>
             <div className="it-field">
               <label className="it-label" htmlFor="iu-valid">
                 הבדיקה הבאה{f.kind === "periodic" ? "" : " — לא חובה"}
@@ -736,13 +744,6 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
                 </span>
               )}
             </div>
-            {showInsp && (
-              <div className="it-field">
-                <label className="it-label" htmlFor="iu-insp">תאריך הבדיקה</label>
-                <input id="iu-insp" className="it-input it-input--date" type="date" max={today} value={f.inspected_on}
-                  onChange={(e) => set("inspected_on", e.target.value)} name="inspected_on" />
-              </div>
-            )}
 
             {/* ⚠️ אדם מאשר את התאריך — הוא קובע את צבע המנורה ואת ההתראות. התווית
                 חוזרת על הערך עצמו, כדי שהאישור יהיה על מה שמוצג ולא על "הטופס". */}
@@ -753,31 +754,27 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
               <span>
                 {/* ⚠️ תאריך הבדיקה **תמיד** בשורת האישור (בעלת המוצר, 11/10/2026: "להוסיף את תאריך הבדיקה
                     לאישור ידני"). עד היום הוא נקרא מהמסמך ונשלח בלי שאיש ראה אותו — כל 67 התסקירים בייצור —
-                    והוא קובע את סדר התסקירים, את ימי התיקון, ואת "נעשה N ימים אחרי שהקודם פג". "שינוי" פותח
-                    את השדה (showInsp); עריכה בו מבטלת את האישור (DATE_FIELDS). preventDefault — הכפתור בתוך
-                    ה-label, ולחיצה עליו לא תסמן את התיבה. */}
-                בדקתי מול המסמך: {f.inspected_on ? <>נבדק ב-{formatDateIL(f.inspected_on)}{!showInsp && (
-                  <> <button type="button" className="it-link iu-insp-change"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowInsp(true); }}>שינוי</button></>
-                )}, </> : ""}
+                    והוא קובע את סדר התסקירים, את ימי התיקון, ואת "נעשה N ימים אחרי שהקודם פג". השדה שלו גלוי
+                    מעל, ועריכה בו מבטלת את האישור (DATE_FIELDS) — ולכן אין כאן "שינוי". */}
+                בדקתי מול המסמך: {f.inspected_on ? `נבדק ב-${formatDateIL(f.inspected_on)}, ` : ""}
                 {f.valid_until
                   ? `הבדיקה הבאה ${formatDateIL(f.valid_until)}`
                   : f.kind === "followup" ? "התוקף כמו התסקיר התקופתי" : "—"}
               </span>
             </label>
 
-            {/* ---- דוח ישן — רק כשנבדק לפני הבדיקה האחרונה של המתקן; בלי בחירה מראש (11/10/2026) ---- */}
+            {/* ---- דוח ישן — רק כשנבדק לפני הבדיקה האחרונה של המתקן; "כן" מסומן מראש (11/10/2026) ---- */}
             {isOld && (
-              // ⚠️ הנוסח של בעלת המוצר (11/10/2026): "זוהה קובץ ישן, לשמור?" — ועדיין שתי תשובות, בלי בחירה מראש
+              // ⚠️ הנוסח של בעלת המוצר (11/10/2026): "זוהה קובץ ישן, לשמור?" — "כן" כברירת מחדל, ו"לא" זמין
               <fieldset className="iu-old" role="radiogroup" aria-label="זוהה קובץ ישן, לשמור?">
                 <legend className="it-label">זוהה קובץ ישן, לשמור?</legend>
                 <label className="it-check">
-                  <input type="radio" name="old_choice" value="archive" checked={f.oldChoice === "archive"}
+                  <input type="radio" name="old_choice" value="archive" checked={oldPick === "archive"}
                     onChange={() => set("oldChoice", "archive")} />
                   <span>כן — כדוח ישן, להיסטוריה בלבד</span>
                 </label>
                 <label className="it-check">
-                  <input type="radio" name="old_choice" value="regular" checked={f.oldChoice === "regular"}
+                  <input type="radio" name="old_choice" value="regular" checked={oldPick === "regular"}
                     onChange={() => set("oldChoice", "regular")} />
                   <span>לא — כתסקיר רגיל, עם מעקב ליקויים</span>
                 </label>
