@@ -1594,6 +1594,19 @@ The owner asked for two things: *"אני רוצה שיופיע ההסכם שיר
 - **What still lags:** availability within service hours comes from the table until the next cron
   run (≤10 min). Only the label is immediate.
 
+**The manual "דרגת אתר" field is gone from add-site and from the admin edit row** (owner,
+11/10/2026, pointing at it: *"את זה תעיף"*).
+- **Why it was dead weight:** the tier on every card comes from the board (`site_service_links`).
+  The form only set `sites.tier`, which is shown only when the board read fails (`effectiveTier`'s
+  fallback, kept by `keepLastTier`).
+- `registerSiteDirect` already sends `'basic'` when no tier is passed, and `updateSiteDirect` omits
+  `p_tier`, so `sites.tier` keeps its value.
+- The read-only "דרגה: …" in the admin row stays: it shows the board's tier.
+- To restore: `git show 1fda799:dashboard/src/components/AddSiteModal/AddSiteModal.jsx` and the
+  same path for `AdminPanel.jsx`.
+- Browser check: `e2e/probe-notier.mjs` (3/3). It unlocks the panel with any code (the harness
+  mock's `verifyAdminCode` returns true), and the panel is reached via the supervisor view.
+
 Tests: `service-links.test.js` (7; 5 of 5 SQL mutations caught), `service-merge.test.js` and
 `sites-direct-cache.test.js` (updated, plus `keepLastTier` and the fresh-tier cases). Browser:
 `e2e/probe-tier-all.mjs` (34/34; 27/27 with `REAL=1`); `dbg-tier-gap.mjs` / `dbg-tier-names.mjs`

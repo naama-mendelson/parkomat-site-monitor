@@ -2,7 +2,7 @@
 // זמין רק למנהל בקרה ומנהל כללי, ומאחורי קוד מנהל שהשרת אוכף.
 import { useState, useEffect } from "react";
 import SiteIdentities from "../SiteIdentities/SiteIdentities";
-import { STATUS_COLORS, STATUS_LABELS, TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
+import { STATUS_COLORS, STATUS_LABELS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
 import { updateSite, deleteSite, provisionAgent, agentEverBeat, markControllerReplaced, sitesWithAgentIdentity } from "../../services/dataSource";
@@ -109,10 +109,6 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
     setDraft({
       name: site.site_name,
       code: site.code,
-      // ⚠️ מהמסד ולא מההסכם — ראה `manualTier` ב-sitesDirect. `initialTier`
-      // נשמר כדי לשלוח דרגה **רק כשהמשתמשת שינתה אותה**.
-      tier: site.manualTier ?? site.tier ?? "basic",
-      initialTier: site.manualTier ?? site.tier ?? "basic",
       plcType: site.plc_type ?? "",
       controlSystem: site.control_system ?? "",
       initialControlSystem: site.control_system ?? "",
@@ -140,8 +136,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
       await updateSite(originalCode, {
         site_name: name,
         code: newCode,
-        // undefined = "אל תיגע" (updateSiteDirect אינו שולח p_tier).
-        tier: draft.tier !== draft.initialTier ? draft.tier : undefined,
+        // ⚠️ אין כאן דרגה (11/10/2026, "את זה תעיף"): היא באה מהרמזור. בלי tier — updateSiteDirect
+        // אינו שולח p_tier, ו-sites.tier נשאר כמו שהוא.
         plc_type: draft.plcType,
         // ⚠️ רק כששונתה — ריק כששונתה פירושו "נקה". undefined = אל תיגע.
         control_system: draft.controlSystem !== draft.initialControlSystem ? draft.controlSystem : undefined,
@@ -483,15 +479,6 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                         <span>קוד</span>
                         <input value={draft.code}
                           onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
-                      </label>
-                      <label>
-                        <span>דרגה</span>
-                        <select value={draft.tier}
-                          onChange={(e) => setDraft({ ...draft, tier: e.target.value })}>
-                          {TIER_OPTIONS.map((t) => (
-                            <option key={t} value={t}>{TIER_LABELS[t]}</option>
-                          ))}
-                        </select>
                       </label>
                       <label>
                         <span>סוג המתקן</span>

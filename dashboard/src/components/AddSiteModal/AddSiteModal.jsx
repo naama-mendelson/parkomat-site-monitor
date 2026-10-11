@@ -4,7 +4,6 @@ import { useState } from "react";
 // שקובע. הכלל בפרויקט הוא שקומפוננטה אינה בוחרת מסלול נתונים.
 import { registerSite } from "../../services/dataSource";
 import { copyText } from "../../utils/clipboard";
-import { TIER_OPTIONS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
@@ -21,7 +20,6 @@ function AddSiteModal({ onClose, onSuccess }) {
   const [siteName, setSiteName] = useState("");
   const [plcType, setPlcType] = useState("");
   const [controlSystem, setControlSystem] = useState("");
-  const [tier, setTier] = useState("basic");
   const [fixflowProfile, setFixflowProfile] = useState("");   // פיילוט FixFlow
   // אתר בלי בקר מחובר (07/10/2026) — בודק, תחזוקה ומשימות בלבד; בלי זהות סוכן
   const [noController, setNoController] = useState(false);
@@ -51,7 +49,6 @@ function AddSiteModal({ onClose, onSuccess }) {
       const res = await registerSite({
         code: trimmedCode,
         site_name: trimmedName,
-        tier,
         plc_type: plcType.trim() || undefined,
         control_system: controlSystem || undefined,
         // ⚠️ ריק = תיגזר אוטומטית משם האתר או מסוג המכונה. פיילוט FixFlow.
@@ -188,15 +185,9 @@ function AddSiteModal({ onClose, onSuccess }) {
             />
           </label>
 
-          <label className="addsite-field">
-            <span>דרגת אתר <b className="req">*</b></span>
-            <select value={tier} onChange={(e) => setTier(e.target.value)}>
-              {TIER_OPTIONS.map((t) => (
-                <option key={t} value={t}>{TIER_LABELS[t]}</option>
-              ))}
-            </select>
-          </label>
-
+          {/* ⚠️ "דרגת אתר" הוסר (בעלת המוצר, 11/10/2026: "את זה תעיף"). הדרגה שעל הכרטיס באה מהרמזור
+              (site_service_links), והבחירה כאן קבעה רק את sites.tier — ערך גיבוי שמוצג רק כשהקריאה
+              לרמזור נכשלת. השרת שם 'basic' כשלא נשלחה דרגה. */}
           {/* ==========================================================
               סוג המתקן — רשימה סגורה, לא טקסט חופשי
               ==========================================================
