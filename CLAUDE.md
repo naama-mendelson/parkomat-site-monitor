@@ -970,9 +970,10 @@ Rules that are easy to break and expensive to notice:
   *"שיהיה ניתן לעלות דוחות ישנים כדי שישמרו בהיסטוריה. בדוחות אלו לא ישמר האם התקלות שבו טופלו או
   לא — רק ישמר בהיסטוריה. וכשמעלים כזה דוח יהיה צריך לאשר את התאריכים כמו כל דוח"*).
   - **When it is offered:** only when the document's next inspection date has already passed (the
-    owner chose this over an always-visible option). The form then asks "דוח ישן — להיסטוריה בלבד /
-    תסקיר רגיל — עם מעקב ליקויים", with nothing pre-chosen. Choosing "old" hides the defects
-    question. Dates are confirmed like any report.
+    owner chose this over an always-visible option). The form then asks, in her words, **"זוהה קובץ
+    ישן, לשמור?"**, with two answers: "כן — כדוח ישן, להיסטוריה בלבד" and "לא — כתסקיר רגיל, עם מעקב
+    ליקויים". Nothing is pre-chosen. Choosing "כן" hides the defects question. Dates are confirmed
+    like any report.
   - **It is a third kind, not a flag, on purpose.** Every query that filters `kind = 'periodic'`
     skips it by itself: the cycle and the lamp, the parent of a follow-up, and bringing a machine
     back into use. With a flag, each of those would need an `AND NOT archived`, and the one that

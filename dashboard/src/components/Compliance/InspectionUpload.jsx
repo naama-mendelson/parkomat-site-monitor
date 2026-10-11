@@ -393,7 +393,7 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
     if (f.kind === "followup" && parent && f.inspected_on && f.inspected_on < parent.inspected_on) {
       inspProblem("בדיקה חוזרת אינה יכולה להיות לפני התסקיר התקופתי");
     }
-    if (expired && !f.oldChoice) problems.push("דוח ישן או תסקיר רגיל");
+    if (expired && !f.oldChoice) problems.push("תשובה ל\"זוהה קובץ ישן, לשמור?\"");
     if (!asArchive && !f.defectsChoice) problems.push("יש ליקויים או אין");
     if (withDefects) {
       if (f.defects.length === 0) problems.push("לפחות ליקוי אחד");
@@ -764,17 +764,18 @@ export default function InspectionUpload({ site, derived, preset = null, onSaved
 
             {/* ---- דוח ישן — רק כשהבדיקה הבאה שבמסמך כבר עברה; בלי בחירה מראש (11/10/2026) ---- */}
             {expired && (
-              <fieldset className="iu-old" role="radiogroup" aria-label="דוח ישן או תסקיר רגיל">
-                <legend className="it-label">הבדיקה הבאה שבמסמך כבר עברה. לשמור אותו כ:</legend>
+              // ⚠️ הנוסח של בעלת המוצר (11/10/2026): "זוהה קובץ ישן, לשמור?" — ועדיין שתי תשובות, בלי בחירה מראש
+              <fieldset className="iu-old" role="radiogroup" aria-label="זוהה קובץ ישן, לשמור?">
+                <legend className="it-label">זוהה קובץ ישן, לשמור?</legend>
                 <label className="it-check">
                   <input type="radio" name="old_choice" value="archive" checked={f.oldChoice === "archive"}
                     onChange={() => set("oldChoice", "archive")} />
-                  <span>דוח ישן — להיסטוריה בלבד, בלי מעקב ליקויים</span>
+                  <span>כן — כדוח ישן, להיסטוריה בלבד</span>
                 </label>
                 <label className="it-check">
                   <input type="radio" name="old_choice" value="regular" checked={f.oldChoice === "regular"}
                     onChange={() => set("oldChoice", "regular")} />
-                  <span>תסקיר רגיל — עם מעקב ליקויים</span>
+                  <span>לא — כתסקיר רגיל, עם מעקב ליקויים</span>
                 </label>
               </fieldset>
             )}
