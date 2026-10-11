@@ -34,13 +34,15 @@ import { ClipboardCheckIcon } from "./icons";
 import { COMPLIANCE_COLORS, COMPLIANCE_STATES } from "../../utils/constants";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { InspectionMenu, InspectionReasonDialog } from "./InspectionDialog";
-import { DefectDoneRow, DefectRow, FixesPdfButton } from "./DefectRows";
+import { DefectDoneRow, DefectRow, FixesPdfButton, PartsText } from "./DefectRows";
 import DefectCloseDialog from "./DefectCloseDialog";
 import DefectEditDialog from "./DefectEditDialog";
 import InspectionReportEdit from "./InspectionReportEdit";
 import InspectionUpload from "./InspectionUpload";
 import InspectionHistory from "./InspectionHistory";
-import { KIND_LABEL, deriveInspection, hasDraggedFiles, ilDateOf, machineTitle, validityText } from "./InspectionUtils";
+import {
+  KIND_LABEL, deriveInspection, hasDraggedFiles, ilDateOf, machineTitle, outcomeParts, previousOf, validityText,
+} from "./InspectionUtils";
 import "./InspectionTab.css";
 
 const LAMP_STATES = new Set(COMPLIANCE_STATES);
@@ -331,6 +333,11 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
   // "לראות כמה ליקויים נשארו" — מתוך כל הליקויים של המחזור הנוכחי (פתוחים + בוצעו)
   const cycleTotal = withReports.reduce((n, cy) => n + cy.open.length + cy.done.length, 0);
   const empty = derived.reports.length === 0;
+  // ⚠️ התסקיר הקודם (בעלת המוצר, 11/10/2026): הליקויים שלו כבר לא נספרים — הנורה והרשימה הן של
+  // התסקיר החדש — אבל רואים מה היה בו, והאם החדש נעשה אחרי שהקודם פג. מתקן בלי תסקיר קודם — אין שורה.
+  const prevLines = derived.cycles
+    .map((cy) => ({ key: cy.key, cy, p: previousOf(cy.periodic, derived.byId) }))
+    .filter((x) => x.p);
 
   return (
     <div className="it-tab" dir="rtl">
@@ -362,6 +369,15 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
               </span>
             )}
             {derived.active.length > 1 && insp?.validUntil && <span className="it-muted">המוקדם מבין המתקנים</span>}
+            {prevLines.map(({ key, cy, p }) => (
+              <span key={key} className="it-prev">
+                <span>
+                  {derived.active.length > 1 && <strong>{machineTitle(cy.machine)}: </strong>}
+                  התסקיר הקודם ({formatDateIL(p.inspectedOn)}): <PartsText parts={outcomeParts(p.outcome)} />
+                </span>
+                {p.gap && <span>התסקיר הנוכחי נעשה <PartsText parts={[p.gap]} /></span>}
+              </span>
+            ))}
             {/* ⚠️ בלי שבבים: "ליקויים פתוחים" ומספרם — בכותרת של רשימת הליקויים למטה, והמתנה
                 לתסקיר נקי — בבאנר עם הפעולה. בעלת המוצר (06/10/2026): "תעיף את זה ותעצב את כל
                 העמוד נורמלי ויותר מסודר". */}

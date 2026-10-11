@@ -124,6 +124,62 @@ export function openInCycleUpTo(reports, parentId, inspectedOn) {
 }
 
 // ============================================================
+// התסקיר הקודם — מה היה בו (11/10/2026)
+// ============================================================
+// בעלת המוצר: "כאשר מעלים דוח חדש, גם אם התקלות הקודמות לא טופלו — יש להתעלם מהתקלות הקודמות
+// ולהתמקד רק במסמך החדש, אך יראו מה היה המצב של המסמך הקודם: שהתקלות לא טופלו או טופלו אחרי
+// הזמן. וכן האם הדוח החדש עלה באיחור". ⚠️ כל הספירות מה-SQL (outcome / prev / late_days ב-
+// inspection_site) — כאן רק מנסחים. `late` מסמן חלק שנצבע (it-late).
+
+/**
+ * סיכום המחזור של תקופתי — מה שקרה לליקויים שלו.
+ * @param {{total:number, not_handled:number, open:number, done_late:number, done_on_time:number}|null} o
+ * @returns {{text:string, late?:boolean}[]}
+ */
+export function outcomeParts(o) {
+  if (!o) return [];
+  if (!o.total) return [{ text: "ללא ליקויים" }];
+  const parts = [];
+  if (o.not_handled) parts.push({ late: true,
+    text: o.not_handled === 1 ? "ליקוי אחד לא טופל" : `${o.not_handled} ליקויים לא טופלו` });
+  if (o.done_late) parts.push({ late: true,
+    text: o.done_late === 1 ? "ליקוי אחד טופל אחרי המועד" : `${o.done_late} ליקויים טופלו אחרי המועד` });
+  if (o.done_on_time) parts.push({
+    text: o.done_on_time === 1 ? "ליקוי אחד טופל בזמן" : `${o.done_on_time} ליקויים טופלו בזמן` });
+  if (o.open) parts.push({ text: o.open === 1 ? "ליקוי אחד עדיין פתוח" : `${o.open} ליקויים עדיין פתוחים` });
+  return parts;
+}
+
+/**
+ * מתי נעשה התסקיר ביחס לתוקף הקודם. gap_days = יום הבדיקה פחות התוקף הקודם (SQL).
+ * @param {number|null|undefined} gapDays
+ * @returns {{text:string, late:boolean}|null} "… אחרי שהתסקיר הקודם פג" / "לפני …"
+ */
+export function gapPart(gapDays) {
+  if (gapDays == null) return null;
+  if (gapDays <= 0) return { late: false, text: "לפני שהתסקיר הקודם פג" };
+  return { late: true, text: gapDays === 1 ? "יום אחד אחרי שהתסקיר הקודם פג" : `${gapDays} ימים אחרי שהתסקיר הקודם פג` };
+}
+
+/**
+ * התסקיר הקודם של מחזור — לשורה בפס המצב.
+ * @param {object|null} periodic התקופתי של המחזור הנוכחי (מ-inspection_site)
+ * @param {Map<number, object>} byId
+ * @returns {{inspectedOn:string, outcome:object|null, gap:{text:string,late:boolean}|null}|null}
+ */
+export function previousOf(periodic, byId) {
+  const p = periodic?.prev;
+  if (!p) return null;
+  return { inspectedOn: p.inspected_on, outcome: byId?.get(p.id)?.outcome ?? null, gap: gapPart(p.gap_days) };
+}
+
+/** ליקוי שתוקן אחרי המועד — "N ימים אחרי המועד". */
+export function lateText(days) {
+  if (!days || days <= 0) return null;
+  return days === 1 ? "יום אחד אחרי המועד" : `${days} ימים אחרי המועד`;
+}
+
+// ============================================================
 // היסטוריית השינויים — תוויות
 // ============================================================
 const ACTION_LABEL = {

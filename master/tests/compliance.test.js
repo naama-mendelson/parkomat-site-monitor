@@ -1449,3 +1449,81 @@ test("30 · אין overloads: שם אחד = פונקציה אחת", { skip }, as
     GROUP BY p.proname HAVING count(*) > 1`);
   assert.deepEqual(r, []);
 });
+
+// ---------------------------------------------------------------
+// 50 · תסקיר חדש: מתעלמים מהליקויים הקודמים — ורואים מה היה בתסקיר הקודם (11/10/2026)
+// ---------------------------------------------------------------
+// בעלת המוצר: "כאשר מעלים דוח חדש, גם אם התקלות הקודמות לא טופלו — יש להתעלם מהתקלות הקודמות
+// ולהתמקד רק במסמך החדש, אך יראו מה היה המצב של המסמך הקודם: שהתקלות לא טופלו או טופלו אחרי
+// הזמן. וכן האם הדוח החדש עלה באיחור".
+const siteJson = async (code) => (await one(MGR, `SELECT public.inspection_site($1) AS j`, [code])).j;
+
+test("50 · תסקיר חדש: הקודם 'הוחלף' — לא טופל / אחרי המועד / בזמן, ו-gap_days מול התוקף הקודם", { skip }, async () => {
+  // --- א. ליקוי שלא טופל, ליקוי שטופל אחרי המועד, ליקוי שטופל בזמן; ותסקיר חדש 15 יום אחרי שהקודם פג
+  const s = await newSite();
+  const p1 = await periodic(s, { insp: addDays(TODAY, -400), valid: addDays(TODAY, -35), defects: [
+    { body: "לא טופל", due_on: addDays(TODAY, -380) },
+    { body: "טופל אחרי המועד", due_on: addDays(TODAY, -370) },
+    { body: "טופל בזמן", due_on: addDays(TODAY, 5) },
+    { body: "טופל ביום המועד", due_on: TODAY },
+  ] });
+  const [d1, d2, d3, d4] = await defectsOf(p1.report_id);
+  await closeByPhoto(d2.id);
+  await closeByPhoto(d3.id);
+  await closeByPhoto(d4.id);
+  const p2 = await periodic(s, { insp: addDays(TODAY, -20), valid: addDays(TODAY, 300) });
+
+  const j = await siteJson(s.code);
+  const r1 = j.reports.find((r) => r.id === p1.report_id);
+  const r2 = j.reports.find((r) => r.id === p2.report_id);
+  assert.equal(r1.superseded, true);
+  assert.equal(r2.superseded, false);
+  assert.deepEqual(r1.outcome, { total: 4, not_handled: 1, open: 0, done_late: 1, done_on_time: 2 });
+  const byId = new Map(r1.defects.map((d) => [d.id, d]));
+  assert.equal(byId.get(d1.id).not_handled, true);
+  assert.equal(byId.get(d1.id).due_state, null, "ליקוי של מחזור שהוחלף אינו 'עבר מועד' של אף אחד");
+  assert.equal(byId.get(d2.id).done_on, TODAY);
+  assert.equal(byId.get(d2.id).late_days, 370);
+  assert.equal(byId.get(d2.id).not_handled, false);
+  assert.equal(byId.get(d3.id).late_days, null);
+  assert.equal(byId.get(d4.id).late_days, null, "ביום המועד עצמו — בזמן (כמו overdue: due_on < היום)");
+  assert.deepEqual(r2.prev, { id: p1.report_id, inspected_on: addDays(TODAY, -400), valid_until: addDays(TODAY, -35), gap_days: 15 });
+  assert.equal(r1.prev, null, "התסקיר הראשון — אין קודם");
+  assert.deepEqual(r2.outcome, { total: 0, not_handled: 0, open: 0, done_late: 0, done_on_time: 0 });
+  // ⚠️ וההתעלמות: הליקוי הישן שעבר את המועד אינו צובע את המחזור החדש
+  const st = await status(s.id);
+  assert.equal(st.s, "ok");
+  assert.equal(st.open, 0);
+
+  // --- ב. סגירה בבדיקה חוזרת נקייה: יום התיקון = יום הבדיקה החוזרת; והתוקף שלה הוא ה"קודם"
+  const t = await newSite();
+  const q1 = await periodic(t, { insp: addDays(TODAY, -300), valid: addDays(TODAY, -100), defects: [
+    { body: "תוקן ונבדק", due_on: addDays(TODAY, -290) },
+  ] });
+  const [e1] = await defectsOf(q1.report_id);
+  const f1 = await followup(t, q1.report_id, { insp: addDays(TODAY, -280), valid: addDays(TODAY, 10), close: true });
+  const q2 = await periodic(t, { insp: addDays(TODAY, -5), valid: addDays(TODAY, 360) });
+  const k = await siteJson(t.code);
+  const kq1 = k.reports.find((r) => r.id === q1.report_id);
+  const kd = kq1.defects.find((d) => d.id === e1.id);
+  assert.equal(kd.done_on, addDays(TODAY, -280), "יום הבדיקה החוזרת, לא רגע ההעלאה");
+  assert.equal(kd.late_days, 10);
+  assert.deepEqual(kq1.outcome, { total: 1, not_handled: 0, open: 0, done_late: 1, done_on_time: 0 });
+  assert.equal(k.reports.find((r) => r.id === f1.report_id).superseded, true, "החוזרת שייכת למחזור שהוחלף");
+  const kq2 = k.reports.find((r) => r.id === q2.report_id);
+  assert.equal(kq2.prev.valid_until, addDays(TODAY, 10), "חוזרת עם תוקף משלה דורסת את התקופתי");
+  assert.equal(kq2.prev.gap_days, -15, "נבדק לפני שהקודם פג — בזמן");
+
+  // --- ג. שני מתקנים: תקופתי חדש למתקן B אינו מחליף את A
+  const u = await newSite();
+  const a1 = await periodic(u, { machine: "A", insp: addDays(TODAY, -200), valid: addDays(TODAY, 100), defects: [
+    { body: "פתוח במתקן A", due_on: addDays(TODAY, -190) },
+  ] });
+  await periodic(u, { machine: "B", insp: addDays(TODAY, -10), valid: addDays(TODAY, 300) });
+  const w = await siteJson(u.code);
+  const wa = w.reports.find((r) => r.id === a1.report_id);
+  assert.equal(wa.superseded, false);
+  assert.equal(wa.defects[0].not_handled, false);
+  assert.equal(wa.defects[0].due_state, "overdue", "המחזור של A עדיין חי — עבר מועד");
+  assert.deepEqual(wa.outcome, { total: 1, not_handled: 0, open: 1, done_late: 0, done_on_time: 0 });
+});

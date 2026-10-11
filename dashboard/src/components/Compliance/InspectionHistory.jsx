@@ -10,11 +10,11 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchComplianceHistory } from "../../services/dataSource";
 import { formatDateIL, formatStampIL } from "../../utils/compliance";
 import {
-  FIELD_LABEL, KIND_LABEL, SOURCE_TAG, byDateDesc, historyActionLabel, historyValue, machineTitle,
-  openInCycleUpTo,
+  FIELD_LABEL, KIND_LABEL, SOURCE_TAG, byDateDesc, gapPart, historyActionLabel, historyValue, machineTitle,
+  openInCycleUpTo, outcomeParts,
 } from "./InspectionUtils";
 import { InspectionMenu } from "./InspectionDialog";
-import { DefectDoneRow } from "./DefectRows";
+import { DefectDoneRow, PartsText } from "./DefectRows";
 
 function groupHistory(reports) {
   const byId = new Map(reports.map((r) => [r.id, r]));
@@ -82,6 +82,16 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
           <>בתוקף עד {formatDateIL(validDate)} {r.validity_source && <span className="it-tag it-tag--src">{SOURCE_TAG[r.validity_source] ?? r.validity_source}</span>}</>
         )}
       </p>
+      {/* ⚠️ התסקיר הקודם (בעלת המוצר, 11/10/2026): מתי נעשה התקופתי ביחס לתוקף הקודם, ומה קרה
+          לליקויים של מחזור שהוחלף — מה-SQL (prev.gap_days, outcome). */}
+      {/* ⚠️ span אחד בתוך השורה: .it-report-line היא flex, וכל ילד שלה היה הופך לקופסה נפרדת —
+          הטקסט נשבר לחתיכות וה-" · " מאבד את הרווח שלפניו. */}
+      {r.kind === "periodic" && gapPart(r.prev?.gap_days) && (
+        <p className="it-report-line it-muted"><span>נעשה <PartsText parts={[gapPart(r.prev.gap_days)]} /></span></p>
+      )}
+      {r.kind === "periodic" && r.superseded && r.outcome && (
+        <p className="it-report-line"><span>הוחלף בתסקיר חדש: <PartsText parts={outcomeParts(r.outcome)} /></span></p>
+      )}
       {(r.inspector_name || r.inspector_license || r.report_number) && (
         <p className="it-report-line it-muted">
           {r.inspector_name && <span>בודק: {r.inspector_name}{r.inspector_license ? ` (רישיון ${r.inspector_license})` : ""}</span>}
@@ -110,7 +120,10 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
             <li key={d.id} className="it-done it-done--open">
               <p className="it-defect-body">{d.body}</p>
               <p className="it-done-meta">
-                פתוח{d.due_on ? ` · לתיקון עד ${formatDateIL(d.due_on)}` : ""}{d.urgent ? " · דחוף" : ""}
+                {d.not_handled
+                  ? <><span className="it-late">לא טופל</span>{d.due_on ? ` · מועד התיקון היה ${formatDateIL(d.due_on)}` : ""}</>
+                  : <>פתוח{d.due_on ? ` · לתיקון עד ${formatDateIL(d.due_on)}` : ""}</>}
+                {d.urgent ? " · דחוף" : ""}
               </p>
             </li>
           )))}

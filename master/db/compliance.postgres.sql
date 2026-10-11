@@ -880,8 +880,32 @@ END $fn$;
 REVOKE ALL ON FUNCTION app.inspection_reopen_closed_by(bigint, text, text) FROM PUBLIC;
 
 -- ------------------------------------------------------------
+-- app.inspection_done_on — היום שבו ליקוי תוקן (11/10/2026)
+-- ------------------------------------------------------------
+-- ⚠️ ליקוי שנסגר בתסקיר חוזר נקי — **יום הבדיקה החוזרת**, לא done_at. done_at הוא רגע ההעלאה
+-- למערכת, וזה יכול להיות שבועות אחרי שהבודק אישר את התיקון; "טופל אחרי המועד" לפי ההעלאה היה
+-- מאשים את מי שתיקן בזמן. ליקוי שסומן "בוצע" — היום (שעון ישראל) שבו סומן. NULL = לא תוקן.
+CREATE OR REPLACE FUNCTION app.inspection_done_on(p_closed_by bigint, p_done_at text) RETURNS date
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT CASE WHEN p_closed_by IS NOT NULL
+              THEN (SELECT r.inspected_on FROM inspection_reports r WHERE r.id = p_closed_by)
+              WHEN p_done_at IS NOT NULL THEN app.compliance_today_at(p_done_at::timestamptz) END
+$$;
+REVOKE ALL ON FUNCTION app.inspection_done_on(bigint, text) FROM PUBLIC;
+
+-- ------------------------------------------------------------
 -- inspection_site — כל מה שהלשונית צריכה, בלי base64
 -- ------------------------------------------------------------
+-- ⚠️ **התסקיר הקודם — מה היה בו (11/10/2026).** בעלת המוצר: "כאשר מעלים דוח חדש, גם אם התקלות
+-- הקודמות לא טופלו — יש להתעלם מהן ולהתמקד רק במסמך החדש, אך יראו מה היה המצב של המסמך הקודם:
+-- שהתקלות לא טופלו או טופלו אחרי הזמן, וכן האם הדוח החדש עלה באיחור".
+--   • ההתעלמות כבר קיימת: הנורה והרשימה הפתוחה הן של המחזור הנוכחי בלבד (compliance_machine_rows).
+--   • superseded — המחזור של התסקיר הוחלף בתקופתי חדש יותר לאותו מתקן (אותו סדר כמו cyc שם).
+--   • בליקוי: done_on, late_days (תוקן אחרי due_on), not_handled (נשאר פתוח כשהמחזור הוחלף).
+--     due_state של ליקוי במחזור שהוחלף — NULL: הוא כבר אינו "עבר מועד" של מישהו.
+--   • בתקופתי: outcome (סיכום המחזור, כולל החוזרות), ו-prev — התקופתי הקודם, התוקף האפקטיבי שלו
+--     (כמו ovr שם: חוזרת עם תוקף משלה דורסת), ו-gap_days = יום הבדיקה פחות התוקף. חיובי = הבדיקה
+--     נעשתה אחרי שהקודם פג; בתאריך התוקף עצמו — בזמן (כמו compliance_light).
 CREATE OR REPLACE FUNCTION public.inspection_site(p_site_code text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
@@ -921,9 +945,14 @@ BEGIN
                           'id', d.id, 'seq', d.seq, 'body', d.body, 'urgent', d.urgent, 'due_on', d.due_on,
                           'status', d.status, 'closure_no', d.closure_no, 'done_at', d.done_at,
                           -- מצב המועד מה-SQL, באותם כללים כמו overdue_n / due_soon_n — הדשבורד אינו מחשב סף
-                          'due_state', CASE WHEN d.status = 'open' AND d.due_on < v_today THEN 'overdue'
+                          'due_state', CASE WHEN sup.superseded THEN NULL
+                                             WHEN d.status = 'open' AND d.due_on < v_today THEN 'overdue'
                                              WHEN d.status = 'open' AND d.due_on - v_today <= app.compliance_warn_days()
                                              THEN 'soon' END,
+                          'done_on', x.done_on,
+                          'late_days', CASE WHEN d.status = 'done' AND d.due_on IS NOT NULL AND x.done_on > d.due_on
+                                            THEN x.done_on - d.due_on END,
+                          'not_handled', d.status = 'open' AND sup.superseded,
                           'done_by_name', d.done_by_name, 'done_note', d.done_note,
                           'closed_by_report_id', d.closed_by_report_id,
                           'current_photos', (SELECT count(*)::int FROM inspection_defect_photos ph
@@ -931,14 +960,50 @@ BEGIN
                           'past_photos', (SELECT count(*)::int FROM inspection_defect_photos ph
                                            WHERE ph.defect_id = d.id AND ph.closure_no < d.closure_no))
                         ORDER BY d.seq, d.id)
-                   FROM inspection_defects d WHERE d.report_id = r.id AND d.deleted_at IS NULL), '[]'::jsonb),
+                   FROM inspection_defects d
+                   CROSS JOIN LATERAL (SELECT app.inspection_done_on(d.closed_by_report_id, d.done_at) AS done_on) x
+                  WHERE d.report_id = r.id AND d.deleted_at IS NULL), '[]'::jsonb),
                -- לחלון העריכה: תסקיר שנרשמו בו ליקויים אינו מסומן נקי, גם כשכולם נמחקו (D7)
                'deleted_defects', (SELECT count(*)::int FROM inspection_defects d
-                                    WHERE d.report_id = r.id AND d.deleted_at IS NOT NULL))
+                                    WHERE d.report_id = r.id AND d.deleted_at IS NOT NULL),
+               'superseded', sup.superseded,
+               'outcome', CASE WHEN r.kind = 'periodic' THEN (
+                 SELECT jsonb_build_object(
+                          'total', count(*)::int,
+                          'not_handled', count(*) FILTER (WHERE d.status = 'open' AND sup.superseded)::int,
+                          'open', count(*) FILTER (WHERE d.status = 'open' AND NOT sup.superseded)::int,
+                          'done_late', count(*) FILTER (WHERE d.status = 'done' AND d.due_on IS NOT NULL
+                                                          AND x.done_on > d.due_on)::int,
+                          'done_on_time', count(*) FILTER (WHERE d.status = 'done' AND (d.due_on IS NULL
+                                                          OR x.done_on <= d.due_on))::int)
+                   FROM inspection_reports c
+                   JOIN inspection_defects d ON d.report_id = c.id AND d.deleted_at IS NULL
+                   CROSS JOIN LATERAL (SELECT app.inspection_done_on(d.closed_by_report_id, d.done_at) AS done_on) x
+                  WHERE c.deleted_at IS NULL AND (c.id = r.id OR c.followup_of = r.id)) END,
+               'prev', CASE WHEN r.kind = 'periodic' THEN (
+                 SELECT jsonb_build_object('id', pv.id, 'inspected_on', pv.inspected_on, 'valid_until', pvu.vu,
+                                           'gap_days', r.inspected_on - pvu.vu)
+                   FROM inspection_reports pv
+                   CROSS JOIN LATERAL (SELECT COALESCE((SELECT fu.valid_until FROM inspection_reports fu
+                                                         WHERE fu.followup_of = pv.id AND fu.deleted_at IS NULL
+                                                           AND fu.valid_until IS NOT NULL
+                                                         ORDER BY fu.inspected_on DESC, fu.id DESC LIMIT 1),
+                                                       pv.valid_until) AS vu) pvu
+                  WHERE pv.site_id = v_site AND pv.deleted_at IS NULL AND pv.kind = 'periodic'
+                    AND pv.machine_key = r.machine_key
+                    AND (pv.inspected_on, pv.id) < (r.inspected_on, r.id)
+                  ORDER BY pv.inspected_on DESC, pv.id DESC LIMIT 1) END)
              ORDER BY r.inspected_on DESC, r.id DESC)
         FROM inspection_reports r
         JOIN inspection_files f ON f.id = r.file_id
         LEFT JOIN inspection_reports p ON p.id = r.followup_of
+        -- המחזור של התסקיר (התקופתי שלו) הוחלף בתקופתי חדש יותר לאותו מתקן
+        CROSS JOIN LATERAL (
+          SELECT EXISTS (SELECT 1 FROM inspection_reports n
+                          WHERE n.site_id = v_site AND n.deleted_at IS NULL AND n.kind = 'periodic'
+                            AND n.machine_key = r.machine_key
+                            AND (n.inspected_on, n.id) > (COALESCE(p.inspected_on, r.inspected_on), COALESCE(p.id, r.id)))
+                 AS superseded) sup
        WHERE r.site_id = v_site AND r.deleted_at IS NULL), '[]'::jsonb));
 END $fn$;
 REVOKE ALL ON FUNCTION public.inspection_site(text) FROM PUBLIC, anon;

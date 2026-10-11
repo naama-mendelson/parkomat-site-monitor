@@ -266,6 +266,9 @@
 /* הסיבה שהנורה צבועה כשהתסקיר בתוקף — בדיו של הנורה עצמה: כתום לעבר מועד, צהוב לבתוך החודש */
 .it-reason { color: var(--cl-overdue-ink); font-weight: 700; font-size: 0.9em; }
 .it-reason--soon { color: var(--cl-soon-ink); }
+/* התסקיר הקודם — מה היה בו, והאם הנוכחי נעשה אחרי שפג (11/10/2026). שורות שקטות; רק מה שאיחר
+   נצבע (.it-late). */
+.it-prev { display: flex; flex-direction: column; gap: 2px; color: var(--text-secondary); font-size: 0.86em; }
 
 .it-status-actions {
   display: inline-flex;

@@ -939,6 +939,38 @@ Rules that are easy to break and expensive to notice:
   `inspection_site` carries `deleted_defects` so the edit dialog does not offer the checkbox.
   Defects typed by mistake: delete the report and upload it again with "אין ליקויים". SQL test 47,
   3/3 mutations killed.
+- **A new periodic report replaces the previous one. Its defects stop counting, but what happened
+  to them stays visible** (owner, 11/10/2026: *"גם אם התקלות הקודמות לא טופלו יש להתעלם מהתקלות
+  הקודמות ולהתמקד רק במסמך החדש, אך יראו מה היה המצב של המסמך הקודם... וכן האם הדוח החדש עלה
+  באיחור"*).
+  - **Ignoring them was already in place.** The lamp, the counts and the open list all come from the
+    current cycle (`compliance_machine_rows`). Nothing is closed or deleted in the database.
+  - **New in `inspection_site`:**
+    - Per defect: `done_on`, `late_days` and `not_handled`. For a defect closed by a clean follow-up,
+      `done_on` is that report's inspection day, not `done_at`, so a late upload does not blame a
+      fix that was on time. Fixed on the due date itself = on time.
+    - Per report: `superseded` (a later periodic report exists for the same machine, using the same
+      order as `cyc`).
+    - Per periodic report: `outcome` (counts for the whole cycle) and `prev`. `prev.valid_until` is
+      the previous report's effective validity, where a follow-up with its own validity overrides,
+      like `ovr`. `gap_days` = this report's inspection day minus that validity. Positive means it
+      was done after the previous one expired.
+    - `due_state` is NULL for a defect in a superseded cycle, so an old defect never shows as
+      "overdue".
+  - **Display only, and the dashboard computes nothing** (`outcomeParts`, `gapPart`, `previousOf`,
+    `lateText` in `InspectionUtils.js`):
+    - The status card has two quiet lines per machine that has a previous report.
+    - In the history, a replaced report reads "הוחלף בתסקיר חדש: …", and an old open defect reads
+      "לא טופל · מועד התיקון היה …" instead of "פתוח".
+    - A fixed defect shows "N ימים אחרי המועד".
+    - Only what was late is colored (`.it-late`).
+  - **"Late" means against the previous expiry, not the upload date.** The historical backfill is
+    uploaded months after the inspections, which would make every one of them look late.
+  - Tests: SQL test 50 (6 of 6 mutations caught; the boundary case "fixed on the due date" was added
+    after a `>=` mutation survived), `inspection-previous.test.js` (4), and the browser
+    `insp/harness/probe-prev.mjs` (28). ⚠️ The two added lines in the status card push the page
+    down by about 30px. `insp/run` A7 now scrolls to the thumbnail, because they load lazily via
+    IntersectionObserver, and the `probe-page` P1 threshold is 460.
 - **Nothing in "בוצע" is required** (owner, 06/10/2026: *"אופציונלי — להמשיך גם בלי להעלות
   תמונה"*, then *"שיוכלו לעשות סמן כבוצע בלי למלא את הכל"*). An empty performer name records the
   signed-in user — `app.actor_display_name()`, from the verified identity, never the request — so

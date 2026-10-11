@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchComplianceFile, fetchComplianceThumbs } from "../../services/dataSource";
 import { formatDateIL, formatDayMonth } from "../../utils/compliance";
 import { fixesForPdf } from "../../utils/defectPdf";
-import { daysBetween, ilDateOf, KIND_LABEL } from "./InspectionUtils";
+import { daysBetween, ilDateOf, KIND_LABEL, lateText } from "./InspectionUtils";
 import { InspectionMenu } from "./InspectionDialog";
 
 /** תמונות ממוזערות של ליקוי. `kind`: 'defect' (הסגירה הנוכחית) / 'defect_history'. */
@@ -175,6 +175,19 @@ export function FixesPdfButton({ defects, site, machineLabel = null, byId }) {
 }
 
 /** ליקוי שבוצע: מתי ומי, או "נסגר בתסקיר חוזר נקי". */
+/**
+ * חלקי סיכום ("ליקוי אחד לא טופל · 2 ליקויים טופלו בזמן") — מה-outcomeParts / gapPart.
+ * חלק שמסומן late נצבע בדיו של "עבר מועד", והשאר רגיל.
+ */
+export function PartsText({ parts }) {
+  return parts.map((p, i) => (
+    <span key={i}>
+      {i > 0 && " · "}
+      {p.late ? <span className="it-late">{p.text}</span> : p.text}
+    </span>
+  ));
+}
+
 export function DefectDoneRow({ defect, closingReport, isManager, onReopen, onOpenPhoto }) {
   const d = defect;
   const [showPast, setShowPast] = useState(false);
@@ -188,6 +201,9 @@ export function DefectDoneRow({ defect, closingReport, isManager, onReopen, onOp
         {d.closed_by_report_id
           ? `נסגר בתסקיר חוזר נקי מ-${closingReport ? formatDayMonth(closingReport.inspected_on) : "?"}${d.done_by_name ? ` · סומן ע״י ${d.done_by_name}` : ""}`
           : `בוצע ב-${doneDay ? formatDateIL(doneDay) : "?"} ע״י ${d.done_by_name || "?"}`}
+        {/* ⚠️ "טופל אחרי הזמן" (בעלת המוצר, 11/10/2026) — late_days מה-SQL: יום התיקון (בחוזרת —
+            יום הבדיקה החוזרת) פחות מועד התיקון. ביום המועד עצמו — בזמן, ואין כלום. */}
+        {lateText(d.late_days) && <> · <span className="it-late">{lateText(d.late_days)}</span></>}
       </p>
       {d.done_note && <p className="it-done-note">{d.done_note}</p>}
       {d.current_photos > 0 && (
