@@ -165,8 +165,11 @@ test("מנהל עדיין כותב ללוח; מפעיל נדחה", { skip }, asy
 });
 
 test("כל קבצי ה-SQL אידמפוטנטיים — החלה שנייה עוברת", { skip }, async () => {
-  for (const f of ["functions", "security", "writes", "ingest", "cron", "traffic-light", "service-hours", "fixflow",
-    "service-calls", "compliance"]) {
+  // ⚠️ גם schema (11/10/2026): הוא מריץ בכל החלה DROP/ADD/VALIDATE של אילוצים (sites_lift_shape,
+  // ה-FK של app_users) — כאן מול שורות sites שהבדיקות למעלה כבר יצרו. עד אז הוא לא הוחל פעמיים
+  // באף בדיקה, ושורת DROP שנמחקה הייתה עוברת את כל החבילה ונופלת רק בהחלה הבאה בייצור (42710).
+  for (const f of ["schema", "functions", "security", "writes", "ingest", "cron", "traffic-light", "service-hours", "fixflow",
+    "service-calls", "compliance", "tasks", "card-metrics"]) {
     await h.pg.exec(fs.readFileSync(path.join(h.MASTER, "db", `${f}.postgres.sql`), "utf8"));
   }
 });

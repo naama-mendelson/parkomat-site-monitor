@@ -1788,6 +1788,14 @@ Her decisions the same day:
 - **Old signatures are dropped:** `register_site` with 8 args and `update_site` with 7. Two live
   copies make PostgREST refuse the call. The new parameters are `DEFAULT NULL`, so an old call
   still resolves and gets a clear refusal ("יש לבחור סוג מעלית"), not "function not found".
+- ⚠️ **Deploy order: the SQL first, then the push.** The new bundle always sends `p_lift_type`.
+  Against the old 8-arg `register_site`, PostgREST answers 404 (PGRST202) and no site can be
+  registered until the SQL arrives.
+- ⚠️ **The idempotency test now re-applies `schema.postgres.sql` too** (plus `tasks` and
+  `card-metrics`), against `sites` rows that already exist. Until then no test re-applied it.
+  Removing the `DROP CONSTRAINT IF EXISTS sites_lift_shape` line passed all 1008 tests, and would
+  have failed only on the next production apply (42710). The review found it, and the case was
+  checked.
 - **In the forms:** "— לבחור —" is not a value (unlike "לא הוגדר" for the machine type). Switching
   to a type without a console clears the chosen console, so a hidden value is never sent. A site
   that already has a type gets no "— לבחור —" in the edit row.
