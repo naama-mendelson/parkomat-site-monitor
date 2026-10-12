@@ -6,7 +6,7 @@ import { timeAgo } from "../../utils/helpers";
 import { stuckInfo } from "../../utils/stuck";
 import { siteTypeLabel, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { controlSystemLabel } from "../../../../shared/control-systems.mjs";
-import { liftLabel } from "../../../../shared/lift-types.mjs";
+import { liftsLabel, siteLifts } from "../../../../shared/lift-types.mjs";
 import FaultTimer from "./FaultTimer";
 import { useFitName } from "../../hooks/useFitName";
 import "./SiteCard.css";
@@ -121,13 +121,14 @@ function TierBadge({ tier }) {
 // ⚠️ **וסוג המעלית בהמשך אותו תג** (בעלת המוצר, 11/10/2026: "פה אני רוצה שיהיה כתוב סוג המעלית" —
 // ובחרה "באותה תג, בהמשך"): "מצבט Y · לולק · חשמלי · קונזול אורכי". אתר שעוד אין לו סוג מעלית —
 // בלי תוספת (לא "לא הוגדר": רוב האתרים עוד לא הושלמו, ו-69 "לא הוגדר" הם רעש).
-function TypeBadge({ type, system, lift, liftConsole }) {
-  const liftText = lift ? liftLabel(lift, liftConsole) : null;
+// ⚠️ ושתי מעליות (12/10/2026) — שתיהן, מחוברות ב-"+": "… · חשמלי · קונזול אורכי + סרפיד".
+function TypeBadge({ type, system, lifts = [] }) {
+  const liftText = lifts.length ? liftsLabel(lifts) : null;
   if (!type && !system && !liftText) return null;
   const text = [type && siteTypeLabel(type), system, liftText].filter(Boolean).join(" · ");
   return (
     <span className="type-badge"
-      title={`סוג המתקן: ${siteTypeFullLabel(type)} · מערכת: ${controlSystemLabel(system)} · סוג מעלית: ${liftLabel(lift, liftConsole)}`}>
+      title={`סוג המתקן: ${siteTypeFullLabel(type)} · מערכת: ${controlSystemLabel(system)} · ${lifts.length > 1 ? "מעליות" : "סוג מעלית"}: ${liftsLabel(lifts)}`}>
       {text}
     </span>
   );
@@ -655,7 +656,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           <span className="card-name">
             <span ref={name.ref} className="card-name-text"
                   title={name.trimmed ? site.site_name : undefined}>{name.text}</span>
-            {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} lift={site.lift_type} liftConsole={site.lift_console} />}
+            {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} lifts={siteLifts(site)} />}
             {!isMini && <TierBadge tier={site.tier} />}
           </span>
           {isNormal && <span className="card-code">#{site.code}</span>}
@@ -704,7 +705,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           <div className="exp-title">
             <h3 className="exp-name">
               {site.site_name}
-              <TypeBadge type={site.plc_type} system={site.control_system} lift={site.lift_type} liftConsole={site.lift_console} />
+              <TypeBadge type={site.plc_type} system={site.control_system} lifts={siteLifts(site)} />
               <TierBadge tier={site.tier} />
             </h3>
             {/* ==========================================================
@@ -866,7 +867,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               כרטיס סגור. והוא כבר אינו "בסיסי" בכולם — הוא מגיע מהרמזור. ⚠️ השם עדיין
               גובר: התג תופס את מקום הקוד, שיורד לשורת המצב (`codeInRow`), רצפת הרוחב של השם
               ו-useFitName לא השתנו, ותג הסוג נשאר ב-normal בלבד. */}
-          {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} lift={site.lift_type} liftConsole={site.lift_console} />}
+          {isNormal && <TypeBadge type={site.plc_type} system={site.control_system} lifts={siteLifts(site)} />}
           {!isMini && <TierBadge tier={site.tier} />}
         </span>
         {isNormal && <span className="card-code">#{site.code}</span>}

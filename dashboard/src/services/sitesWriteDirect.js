@@ -78,10 +78,14 @@ export async function registerSiteDirect(payload = {}) {
     // אתר בלי בקר מחובר (07/10/2026) — **רק כשהוא כזה**, מאותה סיבה בדיוק: רישום רגיל
     // אינו שולח את המפתח, ולכן אינו תלוי בכך שהמסד כבר מכיר אותו.
     ...(payload.monitored === false ? { p_monitored: false } : {}),
-    // סוג המעלית והקונזול (11/10/2026) — חובה, והשרת אוכף ("יש לבחור סוג מעלית"). הקונזול רק
-    // כשנבחר: בסוג שאין לו קונזול השרת זורק אותו בכל מקרה.
+    // סוג המעלית והקונזול (11/10/2026) — רק כשנבחרו. ⚠️ לא חובה מאז 12/10/2026 בערב; בלי המפתח המסד
+    // שם NULL ("לא הוגדר"). הקונזול — רק כשנבחר: בסוג שאין לו קונזול השרת זורק אותו בכל מקרה.
     ...(payload.lift_type ? { p_lift_type: String(payload.lift_type) } : {}),
     ...(payload.lift_console ? { p_lift_console: String(payload.lift_console) } : {}),
+    // המעלית השנייה (12/10/2026) — **רק כשיש**, מאותה סיבה כמו המערכת: אתר עם מעלית אחת אינו שולח את
+    // המפתחות, ולכן נרשם גם מול מסד שעוד לא מכיר אותם.
+    ...(payload.lift2_type ? { p_lift2_type: String(payload.lift2_type) } : {}),
+    ...(payload.lift2_console ? { p_lift2_console: String(payload.lift2_console) } : {}),
   });
 
   if (error) throw new Error(messageFor(error, "רישום האתר נכשל"));
@@ -229,10 +233,13 @@ export async function updateSiteDirect(code, payload = {}) {
   // כשהמשתמשת שינתה, כך שעריכה רגילה אינה תלויה בכך שהמסד כבר מכיר את השדה.
   if (payload.control_system !== undefined)
     body.p_control_system = String(payload.control_system);
-  // סוג המעלית והקונזול (11/10/2026) — נשלחים רק כשהמשתמשת שינתה. ⚠️ אין "ריק = נקה": הסוג
-  // חובה, והשרת דוחה מחרוזת ריקה.
+  // סוג המעלית והקונזול (11/10/2026) — נשלחים רק כשהמשתמשת שינתה. אותה הבחנה כמו סוג המתקן: חסר =
+  // אל תיגע, ריק = נקה ("לא הוגדר") — מאז 12/10/2026 בערב, כשהסוג הפסיק להיות חובה.
   if (payload.lift_type !== undefined) body.p_lift_type = String(payload.lift_type);
   if (payload.lift_console !== undefined) body.p_lift_console = String(payload.lift_console);
+  // המעלית השנייה (12/10/2026) — אותה הבחנה: ריק = הסרה, חסר = אל תיגע.
+  if (payload.lift2_type !== undefined) body.p_lift2_type = String(payload.lift2_type);
+  if (payload.lift2_console !== undefined) body.p_lift2_console = String(payload.lift2_console);
 
   const { data, error } = await supabase.rpc("update_site", body);
   if (error) throw new Error(messageFor(error, "עדכון האתר נכשל"));

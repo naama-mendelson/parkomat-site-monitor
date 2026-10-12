@@ -1989,56 +1989,98 @@ Tests: `service-links.test.js` (7; 5 of 5 SQL mutations caught), `service-merge.
 `e2e/probe-tier-all.mjs` (34/34; 27/27 with `REAL=1`); `dbg-tier-gap.mjs` / `dbg-tier-names.mjs`
 measure trimming and overflow. The harness mock no longer puts `tier` in `LIVE_DEFAULTS`.
 
-## "סוג מעלית" and the console question on every site (built 11/10/2026)
+## "סוג מעלית": up to two lifts per site, and the console question (built 11/10/2026, reworked 12/10/2026)
 
 The owner: *"כשמוסיפים אתר צריך 'סוג מעלית' שיהיה SELECT … 1, 2, 6 — אם בוחרים באופציות האלו
 תיפתח השאלה קונזול אורכי או קונזול רוחבי"*.
 
 Her decisions the same day:
 - **Required when a site is registered.** For types 1, 2 and 6, the console is required too.
+  ⚠️ **Reversed on 12/10/2026, evening:** *"תעשה שלא יהיה חייבים לבחור מה סוג המעלית"*. The type is
+  optional in both forms, and "לא הוגדר" is a real option you can also go back to. The console is still
+  required once a type that opens it (1, 2, 6) is chosen.
 - **Also in the admin edit row**, so the sites already registered can be completed. Until then
   they stay NULL.
 
+And on 12/10/2026: *"אני רוצה שתהיה אופציה להוסיף עוד מעלית. יש אתרים שיש בהם שתי מעליות. וכן בסוגי
+מעליות להוסיף סוג בשם מספריים הידרואלית ותעצב את הSELECT יותר יפה וחדשני"*. Her answers: **up to two**
+lifts, the scissors type **with no console**, and a **styled dropdown** ("רשימה נפתחת מעוצבת").
+
 | Piece | Where |
 |---|---|
-| The list (keys, labels, which types open the question) | `shared/lift-types.mjs`: `LIFT_TYPES`, `LIFT_CONSOLES`, `liftNeedsConsole`, `liftLabel`, `liftProblem` |
-| Columns + shape | `sites.lift_type`, `sites.lift_console`, CHECK `sites_lift_shape` (`schema.postgres.sql`) |
-| Validation | `app.check_lift_type`, `app.check_lift_console`; `register_site` (10 args) and `update_site` (9 args) in `writes.postgres.sql` |
-| UI | `AddSiteModal.jsx` (required select, plus the console select when the type opens it); `AdminPanel.jsx` (edit selects; the summary row shows `מעלית: …`) |
-| Tests | `sql-local.test.js` (3 tests; 10 of 10 SQL mutations caught on a scratch mirror), `lift-types.test.js` (compares the three copies of the list), `register-site-unmonitored.test.js` (what the data layer sends); browser `e2e/probe-lift.mjs` (51/51, 1280 light and 390 dark) |
+| The list (keys, labels, which types open the question) | `shared/lift-types.mjs`: `LIFT_TYPES` (7), `LIFT_CONSOLES`, `MAX_LIFTS`, `liftNeedsConsole`, `liftLabel`, `liftProblem`, and for two lifts `siteLifts`, `liftsLabel`, `liftsProblem` |
+| Columns + shape | `sites.lift_type` / `lift_console` and `sites.lift2_type` / `lift2_console`; CHECKs `sites_lift_shape` and `sites_lift2_shape` (`schema.postgres.sql`) |
+| Validation | `app.check_lift_type`, `app.check_lift_console`; `register_site` (12 args) and `update_site` (11 args) in `writes.postgres.sql` |
+| UI | `components/ChoiceSelect` (the styled dropdown) and `components/LiftFields` (one or two lifts: the dropdown, a two-part console, "+ עוד מעלית", "✕ הסרה"), used by `AddSiteModal.jsx` (`variant="form"`) and the `AdminPanel.jsx` edit row (`variant="row"`). The card's type badge and the admin row show both, joined by " + " |
+| Tests | `sql-local.test.js` (6 lift tests; 13/13 SQL mutations, `mut-lifts-sql.cjs` in the isolated copy `scratchpad/sqlmut`), `lift-types.test.js` (the four copies of the list, and the helpers), `register-site-unmonitored.test.js` (what the data layer sends); browser `e2e/probe-lift2.mjs` (101, 1280 light and 390 dark) and `probe-liftbadge2.mjs` (11), UI mutations `mut-lifts-ui.mjs` (separate tree). `probe-lift.mjs` (51) drove the old `<select>` and is superseded |
 
 - **Keys are English and labels Hebrew**, as in `site-types`. The labels are exactly hers, in her
   order. "הידראולית" is spelled correctly; she typed "הידרואלית".
-- ⚠️ **The list exists in three copies, and `lift-types.test.js` compares them:** the shared module,
-  the two check functions, and the table CHECK. A type added to only one of them would show in the
-  form and be refused on save, or be saved through SQL and break the screen.
+- ⚠️ **The list exists in four copies, and `lift-types.test.js` compares them:** the shared module,
+  the two check functions, and the two table CHECKs (one per lift). A type added to only one of them
+  would show in the form and be refused on save, or be saved through SQL and break the screen.
 - **The CHECK enforces the shape, not the requirement.** A type is from the list or NULL; the
   console is from the list; and a console exists **exactly** for types 1, 2 and 6. Outside the
   RPCs (hand SQL, a tool) nothing can store "4 עמודים with a console" or "a piston without one".
-- **The requirement lives in `register_site`.** It is checked **after** the duplicate-code check:
-  `tools/check-writes.js` expects 409 for a repeated code without a lift type. That tool and
-  `check-fixflow-field.js` now register with `p_lift_type`.
+  `sites_lift2_shape` adds one rule: **no second lift without a first** (`lift2_type IS NULL OR
+  lift_type IS NOT NULL`). Otherwise "the second lift" would be a site's only lift, and everything
+  that reads `lift_type` would say "לא הוגדר".
+- **Two lifts are columns, not a table.** Exactly up to two, and the card and both forms read them from
+  the same row (`select("*")`) with no extra query per site.
+- **`register_site`:** no requirement since 12/10 evening (NULL or empty = "לא הוגדר"). A type that
+  opens the question still needs its console. A second lift needs a first ("יש להגדיר קודם את המעלית
+  הראשונה", in words before the CHECK says it without them). Checks run **after** the duplicate-code
+  check: `tools/check-writes.js` expects 409 for a repeated code without a lift type.
 - **`update_site`:**
   - NULL means untouched, so the old bundle and a plain rename don't affect the lift fields.
-  - An empty string is **refused**, because the field is required: you can change the type, not
-    remove it.
-  - Changing the type recomputes the console. A type without a console clears it, otherwise the
-    CHECK would refuse.
-  - A console alone changes the console of the current type.
-- **Old signatures are dropped:** `register_site` with 8 args and `update_site` with 7. Two live
-  copies make PostgREST refuse the call. The new parameters are `DEFAULT NULL`, so an old call
-  still resolves and gets a clear refusal ("יש לבחור סוג מעלית"), not "function not found".
-- ⚠️ **Deploy order: the SQL first, then the push.** The new bundle always sends `p_lift_type`.
-  Against the old 8-arg `register_site`, PostgREST answers 404 (PGRST202) and no site can be
-  registered until the SQL arrives.
+  - An empty string **clears** — for the first lift since 12/10 evening (until then it was refused as
+    a required field), and for the second it means remove ("✕ הסרה"). Clearing the first while a second
+    remains is refused: "אי אפשר לנקות את המעלית הראשונה כשיש שנייה — יש להסיר קודם את השנייה".
+  - ⚠️ **Both lifts are computed first and written in one `UPDATE`.** The CHECK is evaluated on the
+    final row, so one call can set both on a site with no lift, or clear both. Two `UPDATE`s fail on the
+    intermediate state (mutation L13). A lift that was not sent keeps its values, console included
+    (mutation L8 survived until the case "change the first, the second keeps its console" was added).
+  - Changing a type recomputes its console. A type without a console clears it, otherwise the
+    CHECK would refuse. A console alone changes the console of the current type.
+- **Old signatures are dropped:** `register_site` with 8 and 10 args, `update_site` with 7 and 9. Two
+  live copies make PostgREST refuse the call. The new parameters are `DEFAULT NULL`, so a call from the
+  old bundle (10 keys) still resolves.
+- ⚠️ **Deploy order: the SQL first, then the push.** The new bundle sends `p_lift2_*` only when there
+  is a second lift, so a one-lift registration also works against the old SQL. But a second lift is
+  404 (PGRST202) there, and clearing the first lift is refused as a required field.
 - ⚠️ **The idempotency test now re-applies `schema.postgres.sql` too** (plus `tasks` and
   `card-metrics`), against `sites` rows that already exist. Until then no test re-applied it.
   Removing the `DROP CONSTRAINT IF EXISTS sites_lift_shape` line passed all 1008 tests, and would
   have failed only on the next production apply (42710). The review found it, and the case was
   checked.
-- **In the forms:** "— לבחור —" is not a value (unlike "לא הוגדר" for the machine type). Switching
-  to a type without a console clears the chosen console, so a hidden value is never sent. A site
-  that already has a type gets no "— לבחור —" in the edit row.
+- **In the forms** (`LiftFields`):
+  - The first lift offers "לא הוגדר" (like the machine type and the system), **only while there is no
+    second**. The second has no empty option: you remove it instead, and its placeholder is
+    "— לבחור —". A second added without a type: "יש לבחור סוג למעלית השנייה, או להסיר אותה".
+  - "+ עוד מעלית" appears only once the first has a type, and not past `MAX_LIFTS` (2).
+  - The console is one frame in two parts (radio inputs). Switching to a type without a console clears
+    it, so a hidden value is never sent.
+  - The edit row sends only what changed per lift (`initialLifts` vs `lifts`): a removed second lift is
+    `lift2_type: ""`, a cleared first is `lift_type: ""` with no console key.
+- **`ChoiceSelect` — the dropdown, instead of `<select>`** (the OS draws a `<select>`'s list and it
+  cannot be styled; same reasoning as the "בודק מוסמך" filter).
+  - ⚠️ **The list opens in a portal, `position: fixed`.** The add-site modal scrolls
+    (`overflow-y: auto`), so an absolutely positioned list inside it was clipped. It is measured from
+    the button, follows scroll and resize, and opens upward when there is no room below. A click inside
+    the portal is not "outside" for the modals: React portal events bubble through the component tree,
+    so the modals' `stopPropagation` still holds.
+  - Rebuilt by hand, as `<select>` gave them for free: closes on choice, outside click, Esc and Tab;
+    arrows, Home/End, Enter/Space; focus back to the button; `role=listbox`/`option`/`aria-selected`;
+    `focus({preventScroll})`, so the modal does not scroll the button away from its list.
+- **The other selects in both forms were restyled, not replaced.** "סוג המתקן" (it has groups) and
+  "מערכת" stay `<select>`, with `appearance: none` and the same SVG chevron, height and corners as the
+  dropdown. In the add-site form every field is 40px (44px on touch).
+- ⚠️ **Found on the way: the add-site buttons had no style at all.** "רשום אתר" and "ביטול" relied on
+  `.btn` / `.btn-primary` from `DetailPanel.css`, deleted in 6830603, and showed as plain text since.
+  Their style now lives in `AddSiteModal.css`, scoped to `.addsite-modal`.
+- ⚠️ **`AdminPanel.css` rules for the edit row are scoped to direct children**
+  (`.adm-edit > label > span|input|select`). `.adm-edit span` gave every span inside the new
+  component a 34px width and a muted colour, and `.adm-edit input` styled the console's radio inputs.
 - The `master` server arm does not know the field. It is retired, and the direct arm is the only
   one in use.
 

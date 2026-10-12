@@ -73,6 +73,36 @@ test("עדכון: סוג מעלית וקונזול נשלחים רק כשנמס�
   assert.equal(calls.rpc[2].args.p_lift_console, "longitudinal");
 });
 
+test("מעלית לא חובה, ושנייה (12/10/2026): רישום בלי סוג אינו שולח מפתח; השנייה — רק כשיש", async () => {
+  const { registerSiteDirect } = await load();
+  const calls = fake();
+  // ⚠️ בלי סוג — אין p_lift_type בכלל (לא ""), והמסד שם NULL. "תעשה שלא יהיה חייבים לבחור"
+  await registerSiteDirect({ code: "9004", site_name: "בלי מעלית", monitored: false });
+  assert.ok(!("p_lift_type" in calls.rpc[0].args) && !("p_lift2_type" in calls.rpc[0].args), JSON.stringify(calls.rpc[0].args));
+  await registerSiteDirect({ code: "9005", site_name: "שתיים", lift_type: "serapid", lift2_type: "electric", lift2_console: "transverse", monitored: false });
+  assert.deepEqual([calls.rpc[1].args.p_lift_type, calls.rpc[1].args.p_lift2_type, calls.rpc[1].args.p_lift2_console],
+    ["serapid", "electric", "transverse"]);
+  // ⚠️ מעלית אחת — בלי מפתחות השנייה: נרשם גם מול מסד שעוד לא מכיר אותם (PostgREST — לפי שמות)
+  await registerSiteDirect({ code: "9006", site_name: "אחת", lift_type: "serapid", monitored: false });
+  assert.ok(!("p_lift2_type" in calls.rpc[2].args) && !("p_lift2_console" in calls.rpc[2].args));
+});
+
+test("עדכון: ריק = נקה (לראשונה מאז 12/10 בערב, ולשנייה = הסרה); חסר = אל תיגע", async () => {
+  const { updateSiteDirect } = await load();
+  const calls = fake();
+  await updateSiteDirect("9005", { lift_type: "" });
+  assert.equal(calls.rpc[0].args.p_lift_type, "", "ריק נשלח כמו שהוא — המסד מנקה");
+  assert.ok(!("p_lift2_type" in calls.rpc[0].args));
+  await updateSiteDirect("9005", { lift2_type: "" });
+  assert.equal(calls.rpc[1].args.p_lift2_type, "");
+  assert.ok(!("p_lift_type" in calls.rpc[1].args));
+  await updateSiteDirect("9005", { lift2_type: "hydraulic-piston-2", lift2_console: "longitudinal" });
+  assert.deepEqual([calls.rpc[2].args.p_lift2_type, calls.rpc[2].args.p_lift2_console], ["hydraulic-piston-2", "longitudinal"]);
+  await updateSiteDirect("9005", { lift2_console: "transverse" });
+  assert.ok(!("p_lift2_type" in calls.rpc[3].args));
+  assert.equal(calls.rpc[3].args.p_lift2_console, "transverse");
+});
+
 test("רישום רגיל: בלי המפתח p_monitored, והזהות כן מונפקת (כאן — נכשלת בלי שרת, ומדווחת)", async () => {
   const { registerSiteDirect } = await load();
   const calls = fake();

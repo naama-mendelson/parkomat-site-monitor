@@ -310,20 +310,23 @@
   min-width: 0;
 }
 
-.adm-edit label {
+.adm-edit > label {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.adm-edit span {
+/* ⚠️ רק הכותרת שליד השדה (label > span) — לא כל span בשורה: סוג המעלית (LiftFields) הוא פקד עם
+   spans משלו, וכלל רחב נתן לכל אחד מהם 34px וצבע מעומעם. */
+.adm-edit > label > span {
   color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 600;
   width: 34px;
 }
 
-.adm-edit input {
+/* ⚠️ ואותו דבר לשדות: הרדיו של הקונזול (LiftFields) הוא input בתוך השורה */
+.adm-edit > label > input {
   flex: 1;
   padding: 7px 10px;
   border-radius: 7px;
@@ -333,7 +336,26 @@
   font-size: 0.83rem;
 }
 
-.adm-edit input:focus { outline: none; border-color: var(--accent); }
+.adm-edit > label > input:focus { outline: none; border-color: var(--accent); }
+
+/* "סוג המתקן" ו"מערכת" — <select> (הרשימה הפתוחה של מערכת ההפעלה), אבל הכפתור הסגור כמו השדות שלידם
+   ובורר המעלית (12/10/2026): בלי המסגרת והחץ של הדפדפן, והחץ שלנו בצד שמאל (RTL) */
+.adm-edit > label > select {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-block: 7px;
+  padding-inline: 10px 34px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary) url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27M2 4l4 4 4-4%27 fill=%27none%27 stroke=%27%238a94a6%27 stroke-width=%271.6%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E") no-repeat left 10px center / 12px 12px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+.adm-edit > label > select:focus { outline: none; border-color: var(--accent); }
 
 .adm-warn {
   color: #facc15;

@@ -1,0 +1,96 @@
+/* components/ChoiceSelect/ChoiceSelect.css — רשימה נפתחת מעוצבת.
+   הכפתור: כמו שדה (מסגרת דקה, רקע הכרטיס), עם החץ בקצה, שמסתובב כשהרשימה פתוחה. הרשימה: כרטיס צף
+   עם צל, שורות מרווחות, והנבחרת — מודגשת, בצבע המותג, עם ✓. גוון ולא מילוי.
+   ⚠️ בלי משקל 800 בטקסט עברי: ל-Segoe UI אין 800, והאותיות נופלות לגופן אחר (ראו Tasks.css). */
+
+.cs-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.95em;
+  text-align: start;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.cs-btn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color)); }
+.cs-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cs-btn.is-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.cs-btn.is-invalid { border-color: var(--status-error); }
+.cs-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-btn.is-empty .cs-value { color: var(--text-muted); }
+.cs-chevron {
+  flex: none;
+  color: #8a94a6;              /* כמו החץ של ה-<select> המעוצבים (SVG ב-data URI אינו מקבל משתנה) */
+  transition: transform 0.15s ease;
+}
+.cs-btn.is-open .cs-chevron { transform: rotate(180deg); }
+
+/* ---------------- הרשימה (ב-portal, fixed) ---------------- */
+.cs-menu {
+  position: fixed;
+  z-index: 3000;               /* מעל כל מודאל: ניהול אתרים 450, הוספת אתר 300, משימות 1200 */
+  box-sizing: border-box;
+  padding: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(10, 25, 60, 0.24);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: csMenuIn 0.12s ease-out;
+}
+.cs-menu.is-up { animation-name: csMenuUp; }
+@keyframes csMenuIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes csMenuUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-menu, .cs-menu.is-up { animation: none; }
+  .cs-chevron, .cs-btn { transition: none; }
+}
+
+.cs-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  cursor: pointer;
+  outline: none;
+}
+.cs-item:hover,
+.cs-item:focus { background: var(--bg-hover); }
+.cs-item:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.cs-item.is-selected {
+  color: var(--accent);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+}
+.cs-item.is-none { color: var(--text-muted); }
+.cs-item-label { flex: 1; min-width: 0; line-height: 1.3; }
+.cs-item-check { flex: none; width: 14px; text-align: center; color: var(--accent); }
+
+/* טלפון — יעד מגע */
+@media (pointer: coarse) {
+  .cs-btn { min-height: 44px; }
+  .cs-item { min-height: 44px; }
+}

@@ -10,7 +10,14 @@ import { changeAdminCode } from "../../services/dataSource";
 import { markUnlocked as storeAdminCode } from "../../services/adminCodeDirect";
 import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
-import { LIFT_CONSOLES, LIFT_TYPES, liftLabel, liftNeedsConsole, liftProblem } from "../../../../shared/lift-types.mjs";
+import { liftsLabel, liftsProblem, siteLifts } from "../../../../shared/lift-types.mjs";
+import LiftFields from "../LiftFields/LiftFields";
+
+// המעליות של האתר כטיוטה לטופס — תמיד לפחות שורה אחת (ריקה, לאתר מלפני 11/10)
+const liftDraft = (site) => {
+  const l = siteLifts(site).map((x) => ({ type: x.type, console: x.console ?? "" }));
+  return l.length ? l : [{ type: "", console: "" }];
+};
 import { useAdmin } from "../../hooks/useAdmin";
 import { copyText } from "../../utils/clipboard";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
@@ -112,11 +119,9 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
       plcType: site.plc_type ?? "",
       controlSystem: site.control_system ?? "",
       initialControlSystem: site.control_system ?? "",
-      // סוג המעלית והקונזול (11/10/2026) — כדי להשלים אתרים שנרשמו לפני השדה
-      liftType: site.lift_type ?? "",
-      liftConsole: site.lift_console ?? "",
-      initialLiftType: site.lift_type ?? "",
-      initialLiftConsole: site.lift_console ?? "",
+      // סוג המעלית והקונזול (11/10/2026) — כדי להשלים אתרים שנרשמו לפני השדה; ועד שתי מעליות (12/10)
+      lifts: liftDraft(site),
+      initialLifts: liftDraft(site),
     });
     setErr(null);
   }
@@ -129,12 +134,17 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
     if (!CODE_PATTERN.test(newCode)) {
       return setErr("קוד האתר: אותיות באנגלית, ספרות, מקף וקו תחתון בלבד");
     }
-    // ⚠️ סוג המעלית: אתר שעוד אין לו (נרשם לפני 11/10) אפשר לערוך בלי לבחור — אבל מי שבחר סוג
-    // שפותח את השאלה חייב לענות על הקונזול, ואתר שכבר יש לו סוג אינו מאבד אותו (השרת דוחה ניקוי).
-    const liftErr = liftProblem(draft.liftType, draft.liftConsole, { required: !!draft.initialLiftType });
+    // ⚠️ סוג המעלית — לא חובה (12/10/2026, ערב: "תעשה שלא יהיה חייבים לבחור מה סוג המעלית"), ואפשר גם
+    // לחזור ל"לא הוגדר". מי שבחר סוג שפותח את השאלה חייב לענות על הקונזול. השנייה — לא חובה; מי שהוסיף
+    // אותה בוחר לה סוג או מסיר אותה.
+    const [a, b] = draft.lifts;
+    const [a0, b0] = draft.initialLifts;
+    const liftErr = liftsProblem(draft.lifts, { required: false });
     if (liftErr) return setErr(liftErr);
-    const liftChanged = draft.liftType !== draft.initialLiftType;
-    const consoleChanged = draft.liftConsole !== draft.initialLiftConsole;
+    const liftChanged = a.type !== a0.type;
+    const consoleChanged = a.console !== a0.console;
+    const lift2Changed = (b?.type || "") !== (b0?.type || "");
+    const console2Changed = (b?.console || "") !== (b0?.console || "");
 
     setBusy(true);
     setErr(null);
@@ -155,8 +165,13 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
         // תמיד אוטומטית. בלי המפתח updateSiteDirect אינו שולח p_fixflow_profile, והשרת אינו נוגע.
         // סוג מעלית וקונזול — רק כששונו. החלפת סוג שולחת גם את הקונזול (בסוג בלי קונזול השרת
         // מוחק אותו); שינוי קונזול לבד — רק אותו.
-        ...(liftChanged && draft.liftType ? { lift_type: draft.liftType, lift_console: draft.liftConsole } : {}),
-        ...(!liftChanged && consoleChanged ? { lift_console: draft.liftConsole } : {}),
+        // ⚠️ הוחלף לריק ("לא הוגדר") — נשלח "" וה-SQL מנקה (מאז 12/10 בערב; עד אז נדחה כשדה חובה)
+        ...(liftChanged ? { lift_type: a.type, ...(a.type ? { lift_console: a.console } : {}) } : {}),
+        ...(!liftChanged && consoleChanged ? { lift_console: a.console } : {}),
+        // השנייה: נוספה או הוחלפה — הסוג והקונזול; הוסרה — "" (בשנייה, בשונה מהראשונה, ריק = הסרה);
+        // רק הקונזול שלה השתנה — רק הוא. לא נגעו — כלום, ו-update_site אינו נוגע בה.
+        ...(lift2Changed ? { lift2_type: b?.type || "", ...(b?.type ? { lift2_console: b.console } : {}) } : {}),
+        ...(!lift2Changed && b?.type && console2Changed ? { lift2_console: b.console } : {}),
       });
       setEditing(null);
       onChanged();
@@ -519,31 +534,10 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                           ))}
                         </select>
                       </label>
-                      {/* סוג המעלית (11/10/2026). "— לבחור —" רק לאתר שעוד אין לו סוג: אתר שכבר יש לו
-                          אינו יכול לחזור ל"בלי" (חובה), רק להחליף. */}
-                      <label>
-                        <span>סוג מעלית</span>
-                        <select name="lift_type" value={draft.liftType}
-                          onChange={(e) => setDraft({ ...draft, liftType: e.target.value,
-                            liftConsole: liftNeedsConsole(e.target.value) ? draft.liftConsole : "" })}>
-                          {!draft.initialLiftType && <option value="">— לבחור —</option>}
-                          {LIFT_TYPES.map((t) => (
-                            <option key={t.key} value={t.key}>{t.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      {liftNeedsConsole(draft.liftType) && (
-                        <label>
-                          <span>קונזול</span>
-                          <select name="lift_console" value={draft.liftConsole}
-                            onChange={(e) => setDraft({ ...draft, liftConsole: e.target.value })}>
-                            <option value="">— לבחור —</option>
-                            {LIFT_CONSOLES.map((c) => (
-                              <option key={c.key} value={c.key}>{c.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
+                      {/* סוג המעלית (11/10/2026), ועד שתיים (12/10/2026). לא חובה (12/10 בערב) — "לא הוגדר"
+                          אפשרי, כל עוד אין שנייה. השנייה — "✕ הסרה". */}
+                      <LiftFields lifts={draft.lifts} onChange={(lifts) => setDraft({ ...draft, lifts })}
+                        variant="row" />
                       <p className="adm-warn">
                         ⚠ שינוי הקוד משנה את נתיב ה-MQTT. הסוכן באתר חייב להתעדכן גם הוא,
                         אחרת הודעותיו יידחו.
@@ -553,7 +547,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                     <div className="adm-info">
                       <span className="adm-name">{s.site_name}</span>
                       <span className="adm-meta">
-                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · מעלית: <b>{liftLabel(s.lift_type, s.lift_console)}</b> · {STATUS_LABELS[s.status] || s.status}
+                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · {siteLifts(s).length > 1 ? "מעליות" : "מעלית"}: <b>{liftsLabel(siteLifts(s))}</b> ·{STATUS_LABELS[s.status] || s.status}
                       </span>
                     </div>
                   )}

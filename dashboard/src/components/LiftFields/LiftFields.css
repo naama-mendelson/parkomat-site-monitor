@@ -1,0 +1,89 @@
+/* components/LiftFields/LiftFields.css — סוג המעלית: אחת או שתיים, והקונזול.
+   ⚠️ בלי משקל 800 בטקסט עברי (Segoe UI — אין 800; ראו Tasks.css). ⚠️ הסלקטורים של הרדיו כפולים
+   (.lf .lf-seg input) כדי לגבור על ".addsite-field input" של הטופס, שהיה נותן לו ריפוד ומסגרת. */
+
+.lf { display: flex; flex-direction: column; gap: 12px; }
+.lf-lift { display: flex; flex-direction: column; gap: 6px; }
+/* שתי מעליות — קו מקווקו דק בין השתיים, בלי קופסה */
+.lf-lift + .lf-lift { padding-top: 12px; border-top: 1px dashed var(--border-color); }
+.lf-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lf-title { color: var(--text-primary); font-size: 0.9em; font-weight: 600; }
+.lf-req { color: #f87171; font-weight: 600; }
+.lf-body { display: flex; flex-direction: column; gap: 8px; }
+
+/* הקונזול — מסגרת אחת בשני חלקים; הנבחר בגוון ובכתב מודגש */
+.lf-console {
+  display: flex;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.lf-seg { position: relative; display: flex; flex: 1 1 0; min-width: 0; }
+.lf .lf-seg input { position: absolute; opacity: 0; width: 1px; height: 1px; min-height: 0; margin: 0; padding: 0; border: 0; }
+.lf-seg span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 0.88em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lf-seg + .lf-seg span { border-inline-start: 1px solid var(--border-color); }
+.lf-seg span:hover { color: var(--text-primary); }
+.lf .lf-seg input:checked + span {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
+  color: var(--accent);
+  font-weight: 700;
+}
+/* בתוך המסגרת (overflow: hidden) — קו מבחוץ היה נחתך */
+.lf .lf-seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+.lf-add,
+.lf-remove {
+  background: none;
+  border: 0;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 0.86em;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lf-add { align-self: flex-start; color: var(--accent); }
+.lf-remove { color: var(--status-error); font-weight: 600; }
+.lf-add:hover, .lf-remove:hover { text-decoration: underline; }
+.lf-add:focus-visible, .lf-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------------- בשורת העריכה של ניהול אתרים ----------------
+   כמו השדות שמעליה: כותרת קטנה ומעומעמת בעמודה של 34px, ואחריה הפקד; הקונזול לצד הסוג כשיש מקום. */
+.lf--row { gap: 7px; }
+.lf--row .lf-lift { flex-direction: row; align-items: flex-start; gap: 8px; }
+.lf--row .lf-lift + .lf-lift { padding-top: 7px; }
+.lf--row .lf-head { flex: none; width: 34px; padding-top: 8px; }
+.lf--row .lf-title { color: var(--text-muted); font-size: 0.75rem; }
+.lf--row .lf-body { flex: 1; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lf--row .cs-btn {
+  flex: 1 1 180px;
+  width: auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  font-size: 0.83rem;
+}
+.lf--row .lf-console { flex: 1 1 200px; border-radius: 7px; background: var(--bg-secondary); }
+.lf--row .lf-seg span { height: 30px; font-size: 0.8rem; }
+.lf--row .lf-add { margin-inline-start: 42px; font-size: 0.8rem; }
+.lf--row .lf-remove { font-size: 0.8rem; }
+
+@media (pointer: coarse) {
+  .lf-seg span { height: 42px; }
+  .lf--row .lf-seg span { height: 40px; }
+  .lf--row .cs-btn { min-height: 44px; }
+  .lf-add, .lf-remove { min-height: 36px; }
+}

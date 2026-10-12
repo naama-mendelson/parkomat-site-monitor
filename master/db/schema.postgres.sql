@@ -722,8 +722,8 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS monitored BOOLEAN NOT NULL DEFAULT TR
 -- lift_type / lift_console — סוג המעלית, והקונזול (11/10/2026)
 -- ============================================================
 -- בעלת המוצר: "כשמוסיפים אתר צריך 'סוג מעלית' … 1, 2, 6 — אם בוחרים באופציות האלו תיפתח
--- השאלה קונזול אורכי או קונזול רוחבי". חובה ברישום (register_site); אתר שנרשם לפני כן
--- נשאר NULL עד שישלימו אותו בעריכה. הרשימה: shared/lift-types.mjs.
+-- השאלה קונזול אורכי או קונזול רוחבי". היה חובה ברישום (register_site) עד 12/10/2026 בערב — "תעשה
+-- שלא יהיה חייבים לבחור מה סוג המעלית"; מאז NULL = "לא הוגדר", גם ברישום. הרשימה: shared/lift-types.mjs.
 -- ⚠️ ה-CHECK הוא הצורה, ולא החובה: סוג מהרשימה או NULL; קונזול מהרשימה; וקונזול יש **בדיוק**
 -- לסוגים שיש להם (1, 2, 6) — לא לסוג אחר, ולא בלי סוג. עמודה שמחוץ ל-RPC (SQL ידני, כלי) אינה
 -- יכולה לשמור "4 עמודים עם קונזול" או "בוכנה בלי קונזול".
@@ -734,12 +734,31 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS lift_console TEXT;
 ALTER TABLE sites DROP CONSTRAINT IF EXISTS sites_lift_shape;
 ALTER TABLE sites ADD CONSTRAINT sites_lift_shape CHECK (
       (lift_type IS NULL OR lift_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'four-post-18kw',
-                                          'four-post-11kw', 'serapid', 'electric'))
+                                          'four-post-11kw', 'serapid', 'electric', 'hydraulic-scissors'))
   AND (lift_console IS NULL OR lift_console IN ('longitudinal', 'transverse'))
   AND ((lift_console IS NOT NULL)
        = COALESCE(lift_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'electric'), false))
 ) NOT VALID;
 ALTER TABLE sites VALIDATE CONSTRAINT sites_lift_shape;
+
+-- המעלית השנייה (12/10/2026: "יש אתרים שיש בהם שתי מעליות", "עד שתיים"). עמודות ולא טבלה: עד שתיים
+-- בדיוק, והכרטיס והטפסים קוראים אותן מאותה שורה (select("*")), בלי שאילתה נוספת לכל אתר.
+-- ⚠️ אותה צורה כמו הראשונה, ועוד כלל אחד: **אין שנייה בלי ראשונה** — אחרת "המעלית השנייה" של אתר
+-- הייתה המעלית היחידה שלו, וכל מי שקורא lift_type היה רואה "לא הוגדר".
+-- ⚠️ הרשימה כאן — עותק רביעי (shared/lift-types.mjs, app.check_lift_type, sites_lift_shape);
+-- tests/lift-types.test.js משווה את כולם.
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lift2_type TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lift2_console TEXT;
+ALTER TABLE sites DROP CONSTRAINT IF EXISTS sites_lift2_shape;
+ALTER TABLE sites ADD CONSTRAINT sites_lift2_shape CHECK (
+      (lift2_type IS NULL OR lift2_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'four-post-18kw',
+                                            'four-post-11kw', 'serapid', 'electric', 'hydraulic-scissors'))
+  AND (lift2_console IS NULL OR lift2_console IN ('longitudinal', 'transverse'))
+  AND ((lift2_console IS NOT NULL)
+       = COALESCE(lift2_type IN ('hydraulic-piston-1', 'hydraulic-piston-2', 'electric'), false))
+  AND (lift2_type IS NULL OR lift_type IS NOT NULL)
+) NOT VALID;
+ALTER TABLE sites VALIDATE CONSTRAINT sites_lift2_shape;
 
 -- ============================================================
 -- מי בפועל הכניס לתחזוקה — שם מוקלד, לצד הזהות המאומתת
