@@ -1,7 +1,7 @@
 // tests/tasks-direct.test.js — מה שכבת הנתונים של המשימות שולחת ל-PostgREST.
 //
-// ⚠️ בלי בחירת סוג (12/10/2026): addTask חייב לשלוח p_kind: null **במפורש**. ל-task_add אין ברירת
-// מחדל ל-p_kind, ו-PostgREST בוחר פונקציה לפי המפתחות בגוף הבקשה — מפתח שחסר הוא חתימה אחרת,
+// ⚠️ משימה בלי סוג (נפתחה ב-12/10/2026, בשעות שלא הייתה בחירה — או מקורא שלא העביר סוג): addTask חייב
+// לשלוח p_kind: null **במפורש**. ל-task_add אין ברירת מחדל ל-p_kind, ו-PostgREST בוחר פונקציה לפי המפתחות בגוף הבקשה — מפתח שחסר הוא חתימה אחרת,
 // כלומר 404 (PGRST202) על כל הוספה. undefined נעלם ב-JSON.stringify, ולכן הבדיקה היא על הגוף
 // כפי שהוא נשלח, לא על האובייקט.
 // tasksDirect.js האמיתי, עם `./supabase` מדומה (כמו register-site-unmonitored.test.js).
@@ -55,11 +55,12 @@ test("addTask בלי סוג: p_kind: null נשלח במפורש בגוף הבק�
   assert.match(calls[1].body, /"p_kind":null/);
 });
 
-test("addTask עם סוג (קורא ישן) — הסוג עובר כמו שהוא", async () => {
+test("addTask עם סוג — כל אחד משלושת הסוגים עובר כמו שהוא (גם מוקד)", async () => {
   const m = await load();
+  const { TASK_KINDS } = await import(pathToFileURL(UTILS).href);
   const calls = fake(7);
-  await m.addTask({ kind: "customer", body: "להתקשר ללקוח", siteCode: "1001", clientId: "c-3" });
-  assert.equal(JSON.parse(calls[0].body).p_kind, "customer");
+  for (const kind of TASK_KINDS) await m.addTask({ kind, body: "להתקשר ללקוח", siteCode: "1001", clientId: `c-${kind}` });
+  assert.deepEqual(calls.map((c) => JSON.parse(c.body).p_kind), ["customer", "technical", "call_center"]);
 });
 
 test("fetchTaskCounts: שורה בלי סוג נספרת בכפתור", async () => {
@@ -68,7 +69,9 @@ test("fetchTaskCounts: שורה בלי סוג נספרת בכפתור", async ()
   assert.deepEqual(await m.fetchTaskCounts(), { bySite: { 5: { open: 3 } } });
 });
 
-test("הסוג אינו מיוצא יותר — אין ממה לבנות בורר", async () => {
+test("הסוגים — עותק אחד בדשבורד (utils/tasks.js), לא שני בשכבת הנתונים", async () => {
+  // ⚠️ עד 12/10/2026 בבוקר TASK_KINDS ישב כאן. עותק שני היה יכול לסטות מזה שהבורר בונה ממנו, ו-T19
+  // ב-tasks.test.js משווה ל-SQL רק את utils/tasks.js
   const m = await load();
   assert.equal(m.TASK_KINDS, undefined);
   assert.equal(m.TASK_KIND_LABEL, undefined);

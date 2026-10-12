@@ -11,10 +11,12 @@
 -- אחד לאתר, והסוג — 'customer' או 'technical' — היה תכונה של המשימה, שנבחרה בהוספה.
 -- (גרסה ראשונה עם שני כפתורים כלליים בכותרת נבנתה ב-06/10 ונזנחה לפני שעלתה.)
 --
--- ⚠️ **בחירת הסוג הוסרה (בעלת המוצר, 12/10/2026, על "קשרי לקוחות / טכני" בטופס: "תעיף את זה").**
--- משימה חדשה נשמרת עם kind = NULL. העמודה, האילוץ והפרמטר נשארים: חבילה ישנה בדפדפן עוד שולחת
--- סוג, ו-NULL מותר בכל מקום (task_add, tasks_list, task_counts). אין כאן ברירת מחדל "טכני" — סוג
--- שאיש לא בחר הוא נתון שקרי.
+-- ⚠️ **בחירת הסוג הוסרה בבוקר 12/10/2026 וחזרה באותו ערב, עם סוג שלישי.** בבוקר, על "קשרי
+-- לקוחות / טכני" בטופס: "תעיף את זה". בערב: "שיהיה: קשרי לקוחות / טכני / מוקד". הסוגים —
+-- app.task_kinds(), והמפתח של "מוקד" הוא 'call_center'.
+-- ⚠️ NULL נשאר מותר (task_add, tasks_list, task_counts), אף שהמסך דורש בחירה: משימות שנפתחו בשעות
+-- שלא הייתה בחירה הן NULL, וחבילה ישנה בדפדפן (טאב פתוח, PWA) עוד שולחת NULL. דחייה כאן הייתה
+-- אומרת לה "יש לבחור סוג" בטופס שאין בו בחירה. ואין ברירת מחדל — סוג שאיש לא בחר הוא נתון שקרי.
 --
 -- ⚠️ **המצב נגזר ולא נשמר:** done_at → בוצעה; אחרת started_at → בטיפול; אחרת לביצוע.
 -- עמודת "מצב" הייתה מאפשרת 'done' בלי מי ומתי — מצב שאסור שיהיה אפשר לבטא.
@@ -27,7 +29,7 @@
 -- זוכר שהמשימה הייתה בטיפול, אצל מי ומתי.
 --
 -- ⚠️ **רק החשבון sherut@parkomat.co.il מסמן "בוצעה"** (בעלת המוצר, 11/10/2026: "רק מי
--- שמתחבר מתוך sherut@parkomat.co.il") — בשני הסוגים, וגם מנהל אחר לא. "לטיפול" ו"החזרה
+-- שמתחבר מתוך sherut@parkomat.co.il") — בכל הסוגים (גם מוקד), וגם מנהל אחר לא. "לטיפול" ו"החזרה
 -- לביצוע" — לכל איש צוות. הכלל כולו במקום **אחד**: app.can_close_task.
 --
 -- מוסכמות: כמו compliance.postgres.sql — טבלאות סגורות (RLS בלי מדיניות, בלי הרשאות),
@@ -37,7 +39,7 @@
 CREATE TABLE IF NOT EXISTS tasks (
   id              BIGSERIAL PRIMARY KEY,
   client_id       UUID NOT NULL,
-  kind            TEXT,                          -- NULL = בלי סוג (מ-12/10/2026 — אין בחירה)
+  kind            TEXT,                          -- app.task_kinds(); NULL = בלי סוג (נפתחה כשלא הייתה בחירה)
   site_id         INTEGER REFERENCES sites(id) ON DELETE SET NULL,
   site_code       TEXT,                          -- snapshot: שורד מחיקת אתר (כמו events)
   body            TEXT NOT NULL,
@@ -56,9 +58,20 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by_user INTEGER;
 -- בלי סוג (12/10/2026). ⚠️ כאן ולא רק ב-CREATE TABLE — בייצור הטבלה קיימת וה-CREATE מדולג.
 ALTER TABLE tasks ALTER COLUMN kind DROP NOT NULL;
 
+-- הסוגים, לפי הסדר שלה: קשרי לקוחות / טכני / מוקד. הפונקציות (task_add, tasks_list) קוראות מכאן.
+-- ⚠️ יש עוד שני עותקים, ו-tasks.test.js (T19) משווה את שלושתם: האילוץ tasks_kind_chk שמתחת (מילולי:
+-- CHECK שקורא לפונקציה לא נבדק מחדש כשהיא משתנה), ו-TASK_KINDS במסך (utils/tasks.js), שקובע גם את
+-- הסדר והשמות. סוג שנוסף רק כאן היה נכשל באילוץ; סוג שנוסף רק במסך — נדחה בשמירה.
+CREATE OR REPLACE FUNCTION app.task_kinds() RETURNS text[]
+LANGUAGE sql IMMUTABLE SET search_path = pg_temp AS $$
+  SELECT ARRAY['customer', 'technical', 'call_center']
+$$;
+REVOKE ALL ON FUNCTION app.task_kinds() FROM PUBLIC;
+
 -- ⚠️ אילוצים בשם, מחוץ ל-CREATE TABLE — אחרת שינוי עתידי לא יגיע לייצור (ראו compliance)
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_kind_chk;
-ALTER TABLE tasks ADD CONSTRAINT tasks_kind_chk CHECK (kind IS NULL OR kind IN ('customer', 'technical')) NOT VALID;
+ALTER TABLE tasks ADD CONSTRAINT tasks_kind_chk
+  CHECK (kind IS NULL OR kind IN ('customer', 'technical', 'call_center')) NOT VALID;
 ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_chk;
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_body_chk;
 ALTER TABLE tasks ADD CONSTRAINT tasks_body_chk CHECK (length(btrim(body)) BETWEEN 2 AND 2000) NOT VALID;
@@ -128,7 +141,7 @@ SELECT t.id, v.action, v.actor, v.uid, v.at
 -- ============================================================
 -- מי רשאי לסמן "בוצעה" — המקום היחיד
 -- ============================================================
--- רק sherut@parkomat.co.il (11/10/2026), בשני הסוגים — p_kind נשאר כדי שכלל לפי סוג יהיה
+-- רק sherut@parkomat.co.il (11/10/2026), בכל הסוגים — p_kind נשאר כדי שכלל לפי סוג יהיה
 -- שינוי כאן בלבד. שום מקום אחר לא צריך להשתנות: tasks_list מחזיר can_close לכל שורה,
 -- והמסך מציג את הכפתור לפיו. ("לטיפול" ו"החזרה לביצוע" — לכל איש צוות: הם לא סוגרים.)
 -- ⚠️ המייל נקרא מ-app_users לפי הזהות המאומתת (כמו is_staff), לא מהאסימון ולא מהשם המוצג:
@@ -188,16 +201,9 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp 
 DECLARE
   v_site integer;
   v_code text := NULLIF(btrim(COALESCE(p_site_code, '')), '');
-  -- פעם אחת לסוג, לא לכל שורה (can_close_task קורא את app_users)
-  v_close_c boolean;
-  v_close_t boolean;
-  v_close_n boolean;
-  v_del_c boolean;
-  v_del_t boolean;
-  v_del_n boolean;
 BEGIN
   PERFORM app.require_staff();
-  IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
+  IF p_kind IS NOT NULL AND NOT (p_kind = ANY (app.task_kinds())) THEN
     RAISE EXCEPTION 'סוג משימה לא מוכר: %', p_kind USING ERRCODE = 'check_violation';
   END IF;
   IF p_done_limit IS NOT NULL AND p_done_limit < 0 THEN
@@ -207,12 +213,6 @@ BEGIN
     SELECT s.id INTO v_site FROM sites s WHERE s.code = v_code;
     IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', v_code USING ERRCODE = 'PT404'; END IF;
   END IF;
-  v_close_c := app.can_close_task('customer');
-  v_close_t := app.can_close_task('technical');
-  v_close_n := app.can_close_task(NULL);
-  v_del_c := app.can_delete_task('customer');
-  v_del_t := app.can_delete_task('technical');
-  v_del_n := app.can_delete_task(NULL);
   RETURN (
     WITH f AS (
       SELECT t.*, s.code AS cur_code, s.site_name AS cur_name
@@ -227,6 +227,16 @@ BEGIN
       (SELECT f.*, true FROM f WHERE f.done_at IS NOT NULL
         ORDER BY f.done_at DESC, f.id DESC LIMIT p_done_limit)
     ),
+    -- מי רשאי — פעם אחת לכל סוג שבתוצאה, לא לכל שורה (can_close_task קורא את app_users). ⚠️ בלי
+    -- רשימת סוגים כאן: עד 12/10 היה משתנה לכל סוג ו-CASE עליהם, וסוג חדש היה נופל ל-ELSE של NULL.
+    -- ה-DISTINCT בתת-שאילתה ולא ליד הקריאות — אחרת הקריאה רצה לכל שורה, ורק אז מסוננת. ו-MATERIALIZED —
+    -- כערובה ולא כתיקון שנמדד: CTE שמופיע פעם אחת מוטמע בשאילתה, וחיבור IS NOT DISTINCT FROM הוא nested
+    -- loop. היום המתכנן שם Materialize מתחתיו ממילא (נבדק: אותו מספר קריאות עם ובלי), אבל זו החלטה שלו.
+    -- T20 ב-tasks.test.js סופר את הקריאות: פעם אחת לכל סוג.
+    perm AS MATERIALIZED (
+      SELECT k.kind, app.can_close_task(k.kind) AS can_close, app.can_delete_task(k.kind) AS can_delete
+        FROM (SELECT DISTINCT pick.kind FROM pick) k
+    ),
     row_of AS (
       SELECT p.id, p.is_done, p.done_at, p.created_at,
              jsonb_build_object('id', p.id, 'kind', p.kind,
@@ -236,13 +246,15 @@ BEGIN
                'body', p.body, 'created_by', p.created_by, 'created_at', p.created_at,
                'started_at', p.started_at, 'started_by', p.started_by,
                'done_at', p.done_at, 'done_by', p.done_by,
-               'can_close', CASE p.kind WHEN 'customer' THEN v_close_c WHEN 'technical' THEN v_close_t ELSE v_close_n END,
+               'can_close', pm.can_close,
                -- "X" — כלל משלו (12/10/2026: גם מנהלים); המסך צובע ומסביר לפיו
-               'can_delete', CASE p.kind WHEN 'customer' THEN v_del_c WHEN 'technical' THEN v_del_t ELSE v_del_n END,
+               'can_delete', pm.can_delete,
                'history', COALESCE((SELECT jsonb_agg(jsonb_build_object('action', h.action, 'by', h.actor, 'at', h.at)
                                                      ORDER BY h.at, h.id)
                                       FROM task_history h WHERE h.task_id = p.id), '[]'::jsonb)) AS j
+        -- ⚠️ LEFT: הרשאה שלא נמצאה היא NULL (המסך: לא רשאי), לעולם לא משימה שנעלמת מהרשימה
         FROM pick p
+        LEFT JOIN perm pm ON pm.kind IS NOT DISTINCT FROM p.kind
     )
     SELECT jsonb_build_object(
       -- "טבלה צומחת": הוותיקה למעלה, החדשה נוספת בסוף
@@ -291,8 +303,8 @@ DECLARE
   v_site integer;
   v_id bigint;
 BEGIN
-  -- NULL = בלי סוג (12/10/2026); סוג שנשלח חייב להיות מוכר
-  IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
+  -- סוג שנשלח חייב להיות מוכר. NULL — מותר (ראו בראש הקובץ: משימות מהשעות בלי בחירה, וחבילה ישנה)
+  IF p_kind IS NOT NULL AND NOT (p_kind = ANY (app.task_kinds())) THEN
     RAISE EXCEPTION 'סוג משימה לא מוכר: %', p_kind USING ERRCODE = 'check_violation';
   END IF;
   IF length(v_body) < 2 THEN RAISE EXCEPTION 'תיאור המשימה ריק' USING ERRCODE = 'check_violation'; END IF;

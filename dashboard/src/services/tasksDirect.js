@@ -32,7 +32,7 @@ async function rpc(name, args, ms = 20_000) {
 }
 
 /**
- * המשימות של אתר (הכפתור בכרטיס) — שני הסוגים יחד, אלא אם kind.
+ * המשימות של אתר (הכפתור בכרטיס) — כל הסוגים יחד, אלא אם kind.
  * open = לביצוע ובטיפול (`state`), done = שבוצעו מהאחרונה, ולכל משימה `history` — כל המעברים שלה.
  * @param {{kind?: string|null, siteCode?: string|null, doneLimit?: number|null}} p — doneLimit null = כל שבוצעו
  * @returns {{open: object[], done: object[], doneTotal: number}}
@@ -43,8 +43,8 @@ export async function fetchTasks({ kind = null, siteCode = null, doneLimit = 200
 }
 
 /**
- * מספרי המשימות הפתוחות (לביצוע + בטיפול) לכל אתר: `{ [siteId]: { customer, technical, open } }` —
- * open הוא שני הסוגים יחד, למספר שעל הכפתור בכרטיס. ⚠️ מי שאינו צוות מקבל אפס — לא שגיאה
+ * מספרי המשימות הפתוחות (לביצוע + בטיפול) לכל אתר: `{ [siteId]: { open } }` — כל הסוגים יחד, וגם
+ * משימות בלי סוג, למספר שעל הכפתור בכרטיס. ⚠️ מי שאינו צוות מקבל אפס — לא שגיאה
  * (task_counts אינו זורק).
  */
 export async function fetchTaskCounts() {
@@ -53,8 +53,9 @@ export async function fetchTaskCounts() {
 
 /**
  * ⚠️ clientId נוצר אצל הקורא ונשלח שוב בניסיון חוזר — כך שליחה כפולה היא משימה אחת.
- * ⚠️ בלי סוג (12/10/2026 — הבחירה הוסרה): p_kind נשלח **null במפורש**. ל-task_add אין ברירת מחדל
- * ל-p_kind, ופרמטר שחסר בגוף הבקשה הוא חתימה אחרת בעיני PostgREST (404, PGRST202).
+ * kind — אחד מ-TASK_KINDS (utils/tasks.js); החלון דורש בחירה. ⚠️ בלי סוג p_kind נשלח **null במפורש**:
+ * ל-task_add אין ברירת מחדל ל-p_kind, ופרמטר שחסר בגוף הבקשה הוא חתימה אחרת בעיני PostgREST (404,
+ * PGRST202).
  */
 export async function addTask({ kind = null, body, siteCode, clientId }) {
   return Number(await rpc("task_add", { p_kind: kind ?? null, p_body: body, p_site_code: siteCode, p_client_id: clientId }));

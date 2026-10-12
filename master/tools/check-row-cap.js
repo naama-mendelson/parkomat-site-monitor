@@ -93,7 +93,7 @@ const BOUNDED = {
 
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
-  task_counts: "שורה לאתר×סוג (3: שני הסוגים ו-'none' — בלי סוג מ-12/10) — רק אתרים עם משימה פתוחה",
+  task_counts: "שורה לאתר×סוג (עד 4: שלושת הסוגים — app.task_kinds() — ו-'none' למשימה בלי סוג) — רק אתרים עם משימה פתוחה",
   task_add: "כתיבה",
   task_start: "כתיבה",
   task_unstart: "כתיבה",

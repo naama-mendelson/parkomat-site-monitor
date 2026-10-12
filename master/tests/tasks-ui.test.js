@@ -6,8 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  taskState, splitOpen, historySteps, historyText, openSummary, countsBySite, taskNow, shortName,
-  TASK_STATES, TASK_STATE_LABEL, TASK_STEP_LABEL, TASK_BADGE,
+  taskState, splitOpen, historySteps, historyText, openSummary, countsBySite, taskNow, shortName, kindLabel,
+  TASK_STATES, TASK_STATE_LABEL, TASK_STEP_LABEL, TASK_BADGE, TASK_KINDS, TASK_KIND_LABEL,
 } from "../../dashboard/src/utils/tasks.js";
 
 const task = (over = {}) => ({
@@ -126,4 +126,15 @@ test("historyText (הריחוף) — גם בו השמות מקוצרים", () =>
     { action: "started", by: "naamam@parkomat.co.il", at: "2026-10-12T07:20:00.000Z" },
   ] };
   assert.equal(historyText(t), "נפתחה 12/10 10:14 ע״י dana ← בתהליך 12/10 10:20 ע״י naamam");
+});
+
+test("סוגים (12/10/2026, ערב): שלושה, בסדר ובמילים שלה; kindLabel — בלי סוג ריק, לא מוכר — המפתח", () => {
+  // ⚠️ הבורר בחלון נבנה מהרשימה הזו, וההודעה "יש לבחור סוג משימה — …" גם. T19 ב-tasks.test.js משווה אותה ל-SQL.
+  assert.deepEqual(TASK_KINDS, ["customer", "technical", "call_center"]);
+  assert.deepEqual(TASK_KINDS.map(kindLabel), ["קשרי לקוחות", "טכני", "מוקד"]);
+  assert.deepEqual(Object.keys(TASK_KIND_LABEL).sort(), [...TASK_KINDS].sort(), "לכל סוג שם, ואין שם בלי סוג");
+  // משימה בלי סוג (נפתחה בשעות שלא הייתה בחירה) — בלי תווית, לא "ללא סוג" ולא "null"
+  for (const k of [null, undefined, ""]) assert.equal(kindLabel(k), "");
+  // סוג שהמסך לא מכיר (מסד חדש מהחבילה) — המפתח, לא ריק: משימה לא נראית "בלי סוג" כשיש לה
+  assert.equal(kindLabel("sales"), "sales");
 });

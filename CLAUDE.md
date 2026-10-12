@@ -1378,24 +1378,25 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
 
-## משימות — one button per site, ⏳ / V / X on every task, full history (built 06/10/2026, reworked 11/10 and 12/10/2026)
+## משימות — one button per site, three kinds, ⏳ / V / X on every task, full history (built 06/10/2026, reworked 11/10 and 12/10/2026)
 
 The owner, 06/10: *"יש המון משימות שנפתחות כל יום בשירות"*. These are customer-relations tasks ("tell
 the customer he parked wrong") and technical ones ("grease…, replace…", mostly for one site). On 11/10:
 *"שלכל אתר יהיה כפתור משימות... אופציה להוסיף משימה, אופציה לעשות משימה בטיפול, אופציה לסמן V...
 שלוש אופציות... כתוב את זה יפה ושיראו את כל ההסטוריה של המשימות"*. She chose **one** button per site,
 not one per kind as on 06/10, and asked for it on the collapsed card too. On 12/10: *"אני רוצה שיהיה X ו-V ליד
-כל משימה וסימון של בתהליך"*.
+כל משימה וסימון של בתהליך"*. The same evening the kinds came back, with a third: *"שיהיה: קשרי לקוחות / טכני
+/ מוקד"*, and then, looking at the result: *"תעצב את הכל בצורה יותר מסודרת"*.
 
 | Piece | Where |
 |---|---|
 | Tables + RPCs | `master/db/tasks.postgres.sql`. Tables `tasks` and `task_history`; RPCs `tasks_list`, `task_counts`, `task_add`, `task_start`, `task_unstart`, `task_done`, `task_delete`. Registered in `db.js` after compliance; applied with `tools/apply-sql.js`. |
-| SQL tests (PGlite) | `master/tests/tasks.test.js`: 18 tests; 24/24 + 8/9 (sherut; the 9th is equivalent) + 6/6 (no kind) + 8/8 (X) + 7/7 (X for managers) SQL mutations caught |
-| UI logic (pure) | `dashboard/src/utils/tasks.js`: `taskState`, `splitOpen`, `historySteps`, `openSummary`, `countsBySite`. Tested in `master/tests/tasks-ui.test.js`. |
-| Data layer test | `master/tests/tasks-direct.test.js`: the real `tasksDirect.js` with a fake Supabase; checks the request body (`p_kind: null`) |
+| SQL tests (PGlite) | `master/tests/tasks.test.js`: 20 tests; 24/24 + 8/9 (sherut; the 9th is equivalent) + 6/6 (no kind) + 8/8 (X) + 7/7 (X for managers) + 10/11 (three kinds; the 11th, removing `MATERIALIZED`, is equivalent today — see below) SQL mutations caught |
+| UI logic (pure) | `dashboard/src/utils/tasks.js`: `TASK_KINDS`, `kindLabel`, `taskState`, `splitOpen`, `historySteps`, `openSummary`, `countsBySite`. Tested in `master/tests/tasks-ui.test.js`. |
+| Data layer test | `master/tests/tasks-direct.test.js`: the real `tasksDirect.js` with a fake Supabase; checks the request body (`p_kind` as sent, `null` when there is none) |
 | Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js`. No server arm. |
 | UI | `components/Tasks/TasksDialog.jsx`, `Tasks.css`, `TasksContext.js`. The button lives in `SiteCard.jsx`: `taskPill` on the collapsed card, `taskButton` on the expanded one, and `rowEnd`. |
-| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 156 checks (K1–K10), and 16/16 + 4/4 UI mutations caught (`mut-icons-ui.mjs` / `mut-del-ui.mjs`, in a separate tree). Every scenario runs inside `guard`, so a stuck scenario becomes a FAIL that names where it stopped, and the next scenarios still run. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
+| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 200 checks (K1–K11; K11 = kinds and layout, with `?tasks=kinds`), and 16/16 + 4/4 + 18/18 (`mut-tkkinds.mjs` / `mut-tkkinds2.mjs`: kinds, layout, weight 800) UI mutations caught (`mut-icons-ui.mjs` / `mut-del-ui.mjs`, in a separate tree). Every scenario runs inside `guard`, so a stuck scenario becomes a FAIL that names where it stopped, and the next scenarios still run. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
 
 Rules that are easy to break:
 
@@ -1405,8 +1406,8 @@ Rules that are easy to break:
 - ⚠️ **One list of open tasks, and ⏳ / V / X beside every one** (12/10/2026). The owner's choices: a mark
   on the task (not the two sections of 11/10), X = **delete completely** (not "cancelled"), and V and X
   "רק sherut, כולם רואים".
-  - The open list keeps the SQL order (oldest first). In progress is a row property: "⏳" before the
-    text, and the ⏳ button is pressed (`aria-pressed`, `is-on`). The state word is now "בתהליך" (her
+  - The open list keeps the SQL order (oldest first). In progress is a row property: the badge says
+    "בתהליך", and the ⏳ button is pressed (`aria-pressed`, `is-on`). The state word is now "בתהליך" (her
     word), and so are the history steps: "בתהליך" / "הוסר 'בתהליך'". The old labels were "בטיפול",
     "הועברה לטיפול" and "הוחזרה לביצוע".
   - **⏳** toggles: `task_start` / `task_unstart`, one click, for any staff user.
@@ -1473,12 +1474,38 @@ Rules that are easy to break:
   shows the message and reloads. ⚠️ This message has its own state (`actError`). The first version put
   it in `loadError`, and the reload that follows cleared it before anyone could read it (measured in
   the browser).
-- ⚠️ **There is no kind any more** (owner, 12/10/2026, pointing at "קשרי לקוחות / טכני" in the add
-  form: *"תעיף את זה"*). Until then each task had a kind, chosen with no default.
-  - A new task is saved with `kind = NULL`. The row no longer shows a kind tag. The input and "הוספה"
-    share one row.
-  - **The column, the CHECK and `p_kind` stay.** A browser still on the old bundle keeps sending a
-    kind, and that still works. A kind that is sent must still be known: `''` and `'sales'` are refused.
+- ⚠️ **Three kinds: קשרי לקוחות / טכני / מוקד — removed in the morning of 12/10/2026, back that evening
+  with a third.** Morning, pointing at "קשרי לקוחות / טכני" in the add form: *"תעיף את זה"*. Evening, a
+  colleague's request she pasted and then confirmed ("להחזיר עם 3 סוגים"): *"אשמח שתוסיפי במשימות גם
+  אפשרות למשימות מוקד. כלומר שיהיה: קשרי לקוחות / טכני / מוקד"*.
+  - Keys `customer` / `technical` / `call_center`, in her order. Nothing in the code had an English
+    name for "מוקד"; "dispatcher" already means the ingestion router.
+  - ⚠️ **Three copies of the list, and T19 compares all three:** `app.task_kinds()` (what `task_add` and
+    `tasks_list` check), the CHECK `tasks_kind_chk` (a literal: a CHECK that calls a function is not
+    re-validated when the function changes), and `TASK_KINDS` in `utils/tasks.js`, which the picker,
+    the labels and the "יש לבחור סוג" sentence are built from. A kind added to only one of them is refused
+    on save, or saved and shown as an English key.
+  - **Required in the dialog, with no default.** "הוספה" without a kind says *"יש לבחור סוג משימה —
+    קשרי לקוחות, טכני או מוקד"* inside the form and frames the picker in red (`is-missing`,
+    `aria-invalid`); nothing is sent. The choice stays for the next task in the same dialog.
+  - ⚠️ **SQL still accepts NULL, on purpose.** Tasks opened in the hours without a choice are NULL, and a
+    stale bundle (wall screen, open tab, PWA) still sends `p_kind: null`. Refusing it would tell that
+    screen "יש לבחור סוג" in a form that has no choice. NULL shows as an empty kind cell.
+  - V is still sherut@ only, for every kind including מוקד; X is still every manager and sherut@.
+  - **`tasks_list` no longer lists the kinds.** Until 12/10 it had a variable per kind and a `CASE` on
+    them, so a new kind would have fallen into the `ELSE` meant for NULL. Now `perm AS MATERIALIZED`
+    calls `can_close_task` / `can_delete_task` once per kind present in the result, joined with
+    `LEFT JOIN … IS NOT DISTINCT FROM`. `LEFT` because a missing permission must read as "not allowed",
+    never drop the task from the list. `IS NOT DISTINCT FROM` because `=` leaves the NULL-kind row
+    without permissions. `MATERIALIZED` is a guarantee, not a measured fix: today the planner puts a
+    Materialize under that nested loop anyway, and the number of calls is the same with or without it.
+    ⚠️ A first measurement here said "8 without". That was PGlite: `pg_stat_get_xact_function_calls`
+    keeps counting across transactions, so the second reading was cumulative (found by the review). T20
+    counts the calls as a difference inside one transaction: for 24 tasks of 4 kinds, 4 ×
+    `can_delete_task` and 8 × `can_close_task` (an operator's `can_delete` calls `can_close` too).
+  - Kept from the hours without kinds: `addTask` sends `p_kind` explicitly, `task_counts` returns `'none'`,
+    and `countsBySite` counts every row (below).
+- **The NULL-kind plumbing, from the morning of 12/10, still in force:**
   - `ALTER TABLE tasks ALTER COLUMN kind DROP NOT NULL` is in the file because production skips the
     `CREATE TABLE`. T16 puts `NOT NULL` back first and re-applies the file. Without that, the test
     would run on a table built fresh and never exercise the `ALTER`.
@@ -1493,9 +1520,41 @@ Rules that are easy to break:
     old bundle until it reloads, because `sw.js` forces nothing. With NULL, every new task would be
     missing from those cards. The pre-deploy review found this (three of four reviewers, independently).
     T16 checks the row against the old logic too.
-  - `tasks_list` gives a NULL kind its own `can_close_task(NULL)`, not the technical one. The rule
-    ignores the kind today, but a per-kind rule must not quietly treat "no kind" as "technical".
+  - A NULL kind gets its own `can_close_task(NULL)`, not the technical one. The rule ignores the kind
+    today, but a per-kind rule must not quietly treat "no kind" as "technical".
   - Mutations: 6 of 6 in SQL.
+- ⚠️ **The dialog was laid out again the same evening** (owner, looking at the field, three chips of a
+  different height and "הוספה" crammed into one row: *"תעצב את הכל בצורה יותר מסודרת"*).
+  - **The form is two rows.** The field gets a row of its own, full width. Under it are "סוג", the kind
+    picker and "הוספה" at the end. All three controls are one height: 42px, or 44px on a phone. A thin
+    line separates adding from the list. The error message sits inside the form, above that line.
+  - **The kind picker is one frame in three parts** (radio inputs, `role="radiogroup"`), not three
+    loose chips. The chosen part is tinted and bold. The focus ring is drawn inside the frame
+    (`outline-offset: -3px`), because `overflow: hidden` cuts an outer one.
+    - ⚠️ The chosen text is the accent mixed 60% into the text colour, not the bare accent. In dark,
+      the bare accent on its own tint measured 3.1:1 (the review); now 9.4:1 light and 5.7:1 dark. K11
+      measures it.
+    - "הוספה" without a kind moves focus to the picker, and the message is linked to it
+      (`aria-describedby`). It is re-rendered on every attempt (`key`), so a screen reader announces
+      it again.
+  - **A row is a grid of three columns:** kind | the task and its state | ⏳ V X.
+    - The kind column has a fixed width (6.5rem), so the kinds line up, and so does the start of every
+      task.
+    - A task with no kind keeps an empty cell (`data-kind="none"`, `aria-hidden`). Without it the task
+      would slide into the kind column.
+    - The kind sits beside the task's first line (`align-self: start`), not between its two lines.
+    - The kind is a grey tag without a frame. The frame belongs to the state badge, and a neutral framed
+      "לביצוע" next to a framed kind looked like two of the same thing.
+    - On a phone the row is one column: the kind is a label above the task, and a missing kind takes
+      no space.
+  - ⚠️ **No Hebrew text at weight 800 or more.** The dashboard's font on Windows is "Segoe UI", which has
+    no 800. Hebrew letters at 800 and 900 fall back to another font, smaller and different; only Latin
+    digits stay in Segoe. This was measured with the weights side by side, and it is exactly how the
+    chosen "טכני" looked in her screenshot. In `Tasks.css` every Hebrew label moved to 700 (the badge,
+    "לאשר?"/"למחוק?", "בוצעו", the chosen kind). K11 fails if any Hebrew text in the dialog renders at
+    800 or more. The three left in `Tasks.css` style symbols and digits (⏳ ✓ ✕, the count), which render
+    fine. ⚠️ **Elsewhere the dashboard still has 31 uses of 800/900 in 17 CSS files.** They were not
+    changed: some style digits, which render fine, and each needs a look.
 - ⚠️ **A row shows the state now and who set it, not the timeline** (owner, 12/10/2026, pointing at
   a row with five steps: *"לא רוצה לראות את הלוג אלא מה המצב עכשיו. ומי עשה את זה. שתיהיה מעוצב יותר
   ברור"*).
@@ -1540,7 +1599,7 @@ Rules that are easy to break:
   that hides the list.
 - ⚠️ **Only the account sherut@parkomat.co.il may mark a task "done"** (owner, 11/10/2026: *"רק מי
   שמתחבר מתוך sherut@parkomat.co.il"*).
-  - This covers both kinds, and no other manager.
+  - This covers every kind (מוקד too), and no other manager.
   - Until then, any staff user could close a task. The original request (06/10) was "customer
     tasks by customer relations", and the system has roles, not teams.
   - **The single place is `app.can_close_task(kind)`.**
@@ -1575,8 +1634,10 @@ Rules that are easy to break:
 - **The dialog does not change the card.** Opening it from a collapsed card does not expand the card
   (`stopPropagation`). `SiteGrid`'s outside-click handler ignores clicks inside `.tk-overlay`;
   otherwise closing the dialog dropped you on a collapsed card.
-- `client_id` is per draft and regenerated only after a success, so an add that is sent twice creates
-  one task.
+- `client_id` is per draft: an add that is sent twice creates one task. It is regenerated after a
+  success **and on any change to the draft** (text or kind). Without the second rule, a request that
+  committed but lost its response, followed by a kind change and "הוספה" again, returned the first task
+  with the old kind, silently (found by the review). The same was already true of an edited text.
 - To restore the two-buttons version (one per kind):
   `git show 147ac83:dashboard/src/components/Tasks/TasksDialog.jsx`, and the same for `SiteCard.jsx`
   and `master/db/tasks.postgres.sql`.

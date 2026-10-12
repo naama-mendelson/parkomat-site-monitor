@@ -7,8 +7,11 @@
 // שלוש אופציות... כתוב את זה יפה ושיראו את כל ההסטוריה של המשימות". בחרה כפתור אחד לאתר
 // (לא אחד לכל סוג).
 //
-// ⚠️ **אין בחירת סוג** (12/10/2026, על "קשרי לקוחות / טכני" בטופס: "תעיף את זה"). משימה נשמרת
-// בלי סוג, ושורה לא מציגה סוג. שדה הטקסט ו"הוספה" — שורה אחת.
+// ⚠️ **הסוג חזר, עם "מוקד"** (12/10/2026, ערב: "שיהיה: קשרי לקוחות / טכני / מוקד"). בבוקר אותו יום
+// הוסר ("תעיף את זה"). בחירה בבורר של שלושה חלקים, בשורה שמתחת לשדה, ליד "הוספה" — בלי ברירת מחדל:
+// סוג שאיש לא בחר הוא נתון שקרי. הבחירה נשארת למשימה הבאה באותו חלון. בכל שורה הסוג בעמודה משלו (בטלפון —
+// תווית מעל המשימה). משימה בלי סוג (נפתחה בשעות שלא הייתה בחירה) — תא ריק.
+// ⚠️ ובאותו ערב — "תעצב את הכל בצורה יותר מסודרת": הטופס בשתי שורות, השורות ברשת של שלוש עמודות.
 //
 // ⚠️ **⏳ / V / X ליד כל משימה** (12/10/2026: "אני רוצה שיהיה X ו-V ליד כל משימה וסימון של
 // בתהליך"). בחרה: רשימה אחת עם סימון "בתהליך" (לא שני חלקים, כמו מ-11/10), X = מחיקה לגמרי
@@ -25,10 +28,12 @@
 //
 // ⚠️ "בוצעו" מקופל: המשימה שנעשתה "נזרקת למקום שלא מציג אותה, למטה" (06/10). בלחיצה נפתחת
 // ההיסטוריה — כל מה שבוצע, ולכל משימה כל המעברים שלה, מי ומתי (גם פתוחה מראה את שלה).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fetchTasks, addTask, startTask, unstartTask, markTaskDone, deleteTask } from "../../services/dataSource";
 import { newId } from "../../utils/complianceFiles";
-import { splitOpen, taskState, taskNow, historyText, openSummary, TASK_STATE_LABEL } from "../../utils/tasks";
+import {
+  splitOpen, taskState, taskNow, historyText, openSummary, kindLabel, TASK_STATE_LABEL, TASK_KINDS,
+} from "../../utils/tasks";
 import "./Tasks.css";
 
 const CONFIRM_MS = 4000;
@@ -45,6 +50,9 @@ const allowed = (t, what) => (what === "done" ? t.can_close : (t.can_delete ?? t
 // ⚠️ לחיצה שנייה שמגיעה מהר מזה אחרי החימוש אינה אישור — היא חלק מלחיצה כפולה (או נגיעה כפולה). בלי
 // זה דאבל-קליק על X מוחק משימה וכל ההיסטוריה שלה בלי שאיש ראה "למחוק?" (נמצא בסקירה, 12/10/2026).
 const ARM_MIN_MS = 600;
+// "קשרי לקוחות, טכני או מוקד" — מהרשימה עצמה, כדי שסוג שנוסף יופיע גם כאן
+const KIND_NAMES = TASK_KINDS.map(kindLabel);
+const NEED_KIND = `יש לבחור סוג משימה — ${KIND_NAMES.slice(0, -1).join(", ")} או ${KIND_NAMES[KIND_NAMES.length - 1]}`;
 
 /**
  * שורת משימה: הגוף, ומתחתיו **המצב עכשיו ומי קבע אותו** — "בתהליך · ע״י naamam · 12/10 10:20 · נפתחה
@@ -54,8 +62,12 @@ const ARM_MIN_MS = 600;
  */
 function TaskRow({ t, state, note, children }) {
   const now = taskNow(t);
+  const kind = kindLabel(t.kind);
   return (
     <li className="tk-row" data-state={state} data-id={t.id}>
+      {/* הסוג — עמודה משלו בתחילת השורה, כך שהסוגים עומדים זה מתחת לזה (בטלפון — תווית מעל המשימה).
+          ⚠️ גם בלי סוג התא נשאר, ריק: בלעדיו המשימה הייתה זזה לעמודת הסוג ושוברת את היישור */}
+      <span className="tk-kind" data-kind={t.kind || "none"} aria-hidden={kind ? undefined : "true"}>{kind}</span>
       <div className="tk-row-main">
         <p className="tk-text">{t.body}</p>
         <p className="tk-meta" title={`היסטוריה: ${historyText(t)}`}>
@@ -91,6 +103,11 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [body, setBody] = useState("");
+  const [kind, setKind] = useState(null);           // ⚠️ בלי ברירת מחדל — הסוג נבחר
+  const kindName = useId();                         // שם קבוצת הרדיו של הסוג — ייחודי לחלון
+  // מונה ל"יש לבחור סוג": הודעה זהה פעמיים לא הייתה נקראת שוב בקורא מסך; key חדש מרנדר אותה מחדש
+  const [errTick, setErrTick] = useState(0);
+  const kindsRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   // ⚠️ נפרד מ-loadError: הטעינה שאחרי פעולה שנכשלה מצליחה — ומאפסת את loadError, כלומר
@@ -144,17 +161,26 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   }, [onClose]);
 
   const canAdd = body.trim().length >= 2 && !saving;
+  // "יש לבחור סוג" — גם מסגרת אדומה סביב הבחירה, כדי שהעין תגיע אליה ולא רק להודעה
+  const kindMissing = saveError === NEED_KIND;
 
   const submit = async (e) => {
     e.preventDefault();
     if (!canAdd) return;
+    // ⚠️ אומרים למה, ולא כפתור "הוספה" מושבת בשקט — והפוקוס עובר לבורר, כך שמקלדת ממשיכה משם בחיצים
+    if (!kind) {
+      setSaveError(NEED_KIND);
+      setErrTick((n) => n + 1);
+      kindsRef.current?.querySelector("input")?.focus({ preventScroll: true });
+      return;
+    }
     setSaving(true);
     setSaveError("");
     setActError("");
     try {
-      await addTask({ body: body.trim(), siteCode: site.code, clientId: clientId.current });
+      await addTask({ kind, body: body.trim(), siteCode: site.code, clientId: clientId.current });
       clientId.current = newId();        // רק אחרי הצלחה — ניסיון חוזר שולח את אותו מזהה
-      setBody("");
+      setBody("");                       // הסוג נשאר: המשימה הבאה בדרך כלל מאותו סוג
       await load();
       onChanged?.();
       inputRef.current?.focus({ preventScroll: true });
@@ -256,12 +282,31 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
           <button type="button" className="tk-close" onClick={onClose} aria-label="סגירה">✕</button>
         </header>
 
+        {/* ⚠️ שתי שורות (12/10/2026, ערב: "תעצב את הכל בצורה יותר מסודרת" — על שורה אחת עם השדה, שלוש
+            גלולות בגובה אחר ו"הוספה"): מה — ברוחב מלא; מתחת — הסוג ו"הוספה". השגיאה בתוך הטופס, מעל הקו */}
         <form className="tk-add" onSubmit={submit}>
+          {/* ⚠️ כל שינוי בטיוטה (טקסט או סוג) — client_id חדש. בלי זה: שליחה שהתחייבה ותשובתה אבדה, ואז
+              החלפת סוג ו"הוספה" שוב — המסד מזהה את אותו client_id ומחזיר את הראשונה, עם הסוג הישן, בשקט
+              (נמצא בסקירה). שליחה חוזרת של אותה טיוטה בדיוק — אותו מזהה, משימה אחת. */}
           <input ref={inputRef} className="tk-input" type="text" maxLength={2000} value={body}
-            placeholder="משימה חדשה…" aria-label="משימה חדשה" onChange={(e) => setBody(e.target.value)} />
-          <button type="submit" className="tk-btn tk-btn--primary" disabled={!canAdd}>{saving ? "מוסיף…" : "הוספה"}</button>
+            placeholder="משימה חדשה…" aria-label="משימה חדשה"
+            onChange={(e) => { setBody(e.target.value); clientId.current = newId(); }} />
+          <div className="tk-add-row">
+            <span className="tk-kind-cap" aria-hidden="true">סוג</span>
+            <div ref={kindsRef} className={`tk-kinds${kindMissing ? " is-missing" : ""}`} role="radiogroup" aria-label="סוג המשימה"
+              aria-invalid={kindMissing || undefined} aria-describedby={kindMissing ? `${kindName}-err` : undefined}>
+              {TASK_KINDS.map((k) => (
+                <label key={k} className="tk-kind-opt">
+                  <input type="radio" name={kindName} value={k} checked={kind === k}
+                    onChange={() => { setKind(k); setSaveError(""); clientId.current = newId(); }} />
+                  <span>{kindLabel(k)}</span>
+                </label>
+              ))}
+            </div>
+            <button type="submit" className="tk-btn tk-btn--primary" disabled={!canAdd}>{saving ? "מוסיף…" : "הוספה"}</button>
+          </div>
+          {saveError && <p key={errTick} id={`${kindName}-err`} className="tk-error" role="alert">{saveError}</p>}
         </form>
-        {saveError && <p className="tk-error" role="alert">{saveError}</p>}
         {actError && <p className="tk-error" role="alert" ref={actErrorRef}>{actError}</p>}
         {loadError && (
           <p className="tk-error" role="alert">

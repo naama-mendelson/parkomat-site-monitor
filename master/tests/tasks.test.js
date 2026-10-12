@@ -1,4 +1,4 @@
-// tests/tasks.test.js — משימות של אתר (לביצוע → בטיפול → בוצעה; קשרי לקוחות / טכני), על Postgres 17 מקומי.
+// tests/tasks.test.js — משימות של אתר (לביצוע → בטיפול → בוצעה; קשרי לקוחות / טכני / מוקד), על Postgres 17 מקומי.
 //
 // רצות על `db.init()` האמיתי (tests/helpers/local-pg.js) — אותם קבצים, אותן הרשאות,
 // אותו RLS. אף שורה לא נוגעת בייצור. הזהויות נזרעות כמו ב-compliance.test.js, כולל
@@ -511,4 +511,86 @@ test("T18 · X למנהלים (12/10/2026): כל מנהל מוחק, בקר לא;
   // משימה שבוצעה — גם מנהל לא מוחק ("בוצעה" סופי)
   await done(SRV, b);
   await fails(del(MGR, b), "PT409", /כבר בוצעה/);
+});
+
+test("T19 · שלושה סוגים (12/10/2026, ערב): מוקד נוסף; אותה רשימה ב-SQL, באילוץ ובמסך; הרשאות — כמו בשאר", { skip }, async () => {
+  // ⚠️ שלושה עותקים של הרשימה: app.task_kinds() (הפונקציות), האילוץ tasks_kind_chk, ו-TASK_KINDS במסך —
+  // שממנו נבנה הבורר. סוג שנוסף רק באחד מהם היה נכשל בשמירה, או נשמר ונראה במסך כמפתח באנגלית.
+  const { TASK_KINDS, TASK_KIND_LABEL } = await import("../../dashboard/src/utils/tasks.js");
+  assert.deepEqual(TASK_KINDS, ["customer", "technical", "call_center"], "הסדר שלה: קשרי לקוחות / טכני / מוקד");
+  assert.deepEqual(TASK_KINDS.map((k) => TASK_KIND_LABEL[k]), ["קשרי לקוחות", "טכני", "מוקד"]);
+  assert.deepEqual((await sup(`SELECT app.task_kinds() k`))[0].k, TASK_KINDS, "app.task_kinds() = TASK_KINDS");
+  const def = (await sup(`SELECT pg_get_constraintdef(oid) d FROM pg_constraint WHERE conname = 'tasks_kind_chk'`))[0].d;
+  const inChk = [...def.matchAll(/'([^']+)'::text/g)].map((m) => m[1]);
+  assert.deepEqual([...inChk].sort(), [...TASK_KINDS].sort(), `האילוץ: ${def}`);
+  assert.match(def, /IS NULL/, "בלי סוג — עדיין מותר (משימות מהשעות בלי בחירה, חבילה ישנה)");
+
+  // כל סוג נשמר, נקרא ומסונן — מוקד בכלל זה; ומשימה בלי סוג באותה רשימה
+  const s = await newSite();
+  const ids = {};
+  for (const k of TASK_KINDS) ids[k] = await add(OPR, k, `משימת ${TASK_KIND_LABEL[k]}`, s.code);
+  const none = await add(OPR, null, "בלי סוג", s.code);
+  const all = await list(MGR, null, s.code);
+  assert.deepEqual(all.open.map((t) => t.kind), [...TASK_KINDS, null], "כל הסוגים, בסדר ההוספה");
+  for (const k of TASK_KINDS) {
+    assert.deepEqual((await list(MGR, k, s.code)).open.map((t) => Number(t.id)), [ids[k]], `סינון לפי ${k}`);
+  }
+  // סוג לא מוכר — נדחה ב-RPC, בסינון, וגם מתחת לשניהם (האילוץ)
+  await fails(add(OPR, "dispatch", "סוג לא מוכר", s.code), "23514", /סוג משימה/);
+  await fails(list(MGR, "dispatch"), "23514", /סוג משימה/);
+  await fails(sup(`UPDATE tasks SET kind = 'dispatch' WHERE id = $1`, [ids.call_center]), "23514");
+
+  // ⚠️ הרשאות לכל שורה ברשימה אחת שיש בה ארבעה "סוגים" (שלושה ו-NULL): מחושבות לכל סוג שבתוצאה, ולכל
+  // שורה — גם לזו בלי סוג (החיבור IS NOT DISTINCT FROM; "=" היה משאיר לה NULL)
+  const perms = async (uid) => (await list(uid, null, s.code)).open.map((t) => [t.kind, t.can_close, t.can_delete]);
+  const expect = (c, d) => [...TASK_KINDS, null].map((k) => [k, c, d]);
+  assert.deepEqual(await perms(OPR), expect(false, false), "בקר: לא V ולא X");
+  assert.deepEqual(await perms(MGR), expect(false, true), "מנהל: X בלבד");
+  assert.deepEqual(await perms(SRV), expect(true, true), "sherut: שניהם");
+
+  // הכפתור בכרטיס: שורה לכל סוג, ובלי סוג — 'none'
+  const c = (await counts(MGR)).filter((r) => r.site_id === s.id).map((r) => [r.kind, r.open]);
+  assert.deepEqual(c.sort(), [["call_center", 1], ["customer", 1], ["none", 1], ["technical", 1]]);
+
+  // מוקד עובר את כל המסלול: בתהליך, V רק של sherut, אירוע ויומן עם הסוג
+  const ev0 = Number((await sup(`SELECT COALESCE(max(id), 0) m FROM events`))[0].m);
+  const m = ids.call_center;
+  await start(OPR, m);
+  await fails(done(MGR, m), "42501", /אין הרשאה/);
+  assert.ok(await done(SRV, m));
+  const t = findIn(await list(MGR, null, s.code), m);
+  assert.deepEqual([t.kind, t.state, t.history.map((x) => x.action)], ["call_center", "done", ["created", "started", "done"]]);
+  const ev = await sup(`SELECT payload FROM events WHERE id > $1 AND type = 'tasks' ORDER BY id`, [ev0]);
+  assert.deepEqual(ev.map((e) => [e.payload.action, e.payload.kind]), [["start", "call_center"], ["done", "call_center"]]);
+  const au = await sup(`SELECT details->>'kind' k FROM audit_log WHERE action = 'task.done' AND target_id = $1`, [String(m)]);
+  assert.deepEqual(au.map((r) => r.k), ["call_center"]);
+  // והמחיקה (X) — מנהל מוחק משימת מוקד פתוחה
+  const m2 = await add(OPR, "call_center", "עוד אחת למוקד", s.code);
+  assert.equal(await del(MGR, m2), true);
+  assert.equal(findIn(await list(MGR, null, s.code), none).kind, null, "המשימה בלי סוג לא נגעה");
+});
+
+test("T20 · הרשאות השורות (can_close / can_delete) — קריאה אחת לכל סוג שברשימה, לא לכל משימה", { skip }, async () => {
+  // can_close_task קורא את app_users. עד 12/10 היה משתנה לכל סוג; מאז — perm AS MATERIALIZED בתוך tasks_list.
+  // כאן נספרות הקריאות עצמן. ⚠️ כהפרש בתוך אותה טרנזקציה: ב-PGlite המונה ממשיך לספור מטרנזקציה קודמת
+  // (קריאה שנייה קראה כפול, ונראתה כמו "בלי MATERIALIZED פי שניים" — לא היה כך).
+  const s = await newSite();
+  const kinds = ["customer", "technical", "call_center", null];
+  for (let i = 0; i < 24; i++) await add(OPR, kinds[i % 4], `משימה ${i}`, s.code);
+  const oid = (await sup(`SELECT 'app.can_close_task(text)'::regprocedure::oid c, 'app.can_delete_task(text)'::regprocedure::oid d`))[0];
+  await h.pg.exec(`SET track_functions = 'all'`);
+  try {
+    const r = await h.as("authenticated", OPR, async (tx) => {
+      const q = `SELECT COALESCE(pg_stat_get_xact_function_calls($1), 0)::int c, COALESCE(pg_stat_get_xact_function_calls($2), 0)::int d`;
+      const before = (await tx.query(q, [oid.c, oid.d])).rows[0];
+      await tx.query(`SELECT public.tasks_list(NULL, $1, 200)`, [s.code]);
+      const after = (await tx.query(q, [oid.c, oid.d])).rows[0];
+      return { c: after.c - before.c, d: after.d - before.d };
+    });
+    // בקר: can_delete_task קורא גם ל-can_close_task (לא מנהל), ולכן פעמיים לכל סוג — ולא 24 ומעלה
+    assert.equal(r.d, 4, `can_delete_task: ${r.d} קריאות ל-24 משימות בארבעה סוגים`);
+    assert.equal(r.c, 8, `can_close_task: ${r.c} קריאות ל-24 משימות בארבעה סוגים`);
+  } finally {
+    await h.pg.exec(`RESET track_functions`);
+  }
 });
