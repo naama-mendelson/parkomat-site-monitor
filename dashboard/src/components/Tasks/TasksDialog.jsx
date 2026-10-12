@@ -13,11 +13,12 @@
 // ⚠️ **⏳ / V / X ליד כל משימה** (12/10/2026: "אני רוצה שיהיה X ו-V ליד כל משימה וסימון של
 // בתהליך"). בחרה: רשימה אחת עם סימון "בתהליך" (לא שני חלקים, כמו מ-11/10), X = מחיקה לגמרי
 // (לא "בוטלה"), ו-V ו-X — "רק sherut, כולם רואים": מי שאינו רשאי רואה אותם אפורים, ולחיצה אומרת
-// למה. ⏳ — לכל איש צוות, ולחיצה שנייה מבטלת אותו.
+// למה (מתחת לשורה). אותו יום, אחר כך: "תן אופציה למנהלים למחוק משימה" — X לכל מנהל (ו-sherut@);
+// V נשאר רק sherut@. ⏳ — לכל איש צוות, ולחיצה שנייה מבטלת אותו.
 //
-// ⚠️ אין כאן החלטה על הרשאה: מי רשאי — `can_close` מגיע מה-SQL (app.can_close_task, שקובע גם את
-// task_delete), והכפתור צובע ומסביר לפיו. תנאי כאן היה נראה כמו הגנה ואפשר לעקוף אותו בשורת
-// fetch אחת — ה-RPC הוא שדוחה.
+// ⚠️ אין כאן החלטה על הרשאה: מי רשאי — `can_close` (V) ו-`can_delete` (X) מגיעים מה-SQL
+// (app.can_close_task, app.can_delete_task), והכפתור צובע ומסביר לפיהם. תנאי כאן היה נראה כמו הגנה
+// ואפשר לעקוף אותו בשורת fetch אחת — ה-RPC הוא שדוחה.
 //
 // ⚠️ V ו-X אינם הפיכים ("בוצעה" סופי; מחיקה — המשימה וההיסטוריה שלה), ולכן לחיצה ראשונה רק
 // מבקשת אישור, בתוך הכפתור עצמו, לכמה שניות. בלי חלון קופץ. ⏳ הפיך — בלחיצה אחת.
@@ -33,8 +34,14 @@ import "./Tasks.css";
 const CONFIRM_MS = 4000;
 // כמה מאלה שבוצעו נטענות מראש; "הצגת כולן" טוענת את השאר (null = בלי תקרה)
 const DONE_FIRST = 200;
-// ⚠️ ההסבר בלבד — ההחלטה ב-SQL (app.can_close_task). אם הכלל שם משתנה, גם המשפט הזה.
-const NO_RIGHTS = "רק החשבון sherut@parkomat.co.il יכול לסמן בוצע או למחוק משימה";
+// ⚠️ ההסברים בלבד — ההחלטה ב-SQL: V ב-app.can_close_task (רק sherut@), X ב-app.can_delete_task (כל מנהל,
+// ו-sherut@ — 12/10/2026: "תן אופציה למנהלים למחוק משימה"). אם כלל שם משתנה, גם המשפט שלו.
+const NO_RIGHTS = {
+  done: "רק החשבון sherut@parkomat.co.il יכול לסמן בוצע",
+  delete: "רק מנהל יכול למחוק משימה",
+};
+// מי רשאי — מה שה-SQL החזיר לשורה. ⚠️ can_delete חסר (מסד שעוד לא קיבל את 12/10) — לפי can_close, כמו קודם.
+const allowed = (t, what) => (what === "done" ? t.can_close : (t.can_delete ?? t.can_close)) === true;
 // ⚠️ לחיצה שנייה שמגיעה מהר מזה אחרי החימוש אינה אישור — היא חלק מלחיצה כפולה (או נגיעה כפולה). בלי
 // זה דאבל-קליק על X מוחק משימה וכל ההיסטוריה שלה בלי שאיש ראה "למחוק?" (נמצא בסקירה, 12/10/2026).
 const ARM_MIN_MS = 600;
@@ -178,8 +185,8 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   // ⚠️ השנייה נחשבת רק אם היא לחיצה בפני עצמה: לא חלק מלחיצה כפולה (e.detail > 1), ולא פחות מ-ARM_MIN_MS
   // אחרי החימוש. (מקש Enter שמוחזק — נחסם ב-onKeyDown, ראו closeBtn.)
   const ask = (t, what, fn, e) => {
-    if (!t.can_close) {
-      setRowMsg({ id: t.id, msg: NO_RIGHTS });
+    if (!allowed(t, what)) {
+      setRowMsg({ id: t.id, msg: NO_RIGHTS[what] });
       return;
     }
     setRowMsg(null);
@@ -212,14 +219,15 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const closeBtn = (t, what) => {
     const pending = isConfirm(t, what);
     const isDone = what === "done";
+    const ok = allowed(t, what);
     return (
       <button type="button"
-        className={`tk-ico tk-ico--${isDone ? "done" : "del"}${pending ? " is-confirm" : ""}${t.can_close ? "" : " is-locked"}`}
-        aria-disabled={t.can_close ? undefined : "true"} disabled={busyId === t.id}
+        className={`tk-ico tk-ico--${isDone ? "done" : "del"}${pending ? " is-confirm" : ""}${ok ? "" : " is-locked"}`}
+        aria-disabled={ok ? undefined : "true"} disabled={busyId === t.id}
         onClick={(e) => ask(t, what, isDone ? markTaskDone : deleteTask, e)}
         // ⚠️ Enter מוחזק חוזר על עצמו, וכל חזרה היא לחיצה — הראשונה מחמשת והבאות היו מאשרות
         onKeyDown={(e) => { if (e.repeat && (e.key === "Enter" || e.key === " ")) e.preventDefault(); }}
-        title={!t.can_close ? NO_RIGHTS : pending ? "לחיצה נוספת מאשרת" : isDone ? "בוצע" : "מחיקה"}
+        title={!ok ? NO_RIGHTS[what] : pending ? "לחיצה נוספת מאשרת" : isDone ? "בוצע" : "מחיקה"}
         aria-label={pending
           ? (isDone ? `אישור: המשימה "${t.body}" בוצעה` : `אישור: מחיקת המשימה "${t.body}"`)
           : (isDone ? `סימון המשימה "${t.body}" כבוצעה` : `מחיקת המשימה "${t.body}"`)}>

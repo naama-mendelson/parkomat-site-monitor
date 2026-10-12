@@ -1375,12 +1375,12 @@ not one per kind as on 06/10, and asked for it on the collapsed card too. On 12/
 | Piece | Where |
 |---|---|
 | Tables + RPCs | `master/db/tasks.postgres.sql`. Tables `tasks` and `task_history`; RPCs `tasks_list`, `task_counts`, `task_add`, `task_start`, `task_unstart`, `task_done`, `task_delete`. Registered in `db.js` after compliance; applied with `tools/apply-sql.js`. |
-| SQL tests (PGlite) | `master/tests/tasks.test.js`: 17 tests; 24/24 + 8/9 (sherut; the 9th is equivalent) + 6/6 (no kind) + 8/8 (X) SQL mutations caught |
+| SQL tests (PGlite) | `master/tests/tasks.test.js`: 18 tests; 24/24 + 8/9 (sherut; the 9th is equivalent) + 6/6 (no kind) + 8/8 (X) + 7/7 (X for managers) SQL mutations caught |
 | UI logic (pure) | `dashboard/src/utils/tasks.js`: `taskState`, `splitOpen`, `historySteps`, `openSummary`, `countsBySite`. Tested in `master/tests/tasks-ui.test.js`. |
 | Data layer test | `master/tests/tasks-direct.test.js`: the real `tasksDirect.js` with a fake Supabase; checks the request body (`p_kind: null`) |
 | Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js`. No server arm. |
 | UI | `components/Tasks/TasksDialog.jsx`, `Tasks.css`, `TasksContext.js`. The button lives in `SiteCard.jsx`: `taskPill` on the collapsed card, `taskButton` on the expanded one, and `rowEnd`. |
-| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 141 checks (K1–K8), and 10/10 UI mutations caught (`mut-icons-ui.mjs`, in a separate tree). Every scenario runs inside `guard`, so a stuck scenario becomes a FAIL that names where it stopped, and the next scenarios still run. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
+| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 156 checks (K1–K10), and 16/16 + 4/4 UI mutations caught (`mut-icons-ui.mjs` / `mut-del-ui.mjs`, in a separate tree). Every scenario runs inside `guard`, so a stuck scenario becomes a FAIL that names where it stopped, and the next scenarios still run. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
 
 Rules that are easy to break:
 
@@ -1395,17 +1395,40 @@ Rules that are easy to break:
     word), and so are the history steps: "בתהליך" / "הוסר 'בתהליך'". The old labels were "בטיפול",
     "הועברה לטיפול" and "הוחזרה לביצוע".
   - **⏳** toggles: `task_start` / `task_unstart`, one click, for any staff user.
-  - **V** = `task_done`. **X** = `task_delete`. Both ask to confirm *inside the button* for 4 seconds
-    ("✓ לאשר?" / "✕ למחוק?"), and only one confirm is pending at a time. V straight from "to do" is
-    allowed.
-  - **Who sees V and X:** everyone. When `can_close` is false they are grey (`is-locked`,
-    `aria-disabled`), **not `disabled`**. A click says who can (`NO_RIGHTS` in `TasksDialog`) and sends
-    nothing. A phone has no hover, so the click is the explanation. ⚠️ That sentence names
-    sherut@ and is a second copy of the rule in `app.can_close_task`. Change them together. (Playwright
-    refuses to click an `aria-disabled` element, so K7 uses `force`.)
+  - **V** = `task_done`. **X** = `task_delete`. Both ask to confirm for 4 seconds, and only one confirm is
+    pending at a time. V straight from "to do" is allowed.
+    - ⚠️ **The question ("לאשר?" / "למחוק?") is a bubble above the button (`.tk-ask`, absolutely
+      positioned), not text inside it.** Text inside widened the armed button by 33–36px over its
+      neighbour's old spot, so a "corrective" click on the neighbour confirmed the irreversible action.
+      K1/K8 check that arming moves nothing.
+    - ⚠️ **A second click counts only on its own:** not `e.detail > 1` (the second half of a double
+      click or tap), not within `ARM_MIN_MS` (600) of arming, and not a held Enter (`e.repeat` is
+      `preventDefault`-ed). Before this, a habitual double-click on X deleted a task and its history
+      with "למחוק?" on screen for 5–170 ms. K8 checks `dblclick` and a CDP auto-repeat Enter, and also
+      that one deliberate Enter still confirms.
+    - Both were found by the pre-deploy review, together with the old-bundle count and the off-screen
+      explanation below.
+  - **Who sees V and X:** everyone. V follows `can_close` (sherut@). X follows `can_delete` (every
+    manager, and sherut@ — owner, same day: *"תן אופציה למנהלים למחוק משימה"*). When one is false
+    the button is grey (`is-locked`, `aria-disabled`), **not `disabled`**.
+    - A click explains **under that task's row** (`.tk-row-msg`, scrolled into view) and sends
+      nothing. V and X each have their own sentence (`NO_RIGHTS.done` / `.delete`). On a phone there
+      is no hover, so the click is the explanation. The first version wrote it above the list, and on a
+      phone, scrolled to a lower task, it was off screen (K9).
+    - ⚠️ `.tk-row-msg` uses `width: 100%`, **not `flex-basis`**. On a phone the row is a column, so
+      `flex-basis: 100%` set its *height* to the whole row (142px).
+    - ⚠️ The two sentences are second copies of the rules in `app.can_close_task` /
+      `app.can_delete_task`. Change them together.
+    - Playwright refuses to click an `aria-disabled` element, so K7 / K10 use `force`.
+    - K7 is a manager who is not sherut (V grey, X works). K10 is an operator (both grey).
   - "בוצעה" stays final: there is no reopen, and done rows have no buttons.
 - ⚠️ **X deletes completely: `task_delete`.** Until 12/10 there was no DELETE at all.
-  - The same rule as V (`app.can_close_task`, i.e. sherut@ only).
+  - **Who:** `app.can_delete_task` = staff AND (`app.is_manager()` OR `app.can_close_task`): every
+    manager, plus sherut@ even if one day it is not a manager. The role is read from `app_users`, so a
+    demoted manager loses it at once (T18). Until the owner asked for managers (12/10, later the same
+    day), X used the V rule, sherut@ only.
+  - `tasks_list` returns `can_delete` per row, beside `can_close`. The dashboard falls back to
+    `can_close` when the key is missing (an older database).
   - **Open tasks only.** A done task is PT409, "המשימה כבר בוצעה", so a stale screen cannot erase service
     history after someone pressed V.
   - It deletes the `task_history` rows explicitly, in the same transaction. The FK stays without
@@ -1416,7 +1439,8 @@ Rules that are easy to break:
 - **12/10/2026: the two tasks in production were deleted at the owner's request** (*"תמחק את כל המשימות
   הקיימות"*, then "שתיהן" when shown that one was a colleague's real task). It was done by hand in
   SQL, because `task_delete` was not deployed yet: 2 tasks, 17 history rows, and a `delete` event per
-  site. There are no `audit_log` lines for it.
+  site. There are no `audit_log` lines for it. Later the same day her own test task ("משימה", 2431) was
+  deleted the same way (*"תמחק את המשימה שהוספתי"*), because only sherut@ could press X then.
 - **The history lives in `task_history`: one row per change** (`created` / `started` / `unstarted` /
   `done`).
   - The RPC that makes the change writes the row. A call that changes nothing (a second start, or

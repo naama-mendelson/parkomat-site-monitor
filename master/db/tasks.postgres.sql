@@ -21,7 +21,7 @@
 --
 -- ⚠️ **"בוצעה" סופי** — אין פתיחה מחדש, גם לא למנהל: מה שנסגר הוא היסטוריה של השירות.
 -- ⚠️ **ומשימה פתוחה אפשר למחוק לגמרי** — "X" (12/10/2026, task_delete בסוף הקובץ): המשימה וכל
--- ההיסטוריה שלה, ורק מי שרשאי לסמן "בוצעה". עד אז לא היה כאן DELETE בכלל.
+-- ההיסטוריה שלה — רק מנהל, או מי שרשאי לסמן "בוצעה" (app.can_delete_task). עד אז לא היה כאן DELETE בכלל.
 -- "בטיפול" הפיך ("החזרה לביצוע"; מ-12/10 — לחיצה שנייה על ⏳), ולכן ההיסטוריה
 -- יושבת ב-task_history ולא בעמודות: started_* הן המצב של עכשיו, והחזרה מאפסת אותן — היומן
 -- זוכר שהמשימה הייתה בטיפול, אצל מי ומתי.
@@ -143,6 +143,19 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
 $$;
 REVOKE ALL ON FUNCTION app.can_close_task(text) FROM PUBLIC;
 
+-- ============================================================
+-- מי רשאי למחוק ("X") — המקום היחיד
+-- ============================================================
+-- בעלת המוצר, 12/10/2026: "תן אופציה למנהלים למחוק משימה". עד אז X היה באותו כלל כמו V (רק sherut@).
+-- עכשיו: כל מנהל — ובנוסף מי שרשאי לסמן בוצעה, כך ש-sherut@ מוחק גם אם יורד יום אחד מדרגת מנהל.
+-- ⚠️ הדרגה מ-app_users (app.is_manager → current_app_role), לא מהאסימון: מנהל שהורד לבקר מאבד את
+-- המחיקה מיד, לא כשהאסימון שלו פג. V ("בוצעה") לא השתנה — רק sherut@.
+CREATE OR REPLACE FUNCTION app.can_delete_task(p_kind text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT app.is_staff() AND (app.is_manager() OR app.can_close_task(p_kind))
+$$;
+REVOKE ALL ON FUNCTION app.can_delete_task(text) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION app.task_event(p_code text, p_kind text, p_action text)
 RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT app.record_write_event(COALESCE(p_code, '*'), 'tasks',
@@ -179,6 +192,9 @@ DECLARE
   v_close_c boolean;
   v_close_t boolean;
   v_close_n boolean;
+  v_del_c boolean;
+  v_del_t boolean;
+  v_del_n boolean;
 BEGIN
   PERFORM app.require_staff();
   IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
@@ -194,6 +210,9 @@ BEGIN
   v_close_c := app.can_close_task('customer');
   v_close_t := app.can_close_task('technical');
   v_close_n := app.can_close_task(NULL);
+  v_del_c := app.can_delete_task('customer');
+  v_del_t := app.can_delete_task('technical');
+  v_del_n := app.can_delete_task(NULL);
   RETURN (
     WITH f AS (
       SELECT t.*, s.code AS cur_code, s.site_name AS cur_name
@@ -218,6 +237,8 @@ BEGIN
                'started_at', p.started_at, 'started_by', p.started_by,
                'done_at', p.done_at, 'done_by', p.done_by,
                'can_close', CASE p.kind WHEN 'customer' THEN v_close_c WHEN 'technical' THEN v_close_t ELSE v_close_n END,
+               -- "X" — כלל משלו (12/10/2026: גם מנהלים); המסך צובע ומסביר לפיו
+               'can_delete', CASE p.kind WHEN 'customer' THEN v_del_c WHEN 'technical' THEN v_del_t ELSE v_del_n END,
                'history', COALESCE((SELECT jsonb_agg(jsonb_build_object('action', h.action, 'by', h.actor, 'at', h.at)
                                                      ORDER BY h.at, h.id)
                                       FROM task_history h WHERE h.task_id = p.id), '[]'::jsonb)) AS j
@@ -371,7 +392,8 @@ GRANT EXECUTE ON FUNCTION public.task_done(bigint) TO authenticated;
 
 -- "X": מחיקה לגמרי — המשימה וכל ההיסטוריה שלה (בעלת המוצר, 12/10/2026: "אני רוצה שיהיה X ו-V ליד
 -- כל משימה", ועל ה-X בחרה "מחיקה לגמרי" על פני "ביטול" שנשאר בהיסטוריה).
--- ⚠️ אותו כלל כמו "בוצעה" — app.can_close_task, כלומר רק sherut@ (היא בחרה "רק sherut, כולם רואים").
+-- ⚠️ מי רשאי — app.can_delete_task: כל מנהל, ו-sherut@ (12/10/2026: "תן אופציה למנהלים למחוק משימה"; עד
+-- אז — אותו כלל כמו "בוצעה", רק sherut@).
 -- ⚠️ רק משימה פתוחה: "בוצעה" סופי, והיסטוריית השירות לא נמחקת דרך מסך שהתיישן (מישהו סימן V בינתיים).
 -- ⚠️ ה-FK מההיסטוריה נשאר בלי ON DELETE — מחיקה ידנית של משימה עדיין נכשלת בקול. כאן ההיסטוריה
 -- נמחקת במפורש, באותה טרנזקציה.
@@ -386,7 +408,7 @@ DECLARE
 BEGIN
   SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
   IF NOT FOUND THEN RETURN false; END IF;
-  IF NOT app.can_close_task(v_t.kind) THEN
+  IF NOT app.can_delete_task(v_t.kind) THEN
     RAISE EXCEPTION 'אין הרשאה למחוק משימה זו' USING ERRCODE = 'insufficient_privilege';
   END IF;
   IF v_t.done_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר בוצעה' USING ERRCODE = 'PT409'; END IF;

@@ -444,8 +444,8 @@ test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסט
   const keep = await add(OPR, null, "להשאיר", s.code);
   const hist = async (tid) => (await sup(`SELECT count(*)::int n FROM task_history WHERE task_id = $1`, [tid]))[0].n;
   assert.equal(await hist(id), 3);
-  // כל מי שאינו sherut — גם מנהל, גם מי ששמו המוצג הוא המייל — לא מוחק, ושום דבר לא זז
-  for (const uid of [OPR, OPR2, MGR, IMP, XSR]) await fails(del(uid, id), "42501", /אין הרשאה למחוק/);
+  // בקר — לא מוחק, ושום דבר לא זז (מנהלים כן, מ-12/10 — T18)
+  for (const uid of [OPR, OPR2]) await fails(del(uid, id), "42501", /אין הרשאה למחוק/);
   assert.equal(await hist(id), 3);
   assert.ok(findIn(await list(MGR, null, s.code), id), "עדיין קיימת");
   const ev0 = Number((await sup(`SELECT COALESCE(max(id), 0) m FROM events`))[0].m);
@@ -480,4 +480,35 @@ test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסט
   // סוכן ואנונימי — לא (T1/T2 בודקים הרשאה; כאן — שהפונקציה לא פתוחה ל-anon)
   const anon = await sup(`SELECT has_function_privilege('anon', 'public.task_delete(bigint)', 'EXECUTE') a`);
   assert.equal(anon[0].a, false);
+});
+
+test("T18 · X למנהלים (12/10/2026): כל מנהל מוחק, בקר לא; V נשאר רק sherut; can_delete לכל שורה", { skip }, async () => {
+  const s = await newSite();
+  const a = await add(OPR, null, "למחוק כמנהל", s.code);
+  const b = await add(OPR, null, "להשאיר לבדיקה", s.code);
+  const row = async (uid, id) => findIn(await list(uid, null, s.code), id);
+  const perms = async (uid, id) => { const r = await row(uid, id); return [r.can_delete, r.can_close]; };
+  // לכל שורה — מה מותר למי שקורא: המסך צובע ומסביר לפי זה
+  assert.deepEqual(await perms(MGR, a), [true, false], "מנהל: מוחק, לא מסמן בוצעה");
+  assert.deepEqual(await perms(IMP, a), [true, false], "מנהל ששמו המוצג הוא המייל — מוחק כמנהל, לא מסמן");
+  assert.deepEqual(await perms(OPR, a), [false, false], "בקר: לא זה ולא זה");
+  assert.deepEqual(await perms(SRV, a), [true, true], "sherut (בקר בבדיקה) — שניהם, גם בלי דרגת מנהל");
+  // בקר — נדחה; V של מנהל — עדיין נדחה; X של מנהל — נמחקת, וביומן שמו
+  await fails(del(OPR, a), "42501", /אין הרשאה למחוק/);
+  await fails(done(MGR, b), "42501", /אין הרשאה לסמן/);
+  assert.equal(await del(MGR, a), true);
+  assert.equal(await row(MGR, a), undefined);
+  const au = await sup(`SELECT actor_name FROM audit_log WHERE action = 'task.delete' AND target_id = $1`, [String(a)]);
+  assert.deepEqual(au.map((r) => r.actor_name), ["מנהלת משימות"]);
+  // ⚠️ מנהל שהורד לבקר מאבד את המחיקה מיד — הדרגה מהטבלה, לא מהאסימון
+  await sup(`UPDATE app_users SET role = 'operator' WHERE supabase_uid = $1`, [MGR]);
+  try {
+    assert.deepEqual(await perms(MGR, b), [false, false]);
+    await fails(del(MGR, b), "42501", /אין הרשאה למחוק/);
+  } finally {
+    await sup(`UPDATE app_users SET role = 'manager' WHERE supabase_uid = $1`, [MGR]);
+  }
+  // משימה שבוצעה — גם מנהל לא מוחק ("בוצעה" סופי)
+  await done(SRV, b);
+  await fails(del(MGR, b), "PT409", /כבר בוצעה/);
 });
