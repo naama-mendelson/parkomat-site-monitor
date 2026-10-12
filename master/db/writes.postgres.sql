@@ -421,7 +421,8 @@ REVOKE ALL ON FUNCTION app.check_control_system(text) FROM PUBLIC;
 -- ============================================================
 -- ⚠️ רשימה סגורה, כמו המערכת: אותם מפתחות בדיוק כמו shared/lift-types.mjs ושני ה-CHECK
 -- sites_lift_shape / sites_lift2_shape (schema.postgres.sql); tests/lift-types.test.js משווה בין כולם.
--- ⚠️ "חובה" נאכף ב-register_site ולא כאן: NULL כאן = "לא נשלח". אותה פונקציה לשתי המעליות.
+-- NULL כאן = "לא נשלח" / "לא הוגדר". ⚠️ הסוג אינו חובה מאז 12/10/2026 בערב; עד אז register_site דחה רישום בלעדיו.
+-- מה שעדיין חובה הוא הקונזול לסוג שפותח אותו — ב-app.check_lift_console. אותה פונקציה לשתי המעליות.
 CREATE OR REPLACE FUNCTION app.check_lift_type(p_value text)
 RETURNS text
 LANGUAGE plpgsql
@@ -698,9 +699,14 @@ DECLARE
   v_new2  text;
   v_new2c text;
 BEGIN
+  -- ⚠️ FOR UPDATE: ה-UPDATE של המעליות (למטה) כותב את **שתיהן**, כולל זו שלא נשלחה — מהערך שנקרא כאן. בלי
+  -- הנעילה, שני מנהלים שערכו את אותו אתר באותו רגע (אחד — מעלית 1, השני — מעלית 2) היו מחזירים זה לזה את
+  -- הערך הישן, בשקט וה-CHECK עובר (נמצא בסקירה, 12/10/2026). העדכונים שמתחת נועלים את השורה ממילא —
+  -- כאן רק מוקדם יותר, לפני הקריאה.
   SELECT s.id, s.code, s.site_name, s.lift_type, s.lift_console, s.lift2_type, s.lift2_console
     INTO v_id, v_code, v_name, v_cur_lift, v_cur_console, v_cur_lift2, v_cur_console2
-    FROM sites s WHERE s.code = p_code;
+    FROM sites s WHERE s.code = p_code
+    FOR UPDATE;
   IF v_id IS NULL THEN
     RAISE EXCEPTION 'אתר לא נמצא: %', p_code USING ERRCODE = 'PT404';
   END IF;

@@ -37,6 +37,14 @@
 }
 .cs-btn.is-open .cs-chevron { transform: rotate(180deg); }
 
+/* מסך שקוף מתחת לרשימה — לוכד את הלחיצה שסוגרת אותה, כדי שלא תגיע לרקע של המודאל ותסגור גם אותו */
+.cs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2999;
+  background: transparent;
+}
+
 /* ---------------- הרשימה (ב-portal, fixed) ---------------- */
 .cs-menu {
   position: fixed;

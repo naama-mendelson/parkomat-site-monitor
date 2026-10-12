@@ -2012,7 +2012,7 @@ lifts, the scissors type **with no console**, and a **styled dropdown** ("רשי
 | Columns + shape | `sites.lift_type` / `lift_console` and `sites.lift2_type` / `lift2_console`; CHECKs `sites_lift_shape` and `sites_lift2_shape` (`schema.postgres.sql`) |
 | Validation | `app.check_lift_type`, `app.check_lift_console`; `register_site` (12 args) and `update_site` (11 args) in `writes.postgres.sql` |
 | UI | `components/ChoiceSelect` (the styled dropdown) and `components/LiftFields` (one or two lifts: the dropdown, a two-part console, "+ עוד מעלית", "✕ הסרה"), used by `AddSiteModal.jsx` (`variant="form"`) and the `AdminPanel.jsx` edit row (`variant="row"`). The card's type badge and the admin row show both, joined by " + " |
-| Tests | `sql-local.test.js` (6 lift tests; 13/13 SQL mutations, `mut-lifts-sql.cjs` in the isolated copy `scratchpad/sqlmut`), `lift-types.test.js` (the four copies of the list, and the helpers), `register-site-unmonitored.test.js` (what the data layer sends); browser `e2e/probe-lift2.mjs` (101, 1280 light and 390 dark) and `probe-liftbadge2.mjs` (11), UI mutations `mut-lifts-ui.mjs` (separate tree). `probe-lift.mjs` (51) drove the old `<select>` and is superseded |
+| Tests | `sql-local.test.js` (6 lift tests; 13/13 SQL mutations, `mut-lifts-sql.cjs` in the isolated copy `scratchpad/sqlmut`), `lift-types.test.js` (the four copies of the list, and the helpers), `register-site-unmonitored.test.js` (what the data layer sends); browser `e2e/probe-lift2.mjs` (106, 1280 light and 390 dark) and `probe-liftbadge2.mjs` (11), UI mutations `mut-lifts-ui*.mjs` (separate tree; 18 of 19, V18 equivalent in Chromium). `probe-lift.mjs` (51) drove the old `<select>` and is superseded |
 
 - **Keys are English and labels Hebrew**, as in `site-types`. The labels are exactly hers, in her
   order. "הידראולית" is spelled correctly; she typed "הידרואלית".
@@ -2042,6 +2042,10 @@ lifts, the scissors type **with no console**, and a **styled dropdown** ("רשי
     (mutation L8 survived until the case "change the first, the second keeps its console" was added).
   - Changing a type recomputes its console. A type without a console clears it, otherwise the
     CHECK would refuse. A console alone changes the console of the current type.
+  - ⚠️ **The first `SELECT` takes `FOR UPDATE`.** The single `UPDATE` writes both lifts, including the
+    one that was not sent, from the values read at the start. Without the lock, two managers editing
+    the same site at once would write each other's old value back (found in the review after
+    f463712). PGlite has one connection, so `lift-types.test.js` checks this structurally.
 - **Old signatures are dropped:** `register_site` with 8 and 10 args, `update_site` with 7 and 9. Two
   live copies make PostgREST refuse the call. The new parameters are `DEFAULT NULL`, so a call from the
   old bundle (10 keys) still resolves.
@@ -2069,6 +2073,14 @@ lifts, the scissors type **with no console**, and a **styled dropdown** ("רשי
     the button, follows scroll and resize, and opens upward when there is no room below. A click inside
     the portal is not "outside" for the modals: React portal events bubble through the component tree,
     so the modals' `stopPropagation` still holds.
+  - ⚠️ **While open, a transparent backdrop (`.cs-backdrop`) covers the screen and swallows the
+    outside click**, as `<select>` does. The first version closed on a `document` `pointerdown` and let
+    the click through, so a click on the area around the add-site form closed the list *and the whole
+    form*, and what had been typed was lost. The same happened to the admin panel in the middle of an
+    edit (found in the review). The backdrop closes on `click` with `stopPropagation`. Closing on
+    `pointerdown` (V18) survived the probe. In Chromium a click whose pressed element disappears is
+    dispatched nowhere, so it is equivalent there. It is not guaranteed in other browsers, which is
+    why it stays `click`. A wheel over the backdrop also closes it.
   - Rebuilt by hand, as `<select>` gave them for free: closes on choice, outside click, Esc and Tab;
     arrows, Home/End, Enter/Space; focus back to the button; `role=listbox`/`option`/`aria-selected`;
     `focus({preventScroll})`, so the modal does not scroll the button away from its list.

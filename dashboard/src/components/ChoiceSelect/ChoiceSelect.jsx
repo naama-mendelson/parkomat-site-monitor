@@ -88,16 +88,9 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
     return () => { cancelAnimationFrame(raf); window.removeEventListener("scroll", onMove, true); window.removeEventListener("resize", onMove); };
   }, [open, place]);
 
-  // לחיצה מחוץ לכפתור ולרשימה — נסגרת, בלי להחזיר פוקוס (הלחיצה הלכה למקום אחר)
-  useEffect(() => {
-    if (!open) return;
-    const away = (e) => {
-      if (btn.current?.contains(e.target) || menu.current?.contains(e.target)) return;
-      close(false);
-    };
-    document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ⚠️ לחיצה בחוץ — על מסך שקוף שמתחת לרשימה (cs-backdrop, למטה), ולא מאזין pointerdown על המסמך. המאזין
+  // סגר את הרשימה ונתן ללחיצה להמשיך: על הרקע של "הוספת אתר" היא סגרה גם את החלון והמילוי אבד, ובניהול
+  // אתרים — את כל הפאנל באמצע עריכה (נמצא בסקירה, 12/10/2026). <select> של הדפדפן בולע את הלחיצה הזו.
 
   // הפוקוס עוקב אחרי השורה הפעילה — כך גם קורא מסך שומע אותה. ⚠️ preventScroll: focus() רגיל גולל את
   // הדף (או את המודאל) אל השורה, והגלילה מזיזה את הכפתור מתחת לרשימה.
@@ -146,6 +139,13 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
         </svg>
       </button>
       {open && createPortal(
+        <>
+        {/* המסך השקוף: הלחיצה סוגרת את הרשימה ונעצרת כאן. ⚠️ ב-click ולא ב-pointerdown — רשימה שנסגרת כבר
+            ב-pointerdown מסירה את המסך, וה-click שאחריו נוחת על מה שמתחתיו (בדיוק הבאג). ואירוע של React
+            עולה בעץ הקומפוננטות, כך שגם בלי stopPropagation כאן המודאל עוצר אותו. גלגלת — סוגרת, כמו <select>. */}
+        <div className="cs-backdrop" aria-hidden="true"
+          onClick={(e) => { e.stopPropagation(); close(false); }}
+          onWheel={() => close(false)} />
         <div
           ref={menu}
           id={listId}
@@ -172,7 +172,8 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
               <span className="cs-item-check" aria-hidden="true">{o.value === value ? "✓" : ""}</span>
             </div>
           ))}
-        </div>,
+        </div>
+        </>,
         document.body,
       )}
     </>

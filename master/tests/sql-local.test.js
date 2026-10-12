@@ -357,7 +357,7 @@ test("מחרוזת ריקה מנקה את המערכת", { skip }, async () => {
   assert.equal(await systemOf("CS1"), null);
 });
 
-test("רישום בלי מערכת עדיין עובד (רק סוג המעלית חובה)", { skip }, async () => {
+test("רישום בלי מערכת עדיין עובד", { skip }, async () => {
   await asManager(`SELECT * FROM public.register_site(p_code => 'CS2', p_site_name => 'ישן', p_plc_type => 'doli',
     p_tier => 'basic', p_is_new => true, p_fixflow_profile => NULL, p_lift_type => 'four-post-11kw')`);
   assert.equal(await systemOf("CS2"), null);

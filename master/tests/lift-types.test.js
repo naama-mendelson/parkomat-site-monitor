@@ -125,3 +125,12 @@ test("liftsProblem — הראשונה לפי required, השנייה חייבת �
   assert.equal(liftsProblem([L(""), L("serapid")], { required: false }), "יש לבחור קודם את המעלית הראשונה");
   assert.equal(liftsProblem([L("serapid"), L("serapid"), L("serapid")]), "אפשר לרשום עד 2 מעליות");
 });
+
+test("⚠️ update_site נועל את השורה לפני שהוא קורא את המעליות (FOR UPDATE)", () => {
+  // ה-UPDATE של המעליות כותב את שתיהן — גם את זו שלא נשלחה, מהערך שנקרא בתחילת הפונקציה. בלי נעילה לפני
+  // הקריאה, שני מנהלים שערכו את אותו אתר באותו רגע היו מחזירים זה לזה את הערך הישן (נמצא בסקירה, 12/10/2026).
+  // ב-PGlite אין שני חיבורים במקביל, ולכן הבדיקה כאן מבנית: הקריאה הראשונה בפונקציה נועלת.
+  const body = fnBody(WRITES, "public.update_site");
+  const sel = body.slice(body.indexOf("SELECT s.id, s.code, s.site_name"));
+  assert.match(sel.slice(0, sel.indexOf(";")), /FOR UPDATE\s*$/);
+});

@@ -12,16 +12,16 @@ import { SITE_TYPE_GROUPS, siteTypeFullLabel } from "../../../../shared/site-typ
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { liftsLabel, liftsProblem, siteLifts } from "../../../../shared/lift-types.mjs";
 import LiftFields from "../LiftFields/LiftFields";
-
-// המעליות של האתר כטיוטה לטופס — תמיד לפחות שורה אחת (ריקה, לאתר מלפני 11/10)
-const liftDraft = (site) => {
-  const l = siteLifts(site).map((x) => ({ type: x.type, console: x.console ?? "" }));
-  return l.length ? l : [{ type: "", console: "" }];
-};
 import { useAdmin } from "../../hooks/useAdmin";
 import { copyText } from "../../utils/clipboard";
 import AddSiteModal from "../AddSiteModal/AddSiteModal";
 import "./AdminPanel.css";
+
+// המעליות של האתר כטיוטה לטופס — תמיד לפחות שורה אחת (ריקה, לאתר בלי סוג מעלית)
+const liftDraft = (site) => {
+  const l = siteLifts(site).map((x) => ({ type: x.type, console: x.console ?? "" }));
+  return l.length ? l : [{ type: "", console: "" }];
+};
 import Logo from "../Logo/Logo";
 
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -547,7 +547,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                     <div className="adm-info">
                       <span className="adm-name">{s.site_name}</span>
                       <span className="adm-meta">
-                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · {siteLifts(s).length > 1 ? "מעליות" : "מעלית"}: <b>{liftsLabel(siteLifts(s))}</b> ·{STATUS_LABELS[s.status] || s.status}
+                        קוד: <b>{s.code}</b> · דרגה: <b>{TIER_LABELS[s.tier] || TIER_LABELS.basic}</b> · סוג: <b>{siteTypeFullLabel(s.plc_type)}</b> · {siteLifts(s).length > 1 ? "מעליות" : "מעלית"}: <b>{liftsLabel(siteLifts(s))}</b> · {STATUS_LABELS[s.status] || s.status}
                       </span>
                     </div>
                   )}
