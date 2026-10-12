@@ -607,7 +607,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
 
   // ============================================================
-  // משימות האתר — כפתור אחד, עם מספר הפתוחות (לביצוע + בטיפול)
+  // משימות האתר — כפתור אחד, עם מספר הפתוחות (לביצוע + בתהליך)
   // ============================================================
   // בעלת המוצר, 11/10/2026: "שלכל אתר יהיה כפתור משימות" — ובחרה כפתור אחד (לא אחד לכל סוג,
   // כמו מ-06/10), וגם בכרטיס הסגור, כדי שלא צריך לפתוח אותו. בכרטיס הסגור — גלולה קטנה בשורת
@@ -622,7 +622,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     </button>
   );
   const taskButton = tasks && (
-    <button type="button" className="tk-site-btn" onClick={openTasksDialog} aria-label={tasksLabel}>
+    <button type="button" className={`tk-site-btn${openTasks ? " has-open" : ""}`}
+      onClick={openTasksDialog} aria-label={tasksLabel}>
       משימות
       {openTasks > 0 && <span className="tk-count" aria-hidden="true">{openTasks}</span>}
     </button>

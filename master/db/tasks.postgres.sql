@@ -8,14 +8,21 @@
 -- ⚠️ **כפתור אחד לכל אתר, ושלושה מצבים** (בעלת המוצר, 11/10/2026: "שלכל אתר יהיה כפתור
 -- משימות... שלוש אופציות 1- משימה שצריך לעשות 2- משימה בתהליך 3- משימה שנעשתה... ושיראו את
 -- כל ההסטוריה של המשימות"). מ-06/10 היו לכל כרטיס שני כפתורים, אחד לכל סוג; עכשיו חלון
--- אחד לאתר, והסוג — 'customer' או 'technical' — הוא תכונה של המשימה, שנבחרת בהוספה.
+-- אחד לאתר, והסוג — 'customer' או 'technical' — היה תכונה של המשימה, שנבחרה בהוספה.
 -- (גרסה ראשונה עם שני כפתורים כלליים בכותרת נבנתה ב-06/10 ונזנחה לפני שעלתה.)
+--
+-- ⚠️ **בחירת הסוג הוסרה (בעלת המוצר, 12/10/2026, על "קשרי לקוחות / טכני" בטופס: "תעיף את זה").**
+-- משימה חדשה נשמרת עם kind = NULL. העמודה, האילוץ והפרמטר נשארים: חבילה ישנה בדפדפן עוד שולחת
+-- סוג, ו-NULL מותר בכל מקום (task_add, tasks_list, task_counts). אין כאן ברירת מחדל "טכני" — סוג
+-- שאיש לא בחר הוא נתון שקרי.
 --
 -- ⚠️ **המצב נגזר ולא נשמר:** done_at → בוצעה; אחרת started_at → בטיפול; אחרת לביצוע.
 -- עמודת "מצב" הייתה מאפשרת 'done' בלי מי ומתי — מצב שאסור שיהיה אפשר לבטא.
 --
--- ⚠️ **משימה לא נמחקת, ו"בוצעה" סופי** — אין כאן DELETE ואין פתיחה מחדש, גם לא למנהל: מה
--- שנפתח ונסגר הוא היסטוריה של השירות. "בטיפול" כן הפיך ("החזרה לביצוע"), ולכן ההיסטוריה
+-- ⚠️ **"בוצעה" סופי** — אין פתיחה מחדש, גם לא למנהל: מה שנסגר הוא היסטוריה של השירות.
+-- ⚠️ **ומשימה פתוחה אפשר למחוק לגמרי** — "X" (12/10/2026, task_delete בסוף הקובץ): המשימה וכל
+-- ההיסטוריה שלה, ורק מי שרשאי לסמן "בוצעה". עד אז לא היה כאן DELETE בכלל.
+-- "בטיפול" הפיך ("החזרה לביצוע"; מ-12/10 — לחיצה שנייה על ⏳), ולכן ההיסטוריה
 -- יושבת ב-task_history ולא בעמודות: started_* הן המצב של עכשיו, והחזרה מאפסת אותן — היומן
 -- זוכר שהמשימה הייתה בטיפול, אצל מי ומתי.
 --
@@ -30,7 +37,7 @@
 CREATE TABLE IF NOT EXISTS tasks (
   id              BIGSERIAL PRIMARY KEY,
   client_id       UUID NOT NULL,
-  kind            TEXT NOT NULL,
+  kind            TEXT,                          -- NULL = בלי סוג (מ-12/10/2026 — אין בחירה)
   site_id         INTEGER REFERENCES sites(id) ON DELETE SET NULL,
   site_code       TEXT,                          -- snapshot: שורד מחיקת אתר (כמו events)
   body            TEXT NOT NULL,
@@ -46,10 +53,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by_user INTEGER;
+-- בלי סוג (12/10/2026). ⚠️ כאן ולא רק ב-CREATE TABLE — בייצור הטבלה קיימת וה-CREATE מדולג.
+ALTER TABLE tasks ALTER COLUMN kind DROP NOT NULL;
 
 -- ⚠️ אילוצים בשם, מחוץ ל-CREATE TABLE — אחרת שינוי עתידי לא יגיע לייצור (ראו compliance)
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_kind_chk;
-ALTER TABLE tasks ADD CONSTRAINT tasks_kind_chk CHECK (kind IN ('customer', 'technical')) NOT VALID;
+ALTER TABLE tasks ADD CONSTRAINT tasks_kind_chk CHECK (kind IS NULL OR kind IN ('customer', 'technical')) NOT VALID;
 ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_chk;
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_body_chk;
 ALTER TABLE tasks ADD CONSTRAINT tasks_body_chk CHECK (length(btrim(body)) BETWEEN 2 AND 2000) NOT VALID;
@@ -71,8 +80,8 @@ CREATE INDEX IF NOT EXISTS tasks_done_idx ON tasks (done_at) WHERE done_at IS NO
 -- ============================================================
 -- ההיסטוריה — שורה לכל מעבר: נפתחה, לטיפול, הוחזרה לביצוע, בוצעה
 -- ============================================================
--- ⚠️ בלי ON DELETE: משימה לא נמחקת, ומחיקה ידנית של משימה שיש לה היסטוריה תיכשל בקול
--- במקום להעלים את ההיסטוריה איתה.
+-- ⚠️ בלי ON DELETE: מחיקה ידנית של משימה שיש לה היסטוריה תיכשל בקול במקום להעלים את
+-- ההיסטוריה איתה. המחיקה היחידה היא task_delete ("X"), שמוחקת את ההיסטוריה במפורש.
 CREATE TABLE IF NOT EXISTS task_history (
   id            BIGSERIAL PRIMARY KEY,
   task_id       BIGINT NOT NULL REFERENCES tasks(id),
@@ -169,6 +178,7 @@ DECLARE
   -- פעם אחת לסוג, לא לכל שורה (can_close_task קורא את app_users)
   v_close_c boolean;
   v_close_t boolean;
+  v_close_n boolean;
 BEGIN
   PERFORM app.require_staff();
   IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
@@ -183,6 +193,7 @@ BEGIN
   END IF;
   v_close_c := app.can_close_task('customer');
   v_close_t := app.can_close_task('technical');
+  v_close_n := app.can_close_task(NULL);
   RETURN (
     WITH f AS (
       SELECT t.*, s.code AS cur_code, s.site_name AS cur_name
@@ -206,7 +217,7 @@ BEGIN
                'body', p.body, 'created_by', p.created_by, 'created_at', p.created_at,
                'started_at', p.started_at, 'started_by', p.started_by,
                'done_at', p.done_at, 'done_by', p.done_by,
-               'can_close', CASE p.kind WHEN 'customer' THEN v_close_c ELSE v_close_t END,
+               'can_close', CASE p.kind WHEN 'customer' THEN v_close_c WHEN 'technical' THEN v_close_t ELSE v_close_n END,
                'history', COALESCE((SELECT jsonb_agg(jsonb_build_object('action', h.action, 'by', h.actor, 'at', h.at)
                                                      ORDER BY h.at, h.id)
                                       FROM task_history h WHERE h.task_id = p.id), '[]'::jsonb)) AS j
@@ -223,14 +234,18 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.tasks_list(text, text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.tasks_list(text, text, integer) TO authenticated;
 
--- מספרי המשימות הפתוחות (לביצוע + בטיפול) — שורה לכל אתר×סוג; הכרטיס מחבר את שני הסוגים.
+-- מספרי המשימות הפתוחות (לביצוע + בטיפול) — שורה לכל אתר×סוג; הכרטיס מחבר את כל השורות של אתר.
+-- ⚠️ משימה בלי סוג (מ-12/10) מגיעה בשורה עם kind = 'none', **לא NULL**: מסך שעוד מריץ את החבילה
+-- הקודמת (קיר, טאב פתוח, PWA — sw.js לא מרענן) סופר ב-countsBySite הישן רק שורה שיש לה סוג
+-- (`if (!r.kind) continue`), כך שעם NULL כל משימה חדשה הייתה נעלמת מהמספר בכרטיס עד רענון. החבילה
+-- החדשה מתעלמת מהסוג ממילא. (נמצא בסקירה לפני הפריסה, 12/10/2026.)
 -- ⚠️ לעולם אינה זורקת: מי שאינו צוות מקבל אפס שורות (כמו site_compliance) — הכפתורים
 -- נטענים יחד עם רשימת האתרים, ושגיאה כאן לא תפיל אותה.
 DROP FUNCTION IF EXISTS public.task_counts();
 CREATE FUNCTION public.task_counts()
 RETURNS TABLE (kind text, site_id integer, open integer)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT t.kind, t.site_id, count(*)::int
+  SELECT COALESCE(t.kind, 'none'), t.site_id, count(*)::int
     FROM tasks t
    WHERE t.done_at IS NULL AND t.site_id IS NOT NULL AND (SELECT app.is_staff())
    GROUP BY t.kind, t.site_id
@@ -255,7 +270,8 @@ DECLARE
   v_site integer;
   v_id bigint;
 BEGIN
-  IF p_kind IS NULL OR p_kind NOT IN ('customer', 'technical') THEN
+  -- NULL = בלי סוג (12/10/2026); סוג שנשלח חייב להיות מוכר
+  IF p_kind IS NOT NULL AND p_kind NOT IN ('customer', 'technical') THEN
     RAISE EXCEPTION 'סוג משימה לא מוכר: %', p_kind USING ERRCODE = 'check_violation';
   END IF;
   IF length(v_body) < 2 THEN RAISE EXCEPTION 'תיאור המשימה ריק' USING ERRCODE = 'check_violation'; END IF;
@@ -352,3 +368,34 @@ BEGIN
 END $fn$;
 REVOKE ALL ON FUNCTION public.task_done(bigint) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.task_done(bigint) TO authenticated;
+
+-- "X": מחיקה לגמרי — המשימה וכל ההיסטוריה שלה (בעלת המוצר, 12/10/2026: "אני רוצה שיהיה X ו-V ליד
+-- כל משימה", ועל ה-X בחרה "מחיקה לגמרי" על פני "ביטול" שנשאר בהיסטוריה).
+-- ⚠️ אותו כלל כמו "בוצעה" — app.can_close_task, כלומר רק sherut@ (היא בחרה "רק sherut, כולם רואים").
+-- ⚠️ רק משימה פתוחה: "בוצעה" סופי, והיסטוריית השירות לא נמחקת דרך מסך שהתיישן (מישהו סימן V בינתיים).
+-- ⚠️ ה-FK מההיסטוריה נשאר בלי ON DELETE — מחיקה ידנית של משימה עדיין נכשלת בקול. כאן ההיסטוריה
+-- נמחקת במפורש, באותה טרנזקציה.
+-- נשאר אחריה: שורת audit_log אחת (מזהה בלבד, בלי גוף — כמו בכל פעולה), ואירוע לרענון המסכים.
+-- משימה שכבר איננה — false ולא שגיאה: לחיצה כפולה, או שני מסכים, מגיעות לאותה תוצאה.
+CREATE OR REPLACE FUNCTION public.task_delete(p_id bigint)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_staff();
+  v_t tasks%ROWTYPE;
+BEGIN
+  SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF NOT app.can_close_task(v_t.kind) THEN
+    RAISE EXCEPTION 'אין הרשאה למחוק משימה זו' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_t.done_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר בוצעה' USING ERRCODE = 'PT409'; END IF;
+  DELETE FROM task_history h WHERE h.task_id = p_id;
+  DELETE FROM tasks WHERE tasks.id = p_id;
+  PERFORM app.record_write_audit('task.delete', v_actor, app.current_app_role(), 'task', p_id::text,
+    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
+  PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'delete');
+  RETURN true;
+END $fn$;
+REVOKE ALL ON FUNCTION public.task_delete(bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.task_delete(bigint) TO authenticated;

@@ -46,9 +46,11 @@
 }
 
 /* ---------------- הוספה ---------------- */
-.tk-add { display: flex; flex-direction: column; gap: 8px; }
-.tk-add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* שורה אחת: השדה ו"הוספה". ⚠️ אין בחירת סוג (12/10/2026: "תעיף את זה") */
+.tk-add { display: flex; align-items: center; gap: 8px; }
 .tk-input {
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 40px;
   padding: 0 12px;
   border-radius: 10px;
@@ -57,34 +59,10 @@
   color: var(--text-primary);
   font: inherit;
 }
-.tk-add-row .tk-btn--primary { margin-inline-start: auto; }
-
-/* הסוג — שתי גלולות, אחת נבחרת; בלי ברירת מחדל */
-.tk-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
-.tk-kind-opt { position: relative; cursor: pointer; }
-.tk-kind-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
-.tk-kind-opt span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: 0.86em;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.tk-kind-opt input:checked + span {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
-}
+.tk-add .tk-btn--primary { flex: 0 0 auto; }
 
 .tk-input:focus-visible, .tk-btn:focus-visible, .tk-close:focus-visible, .tk-link:focus-visible,
-.tk-collapse:focus-visible, .tk-site-btn:focus-visible, .tk-card-btn:focus-visible,
-.tk-kind-opt input:focus-visible + span {
+.tk-collapse:focus-visible, .tk-site-btn:focus-visible, .tk-card-btn:focus-visible, .tk-ico:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -105,26 +83,82 @@
 .tk-btn:disabled { opacity: 0.5; cursor: default; }
 .tk-btn--primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
 
-/* פעולות בשורה — קטנות ובמסגרת */
-.tk-btn--start, .tk-btn--done {
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: 0.82em;
-  background: transparent;
+
+/* ---------------- ⏳ / V / X ליד כל משימה (12/10/2026) ----------------
+   סמל בלבד, ריבוע קטן; בגוון ולא במילוי. ⏳ — לכל איש צוות, ולחוץ כשהמשימה בתהליך. V ו-X — רק מי
+   ש-can_close; אצל אחרים אפורים (is-locked), ולחיצה מסבירה למה (הכפתור לא disabled — אחרת אין
+   לחיצה, ואין הסבר בטלפון, שאין בו ריחוף). לחיצה ראשונה על V/X מבקשת אישור בתוך הכפתור. */
+.tk-ico {
+  position: relative;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 9px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 1em;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.tk-btn--start {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
-}
-.tk-btn--done {
+.tk-ico--done {
   color: var(--status-ready);
-  border-color: color-mix(in srgb, var(--status-ready) 45%, var(--border-color));
+  border-color: color-mix(in srgb, var(--status-ready) 50%, var(--border-color));
 }
-/* לחיצה ראשונה — מבקש אישור (לא הפיך): ירוק שקוף, כמו "בתוקף" */
-.tk-btn--done.is-confirm {
-  border-color: color-mix(in srgb, var(--status-ready) 70%, transparent);
-  background: color-mix(in srgb, var(--status-ready) 12%, transparent);
+.tk-ico--del {
+  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 50%, var(--border-color));
 }
+/* ⏳ כבוי — אפור (האמוג'י צבעוני מטבעו); דלוק — הגוון של "בתהליך". ⚠️ הפילטר על הסמל בלבד: על
+   הכפתור כולו הוא צובע גם את הרקע, ובכהה הכפתור נראה קופסה כהה ליד V ו-X. */
+.tk-ico--prog .tk-ico-g { filter: grayscale(1); opacity: 0.7; }
+.tk-ico--prog.is-on .tk-ico-g { filter: none; opacity: 1; }
+.tk-ico--prog.is-on {
+  border-color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 16%, var(--bg-card));
+}
+.tk-ico--done.is-confirm {
+  border-color: var(--status-ready);
+  background: color-mix(in srgb, var(--status-ready) 12%, var(--bg-card));
+}
+.tk-ico--del.is-confirm {
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 12%, var(--bg-card));
+}
+/* "לאשר?" / "למחוק?" — בועה מעל הכפתור, מחוץ לזרימה. ⚠️ לא בתוך הכפתור: כפתור שמתרחב (69–72px) כיסה
+   את המקום של השכן, ולחיצה "מתקנת" עליו הייתה מאשרת פעולה בלתי הפיכה. הצבע — של הכפתור (ירוק / אדום). */
+.tk-ask {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: var(--bg-card);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 2;
+}
+.tk-ico.is-locked {
+  color: var(--text-muted);
+  border-color: var(--border-color);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tk-ico:disabled { opacity: 0.5; cursor: default; }
 
 .tk-error { margin: 0; color: var(--status-error); font-weight: 600; font-size: 0.88em; }
 .tk-link {
@@ -140,10 +174,10 @@
 .tk-muted { color: var(--text-secondary); font-size: 0.86em; }
 .tk-empty { margin: 4px 0; color: var(--text-secondary); }
 
-/* ---------------- שלושת החלקים ---------------- */
+/* ---------------- הפתוחות, ו"בוצעו" מקופל ---------------- */
 .tk-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .tk-sec { display: flex; flex-direction: column; min-width: 0; }
-.tk-sec-head, .tk-collapse {
+.tk-collapse {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -178,36 +212,36 @@
 .tk-chev { margin-inline-start: auto; color: var(--text-secondary); }
 .tk-more { margin: 6px 0 0; }
 
-/* סימן המצב: טבעת ריקה — לביצוע; טבעת עם נקודה — בטיפול; ✓ — בוצעו */
-.tk-mark {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  box-sizing: border-box;
-  border: 2px solid var(--text-muted);
-}
-.tk-sec[data-state="in_progress"] .tk-mark {
-  border-color: var(--status-warning);
-  background: radial-gradient(circle, var(--status-warning) 0 2.5px, transparent 3px);
-}
-.tk-sec[data-state="done"] .tk-mark { border: 0; width: auto; height: auto; border-radius: 0; }
+/* הסימן בכותרת "בוצעו" */
+.tk-sec[data-state="done"] .tk-mark { flex-shrink: 0; }
 .tk-sec[data-state="done"] .tk-mark::before { content: "✓"; color: var(--status-ready); font-weight: 900; }
 
 /* ---------------- שורה ---------------- */
 .tk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .tk-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-color);
 }
 .tk-row:last-child { border-bottom: 0; }
+/* ההסבר ל-V/X אפורים — שורה משלו, מתחת לשורה שנלחצה. ⚠️ width ולא flex-basis: בטלפון השורה היא עמודה,
+   ושם flex-basis: 100% הוא *גובה* — ההסבר קיבל את כל גובה השורה (142px) וגלש מתחת למסך (נמדד, K9). */
+.tk-row-msg {
+  flex: none;
+  width: 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.84em;
+  font-weight: 700;
+}
 .tk-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .tk-text { margin: 0; overflow-wrap: anywhere; line-height: 1.45; }
 .tk-row[data-state="done"] .tk-text { color: var(--text-secondary); }
 .tk-check { color: var(--status-ready); font-weight: 800; }
+.tk-prog { font-size: 0.9em; }
 .tk-meta {
   margin: 0;
   display: flex;
@@ -218,18 +252,10 @@
   font-size: 0.8em;
   line-height: 1.5;
 }
-.tk-kind {
-  padding: 0 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border-color);
-  font-weight: 700;
-  white-space: nowrap;
-}
 .tk-step { display: inline-flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 .tk-arrow { color: var(--text-muted); }
 .tk-when { white-space: nowrap; }
-.tk-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.tk-unstart { font-size: 0.82em; white-space: nowrap; }
+.tk-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 /* ---------------- טלפון ---------------- */
 @media (max-width: 640px) {
@@ -237,9 +263,7 @@
   .tk-dialog { border-radius: 0; min-height: 100%; padding: 12px; }
   .tk-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .tk-actions { justify-content: flex-end; }
-  .tk-btn--start, .tk-btn--done { min-height: 40px; flex: 1 1 0; }
-  .tk-unstart { min-height: 40px; padding: 0 6px; }
-  .tk-kind-opt span { min-height: 40px; }
+  .tk-ico { min-width: 44px; height: 44px; }
 }
 
 /* ---------------- הכפתור בכרטיס המורחב ---------------- */
@@ -308,10 +332,14 @@
   height: 32px;
   transform: translateY(-50%);
 }
+/* ⚠️ יש משימה פתוחה (לביצוע או בטיפול) — מסגרת בגוון המלא (בעלת המוצר, 12/10/2026: "אם יש משימות
+   בהמתנה אז שהמסגרת של המשימות תהיה יותר כהה"). הייתה 45% accent מעורבב באפור, וכמעט לא נבדלה
+   מכפתור בלי משימות. בבהיר זה כחול המותג הכהה; בכהה — הכחול הבהיר, כלומר הניגוד החזק יותר. */
 .tk-card-btn.has-open {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+  border-color: var(--accent);
 }
+.tk-site-btn.has-open { border-color: var(--accent); }
 .tk-card-n { font-weight: 800; }
 @media (pointer: coarse) {
   .tk-card-btn::before { height: 44px; }

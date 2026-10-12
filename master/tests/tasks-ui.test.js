@@ -1,6 +1,6 @@
 // tests/tasks-ui.test.js — הצד של הדשבורד במשימות: תרגום, לא החלטה (utils/tasks.js).
 //
-// המצב (לביצוע / בטיפול / בוצעה) נקבע ב-SQL ונבדק ב-tasks.test.js. כאן: איך הפתוחות מתחלקות
+// המצב (לביצוע / בתהליך / בוצעה) נקבע ב-SQL ונבדק ב-tasks.test.js. כאן: איך הפתוחות מתחלקות
 // לשני החלקים בחלון, מה כתוב בשורת ההיסטוריה של משימה, השורה שבכותרת, והמספר שעל הכפתור בכרטיס.
 // החלון עצמו נבדק בדפדפן (e2e/probe-tasks.mjs ב-scratchpad).
 import { test } from "node:test";
@@ -24,7 +24,7 @@ test("taskState: מה שה-SQL אמר; ובלי state מוכר — מהעמוד�
   assert.equal(taskState(null), "todo");
 });
 
-test("splitOpen: לביצוע ובטיפול, כל אחד בסדר שהגיע (מהוותיקה לחדשה)", () => {
+test("splitOpen: לביצוע ובתהליך, כל אחד בסדר שהגיע (מהוותיקה לחדשה)", () => {
   const open = [task({ id: 1 }), task({ id: 2, state: "in_progress" }), task({ id: 3 }), task({ id: 4, state: "in_progress" })];
   const { todo, inProgress } = splitOpen(open);
   assert.deepEqual(todo.map((t) => t.id), [1, 3]);
@@ -45,13 +45,13 @@ test("historySteps / historyText: כל המעברים, בשעון ישראל, ע
   });
   assert.deepEqual(historySteps(t).map((s) => [s.label, s.when, s.by]), [
     ["נפתחה", "01/10 11:00", "דנה"],
-    ["הועברה לטיפול", "02/10 08:30", "יוסי"],
-    ["הוחזרה לביצוע", "02/10 09:00", "יוסי"],
-    ["הועברה לטיפול", "03/10 10:00", "משה"],
+    ["בתהליך", "02/10 08:30", "יוסי"],
+    ["הוסר 'בתהליך'", "02/10 09:00", "יוסי"],
+    ["בתהליך", "03/10 10:00", "משה"],
     ["בוצעה", "04/10 00:15", "משה"],
   ]);
   assert.equal(historyText(task({ history: t.history.slice(0, 2) })),
-    "נפתחה 01/10 11:00 ע״י דנה ← הועברה לטיפול 02/10 08:30 ע״י יוסי");
+    "נפתחה 01/10 11:00 ע״י דנה ← בתהליך 02/10 08:30 ע״י יוסי");
   // פעולה לא מוכרת — לא שורה ריקה עם שם בלי מילה
   assert.deepEqual(historySteps(task({ history: [{ action: "created", by: "דנה", at: t.history[0].at }, { action: "x", by: "?", at: "z" }] }))
     .map((s) => s.action), ["created"]);
@@ -70,25 +70,23 @@ test("historySteps: בלי היסטוריה — מה שהעמודות יודעו
 
 test("openSummary: מה שבכותרת החלון", () => {
   const two = [task(), task()];
-  assert.equal(openSummary({ todo: two, inProgress: [task()] }), "2 לביצוע · 1 בטיפול");
+  assert.equal(openSummary({ todo: two, inProgress: [task()] }), "2 לביצוע · 1 בתהליך");
   assert.equal(openSummary({ todo: two, inProgress: [] }), "2 לביצוע");
-  assert.equal(openSummary({ todo: [], inProgress: two }), "2 בטיפול");
+  assert.equal(openSummary({ todo: [], inProgress: two }), "2 בתהליך");
   assert.equal(openSummary({}), "אין משימות פתוחות");
-  assert.deepEqual(TASK_STATE_LABEL, { todo: "לביצוע", in_progress: "בטיפול", done: "בוצעו" });
+  assert.deepEqual(TASK_STATE_LABEL, { todo: "לביצוע", in_progress: "בתהליך", done: "בוצעו" });
 });
 
-test("countsBySite: שני הסוגים יחד על הכפתור; אתר שנמחק וסוג חסר — מדולגים", () => {
+test("countsBySite: כל הפתוחות של האתר על הכפתור — גם בלי סוג; אתר שנמחק — מדולג", () => {
   const rows = [
     { kind: "customer", site_id: 7, open: 2 },
     { kind: "technical", site_id: 7, open: 1 },
+    { kind: null, site_id: 7, open: 5 },            // ⚠️ מאז 12/10 כל משימה חדשה בלי סוג — נספרת
     { kind: "technical", site_id: 11, open: 4 },
-    { kind: "technical", site_id: null, open: 9 },
+    { kind: "technical", site_id: null, open: 9 },  // אתר שנמחק
     { kind: null, site_id: 12, open: 3 },
   ];
-  assert.deepEqual(countsBySite(rows), {
-    7: { customer: 2, technical: 1, open: 3 },
-    11: { customer: 0, technical: 4, open: 4 },
-  });
+  assert.deepEqual(countsBySite(rows), { 7: { open: 8 }, 11: { open: 4 }, 12: { open: 3 } });
   assert.deepEqual(countsBySite(null), {});
-  assert.deepEqual(countsBySite([{ kind: "customer", site_id: 1, open: "5" }]), { 1: { customer: 5, technical: 0, open: 5 } });
+  assert.deepEqual(countsBySite([{ kind: null, site_id: 1, open: "5" }]), { 1: { open: 5 } });
 });

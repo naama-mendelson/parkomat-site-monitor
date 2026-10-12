@@ -1363,33 +1363,60 @@ read-only and stops ingestion at every site). ⚠️ `settings.compliance_go_liv
 `expired`/`expired`. That is the intended state, not noise; it clears site by site as reports are
 uploaded. Undo = delete the row (grey again). Push alerts (spec phase P5) are not built.
 
-## משימות — one button per site, three states, full history (built 06/10/2026, reworked 11/10/2026)
+## משימות — one button per site, ⏳ / V / X on every task, full history (built 06/10/2026, reworked 11/10 and 12/10/2026)
 
 The owner, 06/10: *"יש המון משימות שנפתחות כל יום בשירות"*. These are customer-relations tasks ("tell
 the customer he parked wrong") and technical ones ("grease…, replace…", mostly for one site). On 11/10:
 *"שלכל אתר יהיה כפתור משימות... אופציה להוסיף משימה, אופציה לעשות משימה בטיפול, אופציה לסמן V...
 שלוש אופציות... כתוב את זה יפה ושיראו את כל ההסטוריה של המשימות"*. She chose **one** button per site,
-not one per kind as on 06/10, and asked for it on the collapsed card too.
+not one per kind as on 06/10, and asked for it on the collapsed card too. On 12/10: *"אני רוצה שיהיה X ו-V ליד
+כל משימה וסימון של בתהליך"*.
 
 | Piece | Where |
 |---|---|
-| Tables + RPCs | `master/db/tasks.postgres.sql`. Tables `tasks` and `task_history`; RPCs `tasks_list`, `task_counts`, `task_add`, `task_start`, `task_unstart`, `task_done`. Registered in `db.js` after compliance; applied with `tools/apply-sql.js`. |
-| SQL tests (PGlite) | `master/tests/tasks.test.js`: 15 tests; 24/24 SQL mutations caught |
+| Tables + RPCs | `master/db/tasks.postgres.sql`. Tables `tasks` and `task_history`; RPCs `tasks_list`, `task_counts`, `task_add`, `task_start`, `task_unstart`, `task_done`, `task_delete`. Registered in `db.js` after compliance; applied with `tools/apply-sql.js`. |
+| SQL tests (PGlite) | `master/tests/tasks.test.js`: 17 tests; 24/24 + 8/9 (sherut; the 9th is equivalent) + 6/6 (no kind) + 8/8 (X) SQL mutations caught |
 | UI logic (pure) | `dashboard/src/utils/tasks.js`: `taskState`, `splitOpen`, `historySteps`, `openSummary`, `countsBySite`. Tested in `master/tests/tasks-ui.test.js`. |
+| Data layer test | `master/tests/tasks-direct.test.js`: the real `tasksDirect.js` with a fake Supabase; checks the request body (`p_kind: null`) |
 | Data layer | `dashboard/src/services/tasksDirect.js`, re-exported by `dataSource.js`. No server arm. |
 | UI | `components/Tasks/TasksDialog.jsx`, `Tasks.css`, `TasksContext.js`. The button lives in `SiteCard.jsx`: `taskPill` on the collapsed card, `taskButton` on the expanded one, and `rowEnd`. |
-| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 115 checks. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
+| Browser | `e2e/probe-tasks.mjs` in the scratchpad harness: 141 checks (K1–K8), and 10/10 UI mutations caught (`mut-icons-ui.mjs`, in a separate tree). Every scenario runs inside `guard`, so a stuck scenario becomes a FAIL that names where it stopped, and the next scenarios still run. `ONLY=K1,K4` and `THEMES=light` narrow a run. |
 
 Rules that are easy to break:
 
 - **The state is derived, never stored.** `done_at` set → done; otherwise `started_at` set → in
   progress; otherwise to do. `tasks_list` returns it as `state`. A state column could say "done" with no
   who or when.
-- **"בוצעה" is final; "בטיפול" can be undone.**
-  - There is no DELETE and no reopen.
-  - "✓ בוצע" asks to confirm *inside the button* for 4 seconds; the second click commits.
-  - "לטיפול" is one click. "החזרה לביצוע" undoes it and clears the `started_*` columns.
-  - V straight from "to do" is allowed.
+- ⚠️ **One list of open tasks, and ⏳ / V / X beside every one** (12/10/2026). The owner's choices: a mark
+  on the task (not the two sections of 11/10), X = **delete completely** (not "cancelled"), and V and X
+  "רק sherut, כולם רואים".
+  - The open list keeps the SQL order (oldest first). In progress is a row property: "⏳" before the
+    text, and the ⏳ button is pressed (`aria-pressed`, `is-on`). The state word is now "בתהליך" (her
+    word), and so are the history steps: "בתהליך" / "הוסר 'בתהליך'". The old labels were "בטיפול",
+    "הועברה לטיפול" and "הוחזרה לביצוע".
+  - **⏳** toggles: `task_start` / `task_unstart`, one click, for any staff user.
+  - **V** = `task_done`. **X** = `task_delete`. Both ask to confirm *inside the button* for 4 seconds
+    ("✓ לאשר?" / "✕ למחוק?"), and only one confirm is pending at a time. V straight from "to do" is
+    allowed.
+  - **Who sees V and X:** everyone. When `can_close` is false they are grey (`is-locked`,
+    `aria-disabled`), **not `disabled`**. A click says who can (`NO_RIGHTS` in `TasksDialog`) and sends
+    nothing. A phone has no hover, so the click is the explanation. ⚠️ That sentence names
+    sherut@ and is a second copy of the rule in `app.can_close_task`. Change them together. (Playwright
+    refuses to click an `aria-disabled` element, so K7 uses `force`.)
+  - "בוצעה" stays final: there is no reopen, and done rows have no buttons.
+- ⚠️ **X deletes completely: `task_delete`.** Until 12/10 there was no DELETE at all.
+  - The same rule as V (`app.can_close_task`, i.e. sherut@ only).
+  - **Open tasks only.** A done task is PT409, "המשימה כבר בוצעה", so a stale screen cannot erase service
+    history after someone pressed V.
+  - It deletes the `task_history` rows explicitly, in the same transaction. The FK stays without
+    `ON DELETE`, so a hand `DELETE` still fails loudly.
+  - A task that is already gone returns `false`, not an error (double click, two screens).
+  - What remains: one `audit_log` row (`task.delete`, ids only) and an `events` row (`action: 'delete'`).
+  - T17 covers it, and 8 of 8 mutations were caught.
+- **12/10/2026: the two tasks in production were deleted at the owner's request** (*"תמחק את כל המשימות
+  הקיימות"*, then "שתיהן" when shown that one was a colleague's real task). It was done by hand in
+  SQL, because `task_delete` was not deployed yet: 2 tasks, 17 history rows, and a `delete` event per
+  site. There are no `audit_log` lines for it.
 - **The history lives in `task_history`: one row per change** (`created` / `started` / `unstarted` /
   `done`).
   - The RPC that makes the change writes the row. A call that changes nothing (a second start, or
@@ -1401,14 +1428,35 @@ Rules that are easy to break:
   - Tasks created before the table existed get `created` / `done` rows built from their columns. That
     backfill is idempotent and lives in the file. Production had 0 tasks on 11/10, so it changed
     nothing there.
-- **Two people press "לטיפול" at once: the first one keeps it.** The second call returns the existing
+- **Two people press ⏳ at once: the first one keeps it.** The second call returns the existing
   stamp and does not overwrite it.
 - **Starting or returning a task that is already done fails with PT409, "המשימה כבר בוצעה".** The dialog
   shows the message and reloads. ⚠️ This message has its own state (`actError`). The first version put
   it in `loadError`, and the reload that follows cleared it before anyone could read it (measured in
   the browser).
-- **Each task has a kind, chosen when it is added, with no default.** The choice stays selected for the
-  next task in the same dialog.
+- ⚠️ **There is no kind any more** (owner, 12/10/2026, pointing at "קשרי לקוחות / טכני" in the add
+  form: *"תעיף את זה"*). Until then each task had a kind, chosen with no default.
+  - A new task is saved with `kind = NULL`. The row no longer shows a kind tag. The input and "הוספה"
+    share one row.
+  - **The column, the CHECK and `p_kind` stay.** A browser still on the old bundle keeps sending a
+    kind, and that still works. A kind that is sent must still be known: `''` and `'sales'` are refused.
+  - `ALTER TABLE tasks ALTER COLUMN kind DROP NOT NULL` is in the file because production skips the
+    `CREATE TABLE`. T16 puts `NOT NULL` back first and re-applies the file. Without that, the test
+    would run on a table built fresh and never exercise the `ALTER`.
+  - ⚠️ **`addTask` sends `p_kind: null` explicitly.** `task_add` has no default for `p_kind`. PostgREST
+    picks a function by the keys in the body, so a missing key is a different signature: 404
+    (PGRST202) on every add. `undefined` disappears in `JSON.stringify`.
+    `tests/tasks-direct.test.js` checks the body as it goes out.
+  - ⚠️ **`countsBySite` used to skip a row with no kind**, so every new task would have been missing
+    from the card count. It now counts every row of the site, and the result is `{ open }` only.
+    ⚠️ **`task_counts` returns `kind = 'none'` for a task with no kind, not NULL.** The old bundle's
+    `countsBySite` skips a row with an empty kind. A wall screen, an open tab or an installed PWA keeps the
+    old bundle until it reloads, because `sw.js` forces nothing. With NULL, every new task would be
+    missing from those cards. The pre-deploy review found this (three of four reviewers, independently).
+    T16 checks the row against the old logic too.
+  - `tasks_list` gives a NULL kind its own `can_close_task(NULL)`, not the technical one. The rule
+    ignores the kind today, but a per-kind rule must not quietly treat "no kind" as "technical".
+  - Mutations: 6 of 6 in SQL.
 - **All the history is visible.**
   - Every row shows its full timeline: "נפתחה … ע״י … ← הועברה לטיפול … ← בוצעה …".
   - "בוצעו" stays collapsed (owner, 06/10: *"תיזרק למקום שלא מציג אותה, למטה"*).
@@ -1423,6 +1471,12 @@ Rules that are easy to break:
 - **The button is on every card, collapsed ones included.** Not in `mini`, which is dormant.
   - On a collapsed card it is a quiet 20px pill, "משימות". When anything is open (to do + in progress),
     the count appears in accent.
+  - ⚠️ **When anything is open, the frame is the full accent** (owner, 12/10/2026: *"אם יש משימות
+    בהמתנה אז שהמסגרת של המשימות תהיה יותר כהה"*). This applies to the pill and to the expanded
+    card's button (`has-open` on both). Before, the frame was 45% accent mixed into grey and could
+    barely be told apart. Measured against the card: light 9.5:1 (open) vs 1.35:1 (none), and dark
+    3.7:1 vs 1.3:1. On the expanded button only the frame changes, not the text.
+    `e2e/probe-tkframe.mjs` (18) checks it in the harness.
   - Its hit area is 32px (44px on touch), made with `::before` like the lamps.
   - It sits with the site code in `.card-row-end`, at the end of the status row.
   - ⚠️ **Measured on 78 compact cards at 1371px.** Without the inspector lamps it fits: 57 + 107 of
@@ -1444,7 +1498,7 @@ Rules that are easy to break:
     - `task_done` refuses with 42501, "אין הרשאה לסמן משימה זו כבוצעה".
     - A repeated `task_done` on a task that is already done returns the existing stamp to anyone, not
       an error. It writes nothing.
-  - "לטיפול" and "החזרה לביצוע" stay open to any staff user, because neither one closes a task.
+  - ⏳ (start / un-start) stays open to any staff user, because it does not close a task. Since 12/10 the same rule also governs X (`task_delete`).
   - ⚠️ **The address is written in the SQL.** Renaming or deleting that account leaves nobody able to
     close tasks, silently. The other buttons keep working.
   - Tests:
@@ -1455,12 +1509,12 @@ Rules that are easy to break:
 - **Closed tables** (`tasks` and `task_history`): RLS on, no policies, no grants, like compliance.
   - Every read and write is a `SECURITY DEFINER` RPC behind `app.require_staff()`.
   - The name recorded is the verified display name, never typed.
-  - `audit_log` gets ids only (`task.add` / `.start` / `.unstart` / `.done`), because every active user
+  - `audit_log` gets ids only (`task.add` / `.start` / `.unstart` / `.done` / `.delete`), because every active user
     can read it.
 - **`tasks_list` returns a single jsonb value.** PostgREST silently cuts responses at 1,000 rows, and
   done tasks only accumulate. Declared in `check-row-cap`.
 - **Live updates.**
-  - Every write publishes `events.type='tasks'`, with action `add` / `start` / `unstart` / `done`.
+  - Every write publishes `events.type='tasks'`, with action `add` / `start` / `unstart` / `done` / `delete`.
   - `App` refreshes the counts and any open dialog on that event.
   - `sitePatch.needsRefetch` ignores it, so a task never reloads the site list.
   - Counts also refresh every 5 minutes. A failed fetch keeps the last counts rather than hiding the

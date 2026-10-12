@@ -93,11 +93,12 @@ const BOUNDED = {
 
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
-  task_counts: "שורה לסוג (2) + שורה לאתר עם משימה פתוחה",
+  task_counts: "שורה לאתר×סוג (3: שני הסוגים ו-'none' — בלי סוג מ-12/10) — רק אתרים עם משימה פתוחה",
   task_add: "כתיבה",
   task_start: "כתיבה",
   task_unstart: "כתיבה",
   task_done: "כתיבה",
+  task_delete: "כתיבה",
   inspection_defect_save: "כתיבה",
   inspection_defect_delete: "כתיבה",
   inspection_defect_photo_add: "כתיבה",
@@ -170,7 +171,9 @@ function scan() {
     // ⚠️ complianceDirect.js קורא דרך עטיפה עם זמן קצוב (rpcT / rpcRaw /
     // outboxCall) ולא `supabase.rpc("...")` ישירות. בלי השורה הזו 33 קריאות
     // היו נעלמות מהשער — ירוק בלי לסרוק אותן, בדיוק הכשל שהשער נבנה נגדו.
-    for (const m of src.matchAll(/\b(?:rpcT|rpcRaw|outboxCall)\(\s*["'](\w+)["']/g)) rpcs.add(m[1]);
+    // ⚠️ ו-tasksDirect.js (וכל שירות עם עטיפה בשם rpc) קורא `rpc("task_add", …)` — עד 12/10/2026 אף קריאת
+    // משימות לא נסרקה כאן, וההכרזות שלהן עמדו בלי שום דבר שמחייב אותן. task_delete נוסף בלי הכרזה ולא נתפס.
+    for (const m of src.matchAll(/\b(?:rpcT|rpcRaw|outboxCall|rpc)\(\s*["'](\w+)["']/g)) rpcs.add(m[1]);
     for (const m of src.matchAll(/supabase\s*\.\s*from\(\s*["'](\w+)["']/g)) tables.add(m[1]);
   }
   return { rpcs, tables };

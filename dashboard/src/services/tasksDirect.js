@@ -1,12 +1,9 @@
-// services/tasksDirect.js — משימות של אתר (לביצוע → בטיפול → בוצעה; קשרי לקוחות / טכני), ישירות ל-PostgREST.
+// services/tasksDirect.js — משימות של אתר (לביצוע → בטיפול → בוצעה), ישירות ל-PostgREST.
 //
 // כל הגישה דרך RPC (db/tasks.postgres.sql) — הטבלה סגורה. אין זרוע שרת: התכונה
 // נולדה אחרי ש-master יצא משימוש, ובמצב שרת הכפתורים מוסתרים (App, SiteCard).
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { countsBySite } from "../utils/tasks";
-
-export const TASK_KINDS = ["customer", "technical"];
-export const TASK_KIND_LABEL = { customer: "קשרי לקוחות", technical: "טכני" };
 
 const HEBREW = /[֐-׿]/;
 const NET_RE = /failed to fetch|networkerror|network request failed|load failed|ERR_INTERNET|ERR_NETWORK|abort/i;
@@ -54,9 +51,13 @@ export async function fetchTaskCounts() {
   return { bySite: countsBySite(await rpc("task_counts", {})) };
 }
 
-/** ⚠️ clientId נוצר אצל הקורא ונשלח שוב בניסיון חוזר — כך שליחה כפולה היא משימה אחת. */
-export async function addTask({ kind, body, siteCode, clientId }) {
-  return Number(await rpc("task_add", { p_kind: kind, p_body: body, p_site_code: siteCode, p_client_id: clientId }));
+/**
+ * ⚠️ clientId נוצר אצל הקורא ונשלח שוב בניסיון חוזר — כך שליחה כפולה היא משימה אחת.
+ * ⚠️ בלי סוג (12/10/2026 — הבחירה הוסרה): p_kind נשלח **null במפורש**. ל-task_add אין ברירת מחדל
+ * ל-p_kind, ופרמטר שחסר בגוף הבקשה הוא חתימה אחרת בעיני PostgREST (404, PGRST202).
+ */
+export async function addTask({ kind = null, body, siteCode, clientId }) {
+  return Number(await rpc("task_add", { p_kind: kind ?? null, p_body: body, p_site_code: siteCode, p_client_id: clientId }));
 }
 
 /** לביצוע → בטיפול (מי ומתי). משימה שכבר בטיפול — נשארת אצל מי שלקח אותה. */
@@ -71,4 +72,12 @@ export async function unstartTask(id) {
 
 export async function markTaskDone(id) {
   return rpc("task_done", { p_id: id });
+}
+
+/**
+ * "X" — מחיקה לגמרי: המשימה וכל ההיסטוריה שלה (12/10/2026). רק מי שרשאי לסמן בוצעה (can_close).
+ * מחזיר false כשהמשימה כבר איננה (לחיצה כפולה, מסך אחר) — לא שגיאה. משימה שבוצעה — PT409.
+ */
+export async function deleteTask(id) {
+  return rpc("task_delete", { p_id: id });
 }

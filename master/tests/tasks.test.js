@@ -48,6 +48,7 @@ const list = async (uid, kind = null, site = null, limit = 200) =>
 const done = async (uid, id) => (await one(uid, `SELECT public.task_done($1) AS d`, [id])).d;
 const start = async (uid, id) => (await one(uid, `SELECT public.task_start($1) AS s`, [id])).s;
 const unstart = async (uid, id) => one(uid, `SELECT public.task_unstart($1)`, [id]);
+const del = async (uid, id) => (await one(uid, `SELECT public.task_delete($1) AS d`, [id])).d;
 const findIn = (j, id) => [...j.open, ...j.done].find((t) => Number(t.id) === id);
 const counts = async (uid) => rpc(uid, `SELECT kind, site_id, open FROM public.task_counts() ORDER BY kind NULLS LAST, site_id`);
 
@@ -76,8 +77,8 @@ test("T1 · anon: אף RPC של משימות אינו ניתן להרצה, וה�
   const fns = await sup(`SELECT p.oid::regprocedure::text sig, has_function_privilege('anon', p.oid, 'EXECUTE') anon
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND (p.proname LIKE 'task\\_%' OR p.proname = 'tasks_list')`);
-  // tasks_list, task_add, task_counts, task_start, task_unstart, task_done
-  assert.equal(fns.length, 6, JSON.stringify(fns));
+  // tasks_list, task_add, task_counts, task_start, task_unstart, task_done, task_delete
+  assert.equal(fns.length, 7, JSON.stringify(fns));
   assert.deepEqual(fns.filter((f) => f.anon).map((f) => f.sig), []);
   await fails(h.as("anon", null, (tx) => tx.query(`SELECT public.tasks_list(NULL, NULL)`)), "42501", /permission denied/);
   // גם מנהל אינו קורא את הטבלאות ישירות — רק דרך ה-RPC (ההיסטוריה כמו המשימות)
@@ -102,6 +103,7 @@ test("T2 · סוכן, מושבת וזהות הקליטה: כל RPC נדחה ב-4
     await fails(start(uid, 1), "42501");
     await fails(unstart(uid, 1), "42501");
     await fails(done(uid, 1), "42501");
+    await fails(del(uid, 1), "42501");
     assert.deepEqual(await counts(uid), [], "הכפתורים נטענים עם רשימת האתרים — שגיאה כאן הייתה מפילה אותה");
   }
   assert.equal((await sup(`SELECT count(*)::int n FROM tasks`))[0].n, 0);
@@ -294,7 +296,7 @@ test("T12 · הקובץ אידמפוטנטי — החלה שנייה לא נכש
   assert.equal((await sup(`SELECT count(*)::int n FROM tasks`))[0].n, n0);
   assert.equal(await hist(), h1, "ההשלמה של ההיסטוריה לא מכפילה בהחלה חוזרת");
   const over = await sup(`SELECT proname, count(*)::int n FROM pg_proc
-                           WHERE proname IN ('tasks_list','task_add','task_done','task_counts','task_start','task_unstart')
+                           WHERE proname IN ('tasks_list','task_add','task_done','task_counts','task_start','task_unstart','task_delete')
                            GROUP BY proname HAVING count(*) > 1`);
   assert.deepEqual(over, [], "שם אחד = פונקציה אחת — PostgREST מסרב לשתי חתימות");
   const sig = await sup(`SELECT pg_get_function_identity_arguments(oid) a FROM pg_proc WHERE proname = 'tasks_list'`);
@@ -395,4 +397,87 @@ test("T15 · אילוצים: בטיפול בלי מי — לא; פעולה לא 
   await fails(sup(`INSERT INTO task_history (task_id, action, actor, at) VALUES ($1, 'deleted', 'x', '2026-10-11T08:00:00.000Z')`, [id]), "23514");
   // ⚠️ אין DELETE ב-RPC; ומחיקה ידנית נכשלת בקול במקום להעלים את ההיסטוריה איתה
   await fails(sup(`DELETE FROM tasks WHERE id = $1`, [id]), "23503");
+});
+
+test("T16 · בלי סוג (12/10/2026): NULL נשמר, נספר בכפתור, נסגר כרגיל; סוג לא מוכר — עדיין נדחה", { skip }, async () => {
+  // ⚠️ כמו בייצור: הטבלה כבר קיימת עם kind NOT NULL, וה-CREATE TABLE מדולג — רק ה-ALTER בקובץ
+  // משחרר אותה. בלי השחזור הזה הבדיקה רצה על טבלה שנבנתה מאפס ולא בודקת את ה-ALTER בכלל.
+  const fs = require("node:fs"), path = require("node:path");
+  await sup(`ALTER TABLE tasks ALTER COLUMN kind SET NOT NULL`);
+  await h.pg.exec(fs.readFileSync(path.join(__dirname, "..", "db", "tasks.postgres.sql"), "utf8"));
+  const s = await newSite();
+  const id = await add(OPR, null, "משימה בלי סוג", s.code);
+  let t = findIn(await list(MGR, null, s.code), id);
+  assert.deepEqual({ kind: t.kind, state: t.state, by: t.created_by }, { kind: null, state: "todo", by: "בקר משימות" });
+  // ⚠️ הכפתור בכרטיס סופר גם שורה בלי סוג — והיא מגיעה עם 'none', לא NULL: countsBySite של החבילה
+  // הקודמת (`if (!r.kind) continue`) מדלג על סוג ריק, ומסך שלא רוענן היה מראה "משימות" בלי מספר
+  const c = (await counts(MGR)).filter((r) => r.site_id === s.id);
+  assert.deepEqual(c.map((r) => [r.kind, r.open]), [["none", 1]]);
+  const oldCountsBySite = (rows) => rows.reduce((m, r) => (r.site_id == null || !r.kind ? m : { ...m, [r.site_id]: (m[r.site_id] || 0) + r.open }), {});
+  assert.equal(oldCountsBySite(await counts(MGR))[s.id], 1, "החבילה הקודמת סופרת אותה");
+  // can_close לשורה בלי סוג — לפי אותו כלל (רק sherut)
+  assert.equal(findIn(await list(MGR, null, s.code), id).can_close, false);
+  assert.equal(findIn(await list(SRV, null, s.code), id).can_close, true);
+  await start(OPR, id);
+  await fails(done(MGR, id), "42501", /אין הרשאה/);
+  assert.ok(await done(SRV, id));
+  t = findIn(await list(MGR, null, s.code), id);
+  assert.deepEqual(t.history.map((x) => x.action), ["created", "started", "done"]);
+  // סינון לפי סוג אינו מחזיר משימה בלי סוג; בלי סינון — כן
+  assert.ok(!(await list(MGR, "technical", s.code)).done.some((x) => Number(x.id) === id));
+  assert.ok((await list(MGR, null, s.code)).done.some((x) => Number(x.id) === id));
+  // חבילה ישנה שעוד שולחת סוג — עובדת; סוג לא מוכר או ריק — נדחה
+  const old = await add(OPR, "customer", "מחבילה ישנה", s.code);
+  assert.equal(findIn(await list(MGR, null, s.code), old).kind, "customer");
+  await fails(add(OPR, "", "סוג ריק", s.code), "23514", /סוג משימה/);
+  await fails(add(OPR, "sales", "סוג אחר", s.code), "23514", /סוג משימה/);
+  // והעמודה באמת מקבלת NULL — גם מתחת ל-RPC
+  const nn = await sup(`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'kind'`);
+  assert.equal(nn[0].is_nullable, "YES");
+});
+
+test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסטוריה; רק sherut; משימה שבוצעה — לא; פעמיים — false", { skip }, async () => {
+  const s = await newSite();
+  const id = await add(OPR, null, "למחוק אותי", s.code);
+  await start(OPR2, id);
+  await unstart(MGR, id);
+  const keep = await add(OPR, null, "להשאיר", s.code);
+  const hist = async (tid) => (await sup(`SELECT count(*)::int n FROM task_history WHERE task_id = $1`, [tid]))[0].n;
+  assert.equal(await hist(id), 3);
+  // כל מי שאינו sherut — גם מנהל, גם מי ששמו המוצג הוא המייל — לא מוחק, ושום דבר לא זז
+  for (const uid of [OPR, OPR2, MGR, IMP, XSR]) await fails(del(uid, id), "42501", /אין הרשאה למחוק/);
+  assert.equal(await hist(id), 3);
+  assert.ok(findIn(await list(MGR, null, s.code), id), "עדיין קיימת");
+  const ev0 = Number((await sup(`SELECT COALESCE(max(id), 0) m FROM events`))[0].m);
+  // sherut מוחק: המשימה וכל שורות ההיסטוריה שלה
+  assert.equal(await del(SRV, id), true);
+  assert.equal((await sup(`SELECT count(*)::int n FROM tasks WHERE id = $1`, [id]))[0].n, 0);
+  assert.equal(await hist(id), 0, "ההיסטוריה נמחקה איתה");
+  const j = await list(MGR, null, s.code);
+  assert.ok(!findIn(j, id), "לא ברשימה — לא בפתוחות ולא בבוצעו");
+  assert.ok(findIn(j, keep), "משימה אחרת לא נגעה");
+  assert.equal(await hist(keep), 1);
+  // הכפתור בכרטיס: נשארה אחת
+  assert.deepEqual((await counts(MGR)).filter((r) => r.site_id === s.id).map((r) => r.open), [1]);
+  // אירוע לרענון המסכים, ויומן — מזהה בלבד, בלי הגוף
+  const ev = await sup(`SELECT site_code, payload FROM events WHERE id > $1 AND type = 'tasks' ORDER BY id`, [ev0]);
+  assert.deepEqual(ev.map((e) => [e.site_code, e.payload.action]), [[s.code, "delete"]]);
+  const au = await sup(`SELECT action, actor_name, details::text d FROM audit_log WHERE action = 'task.delete' AND target_id = $1`, [String(id)]);
+  assert.equal(au.length, 1);
+  assert.equal(au[0].actor_name, "שירות");
+  assert.ok(!au[0].d.includes("למחוק אותי"), "audit_log קריא לכל משתמש פעיל — בלי גוף המשימה");
+  // פעם שנייה (לחיצה כפולה, מסך אחר) — false, לא שגיאה, ובלי אירוע נוסף
+  assert.equal(await del(SRV, id), false);
+  assert.equal(await del(SRV, 999999), false);
+  assert.equal((await sup(`SELECT count(*)::int n FROM events WHERE id > $1 AND type = 'tasks'`, [ev0]))[0].n, 1);
+  // ⚠️ משימה שבוצעה — "בוצעה" סופי; גם sherut לא מוחק אותה (מסך שהתיישן)
+  const d = await add(OPR, null, "בוצעה כבר", s.code);
+  await done(SRV, d);
+  await fails(del(SRV, d), "PT409", /כבר בוצעה/);
+  assert.equal(await hist(d), 2);
+  // מחיקה ידנית עדיין נכשלת בקול (ה-FK בלי ON DELETE) — המחיקה היחידה היא דרך task_delete
+  await fails(sup(`DELETE FROM tasks WHERE id = $1`, [keep]), "23503");
+  // סוכן ואנונימי — לא (T1/T2 בודקים הרשאה; כאן — שהפונקציה לא פתוחה ל-anon)
+  const anon = await sup(`SELECT has_function_privilege('anon', 'public.task_delete(bigint)', 'EXECUTE') a`);
+  assert.equal(anon[0].a, false);
 });
