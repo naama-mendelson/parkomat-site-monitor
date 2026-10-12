@@ -25,7 +25,7 @@ export const TASK_BADGE = { todo: "לביצוע", in_progress: "בתהליך", d
 
 /**
  * שם להצגה, בלי "@parkomat.co.il". ⚠️ כל המשתמשים בדומיין הזה (נאכף ב-SQL, app.allowed_email_domains),
- * כך שהקיצור אינו מאבד מידע — ו-"benr@parkomat.co.il" שלוש פעמים בשורה היה עיקר הרעש (12/10/2026).
+ * כך שהקיצור אינו מאבד מידע — ו-"dana@parkomat.co.il" שלוש פעמים בשורה היה עיקר הרעש (12/10/2026).
  * שם מלא, כשיוגדר, עובר כמו שהוא.
  */
 export function shortName(name) {
