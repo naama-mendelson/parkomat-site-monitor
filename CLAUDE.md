@@ -182,6 +182,21 @@ under two names and every historical query would miss the newer half. `check-dir
 proves it end to end — impersonating the agent through the `app.user_id` GUC, inside a
 transaction that rolls back — and four mutations fail it.
 
+⚠️ **Since 12/10/2026 a "no change" state is no longer recorded** (owner: *"למה SUPABASE שומר הודעות
+שאין בהם שינוי!! חבל על המקום"*).
+- **Why it piled up:** in the direct path almost every car operation produced one row. In a batch the
+  operation comes before the state message and already sets `operating` (`ingest_operation` on
+  `start`), so the state right after it is "no change". Measured: 8,905 of 10,432 rows (85%), about
+  5,000 a week.
+- **Real rejections are still recorded:** late, suppressed during maintenance, LWT late, duplicate
+  operation.
+- `ingest_batch` returns `no_change` to the agent as before. Only the row is gone.
+- The existing rows were deleted the same day, after checking that none had arrived since the apply.
+- `ingest-drops-once.test.js` checks both directions, and both mutations were caught. The
+  outer-layer example is now `state_suppressed`.
+- `check-direct-drops` asserts that the row is **not** written. It now reads only rows created inside
+  its own transaction. "The last 5 rows" caught a real 2438 row from a minute before the apply.
+
 ### Disconnect detection — decided, and it is a heartbeat
 
 ⚠️ **This was the blocker on switching HiveMQ off, and it is now settled.** The record of

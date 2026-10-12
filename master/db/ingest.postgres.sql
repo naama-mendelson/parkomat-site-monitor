@@ -1136,7 +1136,14 @@ BEGIN
       -- הסיבה נשמרת בשם `state_<outcome>` כדי ש-`state_no_change` ייצא
       -- **זהה** לשם שהמסלול הקיים כותב — אחרת אותה תופעה תיספר פעמיים
       -- תחת שני שמות, וכל שאילתה היסטורית תפספס את החצי החדש.
-      IF NOT v_res.applied AND NOT v_res.recorded THEN
+      --
+      -- ⚠️ **ו"ללא שינוי" כבר אינו נרשם** (בעלת המוצר, 12/10/2026: "למה SUPABASE שומר הודעות
+      -- שאין בהם שינוי!! חבל על המקום"). זו אינה דחייה — המצב כבר היה בדיוק זה. במסלול הישיר
+      -- היא נולדת כמעט בכל תפעול: באצווה התפעול קודם להודעת המצב וכבר קובע `operating`
+      -- (ingest_operation), ואז הודעת המצב שאחריו "ללא שינוי". נמדד: 8,903 מתוך 10,430 שורות
+      -- בטבלה (85%), ~5,000 בשבוע. דחיות אמיתיות — מאוחרת, תקלה בתחזוקה, LWT מאוחר — עדיין נרשמות.
+      -- IS DISTINCT FROM ולא <>: outcome NULL (לא אמור לקרות) עדיין נרשם, ולא נבלע.
+      IF NOT v_res.applied AND NOT v_res.recorded AND v_res.outcome IS DISTINCT FROM 'no_change' THEN
         PERFORM app.record_ingest_drop(v_site, 'state',
           'state_' || v_res.outcome,
           format('outcome=%s · status=%s · occurredAt=%s',

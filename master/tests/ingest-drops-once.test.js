@@ -55,12 +55,32 @@ test("⚠️ הודעה מאוחרת נרשמת פעם אחת — בשם המפ�
 });
 
 test("דחייה שרק השכבה החיצונית מכירה — עדיין נרשמת", { skip }, async () => {
-  // 'ללא שינוי' אינו נרשם בפנים, ולכן הדגל לא אמור לבלוע אותו.
+  // 'מושתקת' (תקלה בזמן תחזוקה) אינה נרשמת ב-ingest_drops בפנים — רק ב-suppressed_faults —
+  // ולכן הדגל לא אמור לבלוע אותה, והשכבה החיצונית רושמת אותה פעם אחת.
   const s = await site();
-  await batch([{ kind: "state", status: "ready", occurred_at: iso() }]);
+  await h.pg.query(`UPDATE sites SET status = 'maintenance' WHERE id = $1`, [s.id]);
+  await batch([{ kind: "state", status: "error", occurred_at: iso(), fault_text: "תקלה בזמן תחזוקה" }]);
   const rows = await drops(s.code);
-  assert.deepEqual(rows.map((r) => r.reason), ["state_no_change"], JSON.stringify(rows));
+  assert.deepEqual(rows.map((r) => r.reason), ["state_suppressed"], JSON.stringify(rows));
   assert.equal(rows[0].n, 1);
+});
+
+test("⚠️ 'ללא שינוי' אינו נרשם בכלל (12/10/2026: 'חבל על המקום')", { skip }, async () => {
+  const s = await site();
+  // אותו מצב שכבר קיים — התוצאה עדיין חוזרת לסוכן, אבל בטבלה לא נשאר כלום
+  const r = await batch([{ kind: "state", status: "ready", occurred_at: iso() }]);
+  assert.equal(r.rows[0].outcome, "no_change");
+  assert.deepEqual(await drops(s.code), []);
+  // ⚠️ והמקרה שבשטח: תפעול ואחריו מצב באותה אצווה — התפעול כבר קבע 'operating', והמצב "ללא שינוי"
+  const t = Date.now();
+  const r2 = await batch([
+    { kind: "operation", start_end: "start", entry_exit: "entry", card: "77", state: "operating",
+      occurred_at: iso(t), reported_at: iso(t), cycle: 100 },
+    { kind: "state", status: "operating", occurred_at: iso(t) },
+  ]);
+  assert.deepEqual(r2.rows.map((x) => x.outcome), ["applied", "no_change"]);
+  assert.deepEqual(await drops(s.code), [], "תפעול רגיל לא משאיר שורת 'נדחה'");
+  assert.equal((await h.pg.query(`SELECT status FROM sites WHERE id = $1`, [s.id])).rows[0].status, "operating");
 });
 
 test("הודעה תקינה אינה נרשמת כדחייה", { skip }, async () => {

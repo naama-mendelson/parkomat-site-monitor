@@ -56,6 +56,9 @@ async function main() {
     const before = await countDirect(client);
 
     await client.query("BEGIN");
+    // ⚠️ רק שורות שנוצרו **בתוך** הבדיקה: אתרים אמיתיים כותבים לטבלה כל הזמן, ו"5 האחרונות" תפסו
+    // ב-12/10 שורה אמיתית של 2438 מדקה לפני החלת השינוי — ודיווחו עליה כאילו הבדיקה יצרה אותה.
+    const { rows: [{ m: fromId }] } = await client.query("SELECT COALESCE(max(id), 0) AS m FROM ingest_drops");
     await client.query("SELECT set_config('app.user_id', $1, true)", [agent.uid]);
 
     // ------------------------------------------------------------
@@ -94,30 +97,24 @@ async function main() {
     // ------------------------------------------------------------
     const { rows: drops } = await client.query(
       `SELECT reason, topic, kind, detail FROM ingest_drops
-        WHERE topic LIKE 'direct/%' ORDER BY id DESC LIMIT 5`);
+        WHERE topic LIKE 'direct/%' AND id > $1 ORDER BY id DESC`, [fromId]);
 
     const noChange = drops.find((d) => d.reason === "state_no_change");
     const dup = drops.find((d) => d.reason === "operation_duplicate");
 
-    check("מצב שנדחה נרשם", !!noChange);
+    // ⚠️ **"ללא שינוי" כבר אינו נרשם** (בעלת המוצר, 12/10/2026: "חבל על המקום") — זו אינה
+    // דחייה, והיא נולדה כמעט בכל תפעול (85% מהטבלה). התוצאה עדיין חוזרת לסוכן (בדיקה 1).
+    check("⚠️ מצב ללא שינוי — לא נרשם", !noChange, noChange ? `נרשם: ${noChange.detail}` : "");
     check("תפעול כפול נרשם", !!dup);
-
-    // ⚠️ השם חייב להיות **זהה** לזה שהמסלול הקיים כותב, אחרת אותה תופעה
-    // נספרת תחת שני שמות וכל שאילתה היסטורית מפספסת את החצי החדש.
-    const { rows: [mqttName] } = await client.query(
-      "SELECT count(*)::int AS n FROM ingest_drops WHERE reason='state_no_change' AND topic LIKE 'sites/%'");
-    check("⚠️ אותו שם סיבה כמו במסלול MQTT", Number(mqttName.n) > 0,
-      `${mqttName.n} שורות היסטוריות באותו שם`);
 
     // ⚠️ ה-topic מסומן direct/ — מי שיחקור בעוד חצי שנה חייב לדעת מאיזה
     // מסלול הגיעה השורה, אחרת שתי מערכות שונות נראות כאחת.
-    check("ה-topic מסמן את המסלול", noChange?.topic === `direct/${SITE}/state`,
-      noChange?.topic);
+    check("ה-topic מסמן את המסלול", dup?.topic === `direct/${SITE}/operation`, dup?.topic);
 
     // ⚠️ בלי הפירוט השורה אומרת "נדחה" ולא אומרת למה.
-    check("הפירוט נושא את הסיבה והזמן",
-      !!noChange?.detail && noChange.detail.includes("outcome=") && noChange.detail.includes("occurredAt="),
-      noChange?.detail);
+    check("הפירוט נושא את התפעול והזמן",
+      !!dup?.detail && dup.detail.includes("card=") && dup.detail.includes("occurredAt="),
+      dup?.detail);
 
     await client.query("ROLLBACK");
 
