@@ -1496,8 +1496,22 @@ Rules that are easy to break:
   - `tasks_list` gives a NULL kind its own `can_close_task(NULL)`, not the technical one. The rule
     ignores the kind today, but a per-kind rule must not quietly treat "no kind" as "technical".
   - Mutations: 6 of 6 in SQL.
-- **All the history is visible.**
-  - Every row shows its full timeline: "נפתחה … ע״י … ← הועברה לטיפול … ← בוצעה …".
+- ⚠️ **A row shows the state now and who set it, not the timeline** (owner, 12/10/2026, pointing at
+  a row with five steps: *"לא רוצה לראות את הלוג אלא מה המצב עכשיו. ומי עשה את זה. שתיהיה מעוצב יותר
+  ברור"*).
+  - The row shows a state badge (`.tk-badge`: לביצוע / בתהליך / בוצעה, tinted per state), then who
+    set that state and when. After it, quieter, who opened the task and when.
+  - Who and when come from the **columns** (`created_* / started_* / done_*`), via `taskNow` in
+    `utils/tasks.js`. When "בתהליך" is removed, `started_*` is cleared, so the row goes back to
+    "נפתחה ע״י" the opener.
+  - Names drop "@parkomat.co.il" (`shortName`). Every user is on that domain, which SQL enforces, so
+    nothing is lost.
+  - The separators "·" are text, not CSS `::before`. `innerText` and screen readers do not see
+    generated content.
+  - The badge uses `rem`: inheriting from the 0.8em line made it about 10px.
+- **All the history is still kept and reachable.** It is in `task_history`, and shown on hover over
+  the meta line (`title` = "היסטוריה: …"). The previous behaviour, kept for the record:
+  - Every row showed its full timeline: "נפתחה … ע״י … ← הועברה לטיפול … ← בוצעה …".
   - "בוצעו" stays collapsed (owner, 06/10: *"תיזרק למקום שלא מציג אותה, למטה"*).
   - When opened it shows the newest 200. "הצגת כולן" fetches the rest with `p_done_limit => NULL`.
   - The count always shows the full total.

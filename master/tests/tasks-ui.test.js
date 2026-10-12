@@ -6,8 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  taskState, splitOpen, historySteps, historyText, openSummary, countsBySite,
-  TASK_STATES, TASK_STATE_LABEL, TASK_STEP_LABEL,
+  taskState, splitOpen, historySteps, historyText, openSummary, countsBySite, taskNow, shortName,
+  TASK_STATES, TASK_STATE_LABEL, TASK_STEP_LABEL, TASK_BADGE,
 } from "../../dashboard/src/utils/tasks.js";
 
 const task = (over = {}) => ({
@@ -89,4 +89,41 @@ test("countsBySite: כל הפתוחות של האתר על הכפתור — גם
   assert.deepEqual(countsBySite(rows), { 7: { open: 8 }, 11: { open: 4 }, 12: { open: 3 } });
   assert.deepEqual(countsBySite(null), {});
   assert.deepEqual(countsBySite([{ kind: null, site_id: 1, open: "5" }]), { 1: { open: 5 } });
+});
+
+test("shortName: בלי @parkomat.co.il (כל המשתמשים בדומיין), שם מלא — כמו שהוא", () => {
+  assert.equal(shortName("benr@parkomat.co.il"), "benr");
+  assert.equal(shortName("NaamaM@Parkomat.co.il"), "NaamaM");
+  assert.equal(shortName("דנה כהן"), "דנה כהן");
+  assert.equal(shortName("x@gmail.com"), "x@gmail.com", "דומיין אחר — לא נוגעים");
+  assert.equal(shortName(null), "");
+});
+
+test("taskNow: המצב עכשיו ומי קבע אותו — לא כל השרשרת (12/10/2026)", () => {
+  const base = { created_by: "benr@parkomat.co.il", created_at: "2026-10-12T07:14:00.000Z" };
+  // לביצוע — מי פתח
+  let n = taskNow({ ...base, state: "todo" });
+  assert.deepEqual({ s: n.state, l: n.label, by: n.by, when: n.when }, { s: "todo", l: "לביצוע", by: "benr", when: "12/10 10:14" });
+  assert.deepEqual(n.opened, { by: "benr", when: "12/10 10:14" });
+  // בתהליך — מי סימן ומתי (לא מי פתח)
+  n = taskNow({ ...base, state: "in_progress", started_by: "naamam@parkomat.co.il", started_at: "2026-10-12T07:20:00.000Z" });
+  assert.deepEqual({ l: n.label, by: n.by, when: n.when, opened: n.opened.by }, { l: "בתהליך", by: "naamam", when: "12/10 10:20", opened: "benr" });
+  // בוצעה — מי סימן בוצע
+  n = taskNow({ ...base, state: "done", started_by: "naamam@parkomat.co.il", started_at: "2026-10-12T07:20:00.000Z",
+    done_by: "sherut@parkomat.co.il", done_at: "2026-10-12T08:00:00.000Z" });
+  assert.deepEqual({ l: n.label, by: n.by, when: n.when }, { l: "בוצעה", by: "sherut", when: "12/10 11:00" });
+  // ⚠️ "בתהליך" שהוסר: started_* מתאפסות — חוזרים ל"נפתחה ע״י", לא למי שהסיר
+  n = taskNow({ ...base, state: "todo", started_by: null, started_at: null });
+  assert.equal(n.by, "benr");
+  // המצב — מ-state של ה-SQL, ובלעדיו מהעמודות
+  assert.equal(taskNow({ ...base, done_at: "2026-10-12T08:00:00.000Z", done_by: "x" }).state, "done");
+  assert.deepEqual(TASK_BADGE, { todo: "לביצוע", in_progress: "בתהליך", done: "בוצעה" });
+});
+
+test("historyText (הריחוף) — גם בו השמות מקוצרים", () => {
+  const t = { history: [
+    { action: "created", by: "benr@parkomat.co.il", at: "2026-10-12T07:14:00.000Z" },
+    { action: "started", by: "naamam@parkomat.co.il", at: "2026-10-12T07:20:00.000Z" },
+  ] };
+  assert.equal(historyText(t), "נפתחה 12/10 10:14 ע״י benr ← בתהליך 12/10 10:20 ע״י naamam");
 });

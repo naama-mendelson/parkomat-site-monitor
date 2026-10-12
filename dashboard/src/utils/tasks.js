@@ -20,6 +20,35 @@ export const TASK_STEP_LABEL = {
   done: "בוצעה",
 };
 
+/** התווית של המצב **עכשיו**, ליד משימה — ביחיד ("בוצעה"), לא "בוצעו" שבכותרת החלק. */
+export const TASK_BADGE = { todo: "לביצוע", in_progress: "בתהליך", done: "בוצעה" };
+
+/**
+ * שם להצגה, בלי "@parkomat.co.il". ⚠️ כל המשתמשים בדומיין הזה (נאכף ב-SQL, app.allowed_email_domains),
+ * כך שהקיצור אינו מאבד מידע — ו-"benr@parkomat.co.il" שלוש פעמים בשורה היה עיקר הרעש (12/10/2026).
+ * שם מלא, כשיוגדר, עובר כמו שהוא.
+ */
+export function shortName(name) {
+  return String(name ?? "").replace(/@parkomat\.co\.il$/i, "");
+}
+
+/**
+ * המצב עכשיו ומי קבע אותו — במקום כל השרשרת (בעלת המוצר, 12/10/2026: "לא רוצה לראות את הלוג אלא מה
+ * המצב עכשיו. ומי עשה את זה"). מהעמודות ולא מההיסטוריה: הן "איפה המשימה עכשיו" (started_* מתאפסות
+ * כשמסירים את "בתהליך"). `opened` — מי פתח ומתי. השרשרת המלאה נשארת ב-historyText (ריחוף).
+ * @returns {{state: string, label: string, by: string, when: string, opened: {by: string, when: string}}}
+ */
+export function taskNow(t) {
+  const state = taskState(t);
+  const [by, at] = state === "done" ? [t?.done_by, t?.done_at]
+    : state === "in_progress" ? [t?.started_by, t?.started_at]
+    : [t?.created_by, t?.created_at];
+  return {
+    state, label: TASK_BADGE[state], by: shortName(by), when: formatStampIL(at),
+    opened: { by: shortName(t?.created_by), when: formatStampIL(t?.created_at) },
+  };
+}
+
 /** המצב של משימה. ⚠️ state לא מוכר נקרא מהעמודות — לא "לביצוע" עיוור. */
 export function taskState(t) {
   if (TASK_STATES.includes(t?.state)) return t.state;
@@ -50,7 +79,7 @@ export function historySteps(t) {
   }
   return h
     .filter((s) => TASK_STEP_LABEL[s?.action])
-    .map((s) => ({ action: s.action, label: TASK_STEP_LABEL[s.action], by: s.by || "", when: formatStampIL(s.at) }));
+    .map((s) => ({ action: s.action, label: TASK_STEP_LABEL[s.action], by: shortName(s.by || ""), when: formatStampIL(s.at) }));
 }
 
 /** אותה שורה כטקסט: "נפתחה 01/10 11:00 ע״י דנה ← בתהליך 02/10 08:00 ע״י יוסי". */

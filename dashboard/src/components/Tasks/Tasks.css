@@ -240,8 +240,6 @@
 .tk-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .tk-text { margin: 0; overflow-wrap: anywhere; line-height: 1.45; }
 .tk-row[data-state="done"] .tk-text { color: var(--text-secondary); }
-.tk-check { color: var(--status-ready); font-weight: 800; }
-.tk-prog { font-size: 0.9em; }
 .tk-meta {
   margin: 0;
   display: flex;
@@ -252,8 +250,35 @@
   font-size: 0.8em;
   line-height: 1.5;
 }
-.tk-step { display: inline-flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
-.tk-arrow { color: var(--text-muted); }
+/* המצב עכשיו (12/10/2026: "מה המצב עכשיו. ומי עשה את זה") — תווית בגוון, ולידה מי ומתי; מי פתח —
+   שקט, אחריהם. השרשרת המלאה רק בריחוף (title). גוון ולא מילוי, כמו בשאר המסכים. */
+.tk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  /* ⚠️ rem ולא em: השורה כולה קטנה (0.8em), ותווית שיורשת ממנה יצאה ~10px — קטנה מכדי לקרוא את המצב */
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.tk-badge[data-state="in_progress"] {
+  border-color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 15%, var(--bg-card));
+  color: color-mix(in srgb, var(--status-warning) 55%, var(--text-primary));
+}
+.tk-badge[data-state="done"] {
+  border-color: color-mix(in srgb, var(--status-ready) 65%, var(--border-color));
+  background: color-mix(in srgb, var(--status-ready) 12%, var(--bg-card));
+  color: color-mix(in srgb, var(--status-ready) 70%, var(--text-primary));
+}
+.tk-now { white-space: nowrap; }
+.tk-who { font-weight: 700; color: var(--text-primary); }
+.tk-opened { color: var(--text-muted); }
 .tk-when { white-space: nowrap; }
 .tk-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 

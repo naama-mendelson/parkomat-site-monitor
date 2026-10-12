@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTasks, addTask, startTask, unstartTask, markTaskDone, deleteTask } from "../../services/dataSource";
 import { newId } from "../../utils/complianceFiles";
-import { splitOpen, taskState, historySteps, openSummary, TASK_STATE_LABEL } from "../../utils/tasks";
+import { splitOpen, taskState, taskNow, historyText, openSummary, TASK_STATE_LABEL } from "../../utils/tasks";
 import "./Tasks.css";
 
 const CONFIRM_MS = 4000;
@@ -46,24 +46,28 @@ const allowed = (t, what) => (what === "done" ? t.can_close : (t.can_delete ?? t
 // זה דאבל-קליק על X מוחק משימה וכל ההיסטוריה שלה בלי שאיש ראה "למחוק?" (נמצא בסקירה, 12/10/2026).
 const ARM_MIN_MS = 600;
 
-/** שורת משימה: הגוף, ומתחתיו כל המעברים — "נפתחה … ← בתהליך … ← בוצעה …". `note` — הסבר לשורה הזו. */
+/**
+ * שורת משימה: הגוף, ומתחתיו **המצב עכשיו ומי קבע אותו** — "בתהליך · ע״י naamam · 12/10 10:20 · נפתחה
+ * ע״י benr · 12/10 10:14". ⚠️ לא כל השרשרת (בעלת המוצר, 12/10/2026: "לא רוצה לראות את הלוג אלא מה
+ * המצב עכשיו. ומי עשה את זה. שתיהיה מעוצב יותר ברור") — היא עדיין נשמרת (task_history), ומוצגת
+ * בריחוף על השורה. `note` — הסבר לשורה הזו.
+ */
 function TaskRow({ t, state, note, children }) {
-  const steps = historySteps(t);
+  const now = taskNow(t);
   return (
     <li className="tk-row" data-state={state} data-id={t.id}>
       <div className="tk-row-main">
-        <p className="tk-text">
-          {state === "done" && <span className="tk-check" aria-hidden="true">✓ </span>}
-          {state === "in_progress" && <span className="tk-prog" title={TASK_STATE_LABEL.in_progress}>⏳ </span>}
-          {t.body}
-        </p>
-        <p className="tk-meta">
-          {steps.map((s, i) => (
-            <span key={i} className="tk-step" data-action={s.action}>
-              {i > 0 && <span className="tk-arrow" aria-hidden="true">←</span>}
-              {s.label} <bdi className="tk-when">{s.when}</bdi>{s.by && <> ע״י {s.by}</>}
-            </span>
-          ))}
+        <p className="tk-text">{t.body}</p>
+        <p className="tk-meta" title={`היסטוריה: ${historyText(t)}`}>
+          <span className="tk-badge" data-state={now.state}>{now.label}</span>
+          {now.state === "todo" ? (
+            <span className="tk-now">נפתחה ע״י <b className="tk-who">{now.opened.by}</b> · <bdi className="tk-when">{now.opened.when}</bdi></span>
+          ) : (
+            <>
+              <span className="tk-now">ע״י <b className="tk-who">{now.by}</b> · <bdi className="tk-when">{now.when}</bdi></span>
+              <span className="tk-opened">· נפתחה ע״י {now.opened.by} · <bdi>{now.opened.when}</bdi></span>
+            </>
+          )}
         </p>
       </div>
       {children && <div className="tk-actions">{children}</div>}
