@@ -1598,8 +1598,12 @@ Rules that are easy to break:
     chosen "טכני" looked in her screenshot. In `Tasks.css` every Hebrew label moved to 700 (the badge,
     "לאשר?"/"למחוק?", "בוצעו", the chosen kind). K11 fails if any Hebrew text in the dialog renders at
     800 or more. The three left in `Tasks.css` style symbols and digits (⏳ ✓ ✕, the count), which render
-    fine. ⚠️ **Elsewhere the dashboard still has 31 uses of 800/900 in 17 CSS files.** They were not
-    changed: some style digits, which render fine, and each needs a look.
+    fine. **The rest of the dashboard was checked on 13/10/2026.** A browser sweep over every screen (any element
+    with Hebrew text and a computed weight ≥800) plus a read of the rules it could not reach (closed
+    `<option>` lists, the executive view, PM) found nine: the expanded card name, `.exp-value--sm`, `.it-due--late`
+    / `--soon`, `.ex-head h1`, `.ex-insights-btn`, `.rv-header h1`, `.pm-tpl-group` and the type filter group rows.
+    All are 700 now. `tests/hebrew-weight.test.js` lists every remaining ≥800 rule with what it shows (digits,
+    symbols, "Parkomat"); a new one fails until someone looks. 6/6 mutations caught.
 - ⚠️ **A row shows the state now and who set it, not the timeline** (owner, 12/10/2026, pointing at
   a row with five steps: *"לא רוצה לראות את הלוג אלא מה המצב עכשיו. ומי עשה את זה. שתיהיה מעוצב יותר
   ברור"*).

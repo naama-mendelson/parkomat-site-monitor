@@ -62,7 +62,7 @@
 .sft-select option.sft-group-row {
   background: #dbe3f5;
   color: #10225c;
-  font-weight: 800;
+  font-weight: 700; /* ⚠️ לא 800: שמות קבוצה בעברית, ועברית ב-800 נופלת לגופן אחר */
 }
 
 .sft-caption {

@@ -405,10 +405,11 @@
   gap: 14px;
 }
 
+/* ⚠️ 700 ולא 800: ל-Segoe UI אין 800, ועברית במשקל הזה נופלת לגופן אחר, קטן ושונה */
 .exp-name {
   color: var(--text-primary);
   font-size: 1.25rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -466,7 +467,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.exp-value--sm { font-size: 1.02rem; }
+.exp-value--sm { font-size: 1.02rem; font-weight: 700; } /* טקסט עברי — ראו .exp-name */
 
 .exp-label {
   color: var(--text-secondary);

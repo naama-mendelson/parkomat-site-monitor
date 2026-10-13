@@ -388,8 +388,9 @@
 }
 
 .it-due { color: var(--text-secondary); font-weight: 600; }
-.it-due--late { color: var(--cl-overdue-ink); font-weight: 800; }
-.it-due--soon { color: var(--cl-soon-ink); font-weight: 800; }
+/* ⚠️ 700 ולא 800: ל-Segoe UI אין 800, ועברית במשקל הזה נופלת לגופן אחר, קטן ושונה */
+.it-due--late { color: var(--cl-overdue-ink); font-weight: 700; }
+.it-due--soon { color: var(--cl-soon-ink); font-weight: 700; }
 
 .it-defect-actions {
   display: flex;

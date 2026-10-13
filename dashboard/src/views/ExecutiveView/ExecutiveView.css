@@ -19,10 +19,11 @@
 
 /* כותרת שטוחה ונקייה — בלי gradient על הטקסט. הסגנון החדש נשען על
    אוויר, טיפוגרפיה ומשטחים אחידים, ולא על אפקטים. */
+/* ⚠️ 700 ולא 800: ל-Segoe UI אין 800, ועברית במשקל הזה נופלת לגופן אחר, קטן ושונה */
 .ex-head h1 {
   color: var(--text-primary);
   font-size: 1.35rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.015em;
 }
 
@@ -44,7 +45,7 @@
   border-radius: 12px;
   background: color-mix(in srgb, var(--accent, #3d78d8) 12%, transparent);
   color: var(--accent, #3d78d8);
-  font-weight: 800;
+  font-weight: 700; /* טקסט עברי — ראו .ex-head h1 */
   font-size: 0.95rem;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.1s ease;

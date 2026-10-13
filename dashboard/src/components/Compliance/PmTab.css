@@ -719,7 +719,7 @@ select.pm-input { padding-block: 8px; }
   margin: 2px 0 4px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-color);
-  font-weight: 800;
+  font-weight: 700; /* ⚠️ לא 800: עברית ב-800 נופלת לגופן אחר */
   font-size: 15px;
 }
 .pm-inline-check {

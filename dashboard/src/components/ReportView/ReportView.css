@@ -83,10 +83,11 @@
   letter-spacing: 0.04em;
 }
 
+/* ⚠️ 700 ולא 800: ל-Segoe UI אין 800, ועברית במשקל הזה נופלת לגופן אחר, קטן ושונה */
 .rv-header h1 {
   color: var(--text-primary);
   font-size: 1.7rem;
-  font-weight: 800;
+  font-weight: 700;
   margin-top: 3px;
 }
 
