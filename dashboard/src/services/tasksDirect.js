@@ -71,14 +71,26 @@ export async function unstartTask(id) {
   return rpc("task_unstart", { p_id: id });
 }
 
+// ============================================================
+// קוד המנהל — פותח V ו-X לכל איש צוות (12/10/2026)
+// ============================================================
+// ⚠️ בזיכרון בלבד, לא ב-sessionStorage: "הקוד עצמו אינו נשמר" (adminCodeDirect) — קוד שנשמר בדפדפן
+// הוא קוד שדלף. רענון שוכח אותו. ההחלטה ב-SQL (app.task_code_ok); כאן רק מה נשלח.
+// ⚠️ p_code נשלח רק כשיש קוד: בלעדיו הגוף { p_id } זהה למה שהיה, ועובד גם מול מסד שעוד לא קיבל את
+// החתימה החדשה.
+let taskCode = null;
+export const hasTaskCode = () => taskCode !== null;
+export function setTaskCode(code) { taskCode = code ? String(code) : null; }
+const withCode = (args) => (taskCode ? { ...args, p_code: taskCode } : args);
+
 export async function markTaskDone(id) {
-  return rpc("task_done", { p_id: id });
+  return rpc("task_done", withCode({ p_id: id }));
 }
 
 /**
- * "X" — מחיקה לגמרי: המשימה וכל ההיסטוריה שלה (12/10/2026). רק מי שרשאי לסמן בוצעה (can_close).
+ * "X" — מחיקה לגמרי: המשימה וכל ההיסטוריה שלה (12/10/2026). מנהל, sherut@, או מי שהזין את קוד המנהל.
  * מחזיר false כשהמשימה כבר איננה (לחיצה כפולה, מסך אחר) — לא שגיאה. משימה שבוצעה — PT409.
  */
 export async function deleteTask(id) {
-  return rpc("task_delete", { p_id: id });
+  return rpc("task_delete", withCode({ p_id: id }));
 }

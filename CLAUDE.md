@@ -1452,6 +1452,27 @@ Rules that are easy to break:
   - A task that is already gone returns `false`, not an error (double click, two screens).
   - What remains: one `audit_log` row (`task.delete`, ids only) and an `events` row (`action: 'delete'`).
   - T17 covers it, and 8 of 8 mutations were caught.
+- **The admin code opens V and X for any staff user** (owner, 12/10/2026, evening: *"מי שיודע את הסיסמה יוכל
+  לסמן במשימות כמו השירות… אם הוא נמצא דרך המייל של השירות אז הוא לא צריך סיסמה"*).
+  - It is the **existing** admin code (`settings.admin_code_hash`, the same hash as `verify_admin_code`), checked in
+    SQL by `app.task_code_ok`. ⚠️ Never a literal in the code: the repo is public, and changing the code in the admin
+    panel changes it here too.
+  - `task_done` / `task_delete` take `p_code text DEFAULT NULL`; the 1-arg signatures are dropped (two copies →
+    PostgREST refuses). The identity rule is checked first; the code is only a fallback. The name recorded is still
+    the verified one, and `audit_log` gets `by_code` (like `trust` in maintenance).
+  - In the dialog, a grey V/X opens a password field under that row (`.tk-code`), checked with `verifyAdminCode`.
+    The right code performs what was pressed, with no extra confirm. The code is kept **in memory only**
+    (`setTaskCode` in `tasksDirect.js`), so a reload forgets it. A code the database later rejects is forgotten and
+    asked for again.
+  - ⚠️ **Deploy order: the SQL first.** The bundle sends `p_code` only after a code was entered, and against the old
+    SQL that is a 404 (PGRST202).
+  - Tests: T21 (10/10 SQL mutations caught), `tasks-direct.test.js`; browser K7/K9/K10 updated, K12 new.
+  - ⚠️ **No length rule on the admin code** (owner, 13/10/2026: *"אני לא רוצה שיחייבו איזה קוד… גם להחליף לקוד
+    הפשוט ביותר"*). Any non-empty code, in the form and in `public.set_admin_code`. That function now lives in
+    `writes.postgres.sql` (it was only in `supabase/migrations/20260819_push_notifications.sql`, which `apply-sql`
+    never sees). Empty is still refused: `task_code_ok` rejects an empty code, so it would lock the tasks silently.
+    It is the **only shared code** in the system (admin panel + tasks); personal sign-in passwords are separate
+    Supabase Auth accounts and do not follow it. T22, 4/4 mutations caught.
 - **12/10/2026: the two tasks in production were deleted at the owner's request** (*"תמחק את כל המשימות
   הקיימות"*, then "שתיהן" when shown that one was a colleague's real task). It was done by hand in
   SQL, because `task_delete` was not deployed yet: 2 tasks, 17 history rows, and a `delete` event per

@@ -76,3 +76,27 @@ test("הסוגים — עותק אחד בדשבורד (utils/tasks.js), לא ש�
   assert.equal(m.TASK_KINDS, undefined);
   assert.equal(m.TASK_KIND_LABEL, undefined);
 });
+
+test("V / X: בלי קוד — הגוף { p_id } בלבד (כמו קודם); אחרי setTaskCode — גם p_code; null מנקה", async () => {
+  const m = await load();
+  const calls = fake(true);
+  assert.equal(m.hasTaskCode(), false);
+  await m.markTaskDone(7);
+  await m.deleteTask(8);
+  assert.deepEqual(calls.map((c) => [c.fn, JSON.parse(c.body)]),
+    [["task_done", { p_id: 7 }], ["task_delete", { p_id: 8 }]],
+    "בלי קוד — אותו גוף כמו לפני הקוד, ועובד גם מול מסד בלי p_code");
+  m.setTaskCode("kod-bdui");
+  assert.equal(m.hasTaskCode(), true);
+  await m.markTaskDone(9);
+  await m.deleteTask(10);
+  assert.deepEqual(JSON.parse(calls[2].body), { p_id: 9, p_code: "kod-bdui" });
+  assert.deepEqual(JSON.parse(calls[3].body), { p_id: 10, p_code: "kod-bdui" });
+  // ⏳ אינו צריך קוד ואינו שולח אותו
+  await m.startTask(11);
+  assert.deepEqual(JSON.parse(calls[4].body), { p_id: 11 });
+  m.setTaskCode(null);
+  assert.equal(m.hasTaskCode(), false);
+  await m.markTaskDone(12);
+  assert.deepEqual(JSON.parse(calls[5].body), { p_id: 12 });
+});

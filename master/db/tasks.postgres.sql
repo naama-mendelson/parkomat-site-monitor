@@ -169,6 +169,24 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
 $$;
 REVOKE ALL ON FUNCTION app.can_delete_task(text) FROM PUBLIC;
 
+-- ============================================================
+-- קוד המנהל פותח את V ו-X לכל איש צוות
+-- ============================================================
+-- בעלת המוצר, 12/10/2026: "שמי שיודע את הסיסמה יוכל לסמן במשימות כמו השירות… אם הוא נמצא דרך
+-- המייל של השירות אז הוא לא צריך סיסמה, אבל אם כן אז הוא צריך סיסמה". הסיסמה היא קוד המנהל הקיים
+-- (settings.admin_code_hash, אותו גיבוב כמו public.verify_admin_code) — ⚠️ לא ערך בקוד: המאגר ציבורי,
+-- וקוד שמוחלף בפאנל הניהול מוחלף כאן איתו.
+-- ⚠️ זה **לא** מחליף את הזהות: מי שמסמן נרשם בשמו המאומת, וביומן נרשם by_code — כמו trust בתחזוקה.
+-- קוד ריק או חסר — לעולם לא; וכשאין גיבוב שמור — לעולם לא (כמו verify_admin_code).
+CREATE OR REPLACE FUNCTION app.task_code_ok(p_code text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT COALESCE(p_code, '') <> ''
+     AND EXISTS (SELECT 1 FROM settings s
+                  WHERE s.key = 'admin_code_hash'
+                    AND s.value = encode(sha256(convert_to(p_code, 'utf8')), 'hex'))
+$$;
+REVOKE ALL ON FUNCTION app.task_code_ok(text) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION app.task_event(p_code text, p_kind text, p_action text)
 RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT app.record_write_event(COALESCE(p_code, '*'), 'tasks',
@@ -378,29 +396,36 @@ GRANT EXECUTE ON FUNCTION public.task_unstart(bigint) TO authenticated;
 
 -- "בוצעה": מי ומתי — מלביצוע או מבטיפול. אידמפוטנטי: סימון שני מחזיר את הסימון הראשון ולא
 -- דורס את שמו. started_* נשארות: המשימה הייתה בטיפול, וזה חלק ממה שקרה לה.
-CREATE OR REPLACE FUNCTION public.task_done(p_id bigint)
+-- ⚠️ p_code (12/10/2026): קוד המנהל, למי שאינו sherut@ (app.task_code_ok). DEFAULT NULL — חבילה ישנה
+-- ששולחת { p_id } בלבד ממשיכה להגיע לכאן; והחתימה הישנה נמחקת, כי שתי גרסאות חיות → PostgREST מסרב.
+DROP FUNCTION IF EXISTS public.task_done(bigint);
+CREATE OR REPLACE FUNCTION public.task_done(p_id bigint, p_code text DEFAULT NULL)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_staff();
   v_t tasks%ROWTYPE;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_by_code boolean := false;
 BEGIN
   SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'המשימה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
   IF v_t.done_at IS NOT NULL THEN RETURN v_t.done_at; END IF;
   IF NOT app.can_close_task(v_t.kind) THEN
-    RAISE EXCEPTION 'אין הרשאה לסמן משימה זו כבוצעה' USING ERRCODE = 'insufficient_privilege';
+    IF NOT app.task_code_ok(p_code) THEN
+      RAISE EXCEPTION 'אין הרשאה לסמן משימה זו כבוצעה' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    v_by_code := true;
   END IF;
   UPDATE tasks SET done_at = v_now, done_by = v_actor, done_by_user = app.current_app_user() WHERE tasks.id = p_id;
   PERFORM app.task_log(p_id, 'done', v_actor, v_now);
   PERFORM app.record_write_audit('task.done', v_actor, app.current_app_role(), 'task', p_id::text,
-    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
+    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code, 'by_code', v_by_code));
   PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'done');
   RETURN v_now;
 END $fn$;
-REVOKE ALL ON FUNCTION public.task_done(bigint) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.task_done(bigint) TO authenticated;
+REVOKE ALL ON FUNCTION public.task_done(bigint, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.task_done(bigint, text) TO authenticated;
 
 -- "X": מחיקה לגמרי — המשימה וכל ההיסטוריה שלה (בעלת המוצר, 12/10/2026: "אני רוצה שיהיה X ו-V ליד
 -- כל משימה", ועל ה-X בחרה "מחיקה לגמרי" על פני "ביטול" שנשאר בהיסטוריה).
@@ -411,25 +436,31 @@ GRANT EXECUTE ON FUNCTION public.task_done(bigint) TO authenticated;
 -- נמחקת במפורש, באותה טרנזקציה.
 -- נשאר אחריה: שורת audit_log אחת (מזהה בלבד, בלי גוף — כמו בכל פעולה), ואירוע לרענון המסכים.
 -- משימה שכבר איננה — false ולא שגיאה: לחיצה כפולה, או שני מסכים, מגיעות לאותה תוצאה.
-CREATE OR REPLACE FUNCTION public.task_delete(p_id bigint)
+-- ⚠️ p_code — כמו ב-task_done: קוד המנהל פותח גם את X למי שאינו מנהל ואינו sherut@.
+DROP FUNCTION IF EXISTS public.task_delete(bigint);
+CREATE OR REPLACE FUNCTION public.task_delete(p_id bigint, p_code text DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_staff();
   v_t tasks%ROWTYPE;
+  v_by_code boolean := false;
 BEGIN
   SELECT * INTO v_t FROM tasks t WHERE t.id = p_id FOR UPDATE;
   IF NOT FOUND THEN RETURN false; END IF;
   IF NOT app.can_delete_task(v_t.kind) THEN
-    RAISE EXCEPTION 'אין הרשאה למחוק משימה זו' USING ERRCODE = 'insufficient_privilege';
+    IF NOT app.task_code_ok(p_code) THEN
+      RAISE EXCEPTION 'אין הרשאה למחוק משימה זו' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    v_by_code := true;
   END IF;
   IF v_t.done_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר בוצעה' USING ERRCODE = 'PT409'; END IF;
   DELETE FROM task_history h WHERE h.task_id = p_id;
   DELETE FROM tasks WHERE tasks.id = p_id;
   PERFORM app.record_write_audit('task.delete', v_actor, app.current_app_role(), 'task', p_id::text,
-    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code));
+    jsonb_build_object('kind', v_t.kind, 'site_code', v_t.site_code, 'by_code', v_by_code));
   PERFORM app.task_event((SELECT s.code FROM sites s WHERE s.id = v_t.site_id), v_t.kind, 'delete');
   RETURN true;
 END $fn$;
-REVOKE ALL ON FUNCTION public.task_delete(bigint) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.task_delete(bigint) TO authenticated;
+REVOKE ALL ON FUNCTION public.task_delete(bigint, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.task_delete(bigint, text) TO authenticated;

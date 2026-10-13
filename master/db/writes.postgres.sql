@@ -2324,3 +2324,42 @@ GRANT EXECUTE ON FUNCTION public.mark_controller_replaced(text) TO authenticated
 
 COMMENT ON FUNCTION public.mark_controller_replaced(text) IS
   'הוחלף בקר: הקריאה הבאה נקלטת כבסיס בלי להוסיף למונה. מנהל בלבד.';
+
+-- ============================================================
+-- public.set_admin_code — החלפת קוד המנהל (מנהל בלבד, עם הקוד הנוכחי)
+-- ============================================================
+-- ⚠️ הגדרה זו מחליפה את זו שב-supabase/migrations/20260819_push_notifications.sql: שם היא נולדה,
+-- אבל משם רק `supabase db push` מחיל, ו-tools/apply-sql.js לא ראה אותה. מעכשיו — כאן.
+--
+-- ⚠️ **בלי דרישת אורך** (בעלת המוצר, 13/10/2026: "אני לא רוצה שיחייבו איזה קוד… לעשות מצידי גם להחליף
+-- לקוד הפשוט ביותר"). עד אז — לפחות 4 תווים, כאן ובטופס. נשאר רק "לא ריק": קוד ריק אינו קוד, ו-
+-- app.task_code_ok דוחה ריק ממילא — כלומר הוא היה נועל את המשימות בשקט.
+--
+-- זה הקוד היחיד המשותף במערכת: הוא פותח את פאנל ניהול האתרים (verify_admin_code) ואת V / X במשימות
+-- (app.task_code_ok). שניהם קוראים את settings.admin_code_hash, ולכן החלפה כאן מחליפה את שניהם.
+CREATE OR REPLACE FUNCTION public.set_admin_code(p_current text, p_new text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE h text;
+BEGIN
+  IF NOT app.is_manager() THEN
+    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE='insufficient_privilege';
+  END IF;
+  IF coalesce(p_new,'') = '' THEN
+    RAISE EXCEPTION 'הקוד החדש ריק' USING ERRCODE='check_violation';
+  END IF;
+  SELECT value INTO h FROM settings WHERE key='admin_code_hash';
+  IF h IS NOT NULL AND h <> encode(sha256(convert_to(coalesce(p_current,''),'utf8')),'hex') THEN
+    RAISE EXCEPTION 'הקוד הנוכחי שגוי' USING ERRCODE='insufficient_privilege';
+  END IF;
+  INSERT INTO settings (key, value, updated_at)
+  VALUES ('admin_code_hash', encode(sha256(convert_to(p_new,'utf8')),'hex'),
+          to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+  ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at;
+  RETURN true;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.set_admin_code(text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.set_admin_code(text, text) TO authenticated;

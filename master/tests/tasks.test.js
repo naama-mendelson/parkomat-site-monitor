@@ -478,7 +478,7 @@ test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסט
   // מחיקה ידנית עדיין נכשלת בקול (ה-FK בלי ON DELETE) — המחיקה היחידה היא דרך task_delete
   await fails(sup(`DELETE FROM tasks WHERE id = $1`, [keep]), "23503");
   // סוכן ואנונימי — לא (T1/T2 בודקים הרשאה; כאן — שהפונקציה לא פתוחה ל-anon)
-  const anon = await sup(`SELECT has_function_privilege('anon', 'public.task_delete(bigint)', 'EXECUTE') a`);
+  const anon = await sup(`SELECT has_function_privilege('anon', 'public.task_delete(bigint, text)', 'EXECUTE') a`);
   assert.equal(anon[0].a, false);
 });
 
@@ -592,5 +592,107 @@ test("T20 · הרשאות השורות (can_close / can_delete) — קריאה �
     assert.equal(r.c, 8, `can_close_task: ${r.c} קריאות ל-24 משימות בארבעה סוגים`);
   } finally {
     await h.pg.exec(`RESET track_functions`);
+  }
+});
+
+test("T21 · קוד המנהל (12/10/2026): פותח V ו-X לכל איש צוות; בלי קוד / קוד שגוי — לא; sherut@ ומנהל — בלי קוד", { skip }, async () => {
+  // ⚠️ קוד בדוי — לא הקוד האמיתי (המאגר ציבורי). אותו גיבוב כמו set_admin_code.
+  const CODE = "kod-bdika-21";
+  const hash = crypto.createHash("sha256").update(CODE, "utf8").digest("hex");
+  const prev = await sup(`SELECT value FROM settings WHERE key = 'admin_code_hash'`);
+  await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('admin_code_hash', $1, 'x')
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [hash]);
+  const doneC = async (uid, id, code) => (await one(uid, `SELECT public.task_done($1, $2) AS d`, [id, code])).d;
+  const delC = async (uid, id, code) => (await one(uid, `SELECT public.task_delete($1, $2) AS d`, [id, code])).d;
+  const auditOf = async (id, action) => (await sup(
+    `SELECT details FROM audit_log WHERE action = $1 AND target_id = $2 ORDER BY id DESC LIMIT 1`, [action, String(id)]))[0]?.details;
+  try {
+    const s = await newSite();
+    // בקר: בלי קוד, קוד ריק, קוד שגוי — נדחה; הקוד הנכון — עובר, ונרשם בשמו המאומת
+    const a = await add(OPR, "customer", "בדיקת קוד — בוצע", s.code);
+    await fails(done(OPR, a), "42501");
+    await fails(doneC(OPR, a, ""), "42501");
+    await fails(doneC(OPR, a, "kod-shagui"), "42501");
+    assert.ok(await doneC(OPR, a, CODE));
+    const ra = findIn(await list(MGR, null, s.code), a);
+    assert.equal(ra.state, "done");
+    assert.equal(ra.done_by, "בקר משימות");
+    assert.equal((await auditOf(a, "task.done")).by_code, true);
+    // מחיקה — אותו כלל
+    const b = await add(OPR, "technical", "בדיקת קוד — מחיקה", s.code);
+    await fails(del(OPR, b), "42501");
+    await fails(delC(OPR, b, "kod-shagui"), "42501");
+    assert.equal(await delC(OPR, b, CODE), true);
+    assert.equal(findIn(await list(MGR, null, s.code), b), undefined);
+    assert.equal((await auditOf(b, "task.delete")).by_code, true);
+    // sherut@ ומנהל (מחיקה) — בלי קוד, כמו קודם; והיומן אומר שלא דרך קוד
+    const c = await add(OPR, "call_center", "שירות בלי קוד", s.code);
+    assert.ok(await done(SRV, c));
+    assert.equal((await auditOf(c, "task.done")).by_code, false);
+    const d = await add(OPR, "customer", "מנהל מוחק בלי קוד", s.code);
+    assert.equal(await del(MGR, d), true);
+    assert.equal((await auditOf(d, "task.delete")).by_code, false);
+    // מנהל שאינו sherut@ — V עדיין דורש קוד
+    const e = await add(OPR, "customer", "מנהל ו-V", s.code);
+    await fails(done(MGR, e), "42501");
+    assert.ok(await doneC(MGR, e, CODE));
+    // אין גיבוב שמור — שום קוד לא עובר
+    await sup(`DELETE FROM settings WHERE key = 'admin_code_hash'`);
+    const f = await add(OPR, "customer", "בלי גיבוב", s.code);
+    await fails(doneC(OPR, f, CODE), "42501");
+    await fails(doneC(OPR, f, ""), "42501");
+    // גיבוב של מחרוזת ריקה שמור — קוד ריק עדיין לא
+    await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('admin_code_hash', $1, 'x')`,
+      [crypto.createHash("sha256").update("", "utf8").digest("hex")]);
+    await fails(doneC(OPR, f, ""), "42501");
+    // גיבוב שיושב תחת מפתח אחר ב-settings — אינו קוד
+    await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('t21_other', $1, 'x')`,
+      [crypto.createHash("sha256").update("kod-acher", "utf8").digest("hex")]);
+    await fails(doneC(OPR, f, "kod-acher"), "42501");
+    await sup(`DELETE FROM settings WHERE key = 't21_other'`);
+    // סוכן עם הקוד — עדיין לא איש צוות
+    await sup(`UPDATE settings SET value = $1 WHERE key = 'admin_code_hash'`, [hash]);
+    await fails(doneC(AGT, f, CODE), "42501");
+    // החתימה הישנה (bigint) אינה קיימת — אחרת PostgREST מסרב לשם עם שתי גרסאות. ⚠️ כמו בייצור: החתימות
+    // הישנות קיימות לפני ההחלה, וההחלה היא שמוחקת אותן (על מסד חדש הן לא היו נוצרות ממילא)
+    await h.pg.exec(`CREATE FUNCTION public.task_done(p_id bigint) RETURNS text LANGUAGE sql AS $$ SELECT 'old' $$;
+                     CREATE FUNCTION public.task_delete(p_id bigint) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;`);
+    await h.pg.exec(require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "db", "tasks.postgres.sql"), "utf8"));
+    const sigs = await sup(`SELECT p.oid::regprocedure::text sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE n.nspname = 'public' AND p.proname IN ('task_done', 'task_delete') ORDER BY 1`);
+    assert.deepEqual(sigs.map((r) => r.sig), ["task_delete(bigint,text)", "task_done(bigint,text)"]);
+  } finally {
+    await sup(`DELETE FROM settings WHERE key = 'admin_code_hash'`);
+    if (prev[0]) await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('admin_code_hash', $1, 'x')`, [prev[0].value]);
+  }
+});
+
+test("T22 · החלפת קוד המנהל (13/10/2026): כל קוד לא ריק, גם תו אחד; והמשימות עוברות לקוד החדש מיד", { skip }, async () => {
+  const prev = await sup(`SELECT value FROM settings WHERE key = 'admin_code_hash'`);
+  const setCode = (uid, cur, next) => one(uid, `SELECT public.set_admin_code($1, $2) AS ok`, [cur, next]);
+  const doneC = async (uid, id, code) => (await one(uid, `SELECT public.task_done($1, $2) AS d`, [id, code])).d;
+  try {
+    await sup(`DELETE FROM settings WHERE key = 'admin_code_hash'`);
+    // אין קוד שמור — מנהל קובע, בלי קוד נוכחי
+    assert.equal((await setCode(MGR, "", "kod-yashan")).ok, true);
+    // ⚠️ תו אחד — מותר (עד 13/10: לפחות 4)
+    assert.equal((await setCode(MGR, "kod-yashan", "1")).ok, true);
+    // ריק — לא: קוד ריק היה נועל את המשימות בשקט (task_code_ok דוחה ריק)
+    await fails(setCode(MGR, "1", ""), "23514", /ריק/);
+    // קוד נוכחי שגוי — לא; ובקר — לא, גם עם הקוד הנכון
+    await fails(setCode(MGR, "kod-yashan", "2"), "42501", /הקוד הנוכחי שגוי/);
+    await fails(setCode(OPR, "1", "3"), "42501", /למנהלים בלבד/);
+    // והמשימות — הקוד החדש פותח, הישן כבר לא
+    const s = await newSite();
+    const a = await add(OPR, "customer", "אחרי החלפת הקוד", s.code);
+    await fails(doneC(OPR, a, "kod-yashan"), "42501");
+    assert.ok(await doneC(OPR, a, "1"));
+    // ⚠️ וגם verify_admin_code (פאנל הניהול) — אותו גיבוב. הפונקציה חיה ב-supabase/migrations ולא נטענת כאן,
+    // ולכן ההשוואה ישירה: מה ש-set_admin_code שמר הוא sha256 של הקוד, בדיוק מה ש-verify_admin_code משווה.
+    const stored = (await sup(`SELECT value FROM settings WHERE key = 'admin_code_hash'`))[0].value;
+    assert.equal(stored, crypto.createHash("sha256").update("1", "utf8").digest("hex"));
+  } finally {
+    await sup(`DELETE FROM settings WHERE key = 'admin_code_hash'`);
+    if (prev[0]) await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('admin_code_hash', $1, 'x')`, [prev[0].value]);
   }
 });

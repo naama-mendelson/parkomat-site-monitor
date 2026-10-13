@@ -220,7 +220,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
       const r = await provisionAgent(site.code, { rotate });
       setConfirmRotate(null);
       setAgentIssued({
-        code: site.code, email: r.email, password: r.password,
+        code: site.code, name: site.site_name, email: r.email, password: r.password,
         rotated: Boolean(r.rotated),
       });
     } catch (e) {
@@ -281,7 +281,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
     e.preventDefault();
     setErr(null);
 
-    if (pw.next.trim().length < 4) return setErr("הקוד החדש חייב להכיל לפחות 4 תווים");
+    // ⚠️ בלי דרישת אורך (13/10/2026: "לעשות מצידי גם להחליף לקוד הפשוט ביותר") — רק לא ריק, כמו ב-SQL
+    if (!pw.next.trim()) return setErr("יש להזין קוד חדש");
     if (pw.next !== pw.confirm) return setErr("הקוד החדש ואימותו אינם תואמים");
 
     setBusy(true);
@@ -410,30 +411,43 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
             אתר שאי אפשר לחבר. הסגירה חייבת להיות פעולה של אדם. */}
         {agentIssued && (
           <div className="adm-agent-overlay">
-          <div className="adm-agent-modal">
-            <b>{agentIssued.rotated
-              ? `הונפקה סיסמה חדשה לאתר ${agentIssued.code}`
-              : `נוצרה זהות לאתר ${agentIssued.code}`}</b>
-            <div style={{ marginTop: 8, fontFamily: "monospace", direction: "ltr" }}>
-              {agentIssued.email}
-            </div>
-            <div style={{ fontFamily: "monospace", direction: "ltr", wordBreak: "break-all" }}>
-              {agentIssued.password}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              ⚠️ הסיסמה מוצגת <b>פעם אחת בלבד</b>. היא נכנסת להגדרות הסוכן
-              במחשב שבאתר, בשדה "סיסמת האתר".
-            </div>
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <div className="adm-agent-modal" role="dialog" aria-labelledby="adm-agent-title">
+            {/* ⚠️ שם האתר בכותרת ולא רק הקוד: 12/10/2026 הונפקה סיסמה ל-1122
+                (אשכנזי 42) במקום ל-1162 (עלומים), ושני קודים דומים לא נבדלים
+                במבט. */}
+            <h3 id="adm-agent-title" className="adm-agent-title">
+              {agentIssued.rotated ? "סיסמה חדשה" : "זהות חדשה"}
+              <span className="adm-agent-site">
+                {agentIssued.name ? `${agentIssued.name} · ` : ""}{agentIssued.code}
+              </span>
+            </h3>
+
+            <div className="adm-agent-label">סיסמת האתר</div>
+            <div className="adm-agent-pw">
+              <code dir="ltr">{agentIssued.password}</code>
               <button className="adm-btn" onClick={async () => {
                 // ⚠️ **הסיסמה בלבד, בלי המייל** (בקשת בעלת המוצר, 24/09/2026).
                 // בטופס הסוכן יש שדה אחד — "סיסמת האתר"; המייל נגזר מקוד האתר
                 // (SupabaseDefaults.EmailFor), ולכן העתקת שניהם חייבה למחוק שורה
                 // לפני ההדבקה. copyText ולא navigator.clipboard: הוא עובד גם
                 // בהקשר לא-מאובטח, ואינו זורק.
-                if (await copyText(agentIssued.password)) flash("הסיסמה הועתקה");
-                else setErr("ההעתקה נכשלה — יש להעתיק ידנית");
-              }}>העתק סיסמה</button>
+                if (await copyText(agentIssued.password)) {
+                  setAgentIssued((a) => (a ? { ...a, copied: true } : a));
+                } else setErr("ההעתקה נכשלה — יש להעתיק ידנית");
+              }}>{agentIssued.copied ? "✓ הועתק" : "העתק"}</button>
+            </div>
+            <div className="adm-agent-user">
+              <span>משתמש: <bdi dir="ltr">{agentIssued.email}</bdi></span>
+              <span>נגזר מקוד האתר, אין צורך להזין</span>
+            </div>
+
+            <p className="adm-agent-warn">
+              ⚠️ הסיסמה מוצגת <b>פעם אחת בלבד</b>. מזינים אותה בהגדרות הסוכן
+              במחשב שבאתר, בשדה "סיסמת האתר".
+              {agentIssued.rotated && " עד שמזינים אותה, האתר לא מדווח."}
+            </p>
+
+            <div className="adm-agent-actions">
               <button className="adm-btn-ghost"
                 onClick={() => setAgentIssued(null)}>העתקתי, סגור</button>
             </div>
@@ -448,7 +462,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
             <div className="adm-pw-row">
               <input type="password" placeholder="הקוד הנוכחי" value={pw.current}
                 onChange={(e) => setPw({ ...pw, current: e.target.value })} />
-              <input type="password" placeholder="קוד חדש (4+ תווים)" value={pw.next}
+              <input type="password" placeholder="קוד חדש" value={pw.next}
                 onChange={(e) => setPw({ ...pw, next: e.target.value })} />
               <input type="password" placeholder="אימות הקוד החדש" value={pw.confirm}
                 onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />

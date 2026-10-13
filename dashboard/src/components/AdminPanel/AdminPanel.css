@@ -447,6 +447,81 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
 }
 
+.adm-agent-title {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.adm-agent-site {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.adm-agent-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+/* הסיסמה בתיבה אחת עם כפתור ההעתקה. השורה כולה RTL, והקוד עצמו LTR. */
+.adm-agent-pw {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  padding-inline-start: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.adm-agent-pw code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  /* break-all ולא anywhere: הסיסמה מכילה "-", ושבירה עליו השאירה שורה ראשונה
+     של חמישה תווים. */
+  word-break: break-all;
+  line-height: 1.5;
+  text-align: left;
+  user-select: all;
+}
+
+.adm-agent-user {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.adm-agent-user bdi {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.adm-agent-warn {
+  margin: 14px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.adm-agent-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ⚠️ כתום ולא אדום: אתר בלי זהות אינו מושבת — הוא מדווח מצוין ב-MQTT.
    מה שחסר הוא הכתיבה הישירה ואיתה זיהוי הניתוק. אדום היה קורא כמו תקלה
    באתר עצמו, ושולח מישהו לנסוע לשם. */

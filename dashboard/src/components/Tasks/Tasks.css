@@ -288,6 +288,19 @@
   font-weight: 700;
 }
 .tk-row-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* שדה קוד המנהל — מתחת לשורה שנלחצה (V/X אפורים), לכל רוחבה. ⚠️ width ולא flex-basis, כמו .tk-row-msg */
+.tk-code {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tk-code-label { font-size: 0.84em; font-weight: 700; color: var(--text-secondary); }
+.tk-code-row { display: flex; align-items: center; gap: 8px; }
+.tk-code-input { flex: 1; min-width: 0; height: 40px; }
+.tk-code-err { margin: 0; color: var(--status-error); font-size: 0.84em; font-weight: 700; }
 /* הסוג — תווית בגוון אפור, בלי מסגרת (המסגרת שמורה למצב: "לביצוע" ניטרלית נראתה כמוה). ליד השורה
    הראשונה של המשימה, לא באמצע שתי השורות. משימה בלי סוג — תא ריק. */
 .tk-kind {

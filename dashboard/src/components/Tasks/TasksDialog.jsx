@@ -29,7 +29,10 @@
 // ⚠️ "בוצעו" מקופל: המשימה שנעשתה "נזרקת למקום שלא מציג אותה, למטה" (06/10). בלחיצה נפתחת
 // ההיסטוריה — כל מה שבוצע, ולכל משימה כל המעברים שלה, מי ומתי (גם פתוחה מראה את שלה).
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { fetchTasks, addTask, startTask, unstartTask, markTaskDone, deleteTask } from "../../services/dataSource";
+import {
+  fetchTasks, addTask, startTask, unstartTask, markTaskDone, deleteTask,
+  hasTaskCode, setTaskCode, verifyAdminCode,
+} from "../../services/dataSource";
 import { newId } from "../../utils/complianceFiles";
 import {
   splitOpen, taskState, taskNow, historyText, openSummary, kindLabel, TASK_STATE_LABEL, TASK_KINDS,
@@ -41,9 +44,11 @@ const CONFIRM_MS = 4000;
 const DONE_FIRST = 200;
 // ⚠️ ההסברים בלבד — ההחלטה ב-SQL: V ב-app.can_close_task (רק sherut@), X ב-app.can_delete_task (כל מנהל,
 // ו-sherut@ — 12/10/2026: "תן אופציה למנהלים למחוק משימה"). אם כלל שם משתנה, גם המשפט שלו.
+// ⚠️ ומאז 12/10/2026 (ערב) — גם כל מי שמזין את קוד המנהל (app.task_code_ok): "מי שיודע את הסיסמה יוכל לסמן
+// במשימות כמו השירות". לחיצה על V/X אפורים פותחת שדה קוד מתחת לשורה, במקום ההסבר.
 const NO_RIGHTS = {
-  done: "רק החשבון sherut@parkomat.co.il יכול לסמן בוצע",
-  delete: "רק מנהל יכול למחוק משימה",
+  done: "רק sherut@parkomat.co.il יכול לסמן בוצע, או מי שמזין את קוד המנהל",
+  delete: "רק מנהל יכול למחוק משימה, או מי שמזין את קוד המנהל",
 };
 // מי רשאי — מה שה-SQL החזיר לשורה. ⚠️ can_delete חסר (מסד שעוד לא קיבל את 12/10) — לפי can_close, כמו קודם.
 const allowed = (t, what) => (what === "done" ? t.can_close : (t.can_delete ?? t.can_close)) === true;
@@ -60,7 +65,7 @@ const NEED_KIND = `יש לבחור סוג משימה — ${KIND_NAMES.slice(0, -
  * המצב עכשיו. ומי עשה את זה. שתיהיה מעוצב יותר ברור") — היא עדיין נשמרת (task_history), ומוצגת
  * בריחוף על השורה. `note` — הסבר לשורה הזו.
  */
-function TaskRow({ t, state, note, children }) {
+function TaskRow({ t, state, note, below, children }) {
   const now = taskNow(t);
   const kind = kindLabel(t.kind);
   return (
@@ -86,6 +91,7 @@ function TaskRow({ t, state, note, children }) {
       {/* ⚠️ ליד השורה שנלחצה, לא בראש החלון: בטלפון, אחרי גלילה למשימה נמוכה, השורה העליונה מחוץ למסך —
           והלחיצה על V/X אפורים "לא עשתה כלום" (נמדד בסקירה: 6 משימות פתוחות מספיקות). */}
       {note && <p className="tk-row-msg" role="alert">{note}</p>}
+      {below}
     </li>
   );
 }
@@ -117,6 +123,13 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const [confirm, setConfirm] = useState(null);
   // { id, msg } — הסבר שמוצג מתחת לשורה שנלחצה (V/X אפורים)
   const [rowMsg, setRowMsg] = useState(null);
+  // קוד המנהל: האם כבר הוזן בחלון הזה (נשמר בזיכרון של tasksDirect, עד רענון), ו-{ id, what } —
+  // השורה שבה נפתח שדה הקוד
+  const [unlocked, setUnlocked] = useState(hasTaskCode);
+  const [codeFor, setCodeFor] = useState(null);
+  const [codeVal, setCodeVal] = useState("");
+  const [codeErr, setCodeErr] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
   const actErrorRef = useRef(null);
   const [busyId, setBusyId] = useState(null);
   const [showDone, setShowDone] = useState(false);
@@ -197,12 +210,21 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
     setBusyId(t.id);
     setActError("");
     setRowMsg(null);
+    setCodeFor(null);
     try {
       await fn(t.id);
       await load();
       onChanged?.();
     } catch (err) {
-      setActError(err.message);
+      // ⚠️ קוד שהוזן כאן ונדחה במסד — כנראה הוחלף בינתיים בפאנל הניהול. שוכחים אותו, כדי שהלחיצה הבאה
+      // תבקש אותו שוב במקום להיכשל שוב ושוב בשקט.
+      if (hasTaskCode() && /אין הרשאה/.test(err.message)) {
+        setTaskCode(null);
+        setUnlocked(false);
+        setActError(`${err.message} — ייתכן שקוד המנהל הוחלף. יש להזין אותו שוב.`);
+      } else {
+        setActError(err.message);
+      }
       await load();
       onChanged?.();
     } finally {
@@ -211,15 +233,22 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   };
 
   const isConfirm = (t, what) => confirm?.id === t.id && confirm.what === what;
-  // V / X: מי שאינו רשאי — הסבר מתחת לשורה, בלי שליחה; לחיצה ראשונה — מבקשת אישור; שנייה — שולחת.
+  // רשאי — לפי הזהות (מה שה-SQL החזיר לשורה), או כי קוד המנהל כבר הוזן בחלון הזה
+  const may = (t, what) => allowed(t, what) || unlocked;
+  // V / X: מי שאינו רשאי — שדה לקוד המנהל מתחת לשורה; לחיצה ראשונה — מבקשת אישור; שנייה — שולחת.
   // ⚠️ השנייה נחשבת רק אם היא לחיצה בפני עצמה: לא חלק מלחיצה כפולה (e.detail > 1), ולא פחות מ-ARM_MIN_MS
   // אחרי החימוש. (מקש Enter שמוחזק — נחסם ב-onKeyDown, ראו closeBtn.)
   const ask = (t, what, fn, e) => {
-    if (!allowed(t, what)) {
-      setRowMsg({ id: t.id, msg: NO_RIGHTS[what] });
+    if (!may(t, what)) {
+      setRowMsg(null);
+      setConfirm(null);
+      setCodeFor({ id: t.id, what });
+      setCodeVal("");
+      setCodeErr("");
       return;
     }
     setRowMsg(null);
+    setCodeFor(null);
     if (!isConfirm(t, what)) {
       setConfirm({ id: t.id, what, at: performance.now() });
       clearTimeout(confirmTimer.current);
@@ -231,6 +260,45 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
     setConfirm(null);
     act(t, fn);
   };
+
+  // הקוד נבדק מול המסד (verify_admin_code — הגיבוב לא מגיע לדפדפן), ורק אחרי אישור נשמר ומבצע את מה
+  // שנלחץ. ⚠️ בלי לחיצת אישור נוספת: הזנת הקוד ו"אישור" הן כבר שתי פעולות מכוונות.
+  const submitCode = async (e, t) => {
+    e.preventDefault();
+    if (!codeVal || codeBusy || !codeFor) return;
+    setCodeBusy(true);
+    setCodeErr("");
+    try {
+      if (!(await verifyAdminCode(codeVal))) { setCodeErr("קוד שגוי"); return; }
+      setTaskCode(codeVal);
+      setUnlocked(true);
+      const what = codeFor.what;
+      setCodeFor(null);
+      setCodeVal("");
+      await act(t, what === "done" ? markTaskDone : deleteTask);
+    } catch (err) {
+      setCodeErr(err.message || "אימות הקוד נכשל");
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+  const codeForm = (t) => codeFor?.id === t.id && (
+    <form className="tk-code" onSubmit={(e) => submitCode(e, t)}>
+      <label className="tk-code-label" htmlFor={`${kindName}-code`}>
+        {codeFor.what === "done" ? "קוד מנהל — כדי לסמן בוצע" : "קוד מנהל — כדי למחוק"}
+      </label>
+      <div className="tk-code-row">
+        <input id={`${kindName}-code`} className="tk-input tk-code-input" type="password" autoComplete="off"
+          autoFocus value={codeVal} disabled={codeBusy}
+          onChange={(e) => { setCodeVal(e.target.value); setCodeErr(""); }} />
+        <button type="submit" className="tk-btn tk-btn--primary" disabled={!codeVal || codeBusy}>
+          {codeBusy ? "בודק…" : "אישור"}
+        </button>
+        <button type="button" className="tk-link" onClick={() => setCodeFor(null)}>ביטול</button>
+      </div>
+      {codeErr && <p className="tk-code-err" role="alert">{codeErr}</p>}
+    </form>
+  );
 
   const { todo, inProgress } = splitOpen(data?.open ?? []);
   // ⚠️ רשימה אחת, בסדר שהגיע מה-SQL (מהוותיקה לחדשה) — "בתהליך" הוא סימון על השורה, לא חלק נפרד
@@ -249,7 +317,7 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const closeBtn = (t, what) => {
     const pending = isConfirm(t, what);
     const isDone = what === "done";
-    const ok = allowed(t, what);
+    const ok = may(t, what);
     return (
       <button type="button"
         className={`tk-ico tk-ico--${isDone ? "done" : "del"}${pending ? " is-confirm" : ""}${ok ? "" : " is-locked"}`}
@@ -323,7 +391,8 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
               {open.map((t) => {
                 const state = taskState(t);
                 return (
-                  <TaskRow key={t.id} t={t} state={state} note={rowMsg?.id === t.id ? rowMsg.msg : null}>
+                  <TaskRow key={t.id} t={t} state={state} note={rowMsg?.id === t.id ? rowMsg.msg : null}
+                    below={codeForm(t)}>
                     {progBtn(t, state === "in_progress")}
                     {closeBtn(t, "done")}
                     {closeBtn(t, "delete")}
