@@ -31,7 +31,29 @@ export const KIND_LABEL = {
   check: "סימון",
   photo: "צילום",
   check_photo: "סימון + צילום",
+  value: "ערך (מדידה)",
 };
+
+// ============================================================
+// פריט "ערך" — מדידה (13/10/2026)
+// ============================================================
+// מד השרשרת במפרט: "להזין כמה אחוזים תוצאת המדידה", ומעל 2% לדווח. הערך נשמר בשדה ההערה של
+// הפריט — אותה דרך שהטופס כבר שולח הערות, גם בלי קליטה. ⚠️ אותו כלל כמו app.pm_value_num במסד:
+// "2", "2.5", "2,5", "-1" — מספר; כל השאר אינו מדידה, ופריט חובה נשאר חסר.
+const VALUE_RE = /^-?\d{1,9}([.,]\d{1,4})?$/;
+export function valueNum(text) {
+  const t = String(text ?? "").trim();
+  return VALUE_RE.test(t) ? Number(t.replace(",", ".")) : null;
+}
+/** ערך שנמדד מעל הסף של הפריט (warn_above). בלי סף או בלי מדידה — false. */
+export function valueOver(item, text) {
+  const v = valueNum(text);
+  const w = item?.warn_above == null || item.warn_above === "" ? null : Number(item.warn_above);
+  return v != null && w != null && Number.isFinite(w) && v > w;
+}
+/** סוגים שמבקשים וי / תמונות — "ערך" אינו אף אחד מהם. */
+export const kindHasCheck = (kind) => kind === "check" || kind === "check_photo";
+export const kindHasPhotos = (kind) => kind === "photo" || kind === "check_photo";
 
 // ============================================================
 // אחסון — כל גישה עטופה
@@ -124,7 +146,7 @@ export function writeMe(uid, name) {
  * אוכף את אותו כלל; כאן הוא מוסבר לפני השמירה.
  */
 export function templatePhotoTotal(rows) {
-  return (rows || []).reduce((n, r) => n + (r?.required && r.kind !== "check" ? Number(r.min_photos) || 0 : 0), 0);
+  return (rows || []).reduce((n, r) => n + (r?.required && kindHasPhotos(r.kind) ? Number(r.min_photos) || 0 : 0), 0);
 }
 
 /**

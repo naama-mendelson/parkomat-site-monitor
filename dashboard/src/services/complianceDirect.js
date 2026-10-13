@@ -351,6 +351,48 @@ export async function setPmSiteTemplates(code, templateIds) {
   return Number(await rpcT("pm_site_templates_set", { p_site_code: code, p_template_ids: templateIds }, TIMEOUT.normal));
 }
 
+// ------------------------------------------------------------
+// פרופילי תחזוקה — "כמו ברמזור" (13/10/2026)
+// ------------------------------------------------------------
+
+/**
+ * הלוח: `{ profiles:[{id,name,seq,updated_at,updated_by,template_ids,item_count,photo_count,
+ *                      sites:[{code,name}]}], unassigned:[{code,name}] }`
+ */
+export async function fetchPmProfiles() {
+  const data = await rpcT("pm_profiles_list", {}, TIMEOUT.normal);
+  return {
+    profiles: Array.isArray(data?.profiles) ? data.profiles : [],
+    unassigned: Array.isArray(data?.unassigned) ? data.unassigned : [],
+  };
+}
+
+/**
+ * יצירה (id ריק) או עדכון: שם ורשימות. מנהל בלבד.
+ * @param {string|null} expectedAt — updated_at שהלוח טען; PT409 אם מנהל אחר שמר בינתיים
+ * @returns {number} מזהה הפרופיל
+ */
+export async function savePmProfile(id, name, templateIds, expectedAt = null) {
+  return Number(await rpcT("pm_profile_save", {
+    p_id: id ?? null, p_name: name, p_template_ids: templateIds, p_expected_at: expectedAt,
+  }, TIMEOUT.normal));
+}
+
+/** מחיקת פרופיל — האתרים שבו חוזרים לברירת המחדל. @returns {number} כמה אתרים חזרו */
+export async function deletePmProfile(id) {
+  return Number(await rpcT("pm_profile_delete", { p_id: id }, TIMEOUT.normal)) || 0;
+}
+
+/** אלה אתרי הפרופיל מעכשיו (מצב יעד). אתר מפרופיל אחר עובר לכאן. @returns {number} */
+export async function setPmProfileSites(id, codes) {
+  return Number(await rpcT("pm_profile_sites_set", { p_profile_id: id, p_site_codes: codes }, TIMEOUT.normal)) || 0;
+}
+
+/** פרופיל לאתר אחד. null = בלי פרופיל (ברירת המחדל). */
+export async function setPmSiteProfile(code, profileId) {
+  await rpcT("pm_site_profile_set", { p_site_code: code, p_profile_id: profileId ?? null }, TIMEOUT.normal);
+}
+
 /**
  * שמירת הרשימה כולה — **מצב היעד**: פריט עם id מתעדכן, בלי id נוסף, ומה
  * שלא נשלח מושבת (לא נמחק: ביקורים קיימים מצביעים עליו). מנהל בלבד.

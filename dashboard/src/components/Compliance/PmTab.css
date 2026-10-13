@@ -763,3 +763,14 @@ select.pm-input { padding-block: 8px; }
 .pm-site-lists-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .pm-site-lists-edit label { display: flex; align-items: center; gap: 8px; }
 .pm-site-lists-edit input[type="checkbox"] { width: 18px; height: 18px; }
+
+/* פריט "ערך" — מדידה (13/10/2026): שדה מספר קצר + יחידה, במקום תיבת הסימון */
+.pm-value { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.pm-value-in { display: inline-flex; align-items: center; gap: 6px; }
+.pm-value-input { width: 7em; min-height: 44px; text-align: center; font-variant-numeric: tabular-nums; direction: ltr; }
+.pm-value-unit { color: var(--text-secondary); font-weight: 600; }
+.pm-value-warn { margin: 4px 0 0; padding: 6px 10px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  color: var(--pm-amber-ink); background: var(--pm-amber-bg); border: 1px solid var(--pm-amber-border); }
+.pm-view-value { font-size: 14px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.pm-view-value--over { color: var(--pm-amber-ink); font-weight: 600; }
+.pm-tpl-unit { flex: 0 0 110px; }

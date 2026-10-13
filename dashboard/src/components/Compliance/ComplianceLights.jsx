@@ -18,7 +18,7 @@
 // ⚠️ ההסתרה היחידה היא בחירה מפורשת: בלוח, הנורה של תחום מצוירת רק אחרי בחירה בבורר "בודק מוסמך"
 // שבכותרת (08/10/2026). היא מגיעה דרך LampAreasContext, ולא מנתונים חסרים.
 import { createContext, useContext } from "react";
-import { COMPLIANCE_COLORS } from "../../utils/constants";
+import { complianceColor } from "../../utils/constants";
 import {
   AREA_NAME, COMPLIANCE_AREAS, GLYPH, draftStale, isAwaiting, lampState, lightAria, lightTitle, markFor, markVisible,
   stateLabel,
@@ -34,8 +34,8 @@ import "./ComplianceLights.css";
  */
 export const LampAreasContext = createContext(COMPLIANCE_AREAS);
 
-function colorVars(state) {
-  const c = COMPLIANCE_COLORS[state];
+function colorVars(state, area) {
+  const c = complianceColor(state, area);
   // ⚠️ מילוי, מסגרת וסימן — שמות של משתני CSS, והערכים ב-ComplianceLights.css לכל נושא.
   // "?" (unknown) אינו כאן בכוונה: הוא נצבע מה-CSS, מקווקו.
   return c ? { "--cl-fill": c.bg, "--cl-border": c.border, "--cl-ink": c.ink } : undefined;
@@ -48,7 +48,7 @@ function colorVars(state) {
  */
 export function LampSwatch({ state, area = "inspection" }) {
   return (
-    <span className={`cl-swatch cl-lamp--${state}`} style={colorVars(state)} aria-hidden="true">
+    <span className={`cl-swatch cl-lamp--${state}`} style={colorVars(state, area)} aria-hidden="true">
       <span className="cl-pill">
         <AreaIcon area={area} size={12} className="cl-icon" />
         <span className="cl-glyph">{GLYPH[state]}</span>
@@ -73,7 +73,7 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
     <button
       type="button"
       className={`cl-lamp cl-lamp--${state}${stale ? " cl-lamp--stale" : ""}`}
-      style={colorVars(state)}
+      style={colorVars(state, area)}
       aria-label={lightAria(area, compliance, nowIso)}
       title={lightTitle(area, compliance, nowIso)}
       data-tab={area}
@@ -138,7 +138,7 @@ export function MiniMark({ compliance, onOpen, nowIso }) {
     <button
       type="button"
       className={`cl-mini cl-mini--${m.state}${m.stale ? " cl-lamp--stale" : ""}`}
-      style={colorVars(m.state)}
+      style={colorVars(m.state, m.tab)}
       aria-label={lightAria(m.tab, compliance, now)}
       title={lightTitle(m.tab, compliance, now)}
       data-tab={m.tab}

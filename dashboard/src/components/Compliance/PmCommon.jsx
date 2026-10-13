@@ -1,7 +1,7 @@
 // components/Compliance/PmCommon.jsx — חלקים קטנים שחוזרים בלשונית התחזוקה המונעת.
 import { useEffect, useId, useRef, useState } from "react";
 import { GLYPH } from "../../utils/compliance";
-import { COMPLIANCE_COLORS } from "../../utils/constants";
+import { complianceColor } from "../../utils/constants";
 // ⚠️ המשתנים (--cl-*) מוגדרים שם. בלי הייבוא הזה המנורה תלויה בכך שכרטיס כלשהו כבר טען אותם — ובלעדיו
 // "עומדת לפוג" יצאה שחור-לבן (נמדד ברתמת התחזוקה, שמציירת את הלשונית בלי כרטיסים).
 import "./ComplianceLights.css";
@@ -18,7 +18,7 @@ import { REASON_MAX } from "./PmUtils";
  * מלא בלשונית ושחור-לבן בכרטיס — שני צבעים לאותו מצב, על אותו אתר.
  */
 export function PmLamp({ state = "unknown" }) {
-  const c = COMPLIANCE_COLORS[state];
+  const c = complianceColor(state, "pm");
   return (
     <span className={`pm-lamp pm-lamp--${state}`} aria-hidden="true"
       style={c ? { background: c.bg, borderColor: c.border, color: c.ink } : undefined}>

@@ -16,7 +16,8 @@ import {
   COMPLIANCE_FILTER_ROWS, complianceFilterKey, complianceFilterCounts,
   DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView, complianceActiveCount, sanitizeComplianceView,
 } from "../../dashboard/src/utils/compliance.js";
-import { COMPLIANCE_STATES, COMPLIANCE_COLORS } from "../../dashboard/src/utils/constants.js";
+import { COMPLIANCE_STATES, COMPLIANCE_COLORS, PM_OK_COLORS, complianceColor } from "../../dashboard/src/utils/constants.js";
+import { readFileSync } from "node:fs";
 import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
 
 const NOW = "2026-10-04T09:00:00.000Z";
@@ -325,7 +326,27 @@ test("⚠️ תאריך ISO בדוח היסטורי נקרא נכון, לא נח
 // ---------------------------------------------------------------
 // ⚠️ שיקוף של pm_template_save (שם הכלל נאכף): מעל 40 אף ביקור לא יוכל להיות
 // מוגש. כאן נבדק רק שהעורך סופר כמו השרת — פריטי חובה בלבד, ו"סימון" אינו נספר.
-import { templatePhotoTotal, MAX_PHOTOS_PER_VISIT } from "../../dashboard/src/components/Compliance/PmUtils.js";
+import { templatePhotoTotal, MAX_PHOTOS_PER_VISIT, valueNum, valueOver, kindHasCheck, kindHasPhotos, KIND_LABEL }
+  from "../../dashboard/src/components/Compliance/PmUtils.js";
+
+// פריט "ערך" (13/10/2026) — אותו כלל כמו app.pm_value_num במסד (pm-profiles.test.js בודק את הצד של ה-SQL
+// על אותם מקרים). פער ביניהם = טופס שאומר "בוצע" והגשה שנדחית, או להפך.
+test("פריט ערך: מה נחשב מדידה, הסף, ושאינו וי ואינו תמונות", () => {
+  for (const [t, v] of [["3", 3], [" -1 ", -1], ["2,5", 2.5], ["2.5", 2.5], ["2.", null], ["1e3", null], ["", null],
+    [null, null], ["תקין", null], ["1234567890", null], ["1.23456", null]]) {
+    assert.equal(valueNum(t), v, String(t));
+  }
+  const it = { warn_above: 2 };
+  assert.equal(valueOver(it, "2"), false, "בדיוק בסף — לא מעל");
+  assert.equal(valueOver(it, "2,01"), true);
+  assert.equal(valueOver({ warn_above: null }, "50"), false, "בלי סף — לעולם לא");
+  assert.equal(valueOver({ warn_above: "" }, "50"), false);
+  assert.equal(valueOver(it, "תקין"), false);
+  assert.equal(kindHasCheck("value"), false);
+  assert.equal(kindHasPhotos("value"), false);
+  assert.equal(templatePhotoTotal([{ kind: "value", required: true, min_photos: 3 }]), 0);
+  assert.ok(KIND_LABEL.value);
+});
 
 test("⚠️ סך התמונות בביקור: 7 פריטי צילום חובה × 6 = 42 — מעל התקרה; רשות וסימון אינם נספרים", () => {
   const heavy = Array.from({ length: 7 }, () => ({ kind: "photo", required: true, min_photos: 6 }));
@@ -520,4 +541,22 @@ test("בחירה שמורה (localStorage): מה שמוכר נשמר, כל הש�
   assert.deepEqual(sanitizeComplianceView({ pm: { show: true, only: ["soon"] } }).pm, { show: true, only: ["soon"] });
   // ברירת המחדל עצמה עוברת כמו שהיא
   assert.deepEqual(sanitizeComplianceView(DEFAULT_COMPLIANCE_VIEW), { inspection: off, pm: off });
+});
+
+// ⚠️ 13/10/2026: תחזוקה בתוקף = ירוק ("ירוק תקין, צהוב צריך להתכונן לתחזוקה, אדום לא תקין"); הבודק נשאר
+// "מסגרת שחורה". הצבע עובר דרך complianceColor בלבד, והמשתנים קיימים בשני הנושאים.
+test("נורת התחזוקה בתוקף ירוקה; הבודק בתוקף לא השתנה; שאר המצבים משותפים", () => {
+  assert.deepEqual(complianceColor("ok", "pm"), PM_OK_COLORS);
+  assert.equal(complianceColor("ok", "inspection"), COMPLIANCE_COLORS.ok);
+  assert.equal(complianceColor("ok", undefined), COMPLIANCE_COLORS.ok);
+  for (const st of ["soon", "expired", "none"]) assert.equal(complianceColor(st, "pm"), COMPLIANCE_COLORS[st]);
+  const css = readFileSync(new URL("../../dashboard/src/components/Compliance/ComplianceLights.css", import.meta.url), "utf8");
+  for (const v of ["--cl-pm-ok-fill", "--cl-pm-ok-border", "--cl-pm-ok-ink"]) {
+    assert.equal(css.split(v + ":").length - 1, 2, v + " — בבהיר ובכהה");
+  }
+  // כל מי שצובע נורה עובר דרך complianceColor — לא COMPLIANCE_COLORS[state] ישירות (פרט לעמוד הבודק)
+  for (const f of ["ComplianceLights.jsx", "PmCommon.jsx"]) {
+    const src = readFileSync(new URL("../../dashboard/src/components/Compliance/" + f, import.meta.url), "utf8");
+    assert.ok(!src.includes("COMPLIANCE_COLORS["), f + " צובע בלי complianceColor");
+  }
 });

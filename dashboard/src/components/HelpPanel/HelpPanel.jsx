@@ -81,6 +81,12 @@ function HelpPanel({ onClose }) {
             <Row term={<span className="help-lamp"><LampSwatch state="ok" /> בתוקף</span>}>
               תקין: התסקיר בתוקף ואין ליקויים פתוחים.
             </Row>
+            {/* ⚠️ בתחזוקה "בתוקף" ירוק (13/10/2026) — ובבודק מסגרת שחורה. שתי שורות, כי שני צבעים */}
+            {PM_ENABLED && (
+              <Row term={<span className="help-lamp"><LampSwatch state="ok" area="pm" /> תחזוקה בתוקף</span>}>
+                התחזוקה המונעת האחרונה בוצעה לפני פחות מחצי שנה.
+              </Row>
+            )}
             <Row term={<span className="help-lamp"><LampSwatch state="fixing" /> ליקויים בטיפול</span>}>
               התסקיר בתוקף, ויש ליקויים שעוד יש זמן לתקן אותם.
             </Row>

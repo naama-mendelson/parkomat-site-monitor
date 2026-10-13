@@ -886,6 +886,7 @@ export {
   fetchComplianceThumbs, fetchComplianceFile,
   fetchPmSite, fetchPmVisit, fetchPmTemplate, savePmTemplate,
   fetchPmTemplates, createPmTemplate, renamePmTemplate, setPmSiteTemplates,
+  fetchPmProfiles, savePmProfile, deletePmProfile, setPmProfileSites, setPmSiteProfile,
   startPmVisit, checkPmItem, notePmItem, addPmPhoto, deletePmPhoto,
   submitPmVisit, discardPmVisit, uploadPmHistorical, deletePmVisit, pmOutboxSenders,
   fetchComplianceStorage, fetchComplianceOrphans, reattachCompliance, purgeCompliance,

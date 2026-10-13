@@ -41,12 +41,12 @@ import { formatStampIL } from "../../utils/compliance";
 import { newId } from "../../utils/complianceFiles";
 import {
   HINT_MAX, KIND_LABEL, LABEL_MAX, LABEL_MIN, MAX_PHOTOS_PER_ITEM, MAX_PHOTOS_PER_VISIT, PHOTO_TOTAL_WARN,
-  TEMPLATE_MAX_ITEMS, templatePhotoTotal,
+  TEMPLATE_MAX_ITEMS, templatePhotoTotal, kindHasPhotos,
 } from "./PmUtils";
 
 // צורת הכלל — פונקציה אחת שכל שינוי עובר דרכה
 function shape(r) {
-  if (r.kind === "check" || !r.required) return r.min_photos === 0 ? r : { ...r, min_photos: 0 };
+  if (!kindHasPhotos(r.kind) || !r.required) return r.min_photos === 0 ? r : { ...r, min_photos: 0 };
   if (r.min_photos < 1) return { ...r, min_photos: 1 };
   return r;
 }
@@ -54,7 +54,7 @@ function shape(r) {
 const SECTION_MAX = 60;
 const serialize = (rows) => JSON.stringify((rows || []).map((r) => ({
   id: r.id ?? null, label: r.label.trim(), hint: r.hint.trim(), kind: r.kind, required: r.required, min_photos: r.min_photos,
-  section: r.section.trim(),
+  section: r.section.trim(), unit: r.kind === "value" ? String(r.unit ?? "").trim() : "", warn_above: r.kind === "value" ? String(r.warn_above ?? "").trim() : "",
 })));
 
 function rowError(r) {
@@ -63,6 +63,12 @@ function rowError(r) {
   if (n > LABEL_MAX) return `שם הפריט ארוך מדי (עד ${LABEL_MAX})`;
   if (r.hint.trim().length > HINT_MAX) return `ההסבר ארוך מדי (עד ${HINT_MAX})`;
   if (r.section.trim().length > SECTION_MAX) return `שם הקבוצה ארוך מדי (עד ${SECTION_MAX})`;
+  // "ערך" (13/10/2026): הסף — מספר (פסיק עשרוני מותר), ויחידה עד 10 תווים, כמו בשרת
+  if (r.kind === "value") {
+    const w = String(r.warn_above ?? "").trim();
+    if (w && !Number.isFinite(Number(w.replace(",", ".")))) return "הסף חייב להיות מספר, למשל 2";
+    if (String(r.unit ?? "").trim().length > 10) return "היחידה ארוכה מדי (עד 10 תווים)";
+  }
   return "";
 }
 
@@ -112,6 +118,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
         const next = list.map((t) => shape({
           key: `id:${t.id}`, id: t.id, label: t.label || "", hint: t.hint || "", section: t.section || "",
           kind: t.kind || "check", required: !!t.required, min_photos: Number(t.min_photos) || 0,
+          unit: t.unit || "", warn_above: t.warn_above == null ? "" : String(t.warn_above),
         }));
         const last = list.reduce((a, t) => (!a || (t.updated_at || "") > (a.updated_at || "") ? t : a), null);
         setRows(next);
@@ -158,7 +165,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
   const add = () => {
     const key = newId();
     setRows((rs) => [...rs, { key, id: null, label: "", hint: "", section: rs.length ? rs[rs.length - 1].section : "",
-      kind: "check", required: true, min_photos: 0 }]);
+      kind: "check", required: true, min_photos: 0, unit: "", warn_above: "" }]);
     setFocusKey(key);
     setSavedMsg("");
   };
@@ -186,6 +193,8 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
         kind: r.kind,
         required: r.required,
         min_photos: r.min_photos,
+        // "ערך" (13/10/2026): יחידה וסף. בסוג אחר השרת מוחק אותם בכל מקרה
+        ...(r.kind === "value" ? { unit: String(r.unit ?? "").trim() || null, warn_above: String(r.warn_above ?? "").trim().replace(",", ".") || null } : {}),
       })), version, tplId);
       setListsRev((x) => x + 1);   // מספר הפריטים בבורר
       setSavedMsg(`נשמר — ${n} פריטים פעילים. חל על ביקורים שייפתחו מעכשיו.`);
@@ -325,7 +334,21 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
                       disabled={busy} onChange={(e) => edit(r.key, { required: e.target.checked })} />
                     <span>חובה</span>
                   </label>
-                  {r.kind !== "check" && (
+                  {r.kind === "value" && (
+                    <>
+                      <label className="pm-field pm-tpl-unit">
+                        <span>יחידה</span>
+                        <input className="pm-input" type="text" maxLength={10} value={r.unit} placeholder="%"
+                          disabled={busy} onChange={(e) => edit(r.key, { unit: e.target.value })} />
+                      </label>
+                      <label className="pm-field pm-tpl-unit">
+                        <span>סימון מעל</span>
+                        <input className="pm-input" type="text" inputMode="decimal" maxLength={12} value={r.warn_above}
+                          placeholder="למשל 2" disabled={busy} onChange={(e) => edit(r.key, { warn_above: e.target.value })} />
+                      </label>
+                    </>
+                  )}
+                  {kindHasPhotos(r.kind) && (
                     <div className="pm-stepper" role="group" aria-label={`מספר תמונות מינימלי לפריט ${i + 1}`}>
                       <span>תמונות לפחות</span>
                       <button type="button" className="pm-icon-btn" aria-label="פחות"
@@ -348,7 +371,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
                   </button>
                 </div>
               </div>
-              {r.kind !== "check" && !r.required && (
+              {kindHasPhotos(r.kind) && !r.required && (
                 <small className="pm-hint">פריט רשות אינו יכול לדרוש תמונות — הטכנאי יצלם אם ירצה.</small>
               )}
               {touched && errors[i] && <span className="pm-field-err">{errors[i]}</span>}

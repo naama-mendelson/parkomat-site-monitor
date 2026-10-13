@@ -1821,10 +1821,62 @@ specific to the type of facility"*.
     - `probe-groups.mjs` in the scratchpad harness: 17/17, 12 UI mutations.
 - ⚠️ **The owner's instruction for new sites is addressed to Claude, not the UI:** *"from now on,
   every time a facility is added you'll need to ask which maintenance to attach to it; usually
-  the answer will be like another project"*. When registering a site, **ask** which lists it gets.
-- **Pending from the owner:** the three documents to turn into lists (Kaplan 8, the rest of the
-  Sotefin facilities, "מפרט טיפול לחניונים רובוטיים"), and the codes for the 11 Sotefin sites.
-  ("אביגיל 18" doesn't exist; it is אביגיל 20, 1343, already in the system.)
+  the answer will be like another project"*. When registering a site, **ask** which **profile** it
+  gets (since 13/10/2026 the registration form has an optional "פרופיל תחזוקה" field, shown only
+  when PM is enabled).
+- **Pending from the owner:** the codes for the 12 Sotefin sites (Kaplan 8 + 11). The documents are read
+  (13/10/2026, below); the lists are not loaded into production yet. ("אביגיל 18" doesn't exist; it is
+  אביגיל 20, 1343, already in the system — and the robotic-parks document lists אביגיל 20 under hydraulic.)
+
+## Maintenance profiles — "like the traffic light" (built 13/10/2026; PM still OFF on the live site)
+
+The owner: *"כיון שיש תחזוקה שמתאימה להרבה אתרים אותו דבר — שנקשר את האתר לתחזוקה שמתאימה לו כמו ברמזור"*,
+and for the lamp: *"ירוק תקין, צהוב צריך להתכונן לתחזוקה, אדום לא תקין"*. Her choices: a profiles board,
+green for PM only (the inspector keeps the black frame), Sotefin sites wait for codes, and PM is turned on
+on the live site only after she reviews it.
+
+- **A profile = a name + lists + sites; a site is in one profile** (`pm_profiles`, `pm_profile_templates`,
+  `pm_profile_sites` — PK is the site). Closed tables like the rest of compliance; all access via RPCs.
+  They live in `compliance.postgres.sql`, not a new file: `app.pm_site_template_ids` is `LANGUAGE sql` and
+  is validated at creation, so the tables must exist before it.
+- **`app.pm_site_template_ids` is still the one place:** profile → the old per-site assignment
+  (`pm_site_templates`, empty in production) → the default list. A profile whose lists are all inactive
+  falls through. A visit already open never changes (items are snapshotted).
+- **RPCs:** `pm_profiles_list()` (staff; one jsonb, with `unassigned`), `pm_profile_save(id, name,
+  template_ids, expected_at)` (PT409 on a stale board, ≥1 list, the 40-photo cap across its lists, unique
+  name ignoring case/spaces), `pm_profile_delete(id)` (sites return to the default), `pm_profile_sites_set(id,
+  codes)` (target state; a site from another profile **moves**), `pm_site_profile_set(code, id|null)`.
+  Manager-only writes; `audit_log` gets ids only; a `compliance` event per site that changed (a no-op
+  writes nothing). `pm_site` returns `profile`.
+- **UI:** "לוח פרופילי התחזוקה" in the PM tab's manager tools (`PmProfilesBoard.jsx`) — rows, not boxes;
+  search adds a site and says where it is now ("יעבור מ…"); delete needs a second click. The site row
+  (`PmSiteLists.jsx`) is now "פרופיל תחזוקה: X · שינוי" (a `ChoiceSelect`), with the lists read-only below.
+  `AddSiteModal` has an optional profile field; a failure there does not fail the registration.
+- **Green:** `--cl-pm-ok-*` in `ComplianceLights.css`; every lamp goes through `complianceColor(state,
+  area)` (`utils/constants.js`), never `COMPLIANCE_COLORS[state]` directly (the inspector page excepted).
+  `check-colors.mjs` checks the PM set (pm-ok/soon/expired/none) is distinct, readable, and actually green.
+- **The "value" item** (`kind='value'`, `unit`, `warn_above`): the document's chain gauge — *"להשאיר מקום
+  להזין כמה אחוזים תוצאת המדידה"*, report above 2%. The measured value travels in `pm_visit_items.note`
+  (the path the offline outbox already syncs), so a value item has no free-text note. "Measured" =
+  `app.pm_value_num` (`-?\d{1,9}([.,]\d{1,4})?`), mirrored by `valueNum` in `PmUtils.js` — a required value
+  blocks submit until a number is entered; above `warn_above` it is marked in the form and the view.
+  CHECKs replaced with DROP/ADD NOT VALID/VALIDATE (`pm_checklist_items_kind/_photo_shape/_value_shape`,
+  `pm_visit_items_kind`).
+- **Tests:** `pm-profiles.test.js` (17; 22/22 SQL mutations caught, 2 survived until their cases were
+  added: an inactive list in a profile, and a no-op re-assignment), `compliance-ui.test.js` (green + value
+  helpers). Browser `e2e/probe-pm-profiles.mjs` (109, 1280/390 × light/dark; 11/11 UI mutations caught by
+  `mut-pm-ui.mjs` on a separate tree, because her Vite runs on the repo), `probe-lists` L1/L6/L7
+  updated to the profile row, `probe-overdue` expects the extra "תחזוקה בתוקף" legend row when PM is on.
+- ⚠️ **Harness trap found on the way:** the Wizenet mock had set `window.__calls`, the inspector mock's
+  name — marking a defect done threw "reading 'push'" and `run.mjs` / `probe-overdue` stopped at S2. Now
+  `window.__serviceCalls`.
+- **The content (from Downloads\תחזוקה, read 13/10/2026):** `scratchpad/pm/harness/docsLists.js` (131 items,
+  10 lists) matches the documents. ⚠️ Gaps: the electric-lift section is unfinished in the document
+  ("@לביא"); the Sotefin R&P document has only the lift (shuttle/dolly/lobby rows are empty); Kaplan 8's
+  maintenance-program table (manual pp. 36–38) is scanned images — review before use. The content is
+  **not** in the repo (public; one source is Sotefin's manual) and is loaded once via the RPCs.
+- **Not done yet:** applying the SQL, loading the lists and profiles (after the owner confirms the mapping —
+  the "4 עמודים" lifts, 11 sites, match no document section), and turning PM on in Pages.
 - Tests: `pm-templates.test.js` (12 tests, 10 mutations caught),
   `register-site-unmonitored.test.js`, `sort-sites.test.js`, and `supervisor-shape.test.js`
   (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,

@@ -1,0 +1,34 @@
+/* לוח פרופילי התחזוקה — שורות ולא קופסאות (בעלת המוצר מעדיפה ממשק מינימלי).
+   משתמש במחלקות pm-* של PmTab.css (כפתורים, שדות, הודעות). */
+.pmp { display: flex; flex-direction: column; gap: 12px; }
+
+.pmp-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pmp-row { padding: 12px 0; border-bottom: 1px solid var(--border-color); }
+.pmp-row:first-child { border-top: 1px solid var(--border-color); }
+
+.pmp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.pmp-name { font-size: 15px; color: var(--text-primary); }
+.pmp-actions { margin-inline-start: auto; display: inline-flex; gap: 6px; }
+
+.pmp-line { margin-top: 4px; font-size: 14px; color: var(--text-primary); line-height: 1.5; overflow-wrap: anywhere; }
+.pmp-label { color: var(--text-secondary); font-weight: 600; }
+
+.pmp-edit { display: flex; flex-direction: column; gap: 10px; }
+.pmp-lists { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.pmp-lists legend { padding: 0; margin-bottom: 4px; color: var(--text-secondary); font-weight: 600; font-size: 14px; }
+
+.pmp-sites { display: flex; flex-direction: column; gap: 6px; }
+.pmp-site-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pmp-site-list li { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 14px; }
+.pmp-code { font-variant-numeric: tabular-nums; font-weight: 700; }
+.pmp-move { color: var(--text-secondary); }
+.pmp-x { margin-inline-start: auto; }
+
+.pmp-matches { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-color); border-radius: 8px;
+  max-height: 260px; overflow-y: auto; background: var(--bg-card, var(--bg-primary)); }
+.pmp-matches button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 8px 10px;
+  font-size: 14px; color: var(--text-primary); cursor: pointer; }
+.pmp-matches button:hover, .pmp-matches button:focus-visible { background: var(--pm-blue-bg); }
+.pmp-matches li + li { border-top: 1px solid var(--border-color); }
+
+.pmp-unassigned { font-size: 14px; }

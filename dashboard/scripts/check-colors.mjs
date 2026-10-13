@@ -164,6 +164,27 @@ for (const [group, colors] of Object.entries(GROUPS)) {
         if (d < MIN_DELTA_E) bad(`${name}: ${keys[i]} ↔ ${keys[j]} — ΔE ${d.toFixed(1)}, קרובים מדי`);
       }
     }
+    // ⚠️ תחזוקה מונעת (13/10/2026): "בתוקף" ירוק (--cl-pm-ok-*), והשאר מהמצבים המשותפים. ארבעת
+    // המצבים של התחזוקה נבדלים זה מזה, והסימן קריא — אותם כללים, על הסט שמופיע באותה נורה.
+    {
+      const fill = paint(vars["--cl-pm-ok-fill"], card);
+      const border = fill && paint(vars["--cl-pm-ok-border"], fill);
+      const ink = vars["--cl-pm-ok-ink"];
+      if (!fill || !border || !/^#[0-9a-fA-F]{6}$/.test(ink || "")) bad(`${name}: pm-ok — מילוי/מסגרת/סימן חסרים או לא ניתנים לקריאה`);
+      else {
+        const c = contrast(ink, fill);
+        if (c < MIN_TEXT) bad(`${name}: pm-ok — סימן ${ink} על ${fill}: ${c.toFixed(2)}:1`);
+        const pm = { "pm-ok": { fill, border }, soon: look.soon, expired: look.expired, none: look.none };
+        const ks = Object.keys(pm).filter((k) => pm[k]);
+        for (let i = 0; i < ks.length; i++) for (let j = i + 1; j < ks.length; j++) {
+          const d = Math.max(deltaE(pm[ks[i]].fill, pm[ks[j]].fill), deltaE(pm[ks[i]].border, pm[ks[j]].border));
+          if (d < MIN_DELTA_E) bad(`${name}: תחזוקה ${ks[i]} ↔ ${ks[j]} — ΔE ${d.toFixed(1)}, קרובים מדי`);
+        }
+        // ⚠️ וירוק באמת: הגוון (hue) של המסגרת בטווח הירוק, לא "עוד צבע שונה"
+        const [r, g, b] = rgb(border);
+        if (!(g > r && g > b)) bad(`${name}: pm-ok — המסגרת ${border} אינה ירוקה`);
+      }
+    }
     // טקסט קטן על הכרטיס עצמו: "לא הוגש", "?", ושורות הסיבה בעמוד הבודק
     for (const [label, v] of [["לא הוגש", "--cl-ink-red"], ["?", "--cl-muted"],
                               ["סיבה כתומה", "--cl-overdue-ink"], ["סיבה צהובה", "--cl-soon-ink"]]) {

@@ -14,7 +14,7 @@ import {
 import { formatDateIL, formatStampIL } from "../../utils/compliance";
 import ComplianceFileViewer from "./ComplianceFileViewer";
 import { ReasonForm } from "./PmCommon";
-import { KIND_LABEL, bytesText } from "./PmUtils";
+import { KIND_LABEL, bytesText, valueNum, valueOver } from "./PmUtils";
 
 export default function PmVisitView({ visit, isManager, onDeleted }) {
   const historical = visit.source === "historical";
@@ -97,7 +97,9 @@ export default function PmVisitView({ visit, isManager, onDeleted }) {
             {(detail.items || []).map((it) => {
               const n = (it.photos || []).length;
               // פריט צילום בלי אף תמונה אינו "בוצע", גם כשהוא רשות (מינימום 0)
-              const done = it.kind === "photo" ? n > 0 && n >= (it.min_photos || 0) : !!it.checked;
+              const done = it.kind === "photo" ? n > 0 && n >= (it.min_photos || 0)
+                : it.kind === "value" ? valueNum(it.note) != null : !!it.checked;
+              const over = it.kind === "value" && valueOver(it, it.note);
               return (
                 <li key={it.id} className={`pm-view-item${done ? "" : " pm-view-item--no"}`}>
                   <span className="pm-view-mark" aria-label={done ? "בוצע" : "לא סומן"}>{done ? "✓" : "—"}</span>
@@ -106,7 +108,13 @@ export default function PmVisitView({ visit, isManager, onDeleted }) {
                     <span className="pm-view-sub">
                       {KIND_LABEL[it.kind] || it.kind}{it.required ? " · חובה" : " · רשות"}
                     </span>
-                    {it.note && <span className="pm-view-note pm-pre">{it.note}</span>}
+                    {it.kind === "value" ? (
+                      it.note && (
+                        <span className={`pm-view-value${over ? " pm-view-value--over" : ""}`}>
+                          נמדד: {it.note}{it.unit || ""}{over ? ` · ⚠ מעל ${it.warn_above}${it.unit || ""}` : ""}
+                        </span>
+                      )
+                    ) : it.note && <span className="pm-view-note pm-pre">{it.note}</span>}
                     {(it.photos || []).length > 0 && (
                       <div className="pm-thumbs">
                         {it.photos.map((fid, ix) => (

@@ -57,6 +57,7 @@ import PmVisitView from "./PmVisitView";
 import PmHistoricalUpload from "./PmHistoricalUpload";
 import PmTemplateEditor from "./PmTemplateEditor";
 import PmSiteLists from "./PmSiteLists";
+import PmProfilesBoard from "./PmProfilesBoard";
 import { PmLamp } from "./PmCommon";
 import {
   DISCARD_IDLE_MS, agoText, countText, idleMs, readMe, readStore, sameName, submitReqKey, writeMe, writeStore,
@@ -425,7 +426,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
   // ---------------- היסטוריה וכלי מנהל ----------------
   const [openVisit, setOpenVisit] = useState(null);
   const [showAll, setShowAll] = useState(false);
-  const [tool, setTool] = useState(null);               // 'upload' | 'template'
+  const [tool, setTool] = useState(null);               // 'upload' | 'template' | 'profiles'
   const [mounted, setMounted] = useState(() => new Set());   // כלי שנפתח נשאר חי (מוסתר) — עבודה בו לא נזרקת
   const toolsRef = useRef(null);
   const openTool = (t, scroll = false) => {
@@ -438,6 +439,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
   const [formReason, setFormReason] = useState(null);
   const [uploadReason, setUploadReason] = useState(null);
   const [tplReason, setTplReason] = useState(null);
+  const [profReason, setProfReason] = useState(null);
   let outboxReason = null;
   if (ob.n > 0) {
     const what = countText(ob.n, "שינוי אחד", "שינויים");
@@ -445,7 +447,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
       ? `${what} בביקור עדיין לא סונכרנו לשרת — הם שמורים במכשיר הזה בלבד, ויישלחו רק כשהלשונית תיפתח שוב עם קליטה.`
       : `המכשיר אינו שומר טיוטה: ${what} שלא סונכרנו יימחקו אם החלון ייסגר.`;
   }
-  const reason = [outboxReason, formReason, uploadReason, tplReason].filter(Boolean).join("\n") || null;
+  const reason = [outboxReason, formReason, uploadReason, tplReason, profReason].filter(Boolean).join("\n") || null;
   const onDirtyRef = useRef(onDirtyChange);
   useEffect(() => { onDirtyRef.current = onDirtyChange; }, [onDirtyChange]);
   useEffect(() => { onDirtyRef.current?.(reason); }, [reason]);
@@ -487,7 +489,8 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
 
       {/* אילו רשימות תחזוקה האתר מקבל (07/10/2026) — רק כשאין טופס פתוח */}
       {!formOpen && Array.isArray(data?.templates) && (
-        <PmSiteLists code={site.code} templates={data.templates} assigned={!!data.templates_assigned}
+        <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
+          assigned={!!data.templates_assigned}
           isManager={isManager} onChanged={() => load({ silent: true })} />
       )}
 
@@ -660,11 +663,21 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
               aria-expanded={tool === "template"} onClick={() => openTool("template")}>
               עריכת רשימת הבדיקה ({templateCount})
             </button>
+            <button type="button" className={`pm-btn${tool === "profiles" ? " pm-btn--on" : ""}`}
+              aria-expanded={tool === "profiles"} onClick={() => openTool("profiles")}>
+              לוח פרופילי התחזוקה
+            </button>
           </div>
           {mounted.has("upload") && (
             <div hidden={tool !== "upload"}>
               <PmHistoricalUpload site={site} onDirty={setUploadReason}
                 onUploaded={() => { changed(); load({ silent: true }); }} />
+            </div>
+          )}
+          {mounted.has("profiles") && (
+            <div hidden={tool !== "profiles"}>
+              <PmProfilesBoard active={tool === "profiles"} onDirty={setProfReason}
+                onSaved={() => { changed(); load({ silent: true }); }} />
             </div>
           )}
           {mounted.has("template") && (

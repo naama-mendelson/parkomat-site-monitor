@@ -159,6 +159,13 @@ export const COMPLIANCE_COLORS = Object.fromEntries(COMPLIANCE_STATES.map((s) =>
   ink: `var(--cl-${s}-ink)`,
 }]));
 
+// ⚠️ תחזוקה מונעת בתוקף = ירוק (בעלת המוצר, 13/10/2026: "ירוק תקין, צהוב צריך להתכונן לתחזוקה, אדום לא
+// תקין"). רק בתחזוקה — הבודק המוסמך נשאר "מסגרת שחורה" (הטבלה של 06/10). ירוק של הבודק הוא "ליקויים
+// בטיפול", מצב שאין בתחזוקה, ולכן שני הירוקים אינם מופיעים לעולם על אותה נורה.
+export const PM_OK_COLORS = { bg: "var(--cl-pm-ok-fill)", border: "var(--cl-pm-ok-border)", ink: "var(--cl-pm-ok-ink)" };
+/** הצבעים של מצב בתחום. כל מי שצובע נורה עובר כאן — לא COMPLIANCE_COLORS[state] ישירות. */
+export const complianceColor = (state, area) => (area === "pm" && state === "ok" ? PM_OK_COLORS : COMPLIANCE_COLORS[state]);
+
 // ==========================================================
 // דרגת אתר (רמת שירות) — VIP / מורחב / בסיסי
 // ==========================================================

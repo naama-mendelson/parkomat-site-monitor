@@ -419,12 +419,65 @@ ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_section
   CHECK (section IS NULL OR length(btrim(section)) BETWEEN 1 AND 60) NOT VALID;
 ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_section;
 
+-- ------------------------------------------------------------
+-- פריט מסוג "ערך" — מדידה (13/10/2026)
+-- ------------------------------------------------------------
+-- מתוך "מפרט טיפול לחניונים רובוטיים": מד השרשרת — "להשאיר מקום פה להזין כמה אחוזים תוצאת
+-- המדידה", ומעל 2% חובה לדווח. עד עכשיו זה נרשם רק בהערה, כלומר בלי חובה ובלי סף.
+-- הערך נשמר ב-pm_visit_items.note (טקסט מספרי) — אותה דרך שהטופס כבר שולח הערות, גם בלי
+-- קליטה (pmOutbox). ⚠️ לכן לפריט "ערך" אין הערה חופשית; הוא מדידה אחת.
+-- unit — יחידה לתצוגה ("%"); warn_above — סף: ערך מעליו מסומן בטופס ובביקור שהוגש.
+-- ⚠️ ה-CHECKs שבתוך CREATE TABLE הם טקסט מת בייצור (הטבלה כבר קיימת) — מוחלפים כאן.
+ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS warn_above NUMERIC;
+ALTER TABLE pm_checklist_items DROP CONSTRAINT IF EXISTS pm_checklist_items_kind;
+ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_kind
+  CHECK (kind IN ('check','photo','check_photo','value')) NOT VALID;
+ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_kind;
+ALTER TABLE pm_checklist_items DROP CONSTRAINT IF EXISTS pm_checklist_items_photo_shape;
+ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_photo_shape CHECK (
+     (kind IN ('check','value') AND min_photos = 0)
+  OR (kind IN ('photo','check_photo') AND required AND min_photos >= 1)
+  OR (kind IN ('photo','check_photo') AND NOT required AND min_photos = 0)) NOT VALID;
+ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_photo_shape;
+ALTER TABLE pm_checklist_items DROP CONSTRAINT IF EXISTS pm_checklist_items_value_shape;
+ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_value_shape CHECK (
+  (kind = 'value' OR (unit IS NULL AND warn_above IS NULL))
+  AND (unit IS NULL OR length(btrim(unit)) BETWEEN 1 AND 10)) NOT VALID;
+ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_value_shape;
+
 -- אילו רשימות אתר מקבל. אין שורות → רשימת ברירת המחדל (app.pm_site_template_ids).
 CREATE TABLE IF NOT EXISTS pm_site_templates (
   site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
   template_id INTEGER NOT NULL REFERENCES pm_templates(id) ON DELETE CASCADE,
   PRIMARY KEY (site_id, template_id)
 );
+
+-- ------------------------------------------------------------
+-- פרופיל תחזוקה — "כמו ברמזור" (13/10/2026)
+-- ------------------------------------------------------------
+-- בעלת המוצר: "כיון שיש תחזוקה שמתאימה להרבה אתרים אותו דבר — שנקשר את האתר לתחזוקה שמתאימה
+-- לו כמו ברמזור". פרופיל = שורה: שם, הרשימות שבו, והאתרים שבו. שינוי רשימה בפרופיל חל מיד על
+-- כל האתרים שבו — זה כל הטעם, לעומת שיוך אתר-אתר (pm_site_templates) שהעתיק רשימות.
+-- ⚠️ אתר בפרופיל אחד בלבד — המפתח של pm_profile_sites הוא האתר. שני פרופילים לאותו אתר
+-- היו מחזירים שתי תשובות ל"אילו רשימות", ו-app.pm_site_template_ids הוא מקום אחד.
+CREATE TABLE IF NOT EXISTS pm_profiles (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL CONSTRAINT pm_profiles_name CHECK (length(btrim(name)) BETWEEN 2 AND 60),
+  seq INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL, updated_by TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pm_profiles_name ON pm_profiles (lower(btrim(name)));
+CREATE TABLE IF NOT EXISTS pm_profile_templates (
+  profile_id INTEGER NOT NULL REFERENCES pm_profiles(id) ON DELETE CASCADE,
+  template_id INTEGER NOT NULL REFERENCES pm_templates(id) ON DELETE CASCADE,
+  PRIMARY KEY (profile_id, template_id)
+);
+CREATE TABLE IF NOT EXISTS pm_profile_sites (
+  site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  profile_id INTEGER NOT NULL REFERENCES pm_profiles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_pm_profile_sites_profile ON pm_profile_sites(profile_id);
 
 -- ⚠️ ביקור שהוגש ונמחק רך — מותר לו להישאר בלי חתימה, כי compliance_purge
 -- מוחק אותה (D18). ביקור חי שהוגש מהדשבורד בלי חתימה עדיין אינו ניתן לביטוי.
@@ -480,6 +533,22 @@ CREATE INDEX IF NOT EXISTS idx_pm_visit_items_visit ON pm_visit_items(visit_id, 
 -- שם הקבוצה **בעת פתיחת הביקור** (הקבוצה של הפריט, או שם הרשימה). צילום ולא הפניה:
 -- שינוי שם ברשימה אחר כך אינו מזיז פריטים בביקור פתוח. NULL = ביקור מלפני הקבוצות.
 ALTER TABLE pm_visit_items ADD COLUMN IF NOT EXISTS section TEXT;
+-- פריט "ערך" (13/10/2026) — היחידה והסף מצולמים בפתיחה, כמו כל השאר; הערך עצמו ב-note
+ALTER TABLE pm_visit_items ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE pm_visit_items ADD COLUMN IF NOT EXISTS warn_above NUMERIC;
+ALTER TABLE pm_visit_items DROP CONSTRAINT IF EXISTS pm_visit_items_kind;
+ALTER TABLE pm_visit_items ADD CONSTRAINT pm_visit_items_kind
+  CHECK (kind IN ('check','photo','check_photo','value')) NOT VALID;
+ALTER TABLE pm_visit_items VALIDATE CONSTRAINT pm_visit_items_kind;
+
+-- ערך מספרי בטקסט של פריט "ערך": "2", "2.5", "2,5", "-1". ⚠️ מקום אחד — ההגשה, ספירת "בוצע"
+-- ובדיקות, כדי ש"נמדד" לא יוגדר פעמיים בשתי דרכים.
+CREATE OR REPLACE FUNCTION app.pm_value_num(p text) RETURNS numeric
+LANGUAGE sql IMMUTABLE SET search_path = public, app, pg_temp AS $$
+  SELECT CASE WHEN btrim(COALESCE(p, '')) ~ '^-?[0-9]{1,9}([.,][0-9]{1,4})?$'
+              THEN replace(btrim(p), ',', '.')::numeric END
+$$;
+REVOKE ALL ON FUNCTION app.pm_value_num(text) FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS pm_files (
   id BIGSERIAL PRIMARY KEY,
@@ -654,7 +723,8 @@ ALTER TABLE inspection_reports VALIDATE CONSTRAINT inspection_reports_validity_s
 DO $$ DECLARE t text; s text; BEGIN
   FOREACH t IN ARRAY ARRAY['inspection_machines','inspection_files','inspection_reports','inspection_defects',
                            'inspection_defect_photos','pm_checklist_items','pm_visits','pm_visit_items','pm_files',
-                           'compliance_history','pm_templates','pm_site_templates'] LOOP
+                           'compliance_history','pm_templates','pm_site_templates',
+                           'pm_profiles','pm_profile_templates','pm_profile_sites'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON %I FROM PUBLIC, anon, authenticated, service_role', t);
     s := NULL;
@@ -1880,12 +1950,17 @@ REVOKE ALL ON FUNCTION app.pm_may_discard(pm_visits) FROM PUBLIC;
 -- ------------------------------------------------------------
 -- אילו רשימות אתר מקבל — במקום אחד (07/10/2026)
 -- ------------------------------------------------------------
--- שויך במפורש → הרשימות הפעילות שלו, לפי seq. לא שויך (או שכל מה ששויך הושבת) →
--- רשימת ברירת המחדל. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן, אחרת
--- הכרטיס יאמר דבר אחד והביקור יצולם מדבר אחר.
+-- בפרופיל (13/10/2026) → הרשימות הפעילות של הפרופיל. אחרת שויך במפורש (pm_site_templates,
+-- השיוך הישן אתר-אתר) → הרשימות שלו. אחרת (או שכל מה ששויך הושבת) → רשימת ברירת המחדל.
+-- תמיד לפי seq. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן, אחרת הכרטיס יאמר דבר
+-- אחד והביקור יצולם מדבר אחר.
 CREATE OR REPLACE FUNCTION app.pm_site_template_ids(p_site_id integer) RETURNS integer[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT COALESCE(
+    (SELECT array_agg(t.id ORDER BY t.seq, t.id)
+       FROM pm_profile_sites ps JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
+       JOIN pm_templates t ON t.id = pt.template_id
+      WHERE ps.site_id = p_site_id AND t.active),
     (SELECT array_agg(t.id ORDER BY t.seq, t.id)
        FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
       WHERE st.site_id = p_site_id AND t.active),
@@ -1907,6 +1982,7 @@ BEGIN
            'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                        'id', i.id, 'seq', i.seq, 'label', i.label, 'hint', i.hint, 'kind', i.kind,
                        'section', i.section, 'required', i.required, 'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
+                       'unit', i.unit, 'warn_above', i.warn_above,
                        'updated_by', i.updated_by, 'updated_at', i.updated_at,
                        'photos', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', f.id, 'client_id', f.client_id,
                                                                                'byte_size', f.byte_size) ORDER BY f.id)
@@ -1924,7 +2000,11 @@ BEGIN
                     FROM unnest(app.pm_site_template_ids(v_site)) WITH ORDINALITY AS x(tid, o)
                     JOIN pm_templates t ON t.id = x.tid),
     'templates_assigned', EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
-                                   WHERE st.site_id = v_site AND t.active),
+                                   WHERE st.site_id = v_site AND t.active)
+                          OR EXISTS (SELECT 1 FROM pm_profile_sites ps WHERE ps.site_id = v_site),
+    -- הפרופיל של האתר (13/10/2026), או null — ואז הרשימות למעלה הן השיוך הישן או ברירת המחדל
+    'profile', (SELECT jsonb_build_object('id', p.id, 'name', p.name)
+                  FROM pm_profile_sites ps JOIN pm_profiles p ON p.id = ps.profile_id WHERE ps.site_id = v_site),
     -- שם התצוגה של הקורא, כפי שנכתב ב-updated_by / started_by. הדפדפן מכיר רק את
     -- המייל — בלי זה עריכה של המשתמש עצמו הוצגה "עודכן ע״י <השם שלו>".
     'me', v_actor,
@@ -1938,7 +2018,7 @@ BEGIN
                -- ⚠️ "בוצע" = וי היכן שנדרש וי, ומספר התמונות הנדרש. items_checked אינו
                -- סופר פריט צילום בלבד (אין לו וי), וביקור שלם נקרא "3/5".
                'items_done', (SELECT count(*)::int FROM pm_visit_items i WHERE i.visit_id = v.id
-                                AND (i.kind = 'photo' OR i.checked)
+                                AND (i.kind = 'photo' OR i.checked OR (i.kind = 'value' AND app.pm_value_num(i.note) IS NOT NULL))
                                 AND (SELECT count(*) FROM pm_files f WHERE f.visit_item_id = i.id AND f.kind = 'photo') >= i.min_photos),
                'photo_count', (SELECT count(*)::int FROM pm_files f WHERE f.visit_id = v.id AND f.kind = 'photo'),
                'has_signature', v.signature_b64 IS NOT NULL,
@@ -1970,6 +2050,7 @@ BEGIN
     'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                'id', i.id, 'seq', i.seq, 'label', i.label, 'hint', i.hint, 'kind', i.kind, 'required', i.required,
                'section', i.section, 'min_photos', i.min_photos, 'checked', i.checked, 'note', i.note,
+               'unit', i.unit, 'warn_above', i.warn_above,
                'photos', COALESCE((SELECT jsonb_agg(f.id ORDER BY f.id) FROM pm_files f
                                     WHERE f.visit_item_id = i.id AND f.kind = 'photo'), '[]'::jsonb))
              ORDER BY i.seq, i.id) FROM pm_visit_items i WHERE i.visit_id = v.id), '[]'::jsonb));
@@ -2004,6 +2085,7 @@ BEGIN
   v_t := app.pm_template_resolve(p_template_id);
   RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'seq', t.seq, 'label', t.label, 'hint', t.hint,
                                     'section', t.section, 'kind', t.kind, 'required', t.required, 'min_photos', t.min_photos,
+                                    'unit', t.unit, 'warn_above', t.warn_above,
                                     'updated_at', t.updated_at, 'updated_by', t.updated_by) ORDER BY t.seq, t.id)
                      FROM pm_checklist_items t WHERE t.active AND t.template_id = v_t.id), '[]'::jsonb);
 END $fn$;
@@ -2018,7 +2100,13 @@ BEGIN
   RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object(
              'id', t.id, 'name', t.name, 'seq', t.seq, 'is_default', t.is_default,
              'item_count', (SELECT count(*)::int FROM pm_checklist_items i WHERE i.active AND i.template_id = t.id),
-             'site_count', (SELECT count(*)::int FROM pm_site_templates st WHERE st.template_id = t.id))
+             -- אתרים שמקבלים אותה בפועל: דרך פרופיל, או בשיוך הישן אתר-אתר (13/10/2026)
+             'site_count', (SELECT count(DISTINCT x.site_id)::int FROM (
+                               SELECT st.site_id FROM pm_site_templates st WHERE st.template_id = t.id
+                               UNION
+                               SELECT ps.site_id FROM pm_profile_sites ps
+                                 JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
+                                WHERE pt.template_id = t.id) x))
            ORDER BY t.is_default DESC, t.seq, t.id)
          FROM pm_templates t WHERE t.active), '[]'::jsonb);
 END $fn$;
@@ -2091,7 +2179,7 @@ DECLARE
   v_t pm_templates;
   v_before jsonb; v_after jsonb; v_keep integer[] := '{}';
   v_e jsonb; v_ord bigint; v_id integer; v_label text; v_hint text; v_kind text; v_req boolean; v_min integer;
-  v_sec text; v_n integer; v_cur text; v_who text; v_photos integer;
+  v_sec text; v_n integer; v_cur text; v_who text; v_photos integer; v_unit text; v_warn numeric;
 BEGIN
   v_t := app.pm_template_resolve(p_template_id);
   IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' THEN
@@ -2118,22 +2206,32 @@ BEGIN
       v_id  := NULLIF(v_e->>'id','')::integer;
       v_req := COALESCE(NULLIF(v_e->>'required','')::boolean, true);
       v_min := COALESCE(NULLIF(v_e->>'min_photos','')::integer, 0);
+      v_warn := NULLIF(btrim(COALESCE(v_e->>'warn_above','')),'')::numeric;
     EXCEPTION WHEN others THEN RAISE EXCEPTION 'פריט % אינו תקין', v_ord USING ERRCODE = 'check_violation'; END;
     v_label := btrim(COALESCE(v_e->>'label',''));
     v_hint  := NULLIF(btrim(COALESCE(v_e->>'hint','')),'');
     v_kind  := COALESCE(NULLIF(v_e->>'kind',''),'check');
     v_sec   := NULLIF(btrim(COALESCE(v_e->>'section','')),'');
+    v_unit  := NULLIF(btrim(COALESCE(v_e->>'unit','')),'');
     IF length(v_label) NOT BETWEEN 2 AND 300 THEN
       RAISE EXCEPTION 'שם פריט % חייב להיות בין 2 ל-300 תווים', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_hint IS NOT NULL AND length(v_hint) > 500 THEN
       RAISE EXCEPTION 'הסבר פריט % ארוך מדי', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_sec IS NOT NULL AND length(v_sec) > 60 THEN
       RAISE EXCEPTION 'שם הקבוצה בפריט % ארוך מדי (עד 60 תווים)', v_ord USING ERRCODE = 'check_violation'; END IF;
-    IF v_kind NOT IN ('check','photo','check_photo') THEN
+    IF v_kind NOT IN ('check','photo','check_photo','value') THEN
       RAISE EXCEPTION 'סוג פריט % לא תקין', v_ord USING ERRCODE = 'check_violation'; END IF;
+    -- "ערך" (13/10/2026): יחידה וסף רק בו; בכל סוג אחר הם נמחקים, לא נדחים — כך מעבר סוג בעורך
+    -- אינו נתקע על שדה שכבר אינו מוצג.
+    IF v_kind = 'value' THEN
+      IF v_unit IS NOT NULL AND length(v_unit) > 10 THEN
+        RAISE EXCEPTION 'היחידה בפריט % ארוכה מדי (עד 10 תווים)', v_ord USING ERRCODE = 'check_violation'; END IF;
+    ELSE
+      v_unit := NULL; v_warn := NULL;
+    END IF;
     IF v_min NOT BETWEEN 0 AND 6 THEN
       RAISE EXCEPTION 'מספר תמונות בפריט % חייב להיות 0–6', v_ord USING ERRCODE = 'check_violation'; END IF;
-    IF v_kind = 'check' THEN v_min := 0;
+    IF v_kind IN ('check','value') THEN v_min := 0;
     ELSIF v_req AND v_min < 1 THEN
       RAISE EXCEPTION 'פריט צילום חובה (%) דורש לפחות תמונה אחת', v_ord USING ERRCODE = 'check_violation';
     ELSIF NOT v_req AND v_min <> 0 THEN
@@ -2142,12 +2240,14 @@ BEGIN
     IF v_id IS NOT NULL THEN
       -- ⚠️ רק פריט **של הרשימה הזו**: id של פריט מרשימה אחרת היה מעביר אותו לכאן בשקט.
       UPDATE pm_checklist_items t SET seq = v_ord::int, label = v_label, hint = v_hint, kind = v_kind, required = v_req,
-             min_photos = v_min, section = v_sec, active = true, updated_at = v_now, updated_by = v_actor
+             min_photos = v_min, section = v_sec, unit = v_unit, warn_above = v_warn,
+             active = true, updated_at = v_now, updated_by = v_actor
        WHERE t.id = v_id AND t.template_id = v_t.id;
       IF NOT FOUND THEN RAISE EXCEPTION 'פריט % לא נמצא ברשימה הזו', v_ord USING ERRCODE = 'PT404'; END IF;
     ELSE
-      INSERT INTO pm_checklist_items (template_id, seq, label, hint, kind, required, min_photos, section, active, updated_at, updated_by)
-      VALUES (v_t.id, v_ord::int, v_label, v_hint, v_kind, v_req, v_min, v_sec, true, v_now, v_actor)
+      INSERT INTO pm_checklist_items (template_id, seq, label, hint, kind, required, min_photos, section, unit, warn_above,
+                                      active, updated_at, updated_by)
+      VALUES (v_t.id, v_ord::int, v_label, v_hint, v_kind, v_req, v_min, v_sec, v_unit, v_warn, true, v_now, v_actor)
       RETURNING pm_checklist_items.id INTO v_id;
     END IF;
     v_keep := v_keep || v_id;
@@ -2210,6 +2310,191 @@ BEGIN
 END $fn$;
 REVOKE ALL ON FUNCTION public.pm_site_templates_set(text, integer[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_site_templates_set(text, integer[]) TO authenticated;
+
+-- ------------------------------------------------------------
+-- פרופילי תחזוקה — הלוח (13/10/2026)
+-- ------------------------------------------------------------
+-- קריאה לכל איש צוות (הלשונית מציגה את הפרופיל); כתיבה — מנהל בלבד, כמו הרשימות.
+-- ⚠️ ערך jsonb אחד ולא שורות: PostgREST חותך ב-1,000 שורות (check-row-cap).
+CREATE OR REPLACE FUNCTION public.pm_profiles_list() RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE v_actor text := app.require_staff();
+BEGIN
+  RETURN jsonb_build_object(
+    'profiles', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'id', p.id, 'name', p.name, 'seq', p.seq, 'updated_at', p.updated_at, 'updated_by', p.updated_by,
+        'template_ids', COALESCE((SELECT jsonb_agg(t.id ORDER BY t.seq, t.id) FROM pm_profile_templates pt
+                                    JOIN pm_templates t ON t.id = pt.template_id AND t.active
+                                   WHERE pt.profile_id = p.id), '[]'::jsonb),
+        'item_count', (SELECT count(*)::int FROM pm_profile_templates pt
+                         JOIN pm_templates t ON t.id = pt.template_id AND t.active
+                         JOIN pm_checklist_items i ON i.template_id = t.id AND i.active
+                        WHERE pt.profile_id = p.id),
+        'photo_count', (SELECT COALESCE(sum(i.min_photos), 0)::int FROM pm_profile_templates pt
+                          JOIN pm_templates t ON t.id = pt.template_id AND t.active
+                          JOIN pm_checklist_items i ON i.template_id = t.id AND i.active AND i.required
+                         WHERE pt.profile_id = p.id),
+        'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object('code', s.code, 'name', s.site_name) ORDER BY s.code)
+                             FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id
+                            WHERE ps.profile_id = p.id), '[]'::jsonb))
+      ORDER BY p.seq, p.id) FROM pm_profiles p), '[]'::jsonb),
+    -- אתרים בלי פרופיל — השורה "בלי פרופיל" בתחתית הלוח. הם מקבלים את ברירת המחדל (או שיוך ישן).
+    'unassigned', COALESCE((SELECT jsonb_agg(jsonb_build_object('code', s.code, 'name', s.site_name) ORDER BY s.code)
+                              FROM sites s WHERE NOT EXISTS (SELECT 1 FROM pm_profile_sites ps WHERE ps.site_id = s.id)),
+                           '[]'::jsonb));
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_profiles_list() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profiles_list() TO authenticated;
+
+-- יצירה (p_id ריק) או עדכון של פרופיל: שם ורשימות. ⚠️ p_expected_at — ה-updated_at שהלוח טען;
+-- לוח ישן היה מחזיר בשקט רשימות שמנהל אחר הוציא, וכל אתר בפרופיל יורש את זה. NULL = בלי בדיקה.
+CREATE OR REPLACE FUNCTION public.pm_profile_save(p_id integer, p_name text, p_template_ids integer[],
+                                                  p_expected_at text DEFAULT NULL) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_now text := app.compliance_now_iso();
+  v_name text := btrim(COALESCE(p_name, ''));
+  v_ids integer[] := COALESCE((SELECT array_agg(DISTINCT x) FROM unnest(p_template_ids) x WHERE x IS NOT NULL), '{}');
+  v_p pm_profiles%ROWTYPE; v_id integer; v_photos integer; v_before jsonb;
+BEGIN
+  IF length(v_name) NOT BETWEEN 2 AND 60 THEN
+    RAISE EXCEPTION 'שם הפרופיל חייב להיות בין 2 ל-60 תווים' USING ERRCODE = 'check_violation'; END IF;
+  IF cardinality(v_ids) = 0 THEN
+    RAISE EXCEPTION 'יש לבחור לפחות רשימה אחת לפרופיל' USING ERRCODE = 'check_violation'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_ids) x(id) WHERE NOT EXISTS
+               (SELECT 1 FROM pm_templates t WHERE t.id = x.id AND t.active)) THEN
+    RAISE EXCEPTION 'אחת הרשימות לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  -- ⚠️ אותו 40 כמו ב-pm_template_save וב-pm_visit_start: רשימות הפרופיל הן רשימות האתר
+  SELECT COALESCE(sum(i.min_photos), 0)::int INTO v_photos
+    FROM pm_checklist_items i WHERE i.active AND i.required AND i.template_id = ANY (v_ids);
+  IF v_photos > 40 THEN
+    RAISE EXCEPTION 'הרשימות יחד דורשות % תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש', v_photos
+      USING ERRCODE = 'check_violation'; END IF;
+  -- נעילה: שתי יצירות באותו שם במקביל היו עוברות שתיהן את הבדיקה (האינדקס היה זורק 23505 בלי הסבר)
+  LOCK TABLE pm_profiles IN SHARE ROW EXCLUSIVE MODE;
+  IF EXISTS (SELECT 1 FROM pm_profiles p WHERE lower(btrim(p.name)) = lower(v_name) AND p.id IS DISTINCT FROM p_id) THEN
+    RAISE EXCEPTION 'כבר קיים פרופיל בשם "%"', v_name USING ERRCODE = 'PT409'; END IF;
+
+  IF p_id IS NULL THEN
+    INSERT INTO pm_profiles (name, seq, updated_at, updated_by)
+    VALUES (v_name, COALESCE((SELECT max(p.seq) FROM pm_profiles p), 0) + 1, v_now, v_actor)
+    RETURNING pm_profiles.id INTO v_id;
+  ELSE
+    SELECT p.* INTO v_p FROM pm_profiles p WHERE p.id = p_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
+    IF p_expected_at IS NOT NULL AND v_p.updated_at <> p_expected_at THEN
+      RAISE EXCEPTION 'הפרופיל עודכן בינתיים ע״י % — יש לטעון את הלוח מחדש', v_p.updated_by USING ERRCODE = 'PT409'; END IF;
+    v_before := jsonb_build_object('name', v_p.name, 'template_ids',
+      (SELECT COALESCE(jsonb_agg(pt.template_id ORDER BY pt.template_id), '[]'::jsonb)
+         FROM pm_profile_templates pt WHERE pt.profile_id = p_id));
+    UPDATE pm_profiles p SET name = v_name, updated_at = v_now, updated_by = v_actor WHERE p.id = p_id;
+    v_id := p_id;
+  END IF;
+  DELETE FROM pm_profile_templates pt WHERE pt.profile_id = v_id;
+  INSERT INTO pm_profile_templates (profile_id, template_id) SELECT v_id, x FROM unnest(v_ids) x;
+
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'profile', v_id, CASE WHEN p_id IS NULL THEN 'create' ELSE 'save' END,
+    v_actor, v_before, jsonb_build_object('name', v_name, 'template_ids', to_jsonb(v_ids)), NULL);
+  PERFORM app.record_write_audit('pm.profile_save', v_actor, app.current_app_role(), 'settings', 'pm_profile',
+    jsonb_build_object('profile_id', v_id, 'template_ids', to_jsonb(v_ids)));   -- D22: מזהים בלבד
+  RETURN v_id;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_profile_save(integer, text, integer[], text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_save(integer, text, integer[], text) TO authenticated;
+
+-- מחיקת פרופיל: האתרים שבו חוזרים לברירת המחדל (או לשיוך הישן שלהם). מחזיר כמה אתרים חזרו.
+-- ⚠️ ביקור פתוח אינו משתנה — הפריטים שלו צולמו בפתיחה.
+CREATE OR REPLACE FUNCTION public.pm_profile_delete(p_id integer) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_p pm_profiles%ROWTYPE; v_codes text[]; v_c text;
+BEGIN
+  SELECT p.* INTO v_p FROM pm_profiles p WHERE p.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_codes
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_id;
+  DELETE FROM pm_profiles p WHERE p.id = p_id;   -- CASCADE: הרשימות והאתרים שלו
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'profile', p_id, 'delete', v_actor,
+    jsonb_build_object('name', v_p.name, 'sites', to_jsonb(v_codes)), NULL, NULL);
+  PERFORM app.record_write_audit('pm.profile_delete', v_actor, app.current_app_role(), 'settings', 'pm_profile',
+    jsonb_build_object('profile_id', p_id, 'site_count', cardinality(v_codes)));
+  FOREACH v_c IN ARRAY v_codes LOOP PERFORM app.compliance_event(v_c, 'pm', 'profile'); END LOOP;
+  RETURN cardinality(v_codes);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_profile_delete(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_delete(integer) TO authenticated;
+
+-- מצב יעד: אלה האתרים של הפרופיל מעכשיו. אתר שהיה בפרופיל אחר **עובר** לכאן (כמו "חבר לשורה
+-- אחרת" ברמזור); אתר שהוסר מכאן חוזר לברירת המחדל. מחזיר כמה אתרים בפרופיל.
+CREATE OR REPLACE FUNCTION public.pm_profile_sites_set(p_profile_id integer, p_site_codes text[]) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_codes text[] := COALESCE((SELECT array_agg(DISTINCT btrim(x)) FROM unnest(p_site_codes) x
+                               WHERE NULLIF(btrim(x), '') IS NOT NULL), '{}');
+  v_ids integer[]; v_bad text; v_before text[]; v_moved text[]; v_after text[]; v_c text;
+BEGIN
+  PERFORM 1 FROM pm_profiles p WHERE p.id = p_profile_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  SELECT x INTO v_bad FROM unnest(v_codes) x WHERE NOT EXISTS (SELECT 1 FROM sites s WHERE s.code = x) LIMIT 1;
+  IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', v_bad USING ERRCODE = 'PT404'; END IF;
+  SELECT COALESCE(array_agg(s.id), '{}') INTO v_ids FROM sites s WHERE s.code = ANY (v_codes);
+
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_before
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_moved
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id
+   WHERE ps.site_id = ANY (v_ids) AND ps.profile_id <> p_profile_id;
+  DELETE FROM pm_profile_sites ps WHERE ps.profile_id = p_profile_id AND NOT (ps.site_id = ANY (v_ids));
+  INSERT INTO pm_profile_sites (site_id, profile_id) SELECT x, p_profile_id FROM unnest(v_ids) x
+  ON CONFLICT (site_id) DO UPDATE SET profile_id = EXCLUDED.profile_id;
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_after
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
+
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'profile_sites', p_profile_id, 'set', v_actor,
+    jsonb_build_object('sites', to_jsonb(v_before)),
+    jsonb_build_object('sites', to_jsonb(v_after), 'moved_from_other', to_jsonb(v_moved)), NULL);
+  PERFORM app.record_write_audit('pm.profile_sites_set', v_actor, app.current_app_role(), 'settings', 'pm_profile',
+    jsonb_build_object('profile_id', p_profile_id, 'site_count', cardinality(v_after)));
+  -- אירוע לכל אתר שהשתנה לו משהו: נכנס, יצא, או עבר מפרופיל אחר
+  FOR v_c IN SELECT DISTINCT c FROM (SELECT unnest(v_before) c UNION SELECT unnest(v_after)) u
+              WHERE NOT (c = ANY (v_before) AND c = ANY (v_after)) OR c = ANY (v_moved) LOOP
+    PERFORM app.compliance_event(v_c, 'pm', 'profile');
+  END LOOP;
+  RETURN cardinality(v_after);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_profile_sites_set(integer, text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_sites_set(integer, text[]) TO authenticated;
+
+-- פרופיל לאתר אחד — מהלשונית שלו ומרישום אתר. NULL = בלי פרופיל (ברירת המחדל).
+CREATE OR REPLACE FUNCTION public.pm_site_profile_set(p_site_code text, p_profile_id integer) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_site integer; v_code text; v_before integer;
+BEGIN
+  SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
+  IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
+  IF p_profile_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pm_profiles p WHERE p.id = p_profile_id) THEN
+    RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  SELECT ps.profile_id INTO v_before FROM pm_profile_sites ps WHERE ps.site_id = v_site FOR UPDATE;
+  IF v_before IS NOT DISTINCT FROM p_profile_id THEN RETURN; END IF;   -- אין שינוי — אין רישום
+  IF p_profile_id IS NULL THEN
+    DELETE FROM pm_profile_sites ps WHERE ps.site_id = v_site;
+  ELSE
+    INSERT INTO pm_profile_sites (site_id, profile_id) VALUES (v_site, p_profile_id)
+    ON CONFLICT (site_id) DO UPDATE SET profile_id = EXCLUDED.profile_id;
+  END IF;
+  PERFORM app.compliance_log(v_site, v_code, 'pm', 'site_profile', NULL, 'set', v_actor,
+    jsonb_build_object('profile_id', v_before), jsonb_build_object('profile_id', p_profile_id), NULL);
+  PERFORM app.record_write_audit('pm.site_profile_set', v_actor, app.current_app_role(), 'site', v_code,
+    jsonb_build_object('profile_id', p_profile_id));
+  PERFORM app.compliance_event(v_code, 'pm', 'profile');
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_site_profile_set(text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_site_profile_set(text, integer) TO authenticated;
 
 -- ------------------------------------------------------------
 -- pm_visit_start — טיוטה אחת לאתר; הפריטים מצולמים מהרשימה ברגע הפתיחה
@@ -2286,9 +2571,9 @@ BEGIN
   -- ⚠️ סדר הרשימות כפי שהאתר מקבל אותן, ובתוך כל רשימה — הסדר שלה. seq ממוספר מחדש
   -- ברצף, כי כל רשימה ממספרת מ-1 ושני "פריט 1" היו מתערבבים בטופס.
   -- section: הקבוצה של הפריט, ובלעדיה שם הרשימה — כך כל פריט בביקור חדש שייך לקבוצה.
-  INSERT INTO pm_visit_items (visit_id, template_item_id, seq, label, hint, kind, required, min_photos, section)
+  INSERT INTO pm_visit_items (visit_id, template_item_id, seq, label, hint, kind, required, min_photos, section, unit, warn_above)
   SELECT v_id, t.id, (row_number() OVER (ORDER BY x.o, t.seq, t.id))::int, t.label, t.hint, t.kind, t.required, t.min_photos,
-         COALESCE(NULLIF(btrim(t.section), ''), tp.name)
+         COALESCE(NULLIF(btrim(t.section), ''), tp.name), t.unit, t.warn_above
     FROM unnest(v_tpls) WITH ORDINALITY AS x(tid, o)
     JOIN pm_checklist_items t ON t.template_id = x.tid AND t.active
     JOIN pm_templates tp ON tp.id = x.tid
@@ -2423,6 +2708,8 @@ BEGIN
   SELECT array_agg(i.label ORDER BY i.seq, i.id) INTO v_missing FROM pm_visit_items i
    WHERE i.visit_id = v.id AND i.required
      AND ((i.kind IN ('check','check_photo') AND NOT i.checked)
+          -- "ערך" (13/10/2026): חובה = נמדד מספר. טקסט שאינו מספר אינו מדידה.
+          OR (i.kind = 'value' AND app.pm_value_num(i.note) IS NULL)
           OR (SELECT count(*) FROM pm_files f WHERE f.visit_item_id = i.id AND f.kind = 'photo') < i.min_photos);
   IF v_missing IS NOT NULL THEN
     v_list := array_to_string(v_missing[1:5], ', ');

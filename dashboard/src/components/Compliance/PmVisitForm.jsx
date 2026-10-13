@@ -40,6 +40,7 @@ import { CameraIcon, ReasonForm } from "./PmCommon";
 import {
   DISCARD_IDLE_MS, ITEM_NOTE_MAX, MAX_PHOTOS_PER_ITEM, NAME_KEY, NAME_MAX, VISIT_NOTE_MAX,
   agoText, countText, idleMs, readStore, sameName, submitDateRange, submitReqKey, writeStore,
+  kindHasCheck, kindHasPhotos, valueNum, valueOver,
 } from "./PmUtils";
 
 const NOTE_DEBOUNCE_MS = 800;
@@ -333,8 +334,11 @@ export default function PmVisitForm({
       ...ackedPhotos.map((ph) => ph.clientId),
       ...livePending.map((ph) => ph.clientId),
     ]).size;
-    const needsCheck = it.kind !== "photo";
-    const missing = !!it.required && ((needsCheck && !checked) || photoN < (it.min_photos || 0));
+    const needsCheck = kindHasCheck(it.kind);
+    // "ערך" (13/10/2026): חובה = נמדד מספר (אותו כלל כמו pm_visit_submit). הערך יושב בשדה ההערה.
+    const needsValue = it.kind === "value";
+    const missing = !!it.required && ((needsCheck && !checked) || (needsValue && valueNum(note) == null)
+      || photoN < (it.min_photos || 0));
     const stuck = ob.mine.stuck.filter((s) => String(s.itemId) === id);
     const undoHere = ob.mine.undo.some((u) => u.itemId === id);
     const localTouched = "checked" in p || "note" in p || !!ac || !!an || noteDrafts[id] != null
@@ -380,7 +384,8 @@ export default function PmVisitForm({
     g.done = g.missing === 0;
     // "סיים את השורה" = אין חובה חסרה וגם כל וי (כולל רשות) סומן — רק אז עוברים לבאה,
     // כדי לא לסגור לטכנאי קבוצה שבה עוד נשאר לו פריט רשות.
-    g.finished = g.done && g.items.every((m) => m.it.kind === "photo" || m.checked);
+    g.finished = g.done && g.items.every((m) => m.it.kind === "photo" || m.checked
+      || (m.it.kind === "value" && valueNum(m.note) != null));
   }
   const grouped = groups.length > 1 && groups.some((g) => g.name);
   const [openGroups, setOpenGroups] = useState(() => {
@@ -587,7 +592,19 @@ export default function PmVisitForm({
     <li key={m.id} id={`pm-item-${visitId}-${m.id}`}
       className={`pm-item${m.missing ? " pm-item--todo" : ""}${m.status?.cls === "error" ? " pm-item--error" : ""}`}>
       <div className="pm-item-head">
-        {m.it.kind !== "photo" ? (
+        {m.it.kind === "value" ? (
+          <label className="pm-check pm-value">
+            <span className="pm-check-label">{m.it.label}</span>
+            <span className="pm-value-in">
+              <input type="text" inputMode="decimal" className="pm-input pm-value-input" value={m.note ?? ""}
+                maxLength={14} disabled={lock} aria-invalid={m.note && valueNum(m.note) == null ? "true" : undefined}
+                onFocus={() => onNoteFocus(m.id, m.note)}
+                onChange={(e) => onNoteChange(m.id, e.target.value)}
+                onBlur={() => onNoteBlur(m.id)} />
+              {m.it.unit && <span className="pm-value-unit">{m.it.unit}</span>}
+            </span>
+          </label>
+        ) : m.it.kind !== "photo" ? (
           <label className="pm-check">
             <input type="checkbox" className="pm-checkbox" checked={m.checked} disabled={lock}
               onChange={(e) => toggle(m.id, e.target.checked)} />
@@ -601,19 +618,25 @@ export default function PmVisitForm({
         )}
       </div>
       {m.it.hint && <p className="pm-hint">{m.it.hint}</p>}
+      {m.it.kind === "value" && m.note && valueNum(m.note) == null && (
+        <p className="pm-field-err">יש להזין מספר, למשל 1.5</p>
+      )}
+      {m.it.kind === "value" && valueOver(m.it, m.note) && (
+        <p className="pm-value-warn" role="status">⚠ מעל {m.it.warn_above}{m.it.unit || ""} — יש לדווח</p>
+      )}
 
       <div className="pm-tags">
         {m.it.required
           ? <span className="pm-tag pm-tag--req">חובה</span>
           : <span className="pm-tag">רשות</span>}
-        {m.it.kind !== "check" && (
+        {kindHasPhotos(m.it.kind) && (
           <span className={`pm-tag${m.it.min_photos > 0 && m.photoN < m.it.min_photos ? " pm-tag--short" : ""}`}>
             {m.it.min_photos > 0 ? `${m.photoN}/${m.it.min_photos} תמונות` : `${m.photoN} תמונות`}
           </span>
         )}
       </div>
 
-      {m.it.kind !== "check" && (
+      {kindHasPhotos(m.it.kind) && (
         <div className="pm-photos">
           <PhotoPicker
             max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
@@ -652,7 +675,7 @@ export default function PmVisitForm({
         </div>
       )}
 
-      {noteOpen.has(m.id) || m.note ? (
+      {m.it.kind === "value" ? null : noteOpen.has(m.id) || m.note ? (
         <label className="pm-field pm-note">
           <span>הערה</span>
           <textarea className="pm-input pm-textarea" rows={2} maxLength={ITEM_NOTE_MAX} value={m.note}
