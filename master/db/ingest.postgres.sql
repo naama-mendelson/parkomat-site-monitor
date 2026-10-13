@@ -523,6 +523,7 @@ DECLARE
   v_site     record;
   v_silence  integer;
   v_open     record;
+  v_prev     record;   -- המקטע שנגמר בתחילת נתק פתוח (שלב 3)
   v_in_maint boolean;
 BEGIN
   SELECT s.id, s.status, s.last_seen INTO v_site
@@ -583,6 +584,44 @@ BEGIN
    ORDER BY h.started_at DESC LIMIT 1;
 
   IF v_open.started_at IS NOT NULL AND v_at < v_open.started_at THEN
+    -- ============================================================
+    -- ⚠️ נתק שסומן מוקדם מדי — המצב נכנס לפניו (13/10/2026)
+    -- ============================================================
+    -- סריקת השתיקה מסמנת no_comm 3–4 דקות אחרי הפעימה האחרונה. מצב שהסוכן ראה בדקות האלה מגיע מהתור
+    -- שלו רק אחרי החזרה, וזמנו לפני תחילת מקטע הנתק — ולכן נדחה, והסוכן (שקיבל 200) מחק אותו. נמדד:
+    -- 340 ב-30 יום ב-24 אתרים, 3 מהם תקלות שנעלמו מאחוז הכשל. ההודעה מוכיחה שהסוכן ראה את הבקר באותו
+    -- רגע — מקומה בין המקטע שקדם לנתק לבין הנתק: המקטע ההוא נסגר בזמן ההודעה, ומקטע חדש נפתח ממנה
+    -- ועד תחילת הנתק. הודעות ברצף (תקלה ואז חזרה) נכנסות כך אחת אחרי השנייה.
+    --
+    -- ⚠️ **רק כשהמקטע הפתוח הוא נתק, ורק בתוך המקטע שנגמר בדיוק בתחילתו.** הודעה מוקדמת ממנו היא סדר שבור,
+    -- ולא "סומן מוקדם מדי" — היא נדחית כמו קודם. כך גם כשהמקטע הפתוח אינו נתק.
+    -- ⚠️ **בלי אירוע ובלי לגעת ב-sites.status:** אירוע 'state' היה מפעיל צליל והתראה על תקלה שנגמרה מזמן.
+    -- המצב הנוכחי נקבע בחזרה מהנתק (סוף ingest_batch), כמו קודם.
+    IF v_open.status = 'no_comm' AND p_status <> 'no_comm' THEN
+      SELECT h.id, COALESCE(h.reclassified_to, h.status) AS status, h.started_at INTO v_prev
+        FROM status_history h
+       WHERE h.site_id = p_site_id AND h.ended_at = v_open.started_at
+       ORDER BY h.started_at DESC, h.id DESC
+       LIMIT 1;
+
+      IF v_prev.id IS NOT NULL AND v_at > v_prev.started_at THEN
+        -- ההודעה היא סימן חיים מאותו רגע — last_seen קדימה בלבד
+        UPDATE sites SET last_seen = v_at
+         WHERE id = p_site_id AND (last_seen IS NULL OR last_seen < v_at);
+
+        IF v_prev.status = p_status THEN
+          RETURN QUERY SELECT false, 'no_change'::text, v_at, false;
+          RETURN;
+        END IF;
+
+        UPDATE status_history SET ended_at = v_at WHERE id = v_prev.id;
+        INSERT INTO status_history (site_id, status, started_at, ended_at, fault_text)
+        VALUES (p_site_id, p_status, v_at, v_open.started_at, p_fault_text);
+        RETURN QUERY SELECT true, 'backfilled'::text, v_at, false;
+        RETURN;
+      END IF;
+    END IF;
+
     PERFORM app.record_ingest_drop(p_site_id, 'state', 'state_late_vs_open_segment',
       format('occurredAt=%s < openStartedAt=%s', v_at, v_open.started_at),
       jsonb_build_object('status', p_status, 'occurred_at', p_occurred_at));

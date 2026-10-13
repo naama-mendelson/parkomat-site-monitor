@@ -278,6 +278,24 @@ now the only door that sends an empty batch, and `SupabaseWriterTests` counts re
 runs, its will still gives 90 seconds for free. The heartbeat does not replace it; it is what
 makes turning it off possible.
 
+⚠️ **A state from the minutes before the silence mark goes into history, not into the bin (13/10/2026).**
+The scan marks `no_comm` 3–4 minutes after the last beat. A state the agent saw in those minutes reaches
+us from its queue only after it returns, timed **before** the open `no_comm` segment, and was dropped as
+`state_late_vs_open_segment`. The agent got a 200 and deleted it. Measured: 340 in 30 days at 24 sites,
+3 of them faults that vanished from the failure rate. The message proves the agent saw the PLC at that
+moment, so the mark was early relative to it. `app.ingest_state` (step 3) now closes the segment that ends
+exactly at the `no_comm` start at the message time, and inserts the message's state from there up to the
+`no_comm` start. A sequence (fault, then recovery) goes in one after the other.
+- **Only** when the open segment is `no_comm`, and only inside the segment that ends exactly where it
+  starts. A message earlier than that segment is broken order and is still dropped, and so is any late
+  message when the open segment is not `no_comm`.
+- **No event and no `sites.status` change:** a `state` event would ring the alarm and push an alert for a
+  fault that ended long ago. The current state is still set by the return from disconnect.
+- `last_seen` moves forward only. Outcome `backfilled`, `applied = true`, so it is not recorded as a drop.
+- ⚠️ The retired `master` JS path has no such rule, so `parity-ingest-*` would now differ on these cases.
+- Tests O1–O6 in `sql-local.test.js`; 10/10 mutations caught (two survived until O4 used a whole second
+  and O6 covered a gap in the history).
+
 ⚠️ **And retiring DELL008 needs more than this anyway** — the assistant still holds
 `GROQ_API_KEY` and the backup daemon still runs there. Two Edge Functions already exist
 (`invite-user`, `notify-fault`), so the precedent for moving them is established; the second

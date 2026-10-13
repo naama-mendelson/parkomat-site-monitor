@@ -178,6 +178,97 @@ test("סגירה כפולה (אותה הודעה פעמיים) אינה כותב
   assert.deepEqual(await cardsOf(s.id), ["entry/start:6", "entry/end:6"]);
 });
 
+// ================================================================
+// שינוי מצב שקרה לפני שסריקת השתיקה סימנה נתק — נכנס להיסטוריה (13/10/2026)
+// ================================================================
+// הנתק מסומן 3–4 דקות אחרי הפעימה האחרונה. מצב שהסוכן ראה בדקות האלה מגיע מהתור שלו אחרי החזרה,
+// וזמנו **לפני** תחילת מקטע ה-no_comm — ולכן נדחה כ"מאוחר", והסוכן (שקיבל 200) מחק אותו. נמדד:
+// 340 ב-30 יום, ב-24 אתרים, 3 מהם תקלות. ההודעה מוכיחה שהסוכן ראה את הבקר באותו רגע, כלומר הנתק
+// סומן מוקדם מדי ביחס אליה — המקום שלה הוא בין המקטע שלפני הנתק לבין הנתק.
+const historyOf = async (id) => (await h.pg.query(
+  `SELECT status, started_at, ended_at, fault_text FROM status_history WHERE site_id=$1 ORDER BY started_at, id`, [id])).rows;
+const stMsg = (status, t, fault_text) => ({ kind: "state", status, occurred_at: sec(t), ...(fault_text ? { fault_text } : {}) });
+
+test("⚠️ O1 · תקלה בדקות שלפני סימון הנתק — נכנסת להיסטוריה עם הטקסט, בלי התראה חיה ובלי דחייה", { skip }, async () => {
+  const now = Date.now();
+  const lastBeat = now - 14 * 60e3, ncAt = now - 10 * 60e3;
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, ncAt], ["no_comm", ncAt, null]] });
+  const evBefore = Number((await h.pg.query(`SELECT COALESCE(max(id),0) m FROM events`)).rows[0].m);
+  await batch([stMsg("error", lastBeat + 60e3, "דלתות חניון פתוחות"), stMsg("ready", lastBeat + 120e3)]);
+  const hist = (await historyOf(s.id)).map((r) => [r.status, r.started_at, r.ended_at, r.fault_text]);
+  assert.deepEqual(hist.slice(0, 4), [
+    ["ready", iso(now - 5 * H), sec(lastBeat + 60e3), null],
+    ["error", sec(lastBeat + 60e3), sec(lastBeat + 120e3), "דלתות חניון פתוחות"],
+    ["ready", sec(lastBeat + 120e3), iso(ncAt), null],
+    ["no_comm", iso(ncAt), hist[3][2], null]]);
+  assert.equal(await statusOf(s.id), "ready", "החזרה מנתק — המצב האחרון של האצווה");
+  const drops = (await h.pg.query(`SELECT reason FROM ingest_drops WHERE site_code=$1`, [s.code])).rows;
+  assert.deepEqual(drops, [], "נכנס להיסטוריה — אינו דחייה");
+  // ⚠️ אין אירוע 'state' לתקלה הישנה: אירוע כזה היה מפעיל צליל והתראה על תקלה שנגמרה מזמן
+  const ev = (await h.pg.query(`SELECT payload FROM events WHERE id > $1 AND site_id = $2 AND type = 'state'`, [evBefore, s.id])).rows;
+  assert.ok(ev.every((e) => e.payload.occurredAt >= iso(ncAt)), JSON.stringify(ev.map((e) => e.payload)));
+});
+
+test("O2 · מצב מאוחר זהה למקטע שלפני הנתק — כלום לא משתנה, ולא נרשם כדחייה", { skip }, async () => {
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3;
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, ncAt], ["no_comm", ncAt, null]] });
+  await batch([stMsg("ready", now - 12 * 60e3)]);
+  assert.deepEqual((await historyOf(s.id)).slice(0, 2).map((r) => [r.status, r.started_at, r.ended_at]),
+    [["ready", iso(now - 5 * H), iso(ncAt)], ["no_comm", iso(ncAt), (await historyOf(s.id))[1].ended_at]]);
+  assert.deepEqual((await h.pg.query(`SELECT reason FROM ingest_drops WHERE site_code=$1`, [s.code])).rows, []);
+});
+
+test("O3 · מה שלא משתנה: מוקדם מהמקטע שלפני הנתק — עדיין נדחה; אתר שאינו מנותק — עדיין נדחה", { skip }, async () => {
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3;
+  // הודעה מלפני תחילת המקטע שלפני הנתק — זה אינו "סומן מוקדם מדי", זה סדר שבור
+  const a = await agentSite({ status: "no_comm", history: [["error", now - 6 * H, now - 5 * H], ["ready", now - 5 * H, ncAt], ["no_comm", ncAt, null]] });
+  await batch([stMsg("maintenance", now - 5.5 * H)]);
+  assert.deepEqual((await historyOf(a.id)).slice(0, 3).map((r) => r.status), ["error", "ready", "no_comm"]);
+  assert.ok((await h.pg.query(`SELECT 1 FROM ingest_drops WHERE site_code=$1 AND reason='state_late_vs_open_segment'`, [a.code])).rows.length);
+  // המקטע הפתוח אינו נתק — הודעה מאוחרת נדחית כמו קודם
+  const b = await agentSite({ status: "ready", history: [["error", now - 2 * H, now - H], ["ready", now - H, null]] });
+  await batch([stMsg("maintenance", now - 1.5 * H)]);
+  assert.deepEqual((await historyOf(b.id)).map((r) => r.status), ["error", "ready"]);
+  assert.ok((await h.pg.query(`SELECT 1 FROM ingest_drops WHERE site_code=$1 AND reason='state_late_vs_open_segment'`, [b.code])).rows.length);
+});
+
+test("O4 · מצב מאוחר בזמן שווה לתחילת המקטע שלפני הנתק — נדחה (אין 'לפני' ו'אחרי' לפצל ביניהם)", { skip }, async () => {
+  const now = Date.now();
+  // ⚠️ שנייה שלמה: חותמת הסוכן מעוגלת לשניות, ובלי זה ההודעה יוצאת *מוקדמת* מהמקטע (מילישניות) ולא שווה
+  // לו — והבדיקה לא בדקה שוויון בכלל (מוטציה של >= שרדה)
+  const ncAt = now - 10 * 60e3, readyAt = Math.floor((now - 30 * 60e3) / 1000) * 1000;
+  const s = await agentSite({ status: "no_comm", history: [["ready", readyAt, ncAt], ["no_comm", ncAt, null]] });
+  await batch([stMsg("error", readyAt)]);
+  assert.deepEqual((await historyOf(s.id)).slice(0, 2).map((r) => r.status), ["ready", "no_comm"]);
+});
+
+test("O6 · חור בהיסטוריה לפני הנתק — לא מפצלים מקטע שאינו צמוד לנתק", { skip }, async () => {
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3, readyEnd = now - 20 * 60e3;
+  // המקטע שלפני הנתק נגמר 10 דקות לפניו (לא אמור לקרות, אבל אם קרה — אין לנו מקום בטוח להכניס אליו)
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, readyEnd], ["no_comm", ncAt, null]] });
+  await batch([stMsg("error", now - 15 * 60e3)]);
+  assert.deepEqual((await historyOf(s.id)).slice(0, 2).map((r) => [r.status, r.ended_at]),
+    [["ready", iso(readyEnd)], ["no_comm", (await historyOf(s.id))[1].ended_at]]);
+  assert.ok((await h.pg.query(`SELECT 1 FROM ingest_drops WHERE site_code=$1 AND reason='state_late_vs_open_segment'`, [s.code])).rows.length);
+});
+
+test("O5 · last_seen מתקדם לפי ההודעה המאוחרת (היא סימן חיים), ולא אחורה", { skip }, async () => {
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3;
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, ncAt], ["no_comm", ncAt, null]] });
+  await h.pg.query(`UPDATE sites SET last_seen=$2 WHERE id=$1`, [s.id, iso(now - 20 * 60e3)]);
+  await h.pg.query(`SELECT * FROM app.ingest_state($1, 'error', $2, NULL)`, [s.id, sec(now - 12 * 60e3)]);
+  assert.equal((await h.pg.query(`SELECT last_seen FROM sites WHERE id=$1`, [s.id])).rows[0].last_seen, sec(now - 12 * 60e3));
+  await h.pg.query(`SELECT * FROM app.ingest_state($1, 'ready', $2, NULL)`, [s.id, sec(now - 11 * 60e3)]);
+  await h.pg.query(`UPDATE sites SET last_seen=$2 WHERE id=$1`, [s.id, iso(now - 5 * 60e3)]);
+  // הודעה מאוחרת יותר מ-last_seen? לא — זו מוקדמת ממנו, ולכן last_seen נשאר
+  const before = (await h.pg.query(`SELECT last_seen FROM sites WHERE id=$1`, [s.id])).rows[0].last_seen;
+  assert.equal(before, iso(now - 5 * 60e3));
+});
+
 test("ingest_batch — אנונימי אינו רשאי", { skip }, async () => {
   await assert.rejects(
     h.as("anon", null, (tx) => tx.query(`SELECT * FROM public.ingest_batch('[]'::jsonb)`)),

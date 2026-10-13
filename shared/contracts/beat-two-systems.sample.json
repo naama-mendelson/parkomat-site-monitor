@@ -1,0 +1,8 @@
+{
+  "p_messages": [],
+  "p_version": "1.0.0-contract",
+  "p_systems": [
+    { "unit": 1, "state": "ready", "mode": 1, "car": "" },
+    { "unit": 2, "state": "error", "mode": 5, "car": "133", "fault": "מנהל דולים - דלתות חניון פתוחות:" }
+  ]
+}

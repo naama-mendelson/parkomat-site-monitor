@@ -142,3 +142,17 @@ export function systemsAgeMinutes(seenAt, now = Date.now()) {
   if (!Number.isFinite(t)) return null;
   return Math.max(0, Math.round((now - t) / 60000));
 }
+
+/**
+ * טקסט התקלה של מערכת אחת באתר דו-מערכתי (13/10/2026: "ברגע שקיימת תקלה אני רוצה שיהיה כתוב מה התקלה").
+ * מצב האתר הוא "הטוב מבין השתיים", ולכן כשרק מערכת אחת בתקלה אין לאתר טקסט תקלה — הסוכן (1.0.58) שולח
+ * אותו בפעימה, צמוד למערכת שבתקלה (systems[].fault). "מערכת 2: <טקסט>", או "" כשאין.
+ * ⚠️ רק למערכת שמצבה תקלה: טקסט שנשאר על מערכת שכבר חזרה (פעימה ישנה) אינו תקלה עכשיו.
+ */
+export function systemFaultText(systems) {
+  if (!Array.isArray(systems)) return "";
+  return systems
+    .filter((u) => u?.state === "error" && String(u?.fault ?? "").trim())
+    .map((u) => `מערכת ${u.unit}: ${String(u.fault).trim()}`)
+    .join(" · ");
+}
