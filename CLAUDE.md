@@ -1875,8 +1875,18 @@ on the live site only after she reviews it.
   ("@לביא"); the Sotefin R&P document has only the lift (shuttle/dolly/lobby rows are empty); Kaplan 8's
   maintenance-program table (manual pp. 36–38) is scanned images — review before use. The content is
   **not** in the repo (public; one source is Sotefin's manual) and is loaded once via the RPCs.
-- **Not done yet:** applying the SQL, loading the lists and profiles (after the owner confirms the mapping —
-  the "4 עמודים" lifts, 11 sites, match no document section), and turning PM on in Pages.
+- **In production since 13/10/2026** (SQL applied, "הייצור זהה לקוד"; loaded through the RPCs as a temporary
+  manager named "טעינה מהמסמכים (Claude)", deleted afterwards — that name is what the history shows):
+  - 10 lists, 131 items. The default list was renamed **"בסיס פרקומט — לובי וחשמל"** (19 items) — a site with no
+    profile gets it (owner's choice; it had been an empty "משותף", so no visit could start).
+  - 11 profiles, 68 sites, by the lift and machine type on each site: lift — piston = הידראולית, `electric` and
+    **"4 עמודים" = חשמלית** (owner's call); floor — `doli` = דולי, `xy` = מיטת XY, `x/y/matzbet-*` = מיטת X/Y.
+    1384 (רופין 20) also gets במת XY, so it has its own profile. 1343 (אביגיל 20) is "הידראולית + דולי" (owner).
+    Two Sotefin profiles exist with no sites (R&P; Kaplan 8 marked "לבדיקה"), waiting for the codes.
+  - 10 sites have no lift/machine type and no profile: 1033, 1047, 1077, 1082, 1106, 1122, 1225, 1227, 1304, 1376.
+  - "אקסטרקטור" is loaded but on no profile: the document names עוזיאל 122, which is not a site in the system.
+- **Not done yet:** turning PM on in Pages (`VITE_COMPLIANCE_PM=true`) — after the owner reviews it. The moment it
+  is on, every site's PM lamp is red (no visit recorded anywhere), which is intended.
 - Tests: `pm-templates.test.js` (12 tests, 10 mutations caught),
   `register-site-unmonitored.test.js`, `sort-sites.test.js`, and `supervisor-shape.test.js`
   (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,
