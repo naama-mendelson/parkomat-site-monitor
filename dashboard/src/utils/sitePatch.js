@@ -127,6 +127,8 @@ export function needsRefetch(msg) {
   if (msg.type === "compliance") return false;
   // משימות — אותו דבר: אין בהן אף מדד של רשימת האתרים (App מרענן את המספרים בלבד)
   if (msg.type === "tasks") return false;
+  // קריאות ויזנט — אותו דבר: App מרענן את המספר בכרטיס ואת החלון, לא את רשימת האתרים
+  if (msg.type === "service_calls") return false;
   // הלוח ברמזור — App טוען טעינה חיה בעצמו; טעינה מלאה (ו-dataVersion) מיותרת
   if (msg.type === "service_link") return false;
 

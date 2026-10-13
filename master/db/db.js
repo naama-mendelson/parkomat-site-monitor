@@ -717,6 +717,8 @@ function init() {
         "service-calls.postgres.sql", "compliance.postgres.sql",
         // משימות — אחרי compliance: app.require_staff / app.is_staff מוגדרים שם
         "tasks.postgres.sql",
+        // קריאות ויזנט על כרטיס האתר (13/10/2026) — אחרי compliance (require_staff) ואחרי writes (audit/event)
+        "service-calls-board.postgres.sql",
         // ⚠️ אחרון: מריץ את site_stats / site_uptime / site_uptime_service (חישוב ראשון),
         // ו-app.is_active_user למדיניות. ה-cron שמרענן אותו — ב-cron.postgres.sql למטה.
         "card-metrics.postgres.sql"]) {

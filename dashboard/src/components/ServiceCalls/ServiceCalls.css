@@ -1,0 +1,49 @@
+/* components/ServiceCalls/ServiceCalls.css — חלון הקריאות של ויזנט. המעטפת מ-Tasks.css (tk-overlay / tk-dialog);
+   כאן — השורות. שורות עם קו דק ולא קופסאות, כמו במשימות; בלי משקל 800 בעברית (ל-Segoe UI אין 800). */
+
+.sc-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.sc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-color);
+}
+.sc-row:first-child { border-top: 0; padding-top: 4px; }
+
+.sc-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 0.85em; color: var(--text-secondary); }
+.sc-ticket { font-weight: 700; color: var(--text-primary); }
+.sc-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.sc-phone { color: var(--accent); text-decoration: none; font-weight: 600; }
+.sc-phone:hover { text-decoration: underline; }
+.sc-text { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-notes { margin: 0; font-size: 0.88em; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.sc-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin-top: 2px; }
+.sc-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sc-field-cap { font-size: 0.78em; font-weight: 700; color: var(--text-secondary); }
+.sc-select {
+  height: 38px;
+  min-width: 150px;
+  max-width: 100%;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.9em;
+}
+.sc-select:disabled { opacity: 0.6; }
+.sc-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sc-busy { font-size: 0.85em; padding-bottom: 9px; }
+.sc-changed { margin: 0; font-size: 0.8em; color: var(--text-secondary); }
+.sc-row-msg { width: 100%; }
+.sc-note { margin: 0; }
+
+@media (max-width: 640px) {
+  .sc-field { flex: 1 1 140px; }
+  .sc-select { width: 100%; height: 44px; }
+}
+/* רענון הרשימות — קישור שקט בתחתית, לא כפתור: פעולה של פעם בכמה חודשים */
+.sc-foot { margin: 10px 0 0; font-size: 0.82em; text-align: start; }

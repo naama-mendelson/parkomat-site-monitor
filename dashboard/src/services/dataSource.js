@@ -896,3 +896,8 @@ export {
   fetchTasks, fetchTaskCounts, addTask, startTask, unstartTask, markTaskDone, deleteTask,
   hasTaskCode, setTaskCode,
 } from "./tasksDirect";
+
+// קריאות ויזנט (13/10/2026) — בלי זרוע שרת, כמו המשימות
+export {
+  fetchServiceCallCounts, fetchServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
+} from "./serviceCallsDirect";

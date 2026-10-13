@@ -12,9 +12,12 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance, fetchTaskCounts } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts } from "./services/dataSource";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
+import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
+import { ServiceCallsContext } from "./components/ServiceCalls/ServiceCallsContext";
+import { SERVICE_CALLS_ENABLED } from "./utils/serviceCalls";
 import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
@@ -67,6 +70,10 @@ function App() {
   const [trafficOpen, setTrafficOpen] = useState(false);        // לוח הרמזור
   // משימות: מספרי הפתוחות לכל אתר (הכפתור בכרטיס), החלון הפתוח ({site}), ומונה אירועים
   const [taskCounts, setTaskCounts] = useState(null);
+  // קריאות ויזנט (13/10/2026) — המספרים לכרטיסים, החלון הפתוח, ומונה לטעינה מחדש באירוע
+  const [callCounts, setCallCounts] = useState(null);
+  const [callsOpen, setCallsOpen] = useState(null);
+  const [callsRev, setCallsRev] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(null);
   const [tasksRev, setTasksRev] = useState(0);
 
@@ -196,6 +203,20 @@ function App() {
   const tasksCtx = useDirect && taskCounts
     ? { bySite: taskCounts.bySite, openSite: (site) => setTasksOpen({ site }) }
     : null;
+  // ⚠️ קריאות ויזנט — כמו המשימות: בעלייה, כל 5 דקות, ומיד בכל אירוע. כבוי (VITE_SERVICE_CALLS) — לא נטען
+  // ולא מסומן. כשל משאיר את המספרים הקודמים.
+  const loadCallCounts = useCallback(() => {
+    if (!useDirect || !SERVICE_CALLS_ENABLED) return;
+    fetchServiceCallCounts().then(setCallCounts).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadCallCounts();
+    const id = setInterval(loadCallCounts, 5 * 60_000);
+    return () => clearInterval(id);
+  }, [loadCallCounts]);
+  const callsCtx = useDirect && SERVICE_CALLS_ENABLED && callCounts
+    ? { bySite: callCounts.bySite, openSite: (site) => setCallsOpen({ site }) }
+    : null;
 
   const scheduleComplianceRefresh = useCallback((code) => {
     if (!code) return;
@@ -313,6 +334,12 @@ function App() {
       if (data?.type === "tasks") {
         loadTaskCounts();
         setTasksRev((v) => v + 1);
+        return;
+      }
+      // 0א'. קריאת ויזנט הגיעה או שונתה — המספר בכרטיס, והחלון אם פתוח
+      if (data?.type === "service_calls") {
+        loadCallCounts();
+        setCallsRev((v) => v + 1);
         return;
       }
       // 0ב. הלוח ברמזור השתנה (11/10/2026) — סוג השירות על הכרטיסים נגזר ממנו. טעינה חיה בלבד
@@ -513,13 +540,19 @@ function App() {
       <main className="app-main">
         <StaleBanner />
         <TasksContext.Provider value={tasksCtx}>
-          {renderView()}
+          <ServiceCallsContext.Provider value={callsCtx}>
+            {renderView()}
+          </ServiceCallsContext.Provider>
         </TasksContext.Provider>
       </main>
 
       {tasksOpen && (
         <TasksDialog {...tasksOpen} rev={tasksRev}
           onClose={() => setTasksOpen(null)} onChanged={loadTaskCounts} />
+      )}
+      {callsOpen && (
+        <ServiceCallsDialog {...callsOpen} rev={callsRev}
+          onClose={() => setCallsOpen(null)} onChanged={loadCallCounts} />
       )}
 
       {/* ⚠️ **מחוץ ל-main ואחרון**, כדי שיישב מעל הכול — כולל חלוניות

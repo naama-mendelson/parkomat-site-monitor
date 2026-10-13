@@ -99,6 +99,13 @@ const BOUNDED = {
   task_unstart: "כתיבה",
   task_done: "כתיבה",
   task_delete: "כתיבה",
+
+  // ---- קריאות ויזנט (serviceCallsDirect.js) — הטבלאות סגורות, הכול דרך RPC ----
+  service_call_counts: "שורה לאתר — רק אתרים עם קריאה פתוחה",
+  service_calls_open: "jsonb יחיד — הקריאות הפתוחות של אתר אחד",
+  wizenet_lookups_list: "jsonb יחיד — שתי הרשימות של ויזנט",
+  wizenet_lookups_save: "כתיבה",
+  service_call_record_change: "כתיבה",
   inspection_defect_save: "כתיבה",
   inspection_defect_delete: "כתיבה",
   inspection_defect_photo_add: "כתיבה",

@@ -15,6 +15,7 @@ import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילו�
 import ComplianceLights, { LampAreasContext, MiniMark } from "../Compliance/ComplianceLights";
 import { COMPLIANCE_AREAS } from "../../utils/compliance";
 import { useTasks } from "../Tasks/TasksContext";
+import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import "../Tasks/Tasks.css";
 
 // ==========================================================
@@ -136,6 +137,7 @@ function TypeBadge({ type, system, lifts = [] }) {
 
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
   const tasks = useTasks();          // null — אין משימות במצב הזה
+  const calls = useServiceCalls();   // null — הקריאות כבויות (VITE_SERVICE_CALLS) או לא נטענו
   // ⚠️ **הצ'יפ מציג את המערכת הגרועה, המדד מחשב את הטובה.** באתר
   // דו-מערכתי אלה שני דברים שונים במכוון: "במה לטפל עכשיו" מול "האם
   // עמדנו בהתחייבות". באתר חד-מערכתי `displayStatus` שווה ל-`status`,
@@ -629,11 +631,30 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       {openTasks > 0 && <span className="tk-count" aria-hidden="true">{openTasks}</span>}
     </button>
   );
+  // ============================================================
+  // קריאות פתוחות בוויזנט (13/10/2026: "סימון על כרטיס האתר")
+  // ============================================================
+  // ⚠️ רק כשיש קריאה פתוחה — בניגוד ל"משימות", שמופיע תמיד כי ממנו מוסיפים משימה. קריאות נפתחות בוויזנט, לא
+  // כאן, ולכן כפתור קבוע בכל 70 הכרטיסים היה רעש בלי פעולה מאחוריו. אותו מראה כמו "משימות" עם מספר.
+  const openCalls = calls?.bySite[site.id]?.open ?? 0;
+  const callsLabel = `קריאות שירות בוויזנט — ${openCalls} פתוחות`;
+  const openCallsDialog = (e) => { e.stopPropagation(); calls.openSite(site); };
+  const callsPill = calls && openCalls > 0 && !isMini && (
+    <button type="button" className="tk-card-btn has-open sc-card-btn" onClick={openCallsDialog} aria-label={callsLabel}>
+      קריאות<span className="tk-card-n" aria-hidden="true">{openCalls}</span>
+    </button>
+  );
+  const callsButton = calls && openCalls > 0 && (
+    <button type="button" className="tk-site-btn has-open sc-site-btn" onClick={openCallsDialog} aria-label={callsLabel}>
+      קריאות שירות
+      <span className="tk-count" aria-hidden="true">{openCalls}</span>
+    </button>
+  );
   // ⚠️ "משימות" וקוד האתר — קבוצה אחת בקצה שורת המצב. בלוח בלי נורות היא נכנסת בשורה (נמדד:
   // 57 + 107 מתוך 180px); כשאין מקום — נורות הבודק, או שעון תקלה ארוך — שתיהן יורדות שורה יחד,
   // ולא הקוד לבדו מתחת ל"משימות".
-  const rowEnd = (taskPill || codeInRow) && (
-    <span className="card-row-end">{taskPill}{codeInRow}</span>
+  const rowEnd = (callsPill || taskPill || codeInRow) && (
+    <span className="card-row-end">{callsPill}{taskPill}{codeInRow}</span>
   );
 
   // ============================================================
@@ -791,6 +812,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </div>
         </div>
 
+        {callsButton}
         {taskButton}
 
         <button
@@ -893,7 +915,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <MiniMark compliance={site.compliance} onOpen={openTab} />
           </span>
         </>
-      ) : site.compliance === undefined && !codeInRow && !taskPill ? (
+      ) : site.compliance === undefined && !codeInRow && !taskPill && !callsPill ? (
         statusTag
       ) : (
         // ⚠️ עטיפה רק כשיש רמזורים, משימות או קוד בשורה: במצב שרת (compliance === undefined,

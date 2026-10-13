@@ -2153,3 +2153,42 @@ the same message: *"שהעמוד מנהל בקרה שהאתרים ימוינו �
 **The supervisor table** (`SupervisorView`) now opens sorted by **אחוז כשל, high to low**. Ties
 (most sites are at 0%) fall back to the old urgency order (`compareSitesByPriority`: status → tier).
 Clicking a header still sorts by that column.
+
+## Wizenet service calls on the site card (built 13/10/2026, OFF until the lists are loaded)
+
+The operations email (24/09/2026): the call centre sees a site in fault, but maybe no tenant opened a call in Wizenet, so
+show the calls next to the system data. The owner chose **a marker on the site card**, and **anyone (any staff
+user)** may change a call's status and type.
+
+| Piece | Where |
+|---|---|
+| Intake (already live since 05/10) | `supabase/functions/service-calls` → `service_calls` (insert-only identity). One row **per event**, not per call |
+| Board SQL | `master/db/service-calls-board.postgres.sql` (loaded after `tasks`: it needs `require_staff`, audit, events) |
+| Relay to Wizenet | `supabase/functions/wizenet` — `handler.ts` (all logic, tested in Node) + `index.ts` (Deno wiring) |
+| Dashboard | `services/serviceCallsDirect.js`, `utils/serviceCalls.js`, `components/ServiceCalls/`, `SiteCard` (`callsPill` / `callsButton`), `App` (counts + event) |
+| Tests | `service-calls-board.test.js` (7, 16/16 SQL mutations), `wizenet-fn.test.js` (9), `service-calls-ui.test.js` (5); browser `e2e/probe-calls.mjs` (25) |
+
+- **A call's state is its last row** (by `ticket_number`), and above it our last change per field **if newer**
+  (`service_call_changes`). We may not get an update back from Wizenet for a change made through their API; that
+  is the open question to Wizenet.
+- **Site = project code:** `project_code` if they send one (operations suggested switching to it), else the first part of
+  `parking_code` (`1226-1-02` → `1226`) matched to `sites.code`. A call with no matching site is counted nowhere.
+- **Open = its status is not marked `closed` in `wizenet_lookups`.** An unknown status counts as open: better to
+  show a call that may be closed than to hide an open one. `closed` is guessed from the name only for a **new**
+  row (סגור / נסגר / בוטל / הסתיים / טופל / הושלם) and is **never overwritten** by a reload; check it by eye.
+- **The Wizenet token never reaches the browser.** It is an Edge Function secret (`WIZENET_TOKEN`, plus
+  `WIZENET_QRY_STATUS` / `WIZENET_QRY_TYPE`). ⚠️ Never in a file: the repo is public. The function checks
+  `my_role()` against the database **before** calling Wizenet, and records the change **only after** Wizenet
+  answered `update successfully` (a 200 with an error in the body is an error).
+- **The card marker shows only when there is an open call** (unlike "משימות", which is always there because tasks
+  are added from it). Same look as the tasks pill, in `.card-row-end`.
+- ⚠️ **OFF by default:** `VITE_SERVICE_CALLS` (like `PM_ENABLED`). Without the status list there is no way to know
+  which calls are closed, and the pickers would show numbers. `service-calls-ui.test.js` pins the default.
+- **To turn it on, in order:**
+  1. `apply-sql --apply` (the new file).
+  2. `supabase secrets set WIZENET_TOKEN=… WIZENET_QRY_STATUS=… WIZENET_QRY_TYPE=…` and
+     `supabase functions deploy wizenet` (the CLI is not installed on the dev machine yet).
+  3. Load the lists once: the link "טעינת הרשימות מוויזנט" in the calls dialog (any staff user; afterwards a quiet
+     "רענון…" link at the bottom). Then check the names and the `closed` guesses.
+  4. Tell Wizenet to switch on the push (their mechanism is ready and waiting for us).
+  5. `VITE_SERVICE_CALLS=true` in Pages.
