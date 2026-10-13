@@ -1401,9 +1401,9 @@ Rules that are easy to break and expensive to notice:
 **State:** ✅ the SQL **is applied to production** (05/10/2026: the 271 new objects, nothing else;
 all ten tables empty; post-apply check "הייצור זהה לקוד"; 06/10: the overdue rule (red, then yellow
 the same day), the clean-only-by-document rule and the optional photo — function bodies and the one
-constraint, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive
-maintenance is not** — owner: *"לדחוף רק את הבודק מוסמך"*. One switch hides it everywhere:
-`PM_ENABLED` in `utils/compliance.js` (env `VITE_COMPLIANCE_PM=true`, default off), read through
+constraint, same check). ✅ **The inspector is on the live site (Pages) since 06/10/2026; preventive maintenance since 13/10/2026 (see *Maintenance profiles*); before that preventive
+maintenance was not** — owner: *"לדחוף רק את הבודק מוסמך"*. One switch hides it everywhere:
+`PM_ENABLED` in `utils/compliance.js` (env `VITE_COMPLIANCE_PM=false` turns it off; default on since 13/10), read through
 `COMPLIANCE_AREAS` by the card lamp, the mini mark, the site-window tab, the
 help legend and the supervisor ranking. ⚠️ A Pages build nobody configured must give what was
 decided — so off is the default, and `compliance-ui.test.js` pins it. The PM code ships dormant and
@@ -1829,7 +1829,7 @@ specific to the type of facility"*.
   (13/10/2026, below); the lists are not loaded into production yet. ("אביגיל 18" doesn't exist; it is
   אביגיל 20, 1343, already in the system — and the robotic-parks document lists אביגיל 20 under hydraulic.)
 
-## Maintenance profiles — "like the traffic light" (built 13/10/2026; PM still OFF on the live site)
+## Maintenance profiles — "like the traffic light" (built 13/10/2026; PM ON on the live site since 13/10/2026)
 
 The owner: *"כיון שיש תחזוקה שמתאימה להרבה אתרים אותו דבר — שנקשר את האתר לתחזוקה שמתאימה לו כמו ברמזור"*,
 and for the lamp: *"ירוק תקין, צהוב צריך להתכונן לתחזוקה, אדום לא תקין"*. Her choices: a profiles board,
@@ -1899,8 +1899,11 @@ on the live site only after she reviews it.
     Two Sotefin profiles exist with no sites (R&P; Kaplan 8 marked "לבדיקה"), waiting for the codes.
   - 10 sites have no lift/machine type and no profile: 1033, 1047, 1077, 1082, 1106, 1122, 1225, 1227, 1304, 1376.
   - "אקסטרקטור" is loaded but on no profile: the document names עוזיאל 122, which is not a site in the system.
-- **Not done yet:** turning PM on in Pages (`VITE_COMPLIANCE_PM=true`) — after the owner reviews it. The moment it
-  is on, every site's PM lamp is red (no visit recorded anywhere), which is intended.
+- ✅ **PM is ON on the live site since 13/10/2026** (owner: *"אני עכשיו חזק על התחזוקה אני רוצה שתדחוף את זה"*).
+  The default in `utils/compliance.js` was flipped (`VITE_COMPLIANCE_PM` unset = on; `=false` turns it off),
+  because nobody configures Pages env vars here. `compliance-ui.test.js` pins the new default and tests the off
+  mode with `["inspection"]` passed explicitly. Every site's PM lamp is red until its first visit (intended); on
+  the board it shows only when "תחזוקה מונעת" is chosen in the header filter.
 - Tests: `pm-templates.test.js` (12 tests, 10 mutations caught),
   `register-site-unmonitored.test.js`, `sort-sites.test.js`, and `supervisor-shape.test.js`
   (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,

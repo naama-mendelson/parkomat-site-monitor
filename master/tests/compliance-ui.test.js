@@ -364,19 +364,20 @@ test("⚠️ סך התמונות בביקור: 7 פריטי צילום חובה 
 });
 
 // ---------------------------------------------------------------
-// ⚠️ ברירת המחדל — האתר החי: בודק בלבד (בעלת המוצר, 06/10/2026: "לדחוף רק את הבודק מוסמך")
+// ⚠️ ברירת המחדל — האתר החי: בודק ותחזוקה (בעלת המוצר, 13/10/2026: "אני רוצה שתדחוף את זה";
+// מ-06/10 עד אז — בודק בלבד). המצב הכבוי נבדק עם ["inspection"] מפורש.
 // ---------------------------------------------------------------
-test("ברירת המחדל: התחזוקה המונעת כבויה — בלי משתנה סביבה אין 'pm' בשום רשימה", () => {
-  assert.equal(PM_ENABLED, false, "בנייה שאיש לא הגדיר בה דבר חייבת לתת את מה שהוחלט");
-  assert.deepEqual(COMPLIANCE_AREAS, ["inspection"]);
+test("ברירת המחדל: התחזוקה המונעת דולקת — בלי משתנה סביבה יש 'pm'", () => {
+  assert.equal(PM_ENABLED, true, "בנייה שאיש לא הגדיר בה דבר חייבת לתת את מה שהוחלט");
+  assert.deepEqual(COMPLIANCE_AREAS, ["inspection", "pm"]);
 });
 
 test("תחזוקה כבויה: אדום של תחזוקה אינו מופיע בסימן הקטן או בטבלת המפקח", () => {
   const pmRed = toCompliance(row({ pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33,
     pm_draft_id: 9, pm_draft_last_activity: "2026-10-01T00:00:00.000Z" }));
-  assert.deepEqual(markFor(pmRed), { state: "ok", tab: "inspection", stale: false });
-  assert.equal(markVisible(markFor(pmRed)), false, "אתר שהבודק שלו ירוק — אין סימן בכרטיס הקטן");
-  assert.equal(worstSeverity(pmRed), severity("ok"), "המפקח ממיין לפי הבודק בלבד");
+  assert.deepEqual(markFor(pmRed, ["inspection"]), { state: "ok", tab: "inspection", stale: false });
+  assert.equal(markVisible(markFor(pmRed, ["inspection"])), false, "אתר שהבודק שלו ירוק — אין סימן בכרטיס הקטן");
+  assert.equal(worstSeverity(pmRed, ["inspection"]), severity("ok"), "המפקח ממיין לפי הבודק בלבד");
   assert.equal(worstSeverity(pmRed, ALL_AREAS), severity("expired"));
   // עם התחזוקה: כתום של בודק מעל צהוב של תחזוקה; אדום של תחזוקה מעל כתום של בודק
   const pair = (insp, pm) => markFor(toCompliance(row({ inspection_state: insp, pm_state: pm })), ALL_AREAS);
@@ -389,7 +390,7 @@ test("תחזוקה כבויה: אדום של תחזוקה אינו מופיע ב
 test("תחזוקה כבויה: הבודק עדיין קובע את הסימן", () => {
   const c = toCompliance(row({ inspection_state: "expired", inspection_validity_state: "expired",
     inspection_valid_until: "2026-10-01", inspection_days_left: -3, pm_state: "expired", pm_due_on: "2026-09-01", pm_days_left: -33 }));
-  assert.deepEqual(markFor(c), { state: "expired", tab: "inspection", stale: false });
+  assert.deepEqual(markFor(c, ["inspection"]), { state: "expired", tab: "inspection", stale: false });
 });
 
 // ---------------------------------------------------------------

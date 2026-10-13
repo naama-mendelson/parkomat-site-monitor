@@ -27,12 +27,12 @@ export const DRAFT_STALE_MS = 12 * 60 * 60 * 1000;
 // בכרטיס הקטן, הלשונית בחלון האתר, השורות ברשימת המנהלים, המקרא בעזרה,
 // והדירוג בטבלת המפקח — כולם קוראים את COMPLIANCE_AREAS.
 //
-// הפעלה: `VITE_COMPLIANCE_PM=true` בסביבת הבנייה (כמו VITE_FIXFLOW_ENABLED),
-// או לשנות את ברירת המחדל כאן ל-"true". ⚠️ בלי משתנה — כבוי: בנייה של
-// Cloudflare Pages שאיש לא הגדיר בה דבר חייבת לתת את מה שהוחלט.
+// ⚠️ מ-13/10/2026 דולקת כברירת מחדל (בעלת המוצר: "אני רוצה שתדחוף את זה").
+// כיבוי: `VITE_COMPLIANCE_PM=false` בסביבת הבנייה. בנייה של Cloudflare Pages
+// שאיש לא הגדיר בה דבר חייבת לתת את מה שהוחלט — עכשיו: דולקת.
 // ⚠️ הפונקציות למטה מקבלות `areas` מפורש — כך הבדיקות ממשיכות לבדוק את
 // התחזוקה גם כשהיא כבויה. קוד רדום שאינו נבדק נרקב.
-export const PM_ENABLED = String(import.meta.env?.VITE_COMPLIANCE_PM ?? "false") === "true";
+export const PM_ENABLED = String(import.meta.env?.VITE_COMPLIANCE_PM ?? "true") !== "false";
 export const ALL_AREAS = ["inspection", "pm"];
 export const COMPLIANCE_AREAS = PM_ENABLED ? ALL_AREAS : ["inspection"];
 
