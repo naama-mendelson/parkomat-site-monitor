@@ -200,6 +200,31 @@ test("⚠️ החלה חוזרת של cron.postgres.sql אינה מדליקה מ
   await q(`UPDATE cron.job SET active = true WHERE jobname = 'parkomat-agent-silence'`);
 });
 
+// ⚠️ 13/10/2026: ארבע משימות עדיין נמחקו ונוצרו מחדש בכל החלה (17 פעמים בשלושה ימים בייצור) — jobid חדש
+// בכל פעם, היסטוריית הרצות קטועה, והשהיה ידנית שמתבטלת. עכשיו כולן עוברות דרך ensure_cron_job.
+test("⚠️ כל משימות ה-cron: החלה חוזרת שומרת jobid והשהיה, ומחזירה לוח ופקודה מהקוד", { skip }, async () => {
+  const JOBS = ["parkomat-agent-silence", "parkomat-card-metrics", "parkomat-prune-events",
+    "parkomat-cleanup-old", "parkomat-prune-ingest-drops", "parkomat-ingestion-health"];
+  const all = async () => Object.fromEntries((await q(
+    `SELECT jobname, jobid, schedule, command, active FROM cron.job WHERE jobname = ANY($1)`, [JOBS])).map((r) => [r.jobname, r]));
+  const before = await all();
+  assert.deepEqual(Object.keys(before).sort(), [...JOBS].sort(), "כל שש המשימות מתוזמנות");
+  await q(`UPDATE cron.job SET active = false, schedule = '0 0 * * *', command = 'SELECT 1' WHERE jobname = ANY($1)`, [JOBS]);
+  await h.pg.exec(fs.readFileSync(path.join(__dirname, "../db/cron.postgres.sql"), "utf8"));
+  const after = await all();
+  for (const n of JOBS) {
+    assert.equal(after[n].jobid, before[n].jobid, `${n}: נוצרה מחדש (jobid השתנה)`);
+    assert.equal(after[n].active, false, `${n}: ההשהיה בוטלה בהחלה`);
+    assert.equal(after[n].schedule, before[n].schedule, `${n}: הלוח לא חזר מהקוד`);
+    assert.equal(after[n].command, before[n].command, `${n}: הפקודה לא חזרה מהקוד`);
+  }
+  await q(`UPDATE cron.job SET active = true WHERE jobname = ANY($1)`, [JOBS]);
+  // ובקוד עצמו: אין unschedule ואין schedule ישיר מחוץ ל-ensure_cron_job
+  const src = fs.readFileSync(path.join(__dirname, "../db/cron.postgres.sql"), "utf8").replace(/^\s*--.*$/gm, "");
+  assert.equal((src.match(/cron\.unschedule\(/g) || []).length, 0, "cron.unschedule בקובץ");
+  assert.equal((src.match(/cron\.schedule\(/g) || []).length, 1, "cron.schedule ישיר — רק בתוך ensure_cron_job");
+});
+
 // ============================================================
 // 5. שומר ההמונים
 // ============================================================

@@ -5,6 +5,22 @@ Guidance for Claude Code across the whole repo. Component-specific rules live in
 [`Parkomat.Agent/CLAUDE.md`](Parkomat.Agent/CLAUDE.md) (site agent) — read those before
 editing either component. Source comments are Hebrew; these instruction files are English.
 
+## Current state — measured 13/10/2026 (read this first; older sections below are history where they disagree)
+
+```
+Agent (on site) ──HTTPS──→ Supabase (Postgres + pg_cron + Edge Functions) ←── dashboard (Cloudflare Pages)
+```
+
+- **No server.** `master` is retired (17/09/2026) and its scheduled tasks on DELL008 are disabled. SQL is applied
+  with `master/tools/apply-sql.js` (dry run, then `--apply`). Say "Supabase", not "the server".
+- **Every site reports directly:** 78 sites, 78 agent identities, 78 `alive` rows. MQTT/HiveMQ is read by
+  nobody. Diagrams below that show HiveMQ → Node server, "LIVE at 2438 · off at 17" or agent v1.0.23 are history.
+- **Agents in the field:** 1.0.55 (42), 1.0.57 (34), 1.0.59 (2: the two-system sites 3468 and 1102).
+- **Dashboard:** deployed by `git push` to `main` (Cloudflare Pages). DELL008's copy is not what people open.
+- **Edge Functions:** `invite-user`, `provision-agent`, `notify-fault`, `service-calls` (Wizenet → us),
+  `wizenet` (us → Wizenet; deployed, but Wizenet's API answers only from Israel, see *Wizenet service calls*).
+- **Database:** 153 MB of 500 MB on the free plan; the largest table is `inspection_files` (45 MB of PDFs).
+
 ## ⚠️ Decision, 17/09/2026 — `master` is being retired. Target: Supabase + dashboard only
 
 The product owner: *"I don't need the server. I want only Supabase and the dashboard."*
@@ -1732,6 +1748,12 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   that doesn't exist. For one that does, it updates the schedule and command and leaves
   `active` alone. Before this, `apply-sql.js --apply` (the full `db.init()`) would have quietly
   re-enabled `parkomat-agent-silence`.
+  ⚠️ **Until 13/10/2026 only two jobs used it.** `prune-events`, `cleanup-old`, `prune-ingest-drops` and
+  `ingestion-health` were still `unschedule` + `schedule`: recreated on every apply (17 times in three days,
+  a new `jobid` each time, so their run history split, and a manual pause would have been undone). All six go
+  through `ensure_cron_job` now, defined before the first schedule; the file has no `cron.unschedule` left.
+  `card-metrics.test.js` pauses all six, re-applies, and checks jobid, pause, schedule and command (5/5
+  mutations caught). No apply was needed: the schedules were already identical, only the way of setting them changed.
 - **Mass-silence guard in `mark_silent_agents`.** If at least 5 sites, and at least half of
   those currently alive, go silent in the same scan, it marks none of them. It writes one
   `ingest_drops` row (`silence_mass_skipped`), which raises the hourly drops alert. Sites don't

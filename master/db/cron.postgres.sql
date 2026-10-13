@@ -98,6 +98,45 @@ END;
 $$;
 
 -- ============================================================
+-- ⚠️ app.ensure_cron_job — החלה של הקובץ **אינה** מבטלת השהיה ידנית
+-- ============================================================
+-- עד 07/10/2026 כל משימה כאן נקבעה ב-`unschedule` ואחריו `schedule`. זה
+-- אידמפוטנטי — וגם מוחק את המשימה ויוצר אותה מחדש **פעילה**. באותו יום
+-- `parkomat-agent-silence` הושהתה ביד (`cron.alter_job(..., active := false)`)
+-- כי היא זו שהפכה מסד איטי לסימון כל האתרים כמנותקים, והוכרע להשאיר אותה
+-- מושהית עד שהמסד יוגדל. `tools/apply-sql.js --apply` מריץ את הקובץ הזה —
+-- כלומר ההחלה הבאה, של כל שינוי שהוא, הייתה מדליקה אותה בחזרה בשקט.
+--
+-- כאן: משימה שאינה קיימת — נוצרת. משימה שקיימת — מתעדכנים רק הלוח
+-- והפקודה, ו-`active` **נשאר כפי שהוא** (`cron.alter_job` עם active NULL).
+-- השהיה היא החלטה של אדם; קוד שמוחל אינו המקום לבטל אותה.
+--
+-- ⚠️ 13/10/2026: עד אז רק שתי משימות עברו דרכה. ארבע האחרות (prune-events, cleanup-old,
+-- prune-ingest-drops, ingestion-health) עדיין נמחקו ונוצרו מחדש בכל החלה — 17 פעמים בשלושה ימים,
+-- כל פעם עם jobid חדש, כך שהיסטוריית ההרצות שלהן נקטעה, והשהיה ידנית של אחת מהן הייתה מתבטלת
+-- בשקט. עכשיו כל המשימות כאן עוברות דרכה, ולכן היא מוגדרת לפני כולן.
+--
+-- ⚠️ ההשוואה ב-apply-sql (CRON_SQL) רואה לוח ופקודה, לא `active` — ולכן
+-- משימה מושהית נראית שם "זהה לקוד", וזה נכון: הקוד אינו קובע אם היא פועלת.
+CREATE OR REPLACE FUNCTION app.ensure_cron_job(p_name text, p_schedule text, p_command text)
+RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  v_id bigint;
+BEGIN
+  SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = p_name;
+  IF v_id IS NULL THEN
+    PERFORM cron.schedule(p_name, p_schedule, p_command);
+  ELSE
+    PERFORM cron.alter_job(v_id, schedule := p_schedule, command := p_command);
+  END IF;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION app.ensure_cron_job(text, text, text) FROM PUBLIC;
+
+-- ============================================================
 -- לוח הזמנים
 -- ============================================================
 -- ⚠️ **בקובץ SQL ולא בממשק של Supabase** — כלל 6 ב-CLAUDE.md הראשי.
@@ -107,23 +146,10 @@ $$;
 -- 03:17 UTC ולא 03:00: שעה עגולה היא הרגע שבו כל עבודה מתוזמנת בעולם
 -- רצה יחד. שבע-עשרה דקות אחריה זה שקט.
 --
--- unschedule לפני schedule — אחרת הרצה חוזרת של הקובץ מייצרת כפילויות.
-DO $$
-BEGIN
-  PERFORM cron.unschedule('parkomat-prune-events');
-EXCEPTION WHEN OTHERS THEN NULL;
-END
-$$;
-
-DO $$
-BEGIN
-  PERFORM cron.unschedule('parkomat-cleanup-old');
-EXCEPTION WHEN OTHERS THEN NULL;
-END
-$$;
-
-SELECT cron.schedule('parkomat-prune-events', '17 3 * * *', 'SELECT app.prune_events(7)');
-SELECT cron.schedule('parkomat-cleanup-old',  '37 3 * * *', 'SELECT app.cleanup_old_data(12)');
+-- ensure ולא unschedule + schedule: החלה חוזרת אינה יוצרת כפילות, אינה מחליפה jobid, ואינה
+-- מדליקה משימה שהושהתה ביד (ראה app.ensure_cron_job למעלה).
+SELECT app.ensure_cron_job('parkomat-prune-events', '17 3 * * *', 'SELECT app.prune_events(7)');
+SELECT app.ensure_cron_job('parkomat-cleanup-old',  '37 3 * * *', 'SELECT app.cleanup_old_data(12)');
 
 -- ============================================================
 -- גריפת ingest_drops — רטנציה של 14 יום
@@ -149,14 +175,7 @@ BEGIN
 END;
 $$;
 
-DO $$
-BEGIN
-  PERFORM cron.unschedule('parkomat-prune-ingest-drops');
-EXCEPTION WHEN OTHERS THEN NULL;
-END
-$$;
-
-SELECT cron.schedule('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.prune_ingest_drops(14)');
+SELECT app.ensure_cron_job('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.prune_ingest_drops(14)');
 
 -- ============================================================
 -- שומר הקליטה — ההתראה שהייתה חוסכת יום שלם
@@ -1000,17 +1019,14 @@ $fn$;
 -- הסיום של הפונקציה הוא `$fn$;`.
 --
 -- `check-alert-gate` הוא מה שתופס את זה היום.
-DO $$
-BEGIN
-  PERFORM cron.unschedule('parkomat-ingestion-health');
-EXCEPTION WHEN OTHERS THEN NULL;
-END
-$$;
+--
+-- ⚠️ מאז 13/10/2026 אין כאן `unschedule` בכלל — רק `app.ensure_cron_job`, שמעדכנת במקום.
+-- פרוסה שנעצרת באמצע כבר אינה יכולה למחוק את המשימה.
 
 -- כל 10 דקות. ⚠️ לא כל דקה: ההתראה נמדדת בשעות, ובדיקה תכופה רק מגדילה
 -- את הסיכוי שריצה תיפול על עומס חולף ותצייץ סתם.
-SELECT cron.schedule('parkomat-ingestion-health', '*/10 * * * *',
-                     'SELECT app.check_ingestion_health(10, 15)');
+SELECT app.ensure_cron_job('parkomat-ingestion-health', '*/10 * * * *',
+                           'SELECT app.check_ingestion_health(10, 15)');
 
 -- ============================================================
 -- ⚠️ סריקת השתיקה — משימה נפרדת, וכל דקה
@@ -1039,39 +1055,6 @@ SELECT cron.schedule('parkomat-ingestion-health', '*/10 * * * *',
 -- ⚠️ **ואין כאן התראת push, בכוונה:** הסימון עצמו מפיק אירוע ב-`events`,
 -- ומשם רצה שרשרת ההתראות הרגילה של תקלה. התראה שנייה מכאן הייתה שולחת
 -- שתי הודעות על אותו אירוע.
--- ============================================================
--- ⚠️ app.ensure_cron_job — החלה של הקובץ **אינה** מבטלת השהיה ידנית
--- ============================================================
--- עד 07/10/2026 כל משימה כאן נקבעה ב-`unschedule` ואחריו `schedule`. זה
--- אידמפוטנטי — וגם מוחק את המשימה ויוצר אותה מחדש **פעילה**. באותו יום
--- `parkomat-agent-silence` הושהתה ביד (`cron.alter_job(..., active := false)`)
--- כי היא זו שהפכה מסד איטי לסימון כל האתרים כמנותקים, והוכרע להשאיר אותה
--- מושהית עד שהמסד יוגדל. `tools/apply-sql.js --apply` מריץ את הקובץ הזה —
--- כלומר ההחלה הבאה, של כל שינוי שהוא, הייתה מדליקה אותה בחזרה בשקט.
---
--- כאן: משימה שאינה קיימת — נוצרת. משימה שקיימת — מתעדכנים רק הלוח
--- והפקודה, ו-`active` **נשאר כפי שהוא** (`cron.alter_job` עם active NULL).
--- השהיה היא החלטה של אדם; קוד שמוחל אינו המקום לבטל אותה.
---
--- ⚠️ ההשוואה ב-apply-sql (CRON_SQL) רואה לוח ופקודה, לא `active` — ולכן
--- משימה מושהית נראית שם "זהה לקוד", וזה נכון: הקוד אינו קובע אם היא פועלת.
-CREATE OR REPLACE FUNCTION app.ensure_cron_job(p_name text, p_schedule text, p_command text)
-RETURNS void
-LANGUAGE plpgsql
-AS $fn$
-DECLARE
-  v_id bigint;
-BEGIN
-  SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = p_name;
-  IF v_id IS NULL THEN
-    PERFORM cron.schedule(p_name, p_schedule, p_command);
-  ELSE
-    PERFORM cron.alter_job(v_id, schedule := p_schedule, command := p_command);
-  END IF;
-END;
-$fn$;
-
-REVOKE ALL ON FUNCTION app.ensure_cron_job(text, text, text) FROM PUBLIC;
 
 -- ⚠️ **מושהית מ-07/10/2026 עד הגדלת המסד** (ראה למעלה). ensure ולא
 -- unschedule + schedule — כדי שההחלה לא תדליק אותה. להפעלה מחדש, אחרי ההגדלה:
