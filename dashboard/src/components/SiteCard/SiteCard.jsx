@@ -278,7 +278,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           </span>
           {openOp.card_number
             ? <span className="card-op-card">כרטיס {openOp.card_number}</span>
-            : <span className="card-op-card card-op-card--none">ללא כרטיס</span>}
+            : <span className="card-op-card card-op-card--none">כרטיס טרם נקרא</span>}
         </>
       ) : (
         <span

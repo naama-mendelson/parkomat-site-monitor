@@ -237,6 +237,34 @@ BEGIN
     RETURN;
   END IF;
 
+  -- ---------- 2א. כרטיס שנקרא אחרי הפתיחה — משלים את הפתיחה ----------
+  -- ⚠️ הבקר מעדכן את רגיסטר הכרטיס אחרי שה-MODE כבר עבר לפעולה, אז הפתיחה
+  -- יוצאת ריקה, והסוכן מוסר את הכרטיס רק בסגירה (OperationDetector ממלא
+  -- כרטיס חסר לאורך הפעולה). בלי ההשלמה הלוג הציג "ללא כרטיס" על פתיחה
+  -- שהכרטיס שלה ידוע. נמדד 12/10/2026: 153 מתוך 178 שורות "ללא כרטיס"
+  -- ב-30 יום, ב-7 אתרים.
+  --
+  -- רק הפתיחה האחרונה באותו כיוון, ורק אם לא נסגרה בסגירה אחרת בינתיים —
+  -- אותו כלל כמו ירושה בשלב 1, בכיוון ההפוך. כרטיס קיים לעולם אינו נדרס.
+  IF p_start_end = 'end' AND v_card <> '' THEN
+    UPDATE operations o SET card_number = v_card
+     WHERE o.id = (
+             SELECT o1.id FROM operations o1
+              WHERE o1.site_id = p_site_id AND o1.entry_exit = p_entry_exit
+                AND o1.start_end = 'start'
+                AND o1.occurred_at <= p_occurred_at
+                AND o1.occurred_at >= to_char(
+                      (p_occurred_at::timestamptz - CARD_INHERIT_WINDOW) AT TIME ZONE 'UTC', ISO)
+              ORDER BY o1.occurred_at DESC, o1.id DESC
+              LIMIT 1)
+       AND COALESCE(o.card_number, '') = ''
+       AND NOT EXISTS (
+             SELECT 1 FROM operations o2
+              WHERE o2.site_id = p_site_id AND o2.entry_exit = p_entry_exit
+                AND o2.start_end = 'end' AND o2.id <> v_id
+                AND o2.occurred_at > o.occurred_at AND o2.occurred_at <= p_occurred_at);
+  END IF;
+
   -- ---------- 3. סימן חיים — קדימה בלבד ----------
   UPDATE sites SET last_seen = p_occurred_at
    WHERE id = p_site_id AND (last_seen IS NULL OR last_seen < p_occurred_at);

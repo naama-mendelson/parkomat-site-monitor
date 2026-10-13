@@ -121,6 +121,63 @@ test("⚠️ הודעה פגומה אחת — הפעימה נרשמת, שאר ה
   assert.ok(drops.includes("message_threw"), `הפגומה לא תועדה: ${JSON.stringify(drops)}`);
 });
 
+// ================================================================
+// כרטיס שנקרא רק אחרי הפתיחה — משלים גם את הפתיחה
+// ================================================================
+// הבקר מעדכן את רגיסטר הכרטיס אחרי שה-MODE כבר עבר לפעולה, אז הפתיחה
+// יוצאת ריקה והסוכן מוסר את הכרטיס בסגירה. נמדד 12/10/2026: 153 מתוך 178
+// שורות "ללא כרטיס" ב-30 יום היו פתיחות כאלה.
+const op = (start_end, entry_exit, card, t, cycle) =>
+  ({ kind: "operation", start_end, entry_exit, card, state: "operating", occurred_at: sec(t), cycle });
+const cardsOf = async (id) => (await h.pg.query(
+  `SELECT start_end se, entry_exit ee, card_number card FROM operations WHERE site_id=$1 ORDER BY occurred_at, id`,
+  [id])).rows.map((r) => `${r.ee}/${r.se}:${r.card}`);
+
+test("⚠️ פתיחה ריקה וסגירה עם כרטיס — הפתיחה מקבלת את הכרטיס", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([op("start", "entry", "", now - 10 * 60e3, 100)]);
+  await batch([op("end", "entry", "6", now - 2 * 60e3, 101)]);
+  assert.deepEqual(await cardsOf(s.id), ["entry/start:6", "entry/end:6"]);
+});
+
+test("פתיחה עם כרטיס אינה נדרסת בכרטיס של הסגירה", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([op("start", "exit", "10", now - 10 * 60e3, 100)]);
+  await batch([op("end", "exit", "6", now - 2 * 60e3, 101)]);
+  assert.deepEqual(await cardsOf(s.id), ["exit/start:10", "exit/end:10"]);
+});
+
+test("⚠️ רק הפתיחה של אותה פעולה — לא פתיחה ריקה של פעולה שכבר נסגרה", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([op("start", "entry", "", now - 30 * 60e3, 100)]);
+  await batch([op("end", "entry", "", now - 25 * 60e3, 101)]);
+  await batch([op("start", "entry", "", now - 10 * 60e3, 101)]);
+  await batch([op("end", "entry", "7", now - 2 * 60e3, 102)]);
+  assert.deepEqual(await cardsOf(s.id),
+    ["entry/start:", "entry/end:", "entry/start:7", "entry/end:7"]);
+});
+
+test("סגירת כניסה אינה ממלאת פתיחת יציאה", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([op("start", "exit", "", now - 10 * 60e3, 100)]);
+  await batch([op("end", "entry", "6", now - 2 * 60e3, 101)]);
+  assert.deepEqual(await cardsOf(s.id), ["exit/start:", "entry/end:6"]);
+});
+
+test("סגירה כפולה (אותה הודעה פעמיים) אינה כותבת שוב", { skip }, async () => {
+  const now = Date.now();
+  const s = await agentSite({ status: "ready", history: [["ready", now - 5 * H, null]] });
+  await batch([op("start", "entry", "", now - 10 * 60e3, 100)]);
+  const end = op("end", "entry", "6", now - 2 * 60e3, 101);
+  await batch([end]);
+  await batch([end]);
+  assert.deepEqual(await cardsOf(s.id), ["entry/start:6", "entry/end:6"]);
+});
+
 test("ingest_batch — אנונימי אינו רשאי", { skip }, async () => {
   await assert.rejects(
     h.as("anon", null, (tx) => tx.query(`SELECT * FROM public.ingest_batch('[]'::jsonb)`)),
