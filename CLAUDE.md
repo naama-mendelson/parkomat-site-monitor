@@ -292,6 +292,10 @@ exactly at the `no_comm` start at the message time, and inserts the message's st
 - **No event and no `sites.status` change:** a `state` event would ring the alarm and push an alert for a
   fault that ended long ago. The current state is still set by the return from disconnect.
 - `last_seen` moves forward only. Outcome `backfilled`, `applied = true`, so it is not recorded as a drop.
+- ⚠️ It compares the **raw** `status`, not `COALESCE(reclassified_to, status)` (review, 13/10): against the
+  reclassified value, a repeat `error` from the queue split a fault the manager had reclassified as maintenance,
+  and the new piece counted. Same rule as steps 4–5. A late fault text for a closed error segment is kept there
+  (it was lost); an existing text is never overwritten. O7, O8.
 - ⚠️ The retired `master` JS path has no such rule, so `parity-ingest-*` would now differ on these cases.
 - Tests O1–O6 in `sql-local.test.js`; 10/10 mutations caught (two survived until O4 used a whole second
   and O6 covered a gap in the history).
@@ -1481,7 +1485,9 @@ Rules that are easy to break:
   - In the dialog, a grey V/X opens a password field under that row (`.tk-code`), checked with `verifyAdminCode`.
     The right code performs what was pressed, with no extra confirm. The code is kept **in memory only**
     (`setTaskCode` in `tasksDirect.js`), so a reload forgets it. A code the database later rejects is forgotten and
-    asked for again.
+    asked for again. ⚠️ It also belongs to the user who typed it: sign-out or a different user clears it
+    (`onAuthStateChange`). Without that, on a shared office screen the next person to sign in inherited V/X (review,
+    13/10).
   - ⚠️ **Deploy order: the SQL first.** The bundle sends `p_code` only after a code was entered, and against the old
     SQL that is a 404 (PGRST202).
   - Tests: T21 (10/10 SQL mutations caught), `tasks-direct.test.js`; browser K7/K9/K10 updated, K12 new.
@@ -2210,3 +2216,14 @@ user)** may change a call's status and type.
      "רענון…" link at the bottom). Then check the names and the `closed` guesses.
   4. Tell Wizenet to switch on the push (their mechanism is ready and waiting for us).
   5. `VITE_SERVICE_CALLS=true` in Pages.
+- ⚠️ **13/10/2026: steps 1–2 are done, and the WIZEAPI server answers only from Israel.** The three secrets are set and
+  `wizenet` is deployed (the CLI is now logged in on the dev machine; deploy with `npx supabase functions deploy wizenet
+  --project-ref xvfsikwaaaohnmldjbtv --use-api`). The token works: from the dev PC the status list came back at once.
+  From the function, every call timed out. Measured with check-host.net: `parkomat.wizenet.co.il` (37.19.124.254, Triple C,
+  Tel Aviv) accepts TCP 443 from two Israeli nodes and from **none** in DE/NL/FR/UK/US, twice; same DNS answer everywhere;
+  `www.wizenet.co.il`, `www.parkomat.co.il` and `www.gov.il` are reachable from the same foreign nodes. Supabase runs in
+  Germany, so steps 3 and the status/type change wait for Wizenet to open WIZEAPI to foreign access (asked 13/10). The
+  browser cannot be the relay either: no CORS headers, and the token would leak. Their push **to** us is unaffected.
+- **Found on that deploy:** Deno's timeout message is `"Signal timed out."`, so `/timeout|abort/` missed it and the user
+  saw "הפעולה נכשלה". The handler now checks the error name first, and says whether Wizenet or Supabase did not answer
+  (`wizenet: true` on errors from the Wizenet fetch). 5/5 mutations caught.

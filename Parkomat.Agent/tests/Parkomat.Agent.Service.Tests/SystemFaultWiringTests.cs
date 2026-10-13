@@ -3,9 +3,9 @@ using System.Text.RegularExpressions;
 namespace Parkomat.Agent.Service.Tests;
 
 /// <summary>
-/// 1.0.58 — החיווט של טקסט התקלה של מערכת אחת בתוך Worker.cs. ה-Worker אינו רץ בבדיקות (הוא כותב ל-ProgramData),
-/// ולכן הבדיקה כאן קוראת את הקוד: ש-SystemFaultLatch אכן מוזן משתי המערכות, שהקריאה מהבקר נעשית רק כשהוא
-/// אומר, ושהטקסט נכנס לתצלום שנוסע בפעימה. ההתנהגות עצמה — ב-TwoSystemFaultPipelineTests, מול בקר אמיתי.
+/// 1.0.58/59 — החיווט של טקסט התקלה של מערכת אחת בתוך Worker.cs. ה-Worker אינו רץ בבדיקות (הוא כותב ל-ProgramData),
+/// ולכן הבדיקה כאן קוראת את הקוד: ש-SystemFaultLatch מוזן בקבוצת המערכות שבתקלה, שהקריאה מהבקר היא קריאה אחת
+/// ונעשית רק כשהוא אומר, ושהטקסט נכנס לתצלום שנוסע בפעימה. ההתנהגות עצמה — ב-TwoSystemFaultPipelineTests.
 /// ⚠️ בדיקה מבנית אינה מוכיחה שהקוד רץ — רק שהוא מחובר. לכן היא בנוסף לבדיקת השרשרת, לא במקומה.
 /// </summary>
 public class SystemFaultWiringTests
@@ -20,18 +20,21 @@ public class SystemFaultWiringTests
     }
 
     [Fact]
-    public void TheLatchIsFedByBothSystems()
+    public void TheLatchIsFedWithWhichSystemsAreInFault()
     {
         string src = Worker();
-        Assert.Matches(new Regex(@"ModeTranslator\.FromMode\(reading\.Mode\)\s*==\s*SiteState\.Error\s*\|\|\s*ModeTranslator\.FromMode\(reading\.Mode2 \?\? 4\)\s*==\s*SiteState\.Error"), src);
-        Assert.Matches(new Regex(@"systemFault\.Due\(anySystemInError,"), src);
+        // שתי המערכות נבדקות, והקבוצה (לא רק "יש תקלה") נמסרת ללטץ' — שינוי בקבוצה הוא תקלה חדשה
+        Assert.Matches(new Regex(@"\(1, reading\.Mode\), \(2, reading\.Mode2 \?\? 4\)"), src);
+        Assert.Matches(new Regex(@"systemFault\.Due\(errorUnits,"), src);
     }
 
     [Fact]
-    public void TheTextIsReadOnlyWhenTheLatchSaysSo_AndAFailureDoesNotEscape()
+    public void TheTextIsReadOnce_OnlyWhenTheLatchSaysSo_AndAFailureDoesNotEscape()
     {
         string src = Worker();
-        Assert.Matches(new Regex(@"if \(systemFault\.Due\([^)]*\)\)\s*\{\s*//[^\n]*\n\s*try \{ systemFault\.Set\(await ReadFaultTextOrNullAsync\(SiteState\.Error, stoppingToken\)\); \}"), src);
+        // ⚠️ קריאה אחת — ההמתנה ליציבות של ReadFaultTextOrNullAsync יכולה לעבור את סף ה-watchdog (30 שניות)
+        Assert.Matches(new Regex(@"try \{ systemFault\.Set\(plc\.ReadFaultText\(\)\.Text\); \}"), src);
+        Assert.DoesNotMatch(new Regex(@"systemFault\.Set\(await ReadFaultTextOrNullAsync"), src);
         Assert.Matches(new Regex(@"catch \(Exception fex\)"), src);
     }
 

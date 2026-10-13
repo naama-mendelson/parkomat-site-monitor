@@ -19,7 +19,7 @@ async function load() {
   let src = fs.readFileSync(SRC, "utf8");
   const stub = "data:text/javascript," + encodeURIComponent(
     "export const isSupabaseConfigured = true;" +
-    "export const supabase = { rpc: (...a) => globalThis.__fake.rpc(...a) };");
+    "export const supabase = { rpc: (...a) => globalThis.__fake.rpc(...a), auth: { onAuthStateChange: (cb) => { globalThis.__authCb = cb; return { data: { subscription: { unsubscribe() {} } } }; } } };");
   src = src.replace(`from "./supabase";`, `from ${JSON.stringify(stub)};`);
   src = src.replace(`from "../utils/tasks";`, `from ${JSON.stringify(pathToFileURL(UTILS).href)};`);
   assert.doesNotMatch(src, /from "\.{1,2}\//, "נשאר ייבוא יחסי — tasksDirect קיבל ייבוא חדש");
@@ -99,4 +99,25 @@ test("V / X: בלי קוד — הגוף { p_id } בלבד (כמו קודם); א�
   assert.equal(m.hasTaskCode(), false);
   await m.markTaskDone(12);
   assert.deepEqual(JSON.parse(calls[5].body), { p_id: 12 });
+});
+
+test("⚠️ קוד המנהל נמחק בהתנתקות ובהחלפת משתמש — לא עובר למי שמתחבר אחרי באותה לשונית (סקירה, 13/10)", async () => {
+  const m = await load();
+  const calls = fake(true);
+  const auth = (event, uid) => globalThis.__authCb(event, uid ? { user: { id: uid } } : null);
+  auth("INITIAL_SESSION", "user-a");
+  m.setTaskCode("kod-a");
+  assert.equal(m.hasTaskCode(), true);
+  auth("TOKEN_REFRESHED", "user-a");                         // רענון אסימון של אותו משתמש — הקוד נשאר
+  assert.equal(m.hasTaskCode(), true);
+  auth("SIGNED_OUT", null);
+  assert.equal(m.hasTaskCode(), false, "התנתקות — הקוד נמחק");
+  auth("SIGNED_IN", "user-b");
+  assert.equal(m.hasTaskCode(), false, "משתמש אחר באותה לשונית אינו מקבל את הקוד של הקודם");
+  await m.markTaskDone(5);
+  assert.deepEqual(JSON.parse(calls.at(-1).body), { p_id: 5 }, "ולא נשלח בשמו");
+  // החלפת משתמש בלי SIGNED_OUT ביניהם — גם מוחקת
+  m.setTaskCode("kod-b");
+  auth("SIGNED_IN", "user-c");
+  assert.equal(m.hasTaskCode(), false);
 });

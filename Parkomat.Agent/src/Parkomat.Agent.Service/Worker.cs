@@ -932,14 +932,19 @@ public class Worker : BackgroundService
                 // ⚠️ טקסט התקלה של מערכת אחת (13/10/2026). מצב האתר המאוחד אינו "תקלה" כשרק מערכת אחת
                 // נפלה, ולכן הקריאה הרגילה של הטקסט (רק על מצב תקלה של האתר) לא קרתה — והכרטיס הראה
                 // "מערכת 2: תקלה" בלי מה. מתי לקרוא — SystemFaultLatch; לתצוגה בלבד, בלי היסטוריה.
-                bool anySystemInError =
-                    ModeTranslator.FromMode(reading.Mode) == SiteState.Error ||
-                    ModeTranslator.FromMode(reading.Mode2 ?? 4) == SiteState.Error;
-                if (systemFault.Due(anySystemInError, DateTimeOffset.UtcNow))
+                // ⚠️ **אילו** מערכות בתקלה, לא רק "יש תקלה": שינוי בקבוצה הוא תקלה חדשה (SystemFaultLatch)
+                string errorUnits = string.Join(",",
+                    new[] { (1, reading.Mode), (2, reading.Mode2 ?? 4) }
+                        .Where(u => ModeTranslator.FromMode(u.Item2) == SiteState.Error)
+                        .Select(u => u.Item1));
+                if (systemFault.Due(errorUnits, DateTimeOffset.UtcNow))
                 {
-                    // ⚠️ כשל בקריאת הטקסט אינו מפיל את הסבב: הטקסט הוא תוספת לתצוגה, הקליטה היא העיקר
-                    try { systemFault.Set(await ReadFaultTextOrNullAsync(SiteState.Error, stoppingToken)); }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                    // ⚠️ **קריאה אחת, ולא ReadFaultTextOrNullAsync** (נמצא בסקירה, 13/10/2026). ההמתנה ליציבות שם
+                    // היא עד 11 קריאות; כשהבקר עונה על ה-MODE אבל לא על אזור הטקסט, כל אחת מחכה לתום הזמן (~3
+                    // שניות) — כ-34 שניות, מעל סף ה-watchdog (30), וכאן היא חוזרת כל 30 שניות כל עוד אין טקסט:
+                    // הסוכן היה נהרג ועולה בלולאה. לתצוגה מספיקה קריאה אחת; טקסט שעוד זז מתעדכן ברענון.
+                    // ⚠️ כשל בקריאה אינו מפיל את הסבב: הטקסט הוא תוספת לתצוגה, הקליטה היא העיקר.
+                    try { systemFault.Set(plc.ReadFaultText().Text); }
                     catch (Exception fex) { _logger.LogDebug("System fault text read failed: {Message}", fex.Message); }
                 }
                 latestSystems = BatchPayload.Systems(TwoSystemDetector.Snapshot(

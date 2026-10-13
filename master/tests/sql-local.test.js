@@ -269,6 +269,33 @@ test("O5 · last_seen מתקדם לפי ההודעה המאוחרת (היא סי
   assert.equal(before, iso(now - 5 * 60e3));
 });
 
+test("⚠️ O7 · תקלה שמנהל סיווג מחדש כתחזוקה — תקלה חוזרת מהתור אינה מפצלת אותה (נמצא בסקירה, 13/10)", { skip }, async () => {
+  // ההשוואה הייתה מול הסטטוס *המסווג* (maintenance), ולכן 'error' נראה כשינוי — ונוצר מקטע תקלה חדש,
+  // בלי הסיווג, שנספר בזמינות ובאחוז הכשל. עכשיו מול הסטטוס המקורי, כמו בשלבים 4–5.
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3, errAt = now - 30 * 60e3;
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, errAt], ["error", errAt, ncAt, "maintenance"], ["no_comm", ncAt, null]] });
+  await batch([stMsg("error", now - 12 * 60e3, "טקסט מאוחר")]);
+  const hist = await h.pg.query(`SELECT status, reclassified_to, started_at, ended_at, fault_text FROM status_history WHERE site_id=$1 ORDER BY started_at, id`, [s.id]);
+  assert.deepEqual(hist.rows.slice(0, 3).map((r) => [r.status, r.reclassified_to, r.started_at, r.ended_at]), [
+    ["ready", null, iso(now - 5 * H), iso(errAt)],
+    ["error", "maintenance", iso(errAt), iso(ncAt)],
+    ["no_comm", null, iso(ncAt), hist.rows[2].ended_at]]);
+});
+
+test("O8 · טקסט תקלה שמגיע באיחור למקטע תקלה שנסגר בתחילת הנתק — נשמר בו (ולא נזרק)", { skip }, async () => {
+  const now = Date.now();
+  const ncAt = now - 10 * 60e3, errAt = now - 20 * 60e3;
+  const s = await agentSite({ status: "no_comm", history: [["ready", now - 5 * H, errAt], ["error", errAt, ncAt], ["no_comm", ncAt, null]] });
+  await batch([stMsg("error", now - 15 * 60e3, "דלתות פתוחות")]);
+  const hist = (await historyOf(s.id)).map((r) => [r.status, r.started_at, r.ended_at, r.fault_text]);
+  assert.deepEqual(hist[1], ["error", iso(errAt), iso(ncAt), "דלתות פתוחות"]);
+  assert.equal(hist.length, 4, "לא נוצר מקטע חדש — רק הטקסט נוסף");
+  // ⚠️ טקסט קיים אינו נדרס
+  await batch([stMsg("error", now - 14 * 60e3, "טקסט אחר")]);
+  assert.equal((await historyOf(s.id))[1].fault_text, "דלתות פתוחות");
+});
+
 test("ingest_batch — אנונימי אינו רשאי", { skip }, async () => {
   await assert.rejects(
     h.as("anon", null, (tx) => tx.query(`SELECT * FROM public.ingest_batch('[]'::jsonb)`)),

@@ -145,5 +145,40 @@ test("ויזנט לא עונים — 504, ולא נרשם דבר", async () => {
   const { f, calls } = fakeFetch({ wz: { wizeApp_updateCallStatus: err } });
   const r = await run(makeHandler(ENV, f), req({ action: "update", field: "status", callid: "1", value: "1" }));
   assert.equal(r.status, 504);
+  assert.equal(r.body.error, "ויזנט לא ענו בזמן");
   assert.equal(calls.filter((c) => c.url.includes("service_call_record_change")).length, 0);
+});
+
+test("⚠️ קצב-זמן בניסוח של Deno, וכשל חיבור — מזוהים לפי המקור (ויזנט / Supabase)", async () => {
+  const { makeHandler } = await load();
+  // כך זה נראה ב-Deno (נמצא בפריסה הראשונה): DOMException בשם TimeoutError, "Signal timed out."
+  const deno = () => Object.assign(new Error("Signal timed out."), { name: "TimeoutError" });
+  let { f } = fakeFetch({ wz: { wizeApp_getBIReportQuery: deno() } });
+  let r = await run(makeHandler(ENV, f), req({ action: "lookups" }));
+  assert.equal(r.status, 504);
+  assert.equal(r.body.error, "ויזנט לא ענו בזמן");
+  // השם לבדו מספיק, גם כשההודעה אינה אומרת "זמן"
+  ({ f } = fakeFetch({ wz: { wizeApp_getBIReportQuery: Object.assign(new Error("deadline exceeded"), { name: "TimeoutError" }) } }));
+  r = await run(makeHandler(ENV, f), req({ action: "lookups" }));
+  assert.equal(r.status, 504);
+  // שם אחר, אותה הודעה — עדיין קצב-זמן
+  ({ f } = fakeFetch({ wz: { wizeApp_getBIReportQuery: new Error("Signal timed out.") } }));
+  r = await run(makeHandler(ENV, f), req({ action: "lookups" }));
+  assert.equal(r.status, 504);
+  // כשל חיבור לוויזנט שאינו קצב-זמן — 502 עם הסיבה
+  ({ f } = fakeFetch({ wz: { wizeApp_getBIReportQuery: new Error("connection refused") } }));
+  r = await run(makeHandler(ENV, f), req({ action: "lookups" }));
+  assert.equal(r.status, 502);
+  const b = r.body;
+  assert.equal(b.error, "אין חיבור לוויזנט");
+  assert.match(b.detail, /connection refused/);
+  // קצב-זמן בדרך ל-Supabase — לא מאשימים את ויזנט
+  const g = async (url, init) => {
+    if (String(url).includes("/rpc/wizenet_lookups_save")) throw deno();
+    return f(url, init);
+  };
+  ({ f } = fakeFetch({ wz: { wizeApp_getBIReportQuery: { body: JSON.stringify([{ callstatusid: "1", callstatusname: "חדש" }]) } } }));
+  r = await run(makeHandler(ENV, g), req({ action: "lookups" }));
+  assert.equal(r.status, 504);
+  assert.equal(r.body.error, "Supabase לא ענה בזמן");
 });

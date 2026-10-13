@@ -87,13 +87,19 @@ export function makeHandler(env: Env, f: typeof fetch = fetch) {
   };
 
   const wizenet = async (func: string, body: unknown) => {
-    const res = await f(`${env.wizenetBase}?func=${func}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: env.token },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const text = await res.text();
+    let res: Response, text: string;
+    try {
+      res = await f(`${env.wizenetBase}?func=${func}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: env.token },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      text = await res.text();
+    } catch (e) {
+      // ⚠️ מסומן: כשל בדרך לוויזנט ולא בדרך ל-Supabase — שתי תקלות שונות, ושתיהן היו "לא ענו בזמן"
+      throw Object.assign(new Error(String((e as Error)?.message ?? e)), { name: (e as Error)?.name, wizenet: true });
+    }
     let data: unknown = null;
     try { data = JSON.parse(text); } catch { data = null; }
     return { ok: res.ok, status: res.status, text, data };
@@ -164,8 +170,16 @@ export function makeHandler(env: Env, f: typeof fetch = fetch) {
       return json({ error: "פעולה לא מוכרת" }, 400);
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
-      if (/timeout|abort/i.test(msg)) return json({ error: "ויזנט לא ענו בזמן" }, 504);
-      return json({ error: "הפעולה נכשלה" }, 500);
+      const fromWizenet = (e as { wizenet?: boolean })?.wizenet === true;
+      // ⚠️ ב-Deno ההודעה היא "Signal timed out." — לא "timeout". נמצא בפריסה הראשונה (13/10/2026): קצב-זמן
+      // מול ויזנט יצא "הפעולה נכשלה" במקום "ויזנט לא ענו בזמן". לכן השם קודם, וההודעה רק כגיבוי.
+      const name = String((e as Error)?.name ?? "");
+      if (name === "TimeoutError" || name === "AbortError" || /time[d ]*out|abort/i.test(msg)) {
+        return json({ error: fromWizenet ? "ויזנט לא ענו בזמן" : "Supabase לא ענה בזמן" }, 504);
+      }
+      if (fromWizenet) return json({ error: "אין חיבור לוויזנט", detail: msg.slice(0, 300) }, 502);
+      // ⚠️ הסיבה נשלחת: בלי יומני הפונקציה זו הדרך היחידה לדעת מה נכשל (הטוקן אינו בהודעות של fetch)
+      return json({ error: "הפעולה נכשלה", detail: msg.slice(0, 300) }, 500);
     }
   };
 }

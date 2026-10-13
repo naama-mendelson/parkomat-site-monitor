@@ -598,7 +598,10 @@ BEGIN
     -- ⚠️ **בלי אירוע ובלי לגעת ב-sites.status:** אירוע 'state' היה מפעיל צליל והתראה על תקלה שנגמרה מזמן.
     -- המצב הנוכחי נקבע בחזרה מהנתק (סוף ingest_batch), כמו קודם.
     IF v_open.status = 'no_comm' AND p_status <> 'no_comm' THEN
-      SELECT h.id, COALESCE(h.reclassified_to, h.status) AS status, h.started_at INTO v_prev
+      -- ⚠️ הסטטוס **המקורי** ולא המסווג (נמצא בסקירה, 13/10/2026): מול COALESCE(reclassified_to, status), תקלה
+      -- שמנהל סיווג כתחזוקה נראתה "שונה" מתקלה חוזרת מהתור — והמקטע פוצל לתקלה חדשה בלי הסיווג, שנספרה
+      -- בזמינות. אותו כלל כמו בשלבים 4–5, שמשווים מול הסטטוס הגולמי.
+      SELECT h.id, h.status, h.started_at, h.fault_text INTO v_prev
         FROM status_history h
        WHERE h.site_id = p_site_id AND h.ended_at = v_open.started_at
        ORDER BY h.started_at DESC, h.id DESC
@@ -610,6 +613,11 @@ BEGIN
          WHERE id = p_site_id AND (last_seen IS NULL OR last_seen < v_at);
 
         IF v_prev.status = p_status THEN
+          -- טקסט תקלה שהגיע אחרי המצב (הבקר כותב אותו אחרי ה-MODE) — נשמר במקטע הסגור, כמו ששלב 4 עושה
+          -- למקטע הפתוח. טקסט קיים אינו נדרס.
+          IF p_status = 'error' AND COALESCE(p_fault_text, '') <> '' AND v_prev.fault_text IS NULL THEN
+            UPDATE status_history SET fault_text = p_fault_text WHERE id = v_prev.id;
+          END IF;
           RETURN QUERY SELECT false, 'no_change'::text, v_at, false;
           RETURN;
         END IF;

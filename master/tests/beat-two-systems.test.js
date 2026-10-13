@@ -50,4 +50,10 @@ test("systemFaultText — רק מערכת שבתקלה ויש לה טקסט; כ�
   assert.equal(systemFaultText([{ unit: 1, state: "ready", fault: "שארית" }]), "", "טקסט על מערכת שחזרה אינו תקלה עכשיו");
   assert.equal(systemFaultText([{ unit: 2, state: "error" }]), "", "תקלה בלי טקסט — לא ממציאים שורה");
   assert.equal(systemFaultText([{ unit: 1, state: "error", fault: " א " }, { unit: 2, state: "error", fault: "ב" }]), "מערכת 1: א · מערכת 2: ב");
+  // ⚠️ אתר מנותק, או פירוט ישן — הטקסט אינו מצב נוכחי (סקירה, 13/10)
+  const sys = [{ unit: 2, state: "error", fault: "ישן" }];
+  assert.equal(systemFaultText(sys, { status: "no_comm", ageMin: 0 }), "");
+  assert.equal(systemFaultText(sys, { status: "ready", ageMin: 4 }), "");
+  assert.equal(systemFaultText(sys, { status: "ready", ageMin: 3 }), "מערכת 2: ישן");
+  assert.equal(systemFaultText(sys, { status: "ready" }), "מערכת 2: ישן", "גיל לא ידוע — מציגים");
 });

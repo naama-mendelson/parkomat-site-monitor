@@ -78,10 +78,26 @@ export async function unstartTask(id) {
 // הוא קוד שדלף. רענון שוכח אותו. ההחלטה ב-SQL (app.task_code_ok); כאן רק מה נשלח.
 // ⚠️ p_code נשלח רק כשיש קוד: בלעדיו הגוף { p_id } זהה למה שהיה, ועובד גם מול מסד שעוד לא קיבל את
 // החתימה החדשה.
+//
+// ⚠️ **שייך למשתמש שהזין אותו, ונמחק בהתנתקות או בהחלפת משתמש** (נמצא בסקירה, 13/10/2026). המשתנה חי עם
+// הלשונית, ובמסך משותף בחדר הבקרה: א' מזין קוד ומתנתק, ב' (בקר) מתחבר באותה לשונית — והחלון נפתח
+// "פתוח", ו-ב' מסמן בוצע ומוחק בשם הקוד של א'. כל שינוי זהות (התנתקות, משתמש אחר) מוחק אותו.
 let taskCode = null;
-export const hasTaskCode = () => taskCode !== null;
-export function setTaskCode(code) { taskCode = code ? String(code) : null; }
-const withCode = (args) => (taskCode ? { ...args, p_code: taskCode } : args);
+let currentUser = null;   // מזהה המשתמש המחובר, מעודכן מאירועי ההזדהות
+let codeOwner = null;     // מי שהזין את הקוד
+export const hasTaskCode = () => taskCode !== null && codeOwner === currentUser;
+export function setTaskCode(code) {
+  taskCode = code ? String(code) : null;
+  codeOwner = taskCode ? currentUser : null;
+}
+try {
+  supabase?.auth?.onAuthStateChange?.((event, session) => {
+    const uid = session?.user?.id ?? null;
+    if (event === "SIGNED_OUT" || uid !== currentUser) { taskCode = null; codeOwner = null; }
+    currentUser = uid;
+  });
+} catch { /* Supabase לא מוגדר — אין משתמש ואין קוד */ }
+const withCode = (args) => (hasTaskCode() ? { ...args, p_code: taskCode } : args);
 
 export async function markTaskDone(id) {
   return rpc("task_done", withCode({ p_id: id }));

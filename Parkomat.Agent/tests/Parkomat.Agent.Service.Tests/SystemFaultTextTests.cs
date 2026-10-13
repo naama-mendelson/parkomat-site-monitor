@@ -105,3 +105,27 @@ public class SystemFaultSnapshotTests
         Assert.DoesNotMatch("\"unit\":1[^}]*\"fault\":\"", body);
     }
 }
+
+public class SystemFaultLatchUnitsTests
+{
+    private static readonly DateTimeOffset T0 = new(2026, 10, 13, 8, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void WhichSystemsAreInFault_Changes_ReadAgainAtOnce_AndDropTheOldText()
+    {
+        // נמצא בסקירה: 1 נופלת (טקסט א'), 2 נופלת לפני ש-1 חזרה, ואז 1 חוזרת — "יש תקלה" לא התחלף, והכרטיס הציג
+        // "מערכת 2: א'" עד 5 דקות. עכשיו כל שינוי בקבוצה הוא תקלה חדשה.
+        var l = new SystemFaultLatch();
+        Assert.True(l.Due("1", T0));
+        l.Set("א");
+        Assert.True(l.Due("1,2", T0.AddSeconds(5)));     // גם 2 נפלה — קוראים שוב
+        Assert.Null(l.Text);                             // הטקסט הישן לא נשאר עד שתגיע התשובה
+        l.Set("ב");
+        Assert.True(l.Due("2", T0.AddSeconds(10)));      // 1 חזרה — קוראים שוב
+        l.Set("ב");
+        Assert.Equal("ב", l.Text);
+        Assert.False(l.Due("2", T0.AddSeconds(11)));     // אותה קבוצה — לא בכל דגימה
+        Assert.False(l.Due("", T0.AddSeconds(12)));
+        Assert.Null(l.Text);
+    }
+}

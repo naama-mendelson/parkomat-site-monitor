@@ -149,8 +149,13 @@ export function systemsAgeMinutes(seenAt, now = Date.now()) {
  * אותו בפעימה, צמוד למערכת שבתקלה (systems[].fault). "מערכת 2: <טקסט>", או "" כשאין.
  * ⚠️ רק למערכת שמצבה תקלה: טקסט שנשאר על מערכת שכבר חזרה (פעימה ישנה) אינו תקלה עכשיו.
  */
-export function systemFaultText(systems) {
+// ⚠️ ורק כשהאתר מחובר והפירוט טרי (נמצא בסקירה, 13/10/2026): אתר שהתנתק בזמן שמערכת בו בתקלה היה מציג
+// "⚠ מערכת 2: …" מתחת ל"אין תקשורת" עד שיחזור — טקסט ישן שנראה כמו מצב נוכחי. אותו כלל כמו liveSystems:
+// no_comm — לא; גיל הפירוט מעל SYSTEMS_STALE_MS — לא. בלי ageMin (לא ידוע) — מציגים.
+export function systemFaultText(systems, { status = null, ageMin = null } = {}) {
   if (!Array.isArray(systems)) return "";
+  if (status === "no_comm") return "";
+  if (ageMin != null && ageMin * 60_000 > SYSTEMS_STALE_MS) return "";
   return systems
     .filter((u) => u?.state === "error" && String(u?.fault ?? "").trim())
     .map((u) => `מערכת ${u.unit}: ${String(u.fault).trim()}`)

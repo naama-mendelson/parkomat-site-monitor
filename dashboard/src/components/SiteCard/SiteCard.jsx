@@ -393,7 +393,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ⚠️ אתר דו-מערכתי שמערכת אחת בו נפלה (13/10/2026: "ברגע שקיימת תקלה אני רוצה שיהיה כתוב מה התקלה").
   // מצב האתר הוא "הטוב מבין השתיים", ולכן אין לו תקלה ואין currentFaultText — הטקסט מגיע מהפעימה, צמוד
   // למערכת שבתקלה (systems[].fault). לתצוגה בלבד; תקלה של האתר כולו גוברת (היא כבר אומרת את שתיהן).
-  const faultText = showFault ? site.currentFaultText : systemFaultText(systems);
+  const faultText = showFault ? site.currentFaultText
+    : systemFaultText(systems, { status: site.status, ageMin: site.systemsAgeMin });
 
   const faultLine = faultText ? (
     <div className="card-fault" title={faultText}>
