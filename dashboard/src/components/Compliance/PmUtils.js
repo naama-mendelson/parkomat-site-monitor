@@ -42,7 +42,9 @@ export const KIND_LABEL = {
 // "2", "2.5", "2,5", "-1" — מספר; כל השאר אינו מדידה, ופריט חובה נשאר חסר.
 const VALUE_RE = /^-?\d{1,9}([.,]\d{1,4})?$/;
 export function valueNum(text) {
-  const t = String(text ?? "").trim();
+  // ⚠️ גיזום של רווח/טאב/שורה בלבד — כמו btrim(p, E' \t\r\n') ב-app.pm_value_num. trim() של JS גוזם גם רווח
+  // קשיח, והטופס היה אומר "נמדד" על ערך שההגשה דוחה (סקירה, 13/10/2026).
+  const t = String(text ?? "").replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
   return VALUE_RE.test(t) ? Number(t.replace(",", ".")) : null;
 }
 /** ערך שנמדד מעל הסף של הפריט (warn_above). בלי סף או בלי מדידה — false. */

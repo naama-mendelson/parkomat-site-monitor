@@ -35,7 +35,7 @@ function AddSiteModal({ onClose, onSuccess }) {
   useEffect(() => {
     if (!PM_ENABLED) return undefined;
     let alive = true;
-    fetchPmProfiles().then((d) => { if (alive) setProfiles(d.profiles); }).catch(() => { if (alive) setProfiles([]); });
+    fetchPmProfiles().then((d) => { if (alive) setProfiles(d.profiles); }).catch(() => { if (alive) setProfiles(false); });
     return () => { alive = false; };
   }, []);
 
@@ -283,6 +283,9 @@ function AddSiteModal({ onClose, onSuccess }) {
               <ChoiceSelect label="פרופיל תחזוקה" name="pm_profile" value={profileId} onChange={setProfileId}
                 options={[{ value: "", label: "בלי פרופיל (רשימת ברירת המחדל)" },
                   ...(profiles || []).map((p) => ({ value: String(p.id), label: `${p.name} · ${p.sites.length} אתרים` }))]} />
+              {profiles === false && (
+                <small className="addsite-hint">הפרופילים לא נטענו — אפשר לרשום עכשיו ולקבוע פרופיל אחר כך בלשונית התחזוקה.</small>
+              )}
             </div>
           )}
 

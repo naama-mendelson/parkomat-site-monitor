@@ -372,9 +372,11 @@ export async function fetchPmProfiles() {
  * @param {string|null} expectedAt — updated_at שהלוח טען; PT409 אם מנהל אחר שמר בינתיים
  * @returns {number} מזהה הפרופיל
  */
-export async function savePmProfile(id, name, templateIds, expectedAt = null) {
+export async function savePmProfile(id, name, templateIds, expectedAt = null, siteCodes = null) {
   return Number(await rpcT("pm_profile_save", {
     p_id: id ?? null, p_name: name, p_template_ids: templateIds, p_expected_at: expectedAt,
+    // null = האתרים לא נשלחים ולא משתנים (pm_profile_save בטרנזקציה אחת)
+    p_site_codes: siteCodes,
   }, TIMEOUT.normal));
 }
 

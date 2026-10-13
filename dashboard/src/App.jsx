@@ -22,7 +22,6 @@ import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
-import InspectionPage from "./components/Compliance/InspectionPage";
 import "./components/TrafficLight/TrafficLight.css";
 import OperatorView from "./views/OperatorView/OperatorView";
 import SupervisorView from "./views/SupervisorView/SupervisorView";
@@ -63,7 +62,6 @@ function App() {
   const [detailSection, setDetailSection] = useState(null);
   // עמוד הבודק נפתח מתוך חלון האתר (ולא מהכרטיס) → "חזרה" מחזירה לחלון, לאותה
   // לשונית שממנה יצאו. null = נפתח מהכרטיס/מהכתובת, והחזרה היא לדשבורד.
-  const [inspectionReturn, setInspectionReturn] = useState(null);
   // מונה לכל אתר: עולה באירוע compliance → הלשונית הפתוחה של אותו אתר נטענת מחדש.
   const [complianceRev, setComplianceRev] = useState({});
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
@@ -426,31 +424,17 @@ function App() {
 
   // ===== Handlers =====
   // section — מהמנורה בכרטיס ("inspection"/"pm"); בלעדיו החלון נפתח על הסקירה.
-  // ⚠️ "inspection" אינו לשונית בחלון אלא **עמוד מלא** (InspectionPage) — ראה
-  // הרינדור למטה. המנורה, ההתראות, טבלת המפקח והכתובת עוברים כולם דרך כאן.
+  // ⚠️ מ-13/10/2026 "בודק מוסמך" הוא **לשונית בחלון**, כמו תחזוקה מונעת (בעלת המוצר: "אני רוצה שבודק
+  // מוסמך יהיה בתוך חלונית כמו זה"). מ-05/10 עד אז הוא היה עמוד מלא (InspectionPage). המנורה, ההתראות
+  // וטבלת המפקח עוברים כולם דרך כאן.
   const handleSiteClick = useCallback((code, section = null) => {
     setDetailSection(typeof section === "string" ? section : null);
-    setInspectionReturn(null);
     setSelectedCode(code);
   }, []);
   const closeDetail = useCallback(() => {
     setSelectedCode(null);
     setDetailSection(null);
-    setInspectionReturn(null);
   }, []);
-  // "בודק מוסמך" בתוך חלון האתר פותח את העמוד — והחזרה ממנו חוזרת לחלון, לא
-  // לדשבורד: מי שנכנס דרך האתר מצפה לחזור לאתר.
-  // ⚠️ חוזרים ללשונית שממנה יצאו ולא תמיד לסקירה: מי שהגיע מ"תחזוקה מונעת"
-  // כשפרטי האתר לא נטענו היה נוחת בסקירה — שדורשת אותם — והחלון היה נסגר.
-  const openInspectionFromSite = useCallback((fromSection) => {
-    setInspectionReturn(fromSection || "overview");
-    setDetailSection("inspection");
-  }, []);
-  const backFromInspection = useCallback(() => {
-    if (!inspectionReturn) { closeDetail(); return; }
-    setDetailSection(inspectionReturn === "overview" ? null : inspectionReturn);
-    setInspectionReturn(null);
-  }, [inspectionReturn, closeDetail]);
 
   // ==========================================================
   // ⚠️ פתיחת האפליקציה = דשבורד הבקר. תמיד.
@@ -572,22 +556,6 @@ function App() {
       {(() => {
         if (!selectedCode) return null;
         const listSite = sites.find((x) => x.code === selectedCode);
-        // ⚠️ בודק מוסמך — עמוד מלא ולא לשונית (בקשת בעלת המוצר, 05/10/2026).
-        // מהרשימה בלבד, כמו הלשונית: לא מחכה לפרטי האתר. במצב שרת אין לתכונה
-        // זרוע, ואז נשאר החלון (שבו הלשונית פשוט אינה קיימת).
-        if (detailSection === "inspection" && useDirect) {
-          if (!listSite) return null;
-          return (
-            <InspectionPage
-              key={selectedCode}
-              site={listSite}
-              backLabel={inspectionReturn ? "חזרה לאתר" : "חזרה לדשבורד"}
-              onBack={backFromInspection}
-              complianceRev={complianceRev[selectedCode] ?? 0}
-              onChanged={handleComplianceChanged}
-            />
-          );
-        }
         // ⚠️ רק פרטים של **האתר הזה**: בין הלחיצה לאיפוס ב-useSiteDetail
         // עדיין יושבים שם הפרטים של האתר הקודם, לרינדור אחד.
         const detailSite = detail?.site?.code === selectedCode ? detail.site : null;
@@ -608,7 +576,6 @@ function App() {
             compliance={listSite?.compliance}
             complianceRev={complianceRev[selectedCode] ?? 0}
             onComplianceChanged={handleComplianceChanged}
-            onOpenInspection={openInspectionFromSite}
             detailMissing={!detailSite}
           />
         );

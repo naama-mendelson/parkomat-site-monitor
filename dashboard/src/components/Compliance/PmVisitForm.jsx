@@ -597,7 +597,7 @@ export default function PmVisitForm({
             <span className="pm-check-label">{m.it.label}</span>
             <span className="pm-value-in">
               <input type="text" inputMode="decimal" className="pm-input pm-value-input" value={m.note ?? ""}
-                maxLength={14} disabled={lock} aria-invalid={m.note && valueNum(m.note) == null ? "true" : undefined}
+                maxLength={16} disabled={lock} aria-invalid={m.note && valueNum(m.note) == null ? "true" : undefined}
                 onFocus={() => onNoteFocus(m.id, m.note)}
                 onChange={(e) => onNoteChange(m.id, e.target.value)}
                 onBlur={() => onNoteBlur(m.id)} />

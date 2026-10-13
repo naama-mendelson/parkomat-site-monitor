@@ -1,4 +1,4 @@
-// components/Compliance/InspectionTab.jsx — תוכן "בודק מוסמך": העמוד המלא (InspectionPage) וגם הלשונית בחלון האתר.
+// components/Compliance/InspectionTab.jsx — תוכן "בודק מוסמך": הלשונית בחלון האתר (מ-13/10/2026; מ-05/10 עד אז עמוד מלא, InspectionPage).
 //
 // מה רואים, מלמעלה למטה:
 //   1. פס מצב — נורה, תוקף, ולמה הנורה צבועה כשהתסקיר בתוקף (ושורה לכל מתקן כשיש יותר מאחד).
@@ -96,7 +96,7 @@ function DoneList({ items, byId, isManager, onReopen, onOpenPhoto, site, machine
  * @param {number} [p.complianceRev] — עולה כשהגיע אירוע compliance לאתר; טוען מחדש
  * @param {(reason: string|null) => void} [p.onDirtyChange]
  * @param {() => void} [p.onChanged] — אחרי כל כתיבה מוצלחת (ההורה מרענן את נורת הכרטיס)
- * @param {boolean} [p.dropAnywhere] — בעמוד המלא (InspectionPage): קובץ ששוחרר בכל מקום בעמוד פותח את ההעלאה
+ * @param {boolean} [p.dropAnywhere] — קובץ ששוחרר בכל מקום בחלון פותח את ההעלאה (InsightsModal מעביר אותו תמיד)
  */
 export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, onChanged, dropAnywhere = false }) {
   const { user } = useAuth();

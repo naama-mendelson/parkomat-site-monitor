@@ -545,8 +545,10 @@ ALTER TABLE pm_visit_items VALIDATE CONSTRAINT pm_visit_items_kind;
 -- ובדיקות, כדי ש"נמדד" לא יוגדר פעמיים בשתי דרכים.
 CREATE OR REPLACE FUNCTION app.pm_value_num(p text) RETURNS numeric
 LANGUAGE sql IMMUTABLE SET search_path = public, app, pg_temp AS $$
-  SELECT CASE WHEN btrim(COALESCE(p, '')) ~ '^-?[0-9]{1,9}([.,][0-9]{1,4})?$'
-              THEN replace(btrim(p), ',', '.')::numeric END
+  -- ⚠️ גיזום של רווח, טאב ושורה בלבד — כמו valueNum ב-PmUtils.js (סקירה, 13/10/2026: trim() של JS גזם גם
+  -- רווח קשיח, btrim כאן לא, והטופס אמר "נמדד" על ערך שההגשה דחתה)
+  SELECT CASE WHEN btrim(COALESCE(p, ''), E' \t\r\n') ~ '^-?[0-9]{1,9}([.,][0-9]{1,4})?$'
+              THEN replace(btrim(p, E' \t\r\n'), ',', '.')::numeric END
 $$;
 REVOKE ALL ON FUNCTION app.pm_value_num(text) FROM PUBLIC;
 
@@ -2206,13 +2208,14 @@ BEGIN
       v_id  := NULLIF(v_e->>'id','')::integer;
       v_req := COALESCE(NULLIF(v_e->>'required','')::boolean, true);
       v_min := COALESCE(NULLIF(v_e->>'min_photos','')::integer, 0);
-      v_warn := NULLIF(btrim(COALESCE(v_e->>'warn_above','')),'')::numeric;
     EXCEPTION WHEN others THEN RAISE EXCEPTION 'פריט % אינו תקין', v_ord USING ERRCODE = 'check_violation'; END;
     v_label := btrim(COALESCE(v_e->>'label',''));
     v_hint  := NULLIF(btrim(COALESCE(v_e->>'hint','')),'');
     v_kind  := COALESCE(NULLIF(v_e->>'kind',''),'check');
     v_sec   := NULLIF(btrim(COALESCE(v_e->>'section','')),'');
     v_unit  := NULLIF(btrim(COALESCE(v_e->>'unit','')),'');
+    -- הסף — אותו כלל כמו מדידה (app.pm_value_num): לא "1e3", לא NaN/Infinity (סקירה, 13/10/2026)
+    v_warn  := app.pm_value_num(v_e->>'warn_above');
     IF length(v_label) NOT BETWEEN 2 AND 300 THEN
       RAISE EXCEPTION 'שם פריט % חייב להיות בין 2 ל-300 תווים', v_ord USING ERRCODE = 'check_violation'; END IF;
     IF v_hint IS NOT NULL AND length(v_hint) > 500 THEN
@@ -2226,6 +2229,8 @@ BEGIN
     IF v_kind = 'value' THEN
       IF v_unit IS NOT NULL AND length(v_unit) > 10 THEN
         RAISE EXCEPTION 'היחידה בפריט % ארוכה מדי (עד 10 תווים)', v_ord USING ERRCODE = 'check_violation'; END IF;
+      IF NULLIF(btrim(COALESCE(v_e->>'warn_above','')),'') IS NOT NULL AND v_warn IS NULL THEN
+        RAISE EXCEPTION 'הסף בפריט % חייב להיות מספר, למשל 2', v_ord USING ERRCODE = 'check_violation'; END IF;
     ELSE
       v_unit := NULL; v_warn := NULL;
     END IF;
@@ -2260,6 +2265,22 @@ BEGIN
   IF v_photos > 40 THEN
     RAISE EXCEPTION 'סך התמונות הנדרשות בביקור (%) עולה על 40 — אף ביקור לא יוכל להיות מוגש', v_photos
       USING ERRCODE = 'check_violation';
+  END IF;
+  -- ⚠️ ובכל פרופיל שהרשימה בו — הרשימות שלו יחד הן הביקור (סקירה, 13/10/2026). בלי זה, הגדלת רשימה אחת
+  -- עברה, ומאז כל אתר בפרופיל קיבל "יותר מ-40 תמונות" רק כשטכנאי בשטח ניסה לפתוח ביקור.
+  SELECT p.name, x.n INTO v_who, v_photos FROM (
+      SELECT pt.profile_id, sum(i.min_photos)::int n
+        FROM pm_profile_templates pt
+        JOIN pm_profile_templates pt2 ON pt2.profile_id = pt.profile_id
+        JOIN pm_templates t2 ON t2.id = pt2.template_id AND t2.active
+        JOIN pm_checklist_items i ON i.template_id = t2.id AND i.active AND i.required
+       WHERE pt.template_id = v_t.id
+       GROUP BY pt.profile_id) x
+    JOIN pm_profiles p ON p.id = x.profile_id
+   ORDER BY x.n DESC LIMIT 1;
+  IF v_photos > 40 THEN
+    RAISE EXCEPTION 'הרשימה בפרופיל "%", והפרופיל יחד יידרש ל-% תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש',
+      v_who, v_photos USING ERRCODE = 'check_violation';
   END IF;
 
   SELECT count(*)::int, COALESCE(jsonb_agg(jsonb_build_object('id', t.id, 'label', t.label, 'kind', t.kind,
@@ -2346,10 +2367,79 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.pm_profiles_list() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_profiles_list() TO authenticated;
 
--- יצירה (p_id ריק) או עדכון של פרופיל: שם ורשימות. ⚠️ p_expected_at — ה-updated_at שהלוח טען;
--- לוח ישן היה מחזיר בשקט רשימות שמנהל אחר הוציא, וכל אתר בפרופיל יורש את זה. NULL = בלי בדיקה.
+-- ⚠️ כל כותב לפרופילים נועל קודם את הטבלה, באותו מצב (SHARE ROW EXCLUSIVE מתנגש בעצמו), ולכן הכתיבות
+-- לפרופילים רצות בזו אחר זו (סקירה, 13/10/2026). לפני כן שמירה ומחיקה של אותו פרופיל נעלו בסדר הפוך —
+-- טבלה ואז שורה, מול שורה ואז טבלה — והתוצאה הייתה קיפאון (40P01) בהודעה באנגלית; ושיוך אתר שרץ במקביל
+-- למחיקה נפל על מפתח זר (23503). הכתיבות כאן נדירות (מנהל, לוח), כך שהסדר הסדרתי אינו מחיר.
+CREATE OR REPLACE FUNCTION app.pm_profiles_lock() RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+BEGIN
+  LOCK TABLE pm_profiles IN SHARE ROW EXCLUSIVE MODE;
+END $fn$;
+REVOKE ALL ON FUNCTION app.pm_profiles_lock() FROM PUBLIC;
+
+-- ⚠️ שינוי באתרים של פרופיל מקדם את ה-updated_at שלו (וגם של הפרופיל שאתר עבר ממנו). בלי זה, הבדיקה
+-- "הפרופיל עודכן בינתיים" ראתה רק שם ורשימות: מנהל אחד הוסיף אתר מהלשונית שלו, מנהל שני שמר את
+-- הפרופיל מלוח ישן — והאתר חזר לברירת המחדל בלי מילה (סקירה, 13/10/2026).
+CREATE OR REPLACE FUNCTION app.pm_profiles_touch(p_ids integer[], p_actor text) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  UPDATE pm_profiles p SET updated_at = app.compliance_now_iso(), updated_by = p_actor
+   WHERE p.id = ANY (COALESCE(p_ids, '{}'));
+$$;
+REVOKE ALL ON FUNCTION app.pm_profiles_touch(integer[], text) FROM PUBLIC;
+
+-- האתרים של פרופיל כמצב יעד — הלב המשותף ל-pm_profile_save ול-pm_profile_sites_set. אתר מפרופיל אחר
+-- עובר לכאן; אתר שהוסר חוזר לברירת המחדל. רושם היסטוריה, ביקורת (מזהים בלבד) ואירוע לכל אתר שהשתנה.
+-- הקורא כבר נעל (app.pm_profiles_lock) ובדק שהפרופיל קיים.
+CREATE OR REPLACE FUNCTION app.pm_profile_apply_sites(p_profile_id integer, p_site_codes text[], p_actor text)
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_codes text[] := COALESCE((SELECT array_agg(DISTINCT btrim(x)) FROM unnest(p_site_codes) x
+                               WHERE NULLIF(btrim(x), '') IS NOT NULL), '{}');
+  v_ids integer[]; v_bad text; v_before text[]; v_moved text[]; v_from integer[]; v_after text[]; v_c text;
+BEGIN
+  SELECT x INTO v_bad FROM unnest(v_codes) x WHERE NOT EXISTS (SELECT 1 FROM sites s WHERE s.code = x) LIMIT 1;
+  IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', v_bad USING ERRCODE = 'PT404'; END IF;
+  SELECT COALESCE(array_agg(s.id ORDER BY s.id), '{}') INTO v_ids FROM sites s WHERE s.code = ANY (v_codes);
+
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_before
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}'), COALESCE(array_agg(DISTINCT ps.profile_id), '{}')
+    INTO v_moved, v_from
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id
+   WHERE ps.site_id = ANY (v_ids) AND ps.profile_id <> p_profile_id;
+  DELETE FROM pm_profile_sites ps WHERE ps.profile_id = p_profile_id AND NOT (ps.site_id = ANY (v_ids));
+  INSERT INTO pm_profile_sites (site_id, profile_id) SELECT x, p_profile_id FROM unnest(v_ids) x
+  ON CONFLICT (site_id) DO UPDATE SET profile_id = EXCLUDED.profile_id;
+  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_after
+    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
+
+  IF v_before IS DISTINCT FROM v_after THEN
+    PERFORM app.pm_profiles_touch(array_append(v_from, p_profile_id), p_actor);
+    PERFORM app.compliance_log(NULL, '*', 'pm', 'profile_sites', p_profile_id, 'set', p_actor,
+      jsonb_build_object('sites', to_jsonb(v_before)),
+      jsonb_build_object('sites', to_jsonb(v_after), 'moved_from_other', to_jsonb(v_moved)), NULL);
+    PERFORM app.record_write_audit('pm.profile_sites_set', p_actor, app.current_app_role(), 'settings', 'pm_profile',
+      jsonb_build_object('profile_id', p_profile_id, 'site_count', cardinality(v_after)));
+  END IF;
+  -- אירוע לכל אתר שהשתנה לו משהו: נכנס, יצא, או עבר מפרופיל אחר
+  FOR v_c IN SELECT DISTINCT c FROM (SELECT unnest(v_before) c UNION SELECT unnest(v_after)) u
+              WHERE NOT (c = ANY (v_before) AND c = ANY (v_after)) OR c = ANY (v_moved) LOOP
+    PERFORM app.compliance_event(v_c, 'pm', 'profile');
+  END LOOP;
+  RETURN cardinality(v_after);
+END $fn$;
+REVOKE ALL ON FUNCTION app.pm_profile_apply_sites(integer, text[], text) FROM PUBLIC;
+
+-- יצירה (p_id ריק) או עדכון של פרופיל: שם, רשימות — ואתרים, הכול בטרנזקציה אחת (p_site_codes; NULL =
+-- האתרים לא נשלחו ולא משתנים). ⚠️ p_expected_at — ה-updated_at שהלוח טען, וכולל שינויי אתרים (ראה
+-- app.pm_profiles_touch): לוח ישן נדחה ב-PT409, בלי לגעת בכלום. NULL = בלי בדיקה.
+-- (עד 13/10/2026 בערב הלוח שלח שתי קריאות — שם ורשימות, ואז אתרים — וכשל באמצע השאיר חצי שמירה.)
+DROP FUNCTION IF EXISTS public.pm_profile_save(integer, text, integer[], text);
 CREATE OR REPLACE FUNCTION public.pm_profile_save(p_id integer, p_name text, p_template_ids integer[],
-                                                  p_expected_at text DEFAULT NULL) RETURNS integer
+                                                  p_expected_at text DEFAULT NULL, p_site_codes text[] DEFAULT NULL)
+RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_manager();
@@ -2371,8 +2461,7 @@ BEGIN
   IF v_photos > 40 THEN
     RAISE EXCEPTION 'הרשימות יחד דורשות % תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש', v_photos
       USING ERRCODE = 'check_violation'; END IF;
-  -- נעילה: שתי יצירות באותו שם במקביל היו עוברות שתיהן את הבדיקה (האינדקס היה זורק 23505 בלי הסבר)
-  LOCK TABLE pm_profiles IN SHARE ROW EXCLUSIVE MODE;
+  PERFORM app.pm_profiles_lock();
   IF EXISTS (SELECT 1 FROM pm_profiles p WHERE lower(btrim(p.name)) = lower(v_name) AND p.id IS DISTINCT FROM p_id) THEN
     RAISE EXCEPTION 'כבר קיים פרופיל בשם "%"', v_name USING ERRCODE = 'PT409'; END IF;
 
@@ -2398,10 +2487,13 @@ BEGIN
     v_actor, v_before, jsonb_build_object('name', v_name, 'template_ids', to_jsonb(v_ids)), NULL);
   PERFORM app.record_write_audit('pm.profile_save', v_actor, app.current_app_role(), 'settings', 'pm_profile',
     jsonb_build_object('profile_id', v_id, 'template_ids', to_jsonb(v_ids)));   -- D22: מזהים בלבד
+  IF p_site_codes IS NOT NULL THEN
+    PERFORM app.pm_profile_apply_sites(v_id, p_site_codes, v_actor);
+  END IF;
   RETURN v_id;
 END $fn$;
-REVOKE ALL ON FUNCTION public.pm_profile_save(integer, text, integer[], text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pm_profile_save(integer, text, integer[], text) TO authenticated;
+REVOKE ALL ON FUNCTION public.pm_profile_save(integer, text, integer[], text, text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_save(integer, text, integer[], text, text[]) TO authenticated;
 
 -- מחיקת פרופיל: האתרים שבו חוזרים לברירת המחדל (או לשיוך הישן שלהם). מחזיר כמה אתרים חזרו.
 -- ⚠️ ביקור פתוח אינו משתנה — הפריטים שלו צולמו בפתיחה.
@@ -2411,6 +2503,7 @@ DECLARE
   v_actor text := app.require_manager();
   v_p pm_profiles%ROWTYPE; v_codes text[]; v_c text;
 BEGIN
+  PERFORM app.pm_profiles_lock();
   SELECT p.* INTO v_p FROM pm_profiles p WHERE p.id = p_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
   SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_codes
@@ -2426,47 +2519,25 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.pm_profile_delete(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_profile_delete(integer) TO authenticated;
 
--- מצב יעד: אלה האתרים של הפרופיל מעכשיו. אתר שהיה בפרופיל אחר **עובר** לכאן (כמו "חבר לשורה
--- אחרת" ברמזור); אתר שהוסר מכאן חוזר לברירת המחדל. מחזיר כמה אתרים בפרופיל.
-CREATE OR REPLACE FUNCTION public.pm_profile_sites_set(p_profile_id integer, p_site_codes text[]) RETURNS integer
+-- מצב יעד: אלה האתרים של הפרופיל מעכשיו (כמו "חבר לשורה אחרת" ברמזור). מחזיר כמה אתרים בפרופיל.
+-- ⚠️ p_expected_at כמו ב-pm_profile_save. הלוח שומר הכול דרך pm_profile_save; כאן — לכלים ולקריאה ישירה.
+DROP FUNCTION IF EXISTS public.pm_profile_sites_set(integer, text[]);
+CREATE OR REPLACE FUNCTION public.pm_profile_sites_set(p_profile_id integer, p_site_codes text[],
+                                                       p_expected_at text DEFAULT NULL) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_manager();
-  v_codes text[] := COALESCE((SELECT array_agg(DISTINCT btrim(x)) FROM unnest(p_site_codes) x
-                               WHERE NULLIF(btrim(x), '') IS NOT NULL), '{}');
-  v_ids integer[]; v_bad text; v_before text[]; v_moved text[]; v_after text[]; v_c text;
+  v_p pm_profiles%ROWTYPE;
 BEGIN
-  PERFORM 1 FROM pm_profiles p WHERE p.id = p_profile_id FOR UPDATE;
+  PERFORM app.pm_profiles_lock();
+  SELECT p.* INTO v_p FROM pm_profiles p WHERE p.id = p_profile_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
-  SELECT x INTO v_bad FROM unnest(v_codes) x WHERE NOT EXISTS (SELECT 1 FROM sites s WHERE s.code = x) LIMIT 1;
-  IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', v_bad USING ERRCODE = 'PT404'; END IF;
-  SELECT COALESCE(array_agg(s.id), '{}') INTO v_ids FROM sites s WHERE s.code = ANY (v_codes);
-
-  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_before
-    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
-  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_moved
-    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id
-   WHERE ps.site_id = ANY (v_ids) AND ps.profile_id <> p_profile_id;
-  DELETE FROM pm_profile_sites ps WHERE ps.profile_id = p_profile_id AND NOT (ps.site_id = ANY (v_ids));
-  INSERT INTO pm_profile_sites (site_id, profile_id) SELECT x, p_profile_id FROM unnest(v_ids) x
-  ON CONFLICT (site_id) DO UPDATE SET profile_id = EXCLUDED.profile_id;
-  SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_after
-    FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_profile_id;
-
-  PERFORM app.compliance_log(NULL, '*', 'pm', 'profile_sites', p_profile_id, 'set', v_actor,
-    jsonb_build_object('sites', to_jsonb(v_before)),
-    jsonb_build_object('sites', to_jsonb(v_after), 'moved_from_other', to_jsonb(v_moved)), NULL);
-  PERFORM app.record_write_audit('pm.profile_sites_set', v_actor, app.current_app_role(), 'settings', 'pm_profile',
-    jsonb_build_object('profile_id', p_profile_id, 'site_count', cardinality(v_after)));
-  -- אירוע לכל אתר שהשתנה לו משהו: נכנס, יצא, או עבר מפרופיל אחר
-  FOR v_c IN SELECT DISTINCT c FROM (SELECT unnest(v_before) c UNION SELECT unnest(v_after)) u
-              WHERE NOT (c = ANY (v_before) AND c = ANY (v_after)) OR c = ANY (v_moved) LOOP
-    PERFORM app.compliance_event(v_c, 'pm', 'profile');
-  END LOOP;
-  RETURN cardinality(v_after);
+  IF p_expected_at IS NOT NULL AND v_p.updated_at <> p_expected_at THEN
+    RAISE EXCEPTION 'הפרופיל עודכן בינתיים ע״י % — יש לטעון את הלוח מחדש', v_p.updated_by USING ERRCODE = 'PT409'; END IF;
+  RETURN app.pm_profile_apply_sites(p_profile_id, p_site_codes, v_actor);
 END $fn$;
-REVOKE ALL ON FUNCTION public.pm_profile_sites_set(integer, text[]) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pm_profile_sites_set(integer, text[]) TO authenticated;
+REVOKE ALL ON FUNCTION public.pm_profile_sites_set(integer, text[], text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_sites_set(integer, text[], text) TO authenticated;
 
 -- פרופיל לאתר אחד — מהלשונית שלו ומרישום אתר. NULL = בלי פרופיל (ברירת המחדל).
 CREATE OR REPLACE FUNCTION public.pm_site_profile_set(p_site_code text, p_profile_id integer) RETURNS void
@@ -2477,6 +2548,7 @@ DECLARE
 BEGIN
   SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
+  PERFORM app.pm_profiles_lock();
   IF p_profile_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pm_profiles p WHERE p.id = p_profile_id) THEN
     RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
   SELECT ps.profile_id INTO v_before FROM pm_profile_sites ps WHERE ps.site_id = v_site FOR UPDATE;
@@ -2487,6 +2559,8 @@ BEGIN
     INSERT INTO pm_profile_sites (site_id, profile_id) VALUES (v_site, p_profile_id)
     ON CONFLICT (site_id) DO UPDATE SET profile_id = EXCLUDED.profile_id;
   END IF;
+  -- שני הפרופילים השתנו: זה שהאתר יצא ממנו וזה שנכנס אליו (לוח ישן של אחד מהם יידחה)
+  PERFORM app.pm_profiles_touch(array_remove(ARRAY[v_before, p_profile_id], NULL), v_actor);
   PERFORM app.compliance_log(v_site, v_code, 'pm', 'site_profile', NULL, 'set', v_actor,
     jsonb_build_object('profile_id', v_before), jsonb_build_object('profile_id', p_profile_id), NULL);
   PERFORM app.record_write_audit('pm.site_profile_set', v_actor, app.current_app_role(), 'site', v_code,

@@ -63,6 +63,8 @@
 .cf-area-btn--soon { --filter-bg: #fde047; --filter-border: #fde047; --filter-text: #422006; }
 .cf-area-btn--fixing { --filter-bg: #16a34a; --filter-border: #16a34a; --filter-text: #ffffff; }
 .cf-area-btn--ok { --filter-bg: #ffffff; --filter-border: #ffffff; --filter-text: #111827; }
+/* תחזוקה בתוקף — ירוק, כמו הנורה שלה (13/10/2026; הבודק נשאר לבן — "מסגרת שחורה") */
+.cf-area-btn--in-pm.cf-area-btn--ok { --filter-bg: #16a34a; --filter-border: #16a34a; --filter-text: #ffffff; }
 
 /* ============================================================
    הרשימה — כרטיס מתחת לאריח

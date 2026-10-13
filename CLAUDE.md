@@ -931,7 +931,7 @@ and 1 month before expiry.
 | SQL tests (PGlite) | `master/tests/compliance.test.js` — 42 tests, 50/50 SQL mutations killed |
 | Data layer | `dashboard/src/services/complianceDirect.js`, re-exported by `dataSource.js` (no server arm) |
 | PDF reading (in the browser) — **dates only** | `extractDates` + `suggestInspectionDates` in `shared/parse-inspection.mjs`, `dashboard/src/utils/pdfText.js` (pdfjs, lazy chunk) |
-| Inspector page, PM tab | `InspectionPage.jsx` (full page, frames `InspectionTab.jsx`), `PmTab.jsx` (+ `Inspection*`, `Defect*`, `Pm*`) |
+| Inspector tab, PM tab | `InspectionTab.jsx` (a tab in the site window, `InsightsModal`), `PmTab.jsx` (+ `Inspection*`, `Defect*`, `Pm*`) |
 | Lamps | `ComplianceLights.jsx`, `utils/compliance.js` |
 | UI unit tests | `master/tests/compliance-ui.test.js` |
 
@@ -1371,15 +1371,16 @@ Rules that are easy to break and expensive to notice:
   label repeats the next date (and the inspection date when its field is shown), and editing a
   date or switching periodic↔follow-up clears it. A site with several machines gets **no** machine
   pre-selected — the document is not read for it.
-- **"בודק מוסמך" is a full page, not a tab** (owner's request, 05/10/2026). The card lamp and
-  the supervisor table route through `handleSiteClick` to
-  `InspectionPage`; the site window keeps the tab in its nav (with the defects badge) but clicking
-  it opens the page, and "חזרה" returns to the window **on the tab it left from**. The page renders
-  `InspectionTab` itself — never a copy — with `dropAnywhere`. The PM lamp still opens the window.
-- **Dragging a PDF** (managers only) opens the same upload flow with the file already read. On the
-  page a file dropped **anywhere** opens it, unless a dialog is already open — then it is ignored,
+- ⚠️ **"בודק מוסמך" is a tab in the site window again, like "תחזוקה מונעת"** (owner, 13/10/2026, pointing at
+  the PM tab: *"אני רוצה שבודק מוסמך יהיה בתוך חלונית כמו זה"*). From 05/10 to 13/10 it was a full page
+  (`InspectionPage`, deleted; `git show cf84e50:dashboard/src/components/Compliance/InspectionPage.jsx`).
+  The card lamp and the supervisor table now open the window on that tab, exactly like the PM lamp.
+  The window renders `InspectionTab` with `dropAnywhere`, so a PDF dropped anywhere in the window opens
+  the upload. Browser: `e2e/probe-insp-window.mjs` (21); `run.mjs` S1/S9/S13 and `probe-overdue` follow it.
+- **Dragging a PDF** (managers only) opens the same upload flow with the file already read. In the
+  window a file dropped **anywhere** opens it, unless a dialog is already open — then it is ignored,
   so it cannot replace a form being filled. In the window tab a drop outside the zone is swallowed.
-  Either way the browser must never open the PDF in place of the dashboard: on the page that holds
+  Either way the browser must never open the PDF in place of the dashboard: in the window that holds
   for operators too, who get "רק מנהל יכול להעלות תסקיר" instead.
 - **The PM form is local-first** (`utils/pmOutbox.js`): ticks/notes in localStorage, photos in
   IndexedDB, drained when reception returns; ticks are never reverted. Submit needs an empty outbox.
@@ -1843,9 +1844,22 @@ on the live site only after she reviews it.
   (`pm_site_templates`, empty in production) → the default list. A profile whose lists are all inactive
   falls through. A visit already open never changes (items are snapshotted).
 - **RPCs:** `pm_profiles_list()` (staff; one jsonb, with `unassigned`), `pm_profile_save(id, name,
-  template_ids, expected_at)` (PT409 on a stale board, ≥1 list, the 40-photo cap across its lists, unique
-  name ignoring case/spaces), `pm_profile_delete(id)` (sites return to the default), `pm_profile_sites_set(id,
-  codes)` (target state; a site from another profile **moves**), `pm_site_profile_set(code, id|null)`.
+  template_ids, expected_at, site_codes)` (PT409 on a stale board, ≥1 list, the 40-photo cap across its lists, unique
+  name ignoring case/spaces; `site_codes` NULL = sites untouched), `pm_profile_delete(id)` (sites return to the
+  default), `pm_profile_sites_set(id, codes, expected_at)` (target state; a site from another profile **moves**),
+  `pm_site_profile_set(code, id|null)`. The 4-arg save and 2-arg sites_set are dropped (deploy: SQL first).
+- ⚠️ **Review fixes, 13/10/2026 (before PM went live):**
+  - The board saves name, lists **and sites in one call**. Two calls left a half-saved profile when the second failed.
+  - Every change to a profile's sites bumps `updated_at` of the profile it touched **and of the profiles sites
+    moved out of**, so a board opened earlier gets PT409 instead of silently moving a site back.
+  - Every writer takes `app.pm_profiles_lock()` (`SHARE ROW EXCLUSIVE` on `pm_profiles`) first: one order for all,
+    so two concurrent moves cannot deadlock or race on `pm_profile_sites`.
+  - `pm_template_save` checks the 40-photo cap of **every profile that holds the list**, not only the list alone.
+  - A value item's threshold must be a number ("הסף בפריט % חייב להיות מספר"); `app.pm_value_num` and `valueNum`
+    trim the same characters (space, tab, CR, LF — not NBSP).
+  - Not fixed, deliberately: labels for old per-site assignments (`pm_site_templates` is empty in production), and
+    no event on a save that changes only the name or lists (no lamp depends on them).
+  - Tests: `pm-profiles.test.js` 21; 6/6 review mutations caught (`mut-profiles.cjs`, isolated copy).
   Manager-only writes; `audit_log` gets ids only; a `compliance` event per site that changed (a no-op
   writes nothing). `pm_site` returns `profile`.
 - **UI:** "לוח פרופילי התחזוקה" in the PM tab's manager tools (`PmProfilesBoard.jsx`) — rows, not boxes;

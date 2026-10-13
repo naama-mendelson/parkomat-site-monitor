@@ -41,7 +41,7 @@ import { formatStampIL } from "../../utils/compliance";
 import { newId } from "../../utils/complianceFiles";
 import {
   HINT_MAX, KIND_LABEL, LABEL_MAX, LABEL_MIN, MAX_PHOTOS_PER_ITEM, MAX_PHOTOS_PER_VISIT, PHOTO_TOTAL_WARN,
-  TEMPLATE_MAX_ITEMS, templatePhotoTotal, kindHasPhotos,
+  TEMPLATE_MAX_ITEMS, templatePhotoTotal, kindHasPhotos, valueNum,
 } from "./PmUtils";
 
 // צורת הכלל — פונקציה אחת שכל שינוי עובר דרכה
@@ -66,7 +66,8 @@ function rowError(r) {
   // "ערך" (13/10/2026): הסף — מספר (פסיק עשרוני מותר), ויחידה עד 10 תווים, כמו בשרת
   if (r.kind === "value") {
     const w = String(r.warn_above ?? "").trim();
-    if (w && !Number.isFinite(Number(w.replace(",", ".")))) return "הסף חייב להיות מספר, למשל 2";
+    // ⚠️ אותו כלל כמו מדידה (valueNum / app.pm_value_num) — לא "1e3", לא "0x10" (סקירה, 13/10/2026)
+    if (w && valueNum(w) == null) return "הסף חייב להיות מספר, למשל 2";
     if (String(r.unit ?? "").trim().length > 10) return "היחידה ארוכה מדי (עד 10 תווים)";
   }
   return "";

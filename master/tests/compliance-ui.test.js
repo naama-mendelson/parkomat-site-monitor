@@ -333,7 +333,9 @@ import { templatePhotoTotal, MAX_PHOTOS_PER_VISIT, valueNum, valueOver, kindHasC
 // על אותם מקרים). פער ביניהם = טופס שאומר "בוצע" והגשה שנדחית, או להפך.
 test("פריט ערך: מה נחשב מדידה, הסף, ושאינו וי ואינו תמונות", () => {
   for (const [t, v] of [["3", 3], [" -1 ", -1], ["2,5", 2.5], ["2.5", 2.5], ["2.", null], ["1e3", null], ["", null],
-    [null, null], ["תקין", null], ["1234567890", null], ["1.23456", null]]) {
+    [null, null], ["תקין", null], ["1234567890", null], ["1.23456", null],
+    // ⚠️ גיזום כמו btrim(p, E' \t\r\n') במסד: טאב ושורה כן, רווח קשיח לא (סקירה, 13/10/2026)
+    ["\t3\n", 3], [`3${String.fromCharCode(160)}`, null]]) {
     assert.equal(valueNum(t), v, String(t));
   }
   const it = { warn_above: 2 };

@@ -95,7 +95,7 @@ function AreaPicker({ area, sites, counts, value, onPick }) {
       <button
         ref={btn}
         type="button"
-        className={`filter-btn cf-area-btn${on ? " active" : ""}${row ? ` cf-area-btn--${row.key}` : ""}`}
+        className={`filter-btn cf-area-btn cf-area-btn--in-${area}${on ? " active" : ""}${row ? ` cf-area-btn--${row.key}` : ""}`}
         data-choice={current}
         aria-haspopup="listbox"
         aria-expanded={open}

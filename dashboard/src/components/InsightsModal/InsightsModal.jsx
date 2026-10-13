@@ -90,7 +90,6 @@ function InsightsModal({
   compliance = undefined,        // שורת הרמזור של האתר (מהרשימה) — לתג הליקויים על הלשונית
   complianceRev = 0,             // עולה באירוע compliance של האתר → הלשונית הפתוחה נטענת מחדש
   onComplianceChanged = null,    // אחרי כתיבה מוצלחת בלשונית → App שולף את שורת הרמזור
-  onOpenInspection = null,       // "בודק מוסמך" הוא עמוד מלא — App סוגר את החלון ופותח אותו
   detailMissing = false,         // פרטי האתר לא נטענו (החלון נפתח מהרשימה, ללשונית בודק/תחזוקה)
 }) {
   // ⚠️ `requested` ולא `section`: הרשימה תלויה ב-allSites (ראה sections
@@ -122,14 +121,10 @@ function InsightsModal({
     // השומר בזמן שהעבודה עדיין לא נשמרה — והיציאה האמיתית הבאה עברה בלי שאלה.
     if (key === sectionRef.current) return;
     if (!mayLeave()) return;
-    // ⚠️ "בודק מוסמך" אינו מוצג כאן אלא בעמוד משלו (InspectionPage). השונית
-    // נשארת בניווט — עם תג הליקויים — כי כאן מחפשים אותה, והיא מעבירה לעמוד.
-    // הלשונית הקודמת נמסרת כדי ש"חזרה" בעמוד תנחת בה.
-    if (key === "inspection" && onOpenInspection) { onOpenInspection(sectionRef.current); return; }
     blockerRef.current = null;
     setBlocker(null);
     setRequested(key);
-  }, [mayLeave, onOpenInspection]);
+  }, [mayLeave]);
   useEffect(() => {
     if (!blocker) return undefined;
     const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
@@ -249,7 +244,9 @@ function InsightsModal({
           <div key={section} className="insights-body">
             <Suspense fallback={<p className="insights-state">טוען…</p>}>
               {section === "inspection" ? (
-                <InspectionTab site={site} complianceRev={complianceRev}
+                // ⚠️ dropAnywhere: תסקיר שנגרר לכל מקום בחלון פותח את ההעלאה, כמו בעמוד המלא שהיה כאן עד
+                // 13/10/2026 — ולמי שאינו מנהל: הסבר, ולא דפדפן שפותח את ה-PDF במקום הדשבורד
+                <InspectionTab site={site} complianceRev={complianceRev} dropAnywhere
                   onDirtyChange={onDirtyChange} onChanged={onComplianceChanged} />
               ) : (
                 <PmTab site={site} complianceRev={complianceRev}

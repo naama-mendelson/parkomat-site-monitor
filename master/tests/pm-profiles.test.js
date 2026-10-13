@@ -315,6 +315,71 @@ test("פריט ערך חובה: הגשה נחסמת עד שנמדד מספר; '2
   }
 });
 
+// ============================================================
+// מהסקירה (13/10/2026)
+// ============================================================
+const saveWithSites = (id, name, ids, expected, codes, uid = MGR) =>
+  one(uid, `SELECT public.pm_profile_save($1, $2, $3::int[], $4, $5::text[]) id`, [id, name, ids, expected, codes]).then((r) => r.id);
+
+test("⚠️ לוח ישן אינו מחזיר אתר שמנהל אחר שייך בינתיים — שינוי אתרים מקדם את updated_at", { skip }, async () => {
+  const a = await newSite(), b = await newSite(), c = await newSite();
+  const id = await saveProfile(null, "לוח ישן", [BASE]);
+  await setSites(id, [a, b]);
+  const loaded = (await prof("לוח ישן")).updated_at;
+  await new Promise((r) => setTimeout(r, 5));
+  await setSiteProfile(c, id);                                    // מנהל אחר, מהלשונית של c
+  await fails(saveWithSites(id, "לוח ישן — שם חדש", [BASE], loaded, [a, b]), "PT409", /עודכן בינתיים/);
+  const p = await prof("לוח ישן");
+  assert.deepEqual(p.sites.map((s) => s.code).sort(), [a, b, c].sort(), "c נשאר בפרופיל");
+  // גם מעבר של אתר לפרופיל אחר מקדם את הפרופיל שהוא יצא ממנו
+  const other = await saveProfile(null, "לוח ישן — אחר", [HYD]);
+  const before = (await prof("לוח ישן")).updated_at;
+  await new Promise((r) => setTimeout(r, 5));
+  await setSites(other, [c]);
+  assert.notEqual((await prof("לוח ישן")).updated_at, before, "הפרופיל שאיבד אתר זז");
+  await fails(one(MGR, `SELECT public.pm_profile_sites_set($1, $2::text[], $3) n`, [id, [a], before]), "PT409");
+});
+
+test("שמירה עם אתרים — טרנזקציה אחת: קוד שגוי לא משאיר שם חדש; NULL לא נוגע באתרים", { skip }, async () => {
+  const a = await newSite(), b = await newSite();
+  const id = await saveWithSites(null, "שמירה אחת", [BASE], null, [a]);
+  assert.deepEqual((await prof("שמירה אחת")).sites.map((s) => s.code), [a]);
+  const t0 = (await prof("שמירה אחת")).updated_at;
+  await fails(saveWithSites(id, "שם שלא יישמר", [BASE, HYD], t0, [a, "NOPE-9"]), "PT404", /NOPE-9/);
+  const p = await prof("שמירה אחת");
+  assert.ok(p, "השם לא השתנה");
+  assert.deepEqual(p.template_ids, [BASE], "גם הרשימות לא");
+  await saveWithSites(id, "שמירה אחת", [BASE, HYD], p.updated_at, null);   // שינוי רשימות בלבד
+  assert.deepEqual((await prof("שמירה אחת")).sites.map((s) => s.code), [a], "האתרים לא נגעו");
+  const p2 = await prof("שמירה אחת");
+  await saveWithSites(id, "שמירה אחת", [BASE, HYD], p2.updated_at, [b]);
+  assert.deepEqual((await prof("שמירה אחת")).sites.map((s) => s.code), [b]);
+});
+
+test("⚠️ הגדלת רשימה שמעבירה פרופיל מעל 40 תמונות — נדחית, עם שם הפרופיל", { skip }, async () => {
+  const L1 = await createList("ארבעים א");
+  await saveList([photo("ק1", 6), photo("ק2", 6), photo("ק3", 6), photo("ק4", 6), photo("ק5", 6)], L1);  // 30
+  const L2 = await createList("ארבעים ב");
+  await saveList([photo("ל1", 5)], L2);                                                                  // 5
+  await saveProfile(null, "פרופיל ארבעים", [L1, L2]);
+  await fails(saveList([photo("ל1", 6), photo("ל2", 6)], L2), "23514", /פרופיל ארבעים/);                 // 42
+  assert.equal((await tplItems(L2)).length, 1, "הרשימה לא נשמרה");
+  await saveList([photo("ל1", 6), photo("ל2", 4)], L2);                                                  // 40 — מותר
+});
+
+test("פריט ערך: סף לפי אותו כלל כמו מדידה; גיזום זהה ל-JS (רווח/טאב/שורה — לא רווח קשיח)", { skip }, async () => {
+  const L = await createList("ספים");
+  for (const bad of ["1e3", "0x10", "NaN", "Infinity", "2.", "אחוז"]) {
+    await fails(saveList([{ label: "מד", kind: "value", required: true, warn_above: bad }], L), "23514", /הסף/);
+  }
+  await saveList([{ label: "מד", kind: "value", required: true, warn_above: "2,5" }], L);
+  assert.equal(Number((await tplItems(L))[0].warn_above), 2.5);
+  const num = async (t) => (await sup(`SELECT app.pm_value_num($1) n`, [t]))[0].n;
+  assert.equal(await num("\t3\n"), "3");
+  assert.equal(await num(" 3 "), "3");
+  assert.equal(await num("3 "), null, "רווח קשיח — לא מדידה, כמו ב-JS");
+});
+
 test("⚠️ אתר שנמחק יוצא מהפרופיל בלי להשאיר שורה", { skip }, async () => {
   const a = await newSite();
   const id = await saveProfile(null, "אתר נמחק", [BASE]);

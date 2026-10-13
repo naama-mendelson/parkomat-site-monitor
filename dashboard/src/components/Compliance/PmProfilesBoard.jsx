@@ -6,12 +6,13 @@
 //
 // ⚠️ אתר בפרופיל אחד. הוספה של אתר שכבר בפרופיל אחר **מעבירה** אותו, והשורה אומרת מאיפה
 // לפני השמירה — כמו "חבר לשורה אחרת" ברמזור. השרת אוכף (המפתח של pm_profile_sites הוא האתר).
-// ⚠️ שמירה = שתי קריאות: שם ורשימות (עם updated_at שנטען — לוח ישן נדחה ב-PT409), ואז האתרים
-// כמצב יעד. כשל באמצע אומר מה נשמר ומה לא, ולא "נכשל" סתם.
+// ⚠️ שמירה = קריאה אחת (pm_profile_save עם האתרים), בטרנזקציה אחת. updated_at שנטען נבדק, והוא זז גם
+// כששינו אתרים של הפרופיל ממקום אחר — לוח ישן נדחה ב-PT409 ולא מחזיר אתר שמנהל אחר הזיז. האתרים נשלחים
+// רק כשהשתנו (או בפרופיל חדש), כדי ששינוי שם לא ייגע בהם בכלל (סקירה, 13/10/2026; עד אז שתי קריאות).
 // שורות ולא קופסאות (בעלת המוצר מעדיפה ממשק מינימלי).
 import { useEffect, useMemo, useState } from "react";
 import {
-  fetchPmProfiles, fetchPmTemplates, savePmProfile, deletePmProfile, setPmProfileSites,
+  fetchPmProfiles, fetchPmTemplates, savePmProfile, deletePmProfile,
 } from "../../services/dataSource";
 import "./PmProfilesBoard.css";
 
@@ -28,6 +29,12 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [armDelete, setArmDelete] = useState(null);
+  // ⚠️ "ללחוץ שוב למחיקה" מתפרק אחרי 5 שניות — לחיצה מקרית דקות אחר כך לא תמחק פרופיל (סקירה, 13/10/2026)
+  useEffect(() => {
+    if (armDelete == null) return undefined;
+    const t = setTimeout(() => setArmDelete(null), 5000);
+    return () => clearTimeout(t);
+  }, [armDelete]);
   const [showUnassigned, setShowUnassigned] = useState(false);
 
   useEffect(() => {
@@ -55,8 +62,9 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
   const begin = (p) => {
     setError(""); setNotice(""); setQuery(""); setArmDelete(null);
     setEdit(p
-      ? { id: p.id, name: p.name, expected: p.updated_at, templateIds: new Set(p.template_ids), codes: p.sites.map((s) => s.code) }
-      : { id: null, name: "", expected: null, templateIds: new Set(), codes: [] });
+      ? { id: p.id, name: p.name, expected: p.updated_at, templateIds: new Set(p.template_ids),
+          codes: p.sites.map((s) => s.code), loaded: p.sites.map((s) => s.code) }
+      : { id: null, name: "", expected: null, templateIds: new Set(), codes: [], loaded: null });
   };
   // ⚠️ כל שינוי בעריכה מנקה את השגיאה — "יש לבחור לפחות רשימה אחת" שנשארת אחרי שסימנו רשימה מטעה
   const toggleList = (id) => { setError(""); setEdit((e) => {
@@ -80,22 +88,19 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
     if (name.length < 2) { setError("שם הפרופיל — שני תווים לפחות"); return; }
     if (edit.templateIds.size === 0) { setError("יש לבחור לפחות רשימה אחת"); return; }
     setBusy(true); setError("");
-    let id = edit.id;
+    const same = (a, b) => a && b && a.length === b.length && [...a].sort().join("|") === [...b].sort().join("|");
+    const codes = edit.loaded && same(edit.codes, edit.loaded) ? null : edit.codes;
     try {
-      id = await savePmProfile(edit.id, name, [...edit.templateIds], edit.expected);
-    } catch (e) { setError(e?.message || "השמירה נכשלה"); setBusy(false); return; }
-    try {
-      await setPmProfileSites(id, edit.codes);
+      await savePmProfile(edit.id, name, [...edit.templateIds], edit.expected, codes);
       setNotice(`הפרופיל "${name}" נשמר — ${edit.codes.length} אתרים. חל מהביקור הבא.`);
       setEdit(null);
       onSaved?.();
+      setRev((r) => r + 1);
     } catch (e) {
-      // השם והרשימות כבר נשמרו — אומרים את זה, ומשאירים את העריכה פתוחה (עם המזהה) לשמירה חוזרת
-      setError(`השם והרשימות נשמרו, אבל האתרים לא: ${e?.message || "שגיאה"}. אפשר לשמור שוב.`);
-      setEdit((x) => ({ ...x, id, expected: null }));
+      // ⚠️ שום דבר לא נשמר (טרנזקציה אחת) — העריכה נשארת פתוחה. לוח ישן: לטעון מחדש ולערוך שוב.
+      setError(e?.message || "השמירה נכשלה");
     } finally {
       setBusy(false);
-      setRev((r) => r + 1);
     }
   };
   const remove = async (p) => {

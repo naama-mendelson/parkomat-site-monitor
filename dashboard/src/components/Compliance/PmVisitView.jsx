@@ -111,7 +111,9 @@ export default function PmVisitView({ visit, isManager, onDeleted }) {
                     {it.kind === "value" ? (
                       it.note && (
                         <span className={`pm-view-value${over ? " pm-view-value--over" : ""}`}>
-                          נמדד: {it.note}{it.unit || ""}{over ? ` · ⚠ מעל ${it.warn_above}${it.unit || ""}` : ""}
+                          {/* bdi ltr: "-1" היה מוצג "1-" בפסקה מימין לשמאל */}
+                          נמדד: <bdi dir="ltr">{it.note}{it.unit || ""}</bdi>
+                          {over ? <> · ⚠ מעל <bdi dir="ltr">{it.warn_above}{it.unit || ""}</bdi></> : null}
                         </span>
                       )
                     ) : it.note && <span className="pm-view-note pm-pre">{it.note}</span>}
