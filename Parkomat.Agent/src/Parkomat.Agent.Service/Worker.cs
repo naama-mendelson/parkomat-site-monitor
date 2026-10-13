@@ -277,6 +277,9 @@ public class Worker : BackgroundService
         // הפירוט. באתר שקט הכרטיס היה משקר שעות.
         object? latestSystems = null;
 
+        // טקסט התקלה של מערכת שנפלה בזמן שהשנייה עובדת — נוסע בתצלום (ראה SystemFaultLatch)
+        var systemFault = new SystemFaultLatch();
+
         // ==========================================================
         // ממשיכים מאיפה שהפסקנו, במקום לפתוח פעולה חדשה
         // ==========================================================
@@ -926,9 +929,23 @@ public class Worker : BackgroundService
             // הבאה נושאת את מה שנכון באותו רגע.
             if (twoSystems is not null)
             {
+                // ⚠️ טקסט התקלה של מערכת אחת (13/10/2026). מצב האתר המאוחד אינו "תקלה" כשרק מערכת אחת
+                // נפלה, ולכן הקריאה הרגילה של הטקסט (רק על מצב תקלה של האתר) לא קרתה — והכרטיס הראה
+                // "מערכת 2: תקלה" בלי מה. מתי לקרוא — SystemFaultLatch; לתצוגה בלבד, בלי היסטוריה.
+                bool anySystemInError =
+                    ModeTranslator.FromMode(reading.Mode) == SiteState.Error ||
+                    ModeTranslator.FromMode(reading.Mode2 ?? 4) == SiteState.Error;
+                if (systemFault.Due(anySystemInError, DateTimeOffset.UtcNow))
+                {
+                    // ⚠️ כשל בקריאת הטקסט אינו מפיל את הסבב: הטקסט הוא תוספת לתצוגה, הקליטה היא העיקר
+                    try { systemFault.Set(await ReadFaultTextOrNullAsync(SiteState.Error, stoppingToken)); }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                    catch (Exception fex) { _logger.LogDebug("System fault text read failed: {Message}", fex.Message); }
+                }
                 latestSystems = BatchPayload.Systems(TwoSystemDetector.Snapshot(
                     reading.Mode, reading.CardNumber,
-                    reading.Mode2 ?? 4, reading.CardNumber2 ?? ""));
+                    reading.Mode2 ?? 4, reading.CardNumber2 ?? "",
+                    systemFault.Text));
             }
 
             // שומרים את מצב ה-detector כדי שהפעלה מחדש תמשיך ולא תפתח פעולה

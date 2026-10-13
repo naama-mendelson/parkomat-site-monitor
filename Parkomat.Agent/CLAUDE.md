@@ -930,3 +930,20 @@ place it appears.
 earlier: a technician with three `ParkomatAgentSetup.exe` in Downloads — which one is newest?
 Without it the file properties are blank and the only answer is the modified date, which
 changes on every copy.
+
+## The fault text of one system on a two-system site (1.0.58, 13/10/2026)
+
+Florentin (3468) and Bart (1102) have two systems in one PLC. The site state is **the better of the two**
+(`SiteStateAggregator`), and the fault text was read only when the **site** state was Error, so one system in
+fault showed on the card as "מערכת 2: תקלה" with no word on what. The owner: *"ברגע שקיימת תקלה אני רוצה שיהיה
+כתוב מה התקלה"*, **display only, no history**: the site state, availability and failure rate do not change.
+
+- `SystemFaultLatch` decides when to read: at once when any system enters Error, every 30 s while no text came
+  back, and a refresh every 5 minutes while it lasts (each read waits up to a second and logs a line, so not
+  every sample). It clears when no system is in Error, and a result that arrives after that is dropped.
+- The text rides in the systems snapshot of the **heartbeat** (`systems[].fault`), attached **only** to the unit
+  in Error. The PLC has one text area (`FaultTextRegister`); if a site turns out to have one per system, this is
+  where a second register would go.
+- A failed read never fails the cycle, and an empty read never erases a text already read.
+- The card shows it in the existing fault line: "⚠ מערכת 2: <text>". A whole-site fault still wins.
+- Tests: `SystemFaultTextTests.cs` (8); browser `e2e/probe-sysfault.mjs` (8).

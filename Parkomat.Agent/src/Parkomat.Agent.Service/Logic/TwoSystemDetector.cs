@@ -91,17 +91,25 @@ public class TwoSystemDetector
     // באמת ב-init (4) או שהוקלדה כתובת רגיסטר שגויה — ושתי התקלות
     // האלה נראות זהות לחלוטין על המסך.
     /// <summary>תצלום שתי המערכות לתצוגה. <b>טהור</b>.</summary>
-    public static SystemState[] Snapshot(int mode1, string card1, int mode2, string card2) => new[]
+    //
+    // ⚠️ <paramref name="fault"/> — טקסט התקלה מהבקר (SystemFaultLatch). מוצמד **רק** למערכת שבתקלה: הוא
+    // תיאור של התקלה, ומערכת שעובדת אינה "בתקלה X". null — אין טקסט.
+    public static SystemState[] Snapshot(int mode1, string card1, int mode2, string card2, string? fault = null)
     {
-        new SystemState
+        SiteState? s1 = ModeTranslator.FromMode(mode1);
+        SiteState? s2 = ModeTranslator.FromMode(mode2);
+        return new[]
         {
-            Unit = 1, Mode = mode1, Car = card1,
-            State = ModeTranslator.FromMode(mode1),
-        },
-        new SystemState
-        {
-            Unit = 2, Mode = mode2, Car = card2,
-            State = ModeTranslator.FromMode(mode2),
-        },
-    };
+            new SystemState
+            {
+                Unit = 1, Mode = mode1, Car = card1, State = s1,
+                Fault = s1 == SiteState.Error ? fault : null,
+            },
+            new SystemState
+            {
+                Unit = 2, Mode = mode2, Car = card2, State = s2,
+                Fault = s2 == SiteState.Error ? fault : null,
+            },
+        };
+    }
 }

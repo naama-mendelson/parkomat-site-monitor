@@ -74,6 +74,10 @@ public class SystemState
 
     /// <summary>מספר הרכב במערכת הזו כרגע. ריק אם אין.</summary>
     public string Car { get; set; } = "";
+
+    // ⚠️ טקסט התקלה — **רק** למערכת שבתקלה, ולתצוגה בלבד (13/10/2026: "ברגע שקיימת תקלה אני רוצה שיהיה
+    // כתוב מה התקלה"). בבקר יש אזור טקסט אחד, ולכן כשמערכת אחת בתקלה הטקסט שלו הוא שלה. ראה SystemFaultLatch.
+    public string? Fault { get; set; }
 }
 
 /// <summary>

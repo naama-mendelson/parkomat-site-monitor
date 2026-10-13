@@ -156,6 +156,8 @@ public static class BatchPayload
             // כתובת רגיסטר שגויה". שתיהן נראות זהות בלעדיו.
             mode  = u.Mode,
             car   = u.Car ?? "",
+            // טקסט התקלה של המערכת הזו — רק כשהיא בתקלה ויש טקסט (null אחרת). לתצוגה בכרטיס בלבד.
+            fault = string.IsNullOrWhiteSpace(u.Fault) ? null : u.Fault,
         }).ToArray();
 
     /// <remarks>

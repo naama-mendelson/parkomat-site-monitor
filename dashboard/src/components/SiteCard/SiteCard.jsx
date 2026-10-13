@@ -389,10 +389,18 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const showFault =
     (status === "error" || status === "maintenance") && site.currentFaultText;
 
-  const faultLine = showFault ? (
-    <div className="card-fault" title={site.currentFaultText}>
+  // ⚠️ אתר דו-מערכתי שמערכת אחת בו נפלה (13/10/2026: "ברגע שקיימת תקלה אני רוצה שיהיה כתוב מה התקלה").
+  // מצב האתר הוא "הטוב מבין השתיים", ולכן אין לו תקלה ואין currentFaultText — הטקסט מגיע מהפעימה, צמוד
+  // למערכת שבתקלה (systems[].fault). לתצוגה בלבד; תקלה של האתר כולו גוברת (היא כבר אומרת את שתיהן).
+  const systemFaultText = !showFault && systems
+    ? systems.filter((u) => u.state === "error" && u.fault).map((u) => `מערכת ${u.unit}: ${u.fault}`).join(" · ")
+    : "";
+  const faultText = showFault ? site.currentFaultText : systemFaultText;
+
+  const faultLine = faultText ? (
+    <div className="card-fault" title={faultText}>
       <span className="card-fault-icon" aria-hidden="true">⚠</span>
-      <span className="card-fault-text">{site.currentFaultText}</span>
+      <span className="card-fault-text">{faultText}</span>
     </div>
   ) : null;
 
