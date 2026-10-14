@@ -2347,12 +2347,36 @@ This is the one trap in the feature, and it was visible to the owner before it w
   - The backfill is `WHERE received_il IS NULL`, so an apply does not rewrite the whole table; the condition is on
     `received_il` and not `opened_il` because the latter is legitimately NULL for a message with no `opened_at`.
   - Test S10, 8/8 mutations caught. It is also the first test to re-apply `service-calls.postgres.sql` twice.
-- **The latency, measured in production (14/10/2026)**, first message per call, calls opened after the feed went live
-  (43 of them): **minimum 1.2 s, median 2.8 s, p90 4.1 s, maximum 11.5 s.** Push → our receipt is a median of 1.5 s,
-  and insert → `events` row is 0 ms (same transaction).
-  ⚠️ **Measure on the first message per call, and only on calls opened after the feed went on.** A status update on an
-  older call is also a row, and counting those gives a median of ~175 s and a maximum of 29 hours — a number about the
-  historical gap, not about the feed. That mistake was made and corrected here.
+- **The latency, measured in production (14/10/2026)** — first message per call, calls opened after the feed went live:
+  **about 3 seconds in the median, and that is an upper bound.** Raw figures over 40–43 such calls: minimum 1.2 s,
+  median 2.8–2.9 s, p90 4.1 s, maximum **11.5 s** (ticket 774542, site 1197).
+  - ⚠️ **It is an upper bound, and quoting three decimals is false precision.** Wizenet's `opened_at` / `updated_at`
+    carry **whole seconds only** — 0 of 104 messages contain a fraction — while our `received_at` is in milliseconds.
+    So the truth is between the measured value minus one second and the measured value: the real median is somewhere
+    between 1.9 and 2.9 s. Clock skew between their server and Supabase is not measurable from this data at all.
+  - **The split matters more than the total, and it exonerates us:** their signature → a row in our database is a
+    median of **1.4 s, worst 2.5 s**, and stable. Their own leg (`updated_at` − `opened_at`) is a median of 1 s and a
+    worst of **10 s** — so the whole spread, including the 11.5 s outlier, sits **inside Wizenet**. Insert → `events`
+    row is 0 ms (same transaction).
+  - **And our 1.4 s can be split further, from a real timestamp in the headers.** `sb-request-id` is a UUIDv7 whose
+    first 48 bits are epoch milliseconds, and `cf-ray` decodes to the same instant (the Supabase gateway runs as a
+    Cloudflare Worker, TLV). Both land a median of **445 ms before `received_at`** — so ~0.45 s is ours (gateway →
+    function → connect → insert) and ~1.05 s is their send plus the network.
+  - ⚠️ **Wizenet send no timestamp of their own.** Their request carries `host`, `content-type` and `content-length`
+    and nothing else — not even a `user-agent`. A blind search over all 110 header values found no date, hour, GMT
+    string or epoch anywhere. Every timestamp in `headers` was created by Cloudflare / Supabase / AWS **after** the
+    request arrived. The intake function does store every header except `authorization` / `apikey` / `cookie`, so if
+    they ever add one it will be there — but a header could not answer "when did the person call" anyway: their
+    *server* sends the request, when the call already exists on their side. Only a body field (`opened_at`) can.
+  - ⚠️ **The sample is 3.2 hours of one weekday morning** (07:50:56Z–11:06Z): no evening, no night, no weekend, no
+    peak. There is no basis for "no call ever took longer".
+  - ⚠️ **Measure on the first message per call, and only on calls opened after the feed went on.** A status update on an
+    older call is also a row, and counting those gives a median of ~175 s and a maximum of 29 hours — a number about the
+    historical gap, not about the feed. That mistake was made and corrected here.
+  - ⚠️ **A filter on one leg of the thing being timed is circular.** A first attempt kept only messages where
+    `updated_at − opened_at ≤ 5 s`, which mechanically caps the total at 5 s + transit — and it dropped exactly one
+    call of 40: the worst one. Do not filter the sample by a component of the measurement.
+  - ⚠️ **Any script that hardcodes −3 h breaks on 25/10/2026**, when Israel returns to UTC+2. Use `app.wizenet_ts`.
 
 ### What is on the card, and what is still off
 
