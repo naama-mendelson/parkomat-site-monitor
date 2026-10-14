@@ -170,7 +170,12 @@
   align-items: center;
   gap: 8px;
   margin-inline-start: auto;
+  /* ⚠️ שום פריט כאן לא מתכווץ, והשורה נשברת במקום. נמדד 14/10/2026: כשנוסף הסטופר של קריאות
+     השירות, קוד האתר נדחס לרוחב אפס ו**נעלם** מהכרטיס — לא ירד שורה, פשוט לא נראה. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
+.card-row-end > * { flex: none; }
 .card-row-end > .card-code--row { margin-inline-start: 0; }
 
 /* ===== תג מצב ===== */

@@ -648,6 +648,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // המספר הוא הפתוחות כשיש; אחרת מה שהיה ב-24 השעות. המסגרת המודגשת (has-open) נשמרת לפתוחות בלבד.
   const openCalls = calls?.bySite[site.id]?.open ?? 0;
   const todayCalls = calls?.bySite[site.id]?.recent ?? 0;
+  // ⚠️ מתי נפתחה הקריאה הפתוחה הוותיקה — זמן אמיתי מה-SQL (app.wizenet_ts), לא שעון הקיר של
+  // ויזנט. בעלת המוצר (14/10/2026): "אני רוצה שיהיה כזה סטופר לפני כמה זמן נפתחה הפניה".
+  const oldestCall = calls?.bySite[site.id]?.oldestOpen ?? null;
   const anyCalls = openCalls > 0 || todayCalls > 0;
   const callsLabel = openCalls > 0
     ? `קריאות שירות בוויזנט — ${openCalls} פתוחות, ${todayCalls} ב-24 השעות`
@@ -666,14 +669,20 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
           <path fill="currentColor" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z" />
         </svg>
       ) : "קריאות"}
-      <span className="tk-card-n" aria-hidden="true">{callsN}</span>
+      {/* ⚠️ כשיש קריאה פתוחה — סטופר במקום המספר. "כמה זמן היא כבר פתוחה" הוא הנתון, והמספר
+          נשאר ב-aria-label. כשהכול נסגר היום — המספר, כי אין ממה לספור. */}
+      {openCalls > 0 && oldestCall
+        ? <FaultTimer since={oldestCall} tone="call" />
+        : <span className="tk-card-n" aria-hidden="true">{callsN}</span>}
     </button>
   );
   const callsButton = calls && anyCalls && (
     <button type="button" className={`tk-site-btn sc-site-btn${openCalls > 0 ? " has-open" : ""}`}
       onClick={openCallsDialog} aria-label={callsLabel}>
       קריאות שירות
-      <span className="tk-count" aria-hidden="true">{callsN}</span>
+      {openCalls > 0 && oldestCall
+        ? <FaultTimer since={oldestCall} tone="call" />
+        : <span className="tk-count" aria-hidden="true">{callsN}</span>}
     </button>
   );
   // ⚠️ "משימות" וקוד האתר — קבוצה אחת בקצה שורת המצב. בלוח בלי נורות היא נכנסת בשורה (נמדד:

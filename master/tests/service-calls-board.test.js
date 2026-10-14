@@ -42,7 +42,7 @@ async function call(p) {
     [raw, new Date().toISOString(), raw]));
   await sleep(5);
 }
-const counts = async (uid) => rpc(uid, `SELECT site_id, open, recent FROM public.service_call_counts() ORDER BY site_id`);
+const counts = async (uid) => rpc(uid, `SELECT site_id, open, recent, oldest_open FROM public.service_call_counts() ORDER BY site_id`);
 const openOf = async (uid, code) => (await one(uid, `SELECT public.service_calls_open($1) AS j`, [code])).j;
 const save = (uid, kind, items) => one(uid, `SELECT public.wizenet_lookups_save($1, $2::jsonb) AS n`, [kind, JSON.stringify(items)]);
 const change = async (uid, ticket, field, value) => {
@@ -74,7 +74,8 @@ test("S1 · קריאה לאתר לפי קוד הפרויקט (parking_code '1226
   await call({ ticket_number: "S1-c", parking_code: "9999-1-01", status: "148" });           // אין אתר כזה
   await call({ ticket_number: "S1-d", project_code: s.code, parking_code: "", status: "148" }); // שדה ייעודי, אם יגיע
   const c = await counts(OPR);
-  assert.deepEqual(c.filter((r) => r.site_id === s.id), [{ site_id: s.id, open: 3, recent: 3 }]);
+  assert.deepEqual(c.filter((r) => r.site_id === s.id).map(({ site_id, open, recent }) => ({ site_id, open, recent })),
+    [{ site_id: s.id, open: 3, recent: 3 }]);
   const j = await openOf(OPR, s.code);
   assert.deepEqual(j.map((x) => x.ticket).sort(), ["S1-a", "S1-b", "S1-d"]);
   assert.equal(j.find((x) => x.ticket === "S1-a").first_name, "דנה");
@@ -90,7 +91,9 @@ test("S2 · שורה לכל אירוע: המצב הוא השורה האחרונ�
   assert.deepEqual(await openOf(OPR, s.code), []);
   // ⚠️ 14/10/2026: הכרטיס אינו מתרוקן ביום שבו נפתחו ונסגרו קריאות. open יורד ל-0, ו-recent סופר
   // את מה שהיה היום (בעלת המוצר: "שזה יהיה על הכרטיס שמתאים לפי הקוד").
-  assert.deepEqual((await counts(OPR)).find((r) => r.site_id === s.id), { site_id: s.id, open: 0, recent: 1 });
+  const row2 = (await counts(OPR)).find((r) => r.site_id === s.id);
+  assert.deepEqual([row2.open, row2.recent], [0, 1]);
+  assert.equal(row2.oldest_open, null, "אין פתוחה — אין ממה להתחיל סטופר");
   // ועם p_hours — החלון מהכרטיס מראה גם את מה שנסגר היום, פתוחות קודם
   assert.deepEqual((await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j.map((x) => [x.ticket, x.open]),
     [["S2-a", false]]);
@@ -205,6 +208,42 @@ test("S8 · service_calls_recent — גם סגורות, וגם קוד שאין �
     assert.ok((await one(OPR, `SELECT public.service_calls_recent($1) AS j`, [h2])).j.length >= 3, `p_hours=${h2}`);
   }
   await fails(rpc(AGT, `SELECT public.service_calls_recent(24)`), "42501");
+});
+
+// ⚠️ "אני רוצה שיהיה כזה סטופר לפני כמה זמן נפתחה הפניה" (בעלת המוצר, 14/10/2026). הסטופר מתקתק
+// מול השעון האמיתי, ולכן השעה של ויזנט — שהיא שעון ישראל עם סיומת Z — חייבת לעבור המרה נכונה,
+// ובאזור זמן ולא בהחסרה קבועה (ישראל היא +3 בקיץ ו-+2 בחורף).
+test("S9 · שעון ויזנט → זמן אמיתי, ו-oldest_open לסטופר שעל הכרטיס", { skip }, async () => {
+  // ⚠️ שאילתה ישירה (superuser) לבדיקת הפונקציה הטהורה; קריאה ל-RPC חייבת לעבור בזהות משתמש,
+  // אחרת require_staff נשבר על request.jwt.claims ריק ומחזיר "invalid input syntax for type json".
+  const plain = async (sql, p = []) => (await sup(sql, p))[0];
+  // קיץ: 14/10 הוא עדיין שעון קיץ בישראל (+3)
+  assert.equal((await plain(`SELECT to_char(app.wizenet_ts('2026-10-14T12:40:46Z') AT TIME ZONE 'UTC',
+                                          'YYYY-MM-DD"T"HH24:MI:SS') t`)).t, "2026-10-14T09:40:46");
+  // ⚠️ חורף: אותה שעת קיר ב-01/02 היא +2 — החסרה קבועה של 3 שעות הייתה טועה כאן בשעה
+  assert.equal((await plain(`SELECT to_char(app.wizenet_ts('2026-02-01T12:40:46Z') AT TIME ZONE 'UTC',
+                                          'YYYY-MM-DD"T"HH24:MI:SS') t`)).t, "2026-02-01T10:40:46");
+  assert.equal((await plain(`SELECT app.wizenet_ts('לא תאריך') t`)).t, null);
+  assert.equal((await plain(`SELECT app.wizenet_ts(NULL) t`)).t, null);
+
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  await sup(`UPDATE wizenet_lookups SET closed = true WHERE kind = 'status' AND id = '9'`);
+  await call({ ticket_number: "T-old", parking_code: s.code, status: "1", opened_at: "2026-10-14T08:00:00Z" });
+  await call({ ticket_number: "T-new", parking_code: s.code, status: "1", opened_at: "2026-10-14T11:00:00Z" });
+  await call({ ticket_number: "T-shut", parking_code: s.code, status: "9", opened_at: "2026-10-14T06:00:00Z" });
+  const row = (await counts(OPR)).find((c) => c.site_id === s.id);
+  assert.deepEqual([row.open, row.recent], [2, 3]);
+  // הוותיקה מבין ה**פתוחות** — לא הסגורה שלפניה
+  assert.equal(row.oldest_open, "2026-10-14T05:00:00Z", "08:00 שעון ישראל = 05:00 UTC");
+  // ובכל קריאה ברשימה — אותו זמן אמיתי, לסטופר שבחלון
+  const j = (await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j;
+  assert.equal(j.find((x) => x.ticket === "T-old").opened_utc, "2026-10-14T05:00:00Z");
+  assert.equal(j.find((x) => x.ticket === "T-old").opened_at, "2026-10-14T08:00:00Z", "המקור נשאר כמו שהגיע");
+  // ⚠️ בלי opened_at — נופל לשעת ההגעה, ולא ל-NULL שהיה מאפס את הסטופר
+  await call({ ticket_number: "T-none", parking_code: s.code, status: "1" });
+  const j2 = (await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j;
+  assert.ok(j2.find((x) => x.ticket === "T-none").opened_utc, "נופל לשעת ההגעה");
 });
 
 test("S7 · הקובץ אידמפוטנטי — החלה שנייה לא נכשלת ולא מכפילה טריגר", { skip }, async () => {

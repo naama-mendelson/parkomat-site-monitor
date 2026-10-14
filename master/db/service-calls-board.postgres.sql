@@ -76,6 +76,27 @@ $$;
 REVOKE ALL ON FUNCTION app.service_call_project(jsonb) FROM PUBLIC;
 
 -- ============================================================
+-- ⚠️ שעון ויזנט → זמן אמיתי
+-- ============================================================
+-- ויזנט שולחים **שעון ישראל** עם סיומת Z (נמדד 14/10/2026: updated_at הוא שנייה־שתיים לפני שעת
+-- ההגעה שלנו ומסומן שלוש שעות קדימה; 87 מתוך 87 הודעות של הפיד). המחרוזת שלהם אינה UTC, ולכן
+-- אי אפשר להמיר אותה ב-::timestamptz — זה היה מוסיף שלוש שעות על שלוש.
+-- ⚠️ ולא מחסירים 3 שעות קבועות: ישראל היא UTC+3 בקיץ ו-UTC+2 בחורף, ומעבר השעון קרוב. כאן
+-- הטקסט נקרא כשעון קיר מקומי ומומר דרך אזור הזמן — נכון בשני צדי המעבר.
+CREATE OR REPLACE FUNCTION app.wizenet_ts(p text)
+RETURNS timestamptz
+-- ⚠️ STABLE ולא IMMUTABLE: ההמרה תלויה בבסיס הנתונים של אזורי הזמן, שיכול להתעדכן.
+LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN p ~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}'
+    -- ⚠️ המרה ישירה מטקסט ל-timestamp **בלי אזור**, ולא to_timestamp: הוא מחזיר timestamptz
+    -- ומפרש את הטקסט באזור של הסשן, ואז AT TIME ZONE הולך לכיוון ההפוך ומוסיף שלוש שעות
+    -- במקום להחסיר (נתפס בבדיקה S9).
+    THEN (replace(substring(btrim(p), 1, 19), 'T', ' '))::timestamp AT TIME ZONE 'Asia/Jerusalem'
+  END
+$$;
+REVOKE ALL ON FUNCTION app.wizenet_ts(text) FROM PUBLIC;
+
+-- ============================================================
 -- המצב הנוכחי של כל קריאה
 -- ============================================================
 -- שורה לכל ticket_number: השורה האחרונה שהגיעה מוויזנט, והשינוי האחרון שלנו בכל שדה — אם הוא חדש יותר
@@ -126,15 +147,24 @@ REVOKE ALL ON FUNCTION app.service_calls_current() FROM PUBLIC;
 -- שבו נפתחו ונסגרו שמונה קריאות השאיר שלושה כרטיסים מסומנים, והשאר נראו כאילו לא קרה בהם דבר.
 -- ⚠️ `open` לא שינה משמעות, ו-p_hours ברירת-מחדל — בנייה ישנה שקוראת בלי ארגומנטים עדיין נפתרת
 -- ומקבלת את אותה עמודה. העמודה הנוספת פשוט לא נקראת שם.
+-- ⚠️ שינוי טיפוס ההחזרה (נוספה oldest_open) אינו אפשרי ב-CREATE OR REPLACE — חייבים להפיל
+-- קודם את שתי החתימות הקיימות: זו שבלי ארגומנטים וזו שעם p_hours (נתפס בהחלה לייצור, 14/10).
 DROP FUNCTION IF EXISTS public.service_call_counts();
+DROP FUNCTION IF EXISTS public.service_call_counts(integer);
 CREATE OR REPLACE FUNCTION public.service_call_counts(p_hours integer DEFAULT 24)
-RETURNS TABLE (site_id integer, open integer, recent integer)
+-- ⚠️ oldest_open — מתי נפתחה הקריאה הפתוחה **הוותיקה ביותר** של האתר, כזמן אמיתי. בעלת המוצר
+-- (14/10/2026): "אני רוצה שיהיה כזה סטופר לפני כמה זמן נפתחה הפניה". הכרטיס מציג ממנו שעון
+-- מתקתק, ולכן הוא חייב להיות UTC אמיתי ולא שעון הקיר של ויזנט.
+-- ⚠️ נופל חזרה לשעת ההגעה אלינו כשאין opened_at: סטופר שמתחיל מאפס על נתון חסר הוא שקר.
+RETURNS TABLE (site_id integer, open integer, recent integer, oldest_open text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   WITH w AS (SELECT to_char(now() - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
                             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS since)
   SELECT c.site_id,
          count(*) FILTER (WHERE c.open)::int,
-         count(*) FILTER (WHERE c.received_at > w.since)::int
+         count(*) FILTER (WHERE c.received_at > w.since)::int,
+         to_char(min(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz))
+                   FILTER (WHERE c.open) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
     FROM app.service_calls_current() c, w
    WHERE c.site_id IS NOT NULL AND (SELECT app.is_staff())
      AND (c.open OR c.received_at > w.since)
@@ -160,6 +190,9 @@ BEGIN
     SELECT jsonb_agg(jsonb_build_object(
              'ticket', c.ticket,
              'opened_at', NULLIF(btrim(c.payload ->> 'opened_at'), ''),
+             -- ⚠️ זמן אמיתי לסטופר. opened_at עצמו הוא שעון הקיר שלהם ואי אפשר לחשב ממנו משך.
+             'opened_utc', to_char(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz)
+                                     AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
              'received_at', c.received_at,
              'parking_code', NULLIF(btrim(c.payload ->> 'parking_code'), ''),
              'first_name', c.payload ->> 'first_name',
@@ -203,6 +236,9 @@ BEGIN
     SELECT jsonb_agg(jsonb_build_object(
              'ticket', c.ticket,
              'opened_at', NULLIF(btrim(c.payload ->> 'opened_at'), ''),
+             -- ⚠️ זמן אמיתי לסטופר. opened_at עצמו הוא שעון הקיר שלהם ואי אפשר לחשב ממנו משך.
+             'opened_utc', to_char(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz)
+                                     AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
              'received_at', c.received_at,
              'parking_code', NULLIF(btrim(c.payload ->> 'parking_code'), ''),
              'project', c.project,

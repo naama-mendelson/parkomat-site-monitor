@@ -14,6 +14,7 @@ import {
 } from "../../services/dataSource";
 import { callerName, openedLabel, optionsFor, callText, parkingDetail, callsSummary, israelLabel, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
+import FaultTimer from "../SiteCard/FaultTimer";
 import "./ServiceCalls.css";
 
 /**
@@ -164,6 +165,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                     {c.open != null && (
                       <span className={`sc-state${c.open ? " sc-state--open" : ""}`}>{c.open ? "פתוחה" : "סגורה"}</span>
                     )}
+                    {/* ⚠️ סטופר רק לפתוחה: על קריאה שנסגרה "כמה זמן היא פתוחה" חסר משמעות */}
+                    {c.open && c.opened_utc && <FaultTimer since={c.opened_utc} tone="call" />}
                     <span className="sc-when"><bdi>{openedLabel(c)}</bdi></span>
                     <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
                     {/* ⚠️ "חניה" רק כשהיא מוסיפה מידע (קוד מלא עם מתקן/כרטיס). מאז 08/10 מגיע קוד

@@ -27,8 +27,14 @@ export function countsBySite(rows) {
   const out = {};
   for (const r of rows ?? []) {
     if (r?.site_id == null) continue;
-    const cur = out[r.site_id] ?? { open: 0, recent: 0 };
-    out[r.site_id] = { open: cur.open + (Number(r.open) || 0), recent: cur.recent + (Number(r.recent) || 0) };
+    const cur = out[r.site_id] ?? { open: 0, recent: 0, oldestOpen: null };
+    // ⚠️ הוותיק מכל השורות של אותו אתר — זמן אמיתי (UTC) שה-SQL כבר המיר משעון ויזנט
+    const o = r.oldest_open || null;
+    out[r.site_id] = {
+      open: cur.open + (Number(r.open) || 0),
+      recent: cur.recent + (Number(r.recent) || 0),
+      oldestOpen: !o ? cur.oldestOpen : (!cur.oldestOpen || o < cur.oldestOpen ? o : cur.oldestOpen),
+    };
   }
   return out;
 }

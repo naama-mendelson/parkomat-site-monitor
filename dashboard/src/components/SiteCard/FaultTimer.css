@@ -27,6 +27,13 @@
   color: #f87171;
 }
 
+/* ⚠️ קריאת שירות פתוחה — אותו סטופר, בצבע ההדגשה ולא באדום של התקלה: קריאה פתוחה אינה תקלה
+   במתקן, ואדום שני היה אומר למי שמסתכל שמדובר באותו דבר (14/10/2026). */
+.fault-timer--call {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
 .fault-timer--no_comm {
   background: rgba(148, 163, 184, 0.14);
   color: #cbd5e1;
