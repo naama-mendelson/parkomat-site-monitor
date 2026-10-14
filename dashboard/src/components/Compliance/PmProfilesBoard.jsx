@@ -17,8 +17,10 @@ import {
 import "./PmProfilesBoard.css";
 
 const norm = (s) => String(s ?? "").toLowerCase().replace(/["'״׳`\-–,.]/g, "").replace(/\s+/g, " ").trim();
+// ⚠️ אותו מספר כמו ב-TasksDialog: לחיצה שנייה שמגיעה מוקדם מזה אינה אישור אלא דאבל-קליק
+const ARM_MIN_MS = 600;
 
-export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
+export default function PmProfilesBoard({ active = true, rev: outerRev = 0, onDirty, onSaved }) {
   const [data, setData] = useState(null);        // {profiles, unassigned}
   const [lists, setLists] = useState([]);
   const [loadError, setLoadError] = useState("");
@@ -28,7 +30,7 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [armDelete, setArmDelete] = useState(null);
+  const [armDelete, setArmDelete] = useState(null);   // { id, at } | null
   // ⚠️ "ללחוץ שוב למחיקה" מתפרק אחרי 5 שניות — לחיצה מקרית דקות אחר כך לא תמחק פרופיל (סקירה, 13/10/2026)
   useEffect(() => {
     if (armDelete == null) return undefined;
@@ -45,7 +47,9 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
       .then(([d, l]) => { if (alive) { setData(d); setLists(l); } })
       .catch((e) => { if (alive) setLoadError(e?.message || "הלוח לא נטען"); });
     return () => { alive = false; };
-  }, [active, rev]);
+    // ⚠️ outerRev: שינוי פרופיל של אתר בשורה שמעל (PmSiteLists) מזיז את updated_at של שני פרופילים.
+    // בלי טעינה מחדש כאן, השמירה הבאה מהלוח הזה תידחה ב-PT409 — בלי שאיש נגע בלוח.
+  }, [active, rev, outerRev]);
 
   useEffect(() => { onDirty?.(edit ? "יש פרופיל בעריכה שלא נשמר." : null); }, [edit, onDirty]);
   useEffect(() => () => onDirty?.(null), [onDirty]);
@@ -103,11 +107,14 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
       setBusy(false);
     }
   };
-  const remove = async (p) => {
-    if (armDelete !== p.id) { setArmDelete(p.id); return; }
+  const remove = async (p, e) => {
+    if (armDelete?.id !== p.id) { setArmDelete({ id: p.id, at: performance.now() }); return; }
+    // ⚠️ השנייה נחשבת רק אם היא לחיצה בפני עצמה: לא החצי השני של דאבל-קליק, ולא מיד אחרי החימוש.
+    // בלי זה דאבל-קליק רגיל מוחק פרופיל, וכל אתריו נופלים לרשימת ברירת המחדל (כמו ב-TasksDialog).
+    if ((e?.detail ?? 1) > 1 || performance.now() - armDelete.at < ARM_MIN_MS) return;
     setBusy(true); setError("");
     try {
-      const n = await deletePmProfile(p.id);
+      const n = await deletePmProfile(p.id, p.updated_at ?? null);
       setNotice(`הפרופיל "${p.name}" נמחק. ${n} אתרים חזרו לרשימת ברירת המחדל.`);
       setArmDelete(null);
       onSaved?.();
@@ -124,6 +131,20 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
     );
   }
   if (!data) return <p className="pm-muted">טוען את לוח הפרופילים…</p>;
+
+  // ⚠️ הודעת השגיאה חיה ליד הכפתור שגרם לה. היא הייתה בראש הלוח, ועם אחד-עשר פרופילים סירוב על
+  // אחד מהתחתונים הוצג מחוץ למסך — "שמירה" נראה מת. (אותו לקח כמו K9 במשימות.)
+  // ⚠️ וכפתור טעינה מחדש: אחרי PT409 (הלוח התיישן) expected נשאר ישן, ובלי טעינה מחדש כל ניסיון
+  // נוסף ייכשל באותה שגיאה — עד שסוגרים את חלון האתר.
+  const errorBanner = error ? (
+    <div className="pm-banner pm-banner--error" role="alert">
+      {error}
+      <button type="button" className="pm-btn pm-btn--inline" disabled={busy}
+        onClick={() => { setEdit(null); setError(""); setArmDelete(null); setRev((r) => r + 1); }}>
+        לטעון את הלוח מחדש
+      </button>
+    </div>
+  ) : null;
 
   const editor = (
     <div className="pmp-edit">
@@ -176,6 +197,7 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
           </ul>
         )}
       </div>
+      {errorBanner}
       <div className="pm-row">
         <button type="button" className="pm-btn pm-btn--primary" disabled={busy} onClick={save}>
           {busy ? "שומר…" : "שמירה"}</button>
@@ -191,7 +213,8 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
         ביקור שכבר פתוח ממשיך עם מה שהיה בפתיחתו.
       </div>
       {notice && <div className="pm-banner pm-banner--ok" role="status">{notice}</div>}
-      {error && <div className="pm-banner pm-banner--error" role="alert">{error}</div>}
+      {/* בעריכה הבאנר יושב בתוך העורך, ליד הכפתור. כאן רק שגיאות שאין להן עורך פתוח (מחיקה). */}
+      {!edit && errorBanner}
 
       <ul className="pmp-rows">
         {data.profiles.map((p) => (
@@ -203,8 +226,15 @@ export default function PmProfilesBoard({ active = true, onDirty, onSaved }) {
                   <span className="pm-muted">{p.sites.length} אתרים · {p.item_count} פריטים</span>
                   <span className="pmp-actions">
                     <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || !!edit} onClick={() => begin(p)}>עריכה</button>
-                    <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || !!edit} onClick={() => remove(p)}>
-                      {armDelete === p.id ? "ללחוץ שוב למחיקה" : "מחיקה"}</button>
+                    {/* ⚠️ השאלה היא בועה מעל הכפתור ולא טקסט בתוכו: טקסט ארוך יותר מזיז את "עריכה"
+                        שלידו, ואז "תיקון" בלחיצה על השכן מאשר מחיקה (אותו לקח כמו .tk-ask במשימות) */}
+                    <button type="button" className="pm-btn pm-btn--ghost pmp-del" disabled={busy || !!edit}
+                      aria-pressed={armDelete?.id === p.id}
+                      onKeyDown={(ev) => { if (ev.repeat && (ev.key === "Enter" || ev.key === " ")) ev.preventDefault(); }}
+                      onClick={(ev) => remove(p, ev)}>
+                      מחיקה
+                      {armDelete?.id === p.id && <span className="pmp-ask" aria-hidden="true">ללחוץ שוב למחיקה</span>}
+                    </button>
                   </span>
                 </div>
                 <div className="pmp-line"><span className="pmp-label">רשימות:</span> {p.template_ids.map(listName).join(" · ") || "—"}</div>

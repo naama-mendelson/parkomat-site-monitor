@@ -427,6 +427,9 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
   const [openVisit, setOpenVisit] = useState(null);
   const [showAll, setShowAll] = useState(false);
   const [tool, setTool] = useState(null);               // 'upload' | 'template' | 'profiles'
+  // ⚠️ שינוי הפרופיל של האתר מזיז את updated_at של הפרופילים, ולכן לוח פתוח חייב להיטען מחדש —
+  // אחרת השמירה הבאה ממנו נדחית ב-PT409 בלי שאיש נגע בו.
+  const [profRev, setProfRev] = useState(0);
   const [mounted, setMounted] = useState(() => new Set());   // כלי שנפתח נשאר חי (מוסתר) — עבודה בו לא נזרקת
   const toolsRef = useRef(null);
   const openTool = (t, scroll = false) => {
@@ -491,7 +494,8 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
       {!formOpen && Array.isArray(data?.templates) && (
         <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
           assigned={!!data.templates_assigned}
-          isManager={isManager} onChanged={() => load({ silent: true })} />
+          isManager={isManager}
+          onChanged={() => { setProfRev((r) => r + 1); load({ silent: true }); }} />
       )}
 
       {notice && (
@@ -676,7 +680,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
           )}
           {mounted.has("profiles") && (
             <div hidden={tool !== "profiles"}>
-              <PmProfilesBoard active={tool === "profiles"} onDirty={setProfReason}
+              <PmProfilesBoard active={tool === "profiles"} rev={profRev} onDirty={setProfReason}
                 onSaved={() => { changed(); load({ silent: true }); }} />
             </div>
           )}

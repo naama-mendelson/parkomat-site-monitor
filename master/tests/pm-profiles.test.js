@@ -39,7 +39,8 @@ const saveProfile = (id, name, ids, expected = null, uid = MGR) =>
   one(uid, `SELECT public.pm_profile_save($1, $2, $3::int[], $4) id`, [id, name, ids, expected]).then((r) => r.id);
 const setSites = (id, codes, uid = MGR) => one(uid, `SELECT public.pm_profile_sites_set($1, $2::text[]) n`, [id, codes]).then((r) => r.n);
 const setSiteProfile = (code, id, uid = MGR) => rpc(uid, `SELECT public.pm_site_profile_set($1, $2)`, [code, id]);
-const delProfile = (id, uid = MGR) => one(uid, `SELECT public.pm_profile_delete($1) n`, [id]).then((r) => r.n);
+const delProfile = (id, uid = MGR, expected = null) =>
+  one(uid, `SELECT public.pm_profile_delete($1, $2) n`, [id, expected]).then((r) => r.n);
 const site = (code) => one(OPR, `SELECT public.pm_site($1) j`, [code]).then((r) => r.j);
 const listNames = async (code) => (await site(code)).templates.map((t) => t.name);
 const check = (label) => ({ label, kind: "check", required: true });
@@ -378,6 +379,55 @@ test("פריט ערך: סף לפי אותו כלל כמו מדידה; גיזום
   assert.equal(await num("\t3\n"), "3");
   assert.equal(await num(" 3 "), "3");
   assert.equal(await num("3 "), null, "רווח קשיח — לא מדידה, כמו ב-JS");
+});
+
+// ⚠️ המחיקה הייתה הכותב היחיד בלי בדיקת התיישנות (סקירה, 14/10/2026): לוח ישן נדחה בשמירה ב-PT409
+// ומחק בלי לשאול — כולל פרופיל שמנהל אחר בדיוק מילא באתרים.
+test("⚠️ מחיקת פרופיל מלוח ישן — PT409; עם הערך הנכון, ובלי ערך (בנייה ישנה) — נמחק", { skip }, async () => {
+  const a = await newSite();
+  const id = await saveProfile(null, "מחיקה מלוח ישן", [BASE]);
+  const stale = (await prof("מחיקה מלוח ישן")).updated_at;
+  await setSites(id, [a]);                                  // מנהל אחר מילא אתרים — updated_at זז
+  const fresh = (await prof("מחיקה מלוח ישן")).updated_at;
+  assert.notEqual(fresh, stale, "שינוי אתרים חייב להזיז את updated_at");
+  await fails(delProfile(id, MGR, stale), "PT409", /עודכן בינתיים/);
+  assert.ok(await prof("מחיקה מלוח ישן"), "אחרי PT409 הפרופיל עדיין קיים");
+  assert.equal(await delProfile(id, MGR, fresh), 1);
+  assert.equal(await prof("מחיקה מלוח ישן"), undefined);
+  const id2 = await saveProfile(null, "מחיקה בלי ערך", [BASE]);
+  assert.equal(await delProfile(id2), 0, "בנייה ישנה שולחת p_id בלבד — עדיין עובד");
+});
+
+// ⚠️ בפריט "ערך" וי אינו "בוצע" — רק מדידה. לפני התיקון (14/10/2026) pm_visit_item_check קיבל כל
+// סוג, ו-items_done ספר i.checked לכל סוג; פריט מדידה רשות שסומן וי נראה "בוצע" בלי שנמדד דבר.
+test("⚠️ פריט ערך: אי אפשר לסמן בו וי, ו-items_done סופר מדידה בלבד", { skip }, async () => {
+  const L = await createList("מדידה וי");
+  await saveList([check("בדיקה רגילה"), { label: "מד שרשרת", kind: "value", required: false, unit: "%" }], L);
+  const a = await newSite();
+  const id = await saveProfile(null, "ערך ו-וי", [L]);
+  await setSites(id, [a]);
+  const { visit_id } = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
+  const items = await sup(`SELECT id, kind FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [visit_id]);
+  const chk = items.find((i) => i.kind === "check"), val = items.find((i) => i.kind === "value");
+  await fails(rpc(OPR, `SELECT public.pm_visit_item_check($1, true)`, [val.id]), "23514", /מדידה/);
+  await rpc(OPR, `SELECT public.pm_visit_item_check($1, true)`, [chk.id]);
+  // כותב כלשהו שעקף את הדלת (בנייה ישנה, כלי) — הספירה עדיין לא קוראת לזה "בוצע"
+  await sup(`UPDATE pm_visit_items SET checked = true WHERE id = $1`, [val.id]);
+  const sig = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" };
+  await rpc(OPR, `SELECT * FROM public.pm_visit_submit($1, 'טכנאי', $2::jsonb, NULL, NULL, $3)`,
+    [visit_id, JSON.stringify(sig), "00000000-0000-0000-0000-0000000000b1"]);
+  const v1 = (await site(a)).visits[0];
+  assert.deepEqual({ total: v1.items_total, done: v1.items_done }, { total: 2, done: 1 }, "וי על פריט ערך אינו 'בוצע'");
+  // ואותו ביקור בדיוק, כשנמדד כהלכה — נספר. (אתר שני: pm_child_guard חוסם כתיבה לביקור שהוגש.)
+  const b = await newSite();
+  await setSites(id, [a, b]);
+  const v2id = (await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [b])).visit_id;
+  const bItems = await sup(`SELECT id, kind FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [v2id]);
+  await rpc(OPR, `SELECT public.pm_visit_item_check($1, true)`, [bItems.find((i) => i.kind === "check").id]);
+  await rpc(OPR, `SELECT public.pm_visit_item_note($1, '2,5')`, [bItems.find((i) => i.kind === "value").id]);
+  await rpc(OPR, `SELECT * FROM public.pm_visit_submit($1, 'טכנאי', $2::jsonb, NULL, NULL, $3)`,
+    [v2id, JSON.stringify(sig), "00000000-0000-0000-0000-0000000000b2"]);
+  assert.equal((await site(b)).visits[0].items_done, 2, "אחרי שנמדד — נספר");
 });
 
 test("⚠️ אתר שנמחק יוצא מהפרופיל בלי להשאיר שורה", { skip }, async () => {

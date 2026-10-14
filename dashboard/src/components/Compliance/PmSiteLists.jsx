@@ -63,7 +63,10 @@ export default function PmSiteLists({ code, profile = null, templates = [], assi
       </div>
       {edit && (
         <div className="pm-site-lists-edit">
+          {/* ⚠️ placeholder מפורש: ChoiceSelect לעולם אינו מציג אפשרות שערכה "" על הכפתור הסגור,
+              ובלעדיו אתר בלי פרופיל נקרא "— לבחור —", כאילו חובה לבחור (כמו ב-LiftFields) */}
           <ChoiceSelect label="פרופיל תחזוקה" value={edit.chosen} options={options}
+            placeholder="בלי פרופיל (רשימת ברירת המחדל)"
             onChange={(v) => setEdit((e) => ({ ...e, chosen: v }))} />
           {edit.profiles.length === 0 && (
             <p className="pm-muted">עוד אין פרופילים — יוצרים אותם ב"לוח פרופילי התחזוקה" שבכלי המנהל.</p>

@@ -7,9 +7,12 @@ const { pathToFileURL } = require("node:url");
 const U = pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/serviceCalls.js")).href;
 const P = pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/sitePatch.js")).href;
 
-test("⚠️ כבוי כברירת מחדל: בנייה שאיש לא הגדיר בה VITE_SERVICE_CALLS — אין סימון על הכרטיסים", async () => {
-  const { SERVICE_CALLS_ENABLED } = await import(U);
-  assert.equal(SERVICE_CALLS_ENABLED, false);
+// ⚠️ 14/10/2026: הרשימות נטענו, עשרה סטטוסים סומנו כסגורים וויזנט הדליקו את השליחה — ההצגה דולקת
+// כברירת מחדל. העדכון **חזרה** נשאר כבוי: ה-API שלהם חסום מחוץ לישראל ואין לנו כתובת יוצאת קבועה.
+test("⚠️ ברירות המחדל: ההצגה דולקת, והעדכון לוויזנט כבוי", async () => {
+  const { SERVICE_CALLS_ENABLED, SERVICE_CALLS_WRITE } = await import(U);
+  assert.equal(SERVICE_CALLS_ENABLED, true);
+  assert.equal(SERVICE_CALLS_WRITE, false, "בורר שנראה עובד ונתקע 15 שניות גרוע מערך לקריאה בלבד");
 });
 
 test("countsBySite — לפי site_id, מחבר שורות, מתעלם משורה בלי אתר", async () => {

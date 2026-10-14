@@ -2019,8 +2019,12 @@ BEGIN
                'items_checked', (SELECT count(*)::int FROM pm_visit_items i WHERE i.visit_id = v.id AND i.checked),
                -- ⚠️ "בוצע" = וי היכן שנדרש וי, ומספר התמונות הנדרש. items_checked אינו
                -- סופר פריט צילום בלבד (אין לו וי), וביקור שלם נקרא "3/5".
+               -- ⚠️ בפריט "ערך" וי אינו "בוצע" — רק מדידה (סקירה, 14/10/2026). לפני כן i.checked נספר
+               -- לכל סוג, וכך "13/13 בוצע" הופיע על המסך בזמן ש-pm_visit_submit עדיין סירב בגלל מדידה חסרה.
                'items_done', (SELECT count(*)::int FROM pm_visit_items i WHERE i.visit_id = v.id
-                                AND (i.kind = 'photo' OR i.checked OR (i.kind = 'value' AND app.pm_value_num(i.note) IS NOT NULL))
+                                AND (i.kind = 'photo'
+                                     OR (i.kind = 'value' AND app.pm_value_num(i.note) IS NOT NULL)
+                                     OR (i.kind NOT IN ('photo', 'value') AND i.checked))
                                 AND (SELECT count(*) FROM pm_files f WHERE f.visit_item_id = i.id AND f.kind = 'photo') >= i.min_photos),
                'photo_count', (SELECT count(*)::int FROM pm_files f WHERE f.visit_id = v.id AND f.kind = 'photo'),
                'has_signature', v.signature_b64 IS NOT NULL,
@@ -2497,7 +2501,11 @@ GRANT EXECUTE ON FUNCTION public.pm_profile_save(integer, text, integer[], text,
 
 -- מחיקת פרופיל: האתרים שבו חוזרים לברירת המחדל (או לשיוך הישן שלהם). מחזיר כמה אתרים חזרו.
 -- ⚠️ ביקור פתוח אינו משתנה — הפריטים שלו צולמו בפתיחה.
-CREATE OR REPLACE FUNCTION public.pm_profile_delete(p_id integer) RETURNS integer
+-- ⚠️ p_expected_at כמו בשאר הכותבים (סקירה, 14/10/2026). עד אז המחיקה הייתה **הכותב היחיד** בלי
+-- בדיקת התיישנות: לוח ישן נדחה בשמירה ב-PT409, אבל מחק בלי לשאול — כולל פרופיל שמנהל אחר בדיוק
+-- מילא באתרים. הפרמטר ברירת-מחדל NULL, ולכן קריאה ישנה (p_id בלבד) עדיין נפתרת ב-PostgREST.
+DROP FUNCTION IF EXISTS public.pm_profile_delete(integer);
+CREATE OR REPLACE FUNCTION public.pm_profile_delete(p_id integer, p_expected_at text DEFAULT NULL) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_manager();
@@ -2506,6 +2514,8 @@ BEGIN
   PERFORM app.pm_profiles_lock();
   SELECT p.* INTO v_p FROM pm_profiles p WHERE p.id = p_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'הפרופיל לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  IF p_expected_at IS NOT NULL AND v_p.updated_at <> p_expected_at THEN
+    RAISE EXCEPTION 'הפרופיל עודכן בינתיים ע״י % — יש לטעון את הלוח מחדש', v_p.updated_by USING ERRCODE = 'PT409'; END IF;
   SELECT COALESCE(array_agg(s.code ORDER BY s.code), '{}') INTO v_codes
     FROM pm_profile_sites ps JOIN sites s ON s.id = ps.site_id WHERE ps.profile_id = p_id;
   DELETE FROM pm_profiles p WHERE p.id = p_id;   -- CASCADE: הרשימות והאתרים שלו
@@ -2516,8 +2526,8 @@ BEGIN
   FOREACH v_c IN ARRAY v_codes LOOP PERFORM app.compliance_event(v_c, 'pm', 'profile'); END LOOP;
   RETURN cardinality(v_codes);
 END $fn$;
-REVOKE ALL ON FUNCTION public.pm_profile_delete(integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pm_profile_delete(integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.pm_profile_delete(integer, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_profile_delete(integer, text) TO authenticated;
 
 -- מצב יעד: אלה האתרים של הפרופיל מעכשיו (כמו "חבר לשורה אחרת" ברמזור). מחזיר כמה אתרים בפרופיל.
 -- ⚠️ p_expected_at כמו ב-pm_profile_save. הלוח שומר הכול דרך pm_profile_save; כאן — לכלים ולקריאה ישירה.
@@ -2670,8 +2680,15 @@ CREATE OR REPLACE FUNCTION public.pm_visit_item_check(p_item_id bigint, p_checke
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE v_actor text := app.require_staff(); v_vid bigint; v pm_visits%ROWTYPE;
 BEGIN
-  SELECT i.visit_id INTO v_vid FROM pm_visit_items i WHERE i.id = p_item_id;
-  IF v_vid IS NULL THEN RAISE EXCEPTION 'הפריט לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  -- ⚠️ בפריט "ערך" אין וי — יש מדידה (pm_visit_item_note). הדלת נסגרת כאן, במקום היחיד שכותב
+  -- checked, כדי שלא ייווצר פריט שנראה מסומן ואי אפשר להגיש את הביקור (סקירה, 14/10/2026).
+  SELECT i.visit_id INTO v_vid FROM pm_visit_items i WHERE i.id = p_item_id AND i.kind <> 'value';
+  IF v_vid IS NULL THEN
+    IF EXISTS (SELECT 1 FROM pm_visit_items i WHERE i.id = p_item_id) THEN
+      RAISE EXCEPTION 'פריט מדידה נרשם בערך שנמדד, לא בסימון וי' USING ERRCODE = 'check_violation';
+    END IF;
+    RAISE EXCEPTION 'הפריט לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
   v := app.pm_draft_lock(v_vid);
   UPDATE pm_visit_items i SET checked = COALESCE(p_checked, false), updated_at = app.compliance_now_iso(), updated_by = v_actor
    WHERE i.id = p_item_id;

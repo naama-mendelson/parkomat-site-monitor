@@ -381,8 +381,12 @@ export async function savePmProfile(id, name, templateIds, expectedAt = null, si
 }
 
 /** מחיקת פרופיל — האתרים שבו חוזרים לברירת המחדל. @returns {number} כמה אתרים חזרו */
-export async function deletePmProfile(id) {
-  return Number(await rpcT("pm_profile_delete", { p_id: id }, TIMEOUT.normal)) || 0;
+// ⚠️ expectedAt — ה-updated_at שהלוח טען. בלעדיו מחיקה מלוח ישן מוחקת פרופיל שמנהל אחר בדיוק
+// מילא באתרים, בזמן ש**שמירה** מאותו לוח הייתה נדחית ב-PT409 (סקירה, 14/10/2026).
+// ⚠️ סדר פריסה: ה-SQL קודם. הפרמטר חדש, ומול מסד ישן הוא 404 (PGRST202).
+export async function deletePmProfile(id, expectedAt = null) {
+  const args = expectedAt == null ? { p_id: id } : { p_id: id, p_expected_at: expectedAt };
+  return Number(await rpcT("pm_profile_delete", args, TIMEOUT.normal)) || 0;
 }
 
 /** אלה אתרי הפרופיל מעכשיו (מצב יעד). אתר מפרופיל אחר עובר לכאן. @returns {number} */

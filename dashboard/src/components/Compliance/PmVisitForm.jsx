@@ -352,7 +352,12 @@ export default function PmVisitForm({
     else if (onServer || ac || an || ackedPhotos.length) status = { cls: "saved", text: "✓ נשמר" };
     const byOther = !localTouched && it.updated_by && !sameName(it.updated_by, myName) ? it.updated_by : null;
     const rejected = new Map(pendingPhotos.filter((ph) => stuckPhoto.has(ph.clientId)).map((ph) => [ph.clientId, stuckPhoto.get(ph.clientId)]));
-    return { it, id, checked, note, serverPhotos, pendingPhotos, orphans, photoN, missing, status, byOther, rejected };
+    // ⚠️ noteSaved — הערך **שנשמר** (שרת/תור), בלי ההקלדה שברגע זה. "גמרתי את הקבוצה" נקבע לפיו:
+    // לפי הערך החי, הקלדת "2.5" נחשבה גמורה כבר ב-"2", הקבוצה נסגרה תוך כדי הקלדה, השדה איבד
+    // מיקוד — וה-blur שמר "2". מדידה שגויה בלי שום שגיאה (סקירה, 14/10/2026).
+    // ⚠️ לא noteDrafts: גם הוא מתעדכן בכל הקשה. baseNote זז רק כשהערך נשלח בפועל.
+    const noteSaved = baseNote;
+    return { it, id, checked, note, noteSaved, serverPhotos, pendingPhotos, orphans, photoN, missing, status, byOther, rejected };
   });
 
   const missing = merged.filter((m) => m.missing);
@@ -385,7 +390,7 @@ export default function PmVisitForm({
     // "סיים את השורה" = אין חובה חסרה וגם כל וי (כולל רשות) סומן — רק אז עוברים לבאה,
     // כדי לא לסגור לטכנאי קבוצה שבה עוד נשאר לו פריט רשות.
     g.finished = g.done && g.items.every((m) => m.it.kind === "photo" || m.checked
-      || (m.it.kind === "value" && valueNum(m.note) != null));
+      || (m.it.kind === "value" && valueNum(m.noteSaved) != null));
   }
   const grouped = groups.length > 1 && groups.some((g) => g.name);
   const [openGroups, setOpenGroups] = useState(() => {
@@ -400,11 +405,18 @@ export default function PmVisitForm({
   // מעבר לשורה הבאה: קבוצה **פתוחה** שהסתיימה עכשיו נסגרת, והבאה שלא הושלמה נפתחת.
   // רק במעבר (לא-גמור → גמור) — קבוצה שנפתחה מחדש אחרי שהושלמה נשארת פתוחה.
   const finishedSig = groups.map((g) => (g.finished ? "1" : "0")).join("");
+  // ⚠️ כמה שדות טקסט פתוחים לעריכה. זה גם תנאי וגם תלות: אין מעבר לשורה הבאה בזמן שמקלידים
+  // (ההשהיה היא 800ms, ועצירה קצרה באמצע מספר הייתה סוגרת את הקבוצה מתחת לאצבע), והאפקט
+  // נבדק מחדש ברגע שיוצאים מהשדה — ואז המעבר קורה.
+  const editingNotes = Object.keys(noteEdit).length;
   const prevFinished = useRef(null);
   useEffect(() => {
+    // ⚠️ בזמן הקלדה יוצאים **לפני** עדכון ה"לפני", אחרת המעבר לא-גמור→גמור נבלע כאן
+    // ולא יקרה גם אחרי שיוצאים מהשדה.
+    if (!grouped || editingNotes) return;
     const before = prevFinished.current;
     prevFinished.current = new Map(groups.map((g) => [g.key, g.finished]));
-    if (!before || !grouped) return;
+    if (!before) return;
     const g = groups.find((x) => x.finished && before.get(x.key) === false && openGroups.has(x.key));
     if (!g) return;
     const i = groups.indexOf(g);
@@ -415,9 +427,12 @@ export default function PmVisitForm({
       if (next) n.add(next.key);
       return n;
     });
-    requestAnimationFrame(() => document.getElementById(`pm-group-${visitId}-${g.key}`)
+    // ⚠️ גוללים לקבוצה שנסגרה — הבאה נפתחת בדיוק מתחתיה. אבל כשהבאה היא **לפני** הסגורה
+    // (גלישה לתחילת הרשימה), גלילה לסגורה משאירה את הפתוחה מעל המסך (סקירה, 14/10/2026).
+    const target = next && groups.indexOf(next) < i ? next.key : g.key;
+    requestAnimationFrame(() => document.getElementById(`pm-group-${visitId}-${target}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }, [finishedSig]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [finishedSig, editingNotes]); // eslint-disable-line react-hooks/exhaustive-deps
   const [scrollTo, setScrollTo] = useState(null);
 
   // ---------------- סיום וחתימה ----------------

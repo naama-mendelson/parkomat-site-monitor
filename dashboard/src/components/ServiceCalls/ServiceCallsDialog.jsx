@@ -10,7 +10,7 @@
 // פונקציית ה-Edge מול המסד. שינוי נשלח לוויזנט קודם, ונרשם אצלנו רק אחרי שאישרו.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups } from "../../services/dataSource";
-import { callerName, openedLabel, optionsFor } from "../../utils/serviceCalls";
+import { callerName, openedLabel, optionsFor, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
 import "./ServiceCalls.css";
 
@@ -93,6 +93,15 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
     const cur = field === "status" ? c.status_id : c.type_id;
     const curName = field === "status" ? c.status_name : c.type_name;
     const label = field === "status" ? "סטטוס" : "סוג";
+    // ⚠️ בלי ממסר אי אפשר לעדכן את ויזנט (ראו SERVICE_CALLS_WRITE) — מציגים את הערך ולא בורר שנתקע
+    if (!SERVICE_CALLS_WRITE) {
+      return (
+        <span className="sc-field">
+          <span className="sc-field-cap">{label}</span>
+          <span className="sc-field-val">{curName || cur || "—"}</span>
+        </span>
+      );
+    }
     return (
       <label className="sc-field">
         <span className="sc-field-cap">{label}</span>
@@ -129,9 +138,11 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
         {noLists && calls?.length > 0 && (
           <p className="tk-muted sc-note">
             רשימות הסטטוסים והסוגים של ויזנט עוד לא נטענו — אי אפשר לשנות כרגע.{" "}
-            <button type="button" className="tk-link" disabled={listsBusy} onClick={reloadLists}>
-              {listsBusy ? "טוען מוויזנט…" : "טעינת הרשימות מוויזנט"}
-            </button>
+            {SERVICE_CALLS_WRITE && (
+              <button type="button" className="tk-link" disabled={listsBusy} onClick={reloadLists}>
+                {listsBusy ? "טוען מוויזנט…" : "טעינת הרשימות מוויזנט"}
+              </button>
+            )}
           </p>
         )}
         {listsMsg && <p className={listsMsg.ok ? "tk-muted sc-note" : "tk-error"} role="status">{listsMsg.text}</p>}
@@ -168,11 +179,17 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
               ))}
             </ul>
           )}
-          {!noLists && (
+          {/* ⚠️ גם הרענון עובר דרך WIZEAPI — חסום מחוץ לישראל, ולכן מוסתר עד שיהיה ממסר */}
+          {!noLists && SERVICE_CALLS_WRITE && (
             <p className="sc-foot">
               <button type="button" className="tk-link" disabled={listsBusy} onClick={reloadLists}>
                 {listsBusy ? "טוען מוויזנט…" : "רענון רשימות הסטטוסים והסוגים מוויזנט"}
               </button>
+            </p>
+          )}
+          {!noLists && !SERVICE_CALLS_WRITE && (
+            <p className="sc-foot tk-muted">
+              העדכון בוויזנט נעשה אצלם — הגישה ל-API שלהם מוגבלת לישראל.
             </p>
           )}
         </div>
