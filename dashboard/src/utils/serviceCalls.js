@@ -18,12 +18,17 @@ export const SERVICE_CALLS_ENABLED = String(import.meta.env?.VITE_SERVICE_CALLS 
 // ההחזרה: VITE_SERVICE_CALLS_WRITE=true, אחרי שהממסר קיים והכתובת אושרה אצלם.
 export const SERVICE_CALLS_WRITE = String(import.meta.env?.VITE_SERVICE_CALLS_WRITE ?? "false") === "true";
 
-/** שורות service_call_counts → { [siteId]: { open } } */
+/**
+ * שורות service_call_counts → { [siteId]: { open, recent } }
+ * open — פתוחות עכשיו (בכל גיל); recent — כל מה שהגיע ב-24 השעות, כולל סגורות.
+ * ⚠️ מסד ישן אינו מחזיר recent — אז הוא 0, והכרטיס מתנהג כמו קודם (רק פתוחות).
+ */
 export function countsBySite(rows) {
   const out = {};
   for (const r of rows ?? []) {
     if (r?.site_id == null) continue;
-    out[r.site_id] = { open: (out[r.site_id]?.open ?? 0) + (Number(r.open) || 0) };
+    const cur = out[r.site_id] ?? { open: 0, recent: 0 };
+    out[r.site_id] = { open: cur.open + (Number(r.open) || 0), recent: cur.recent + (Number(r.recent) || 0) };
   }
   return out;
 }

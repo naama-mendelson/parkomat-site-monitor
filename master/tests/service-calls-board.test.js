@@ -42,7 +42,7 @@ async function call(p) {
     [raw, new Date().toISOString(), raw]));
   await sleep(5);
 }
-const counts = async (uid) => rpc(uid, `SELECT site_id, open FROM public.service_call_counts() ORDER BY site_id`);
+const counts = async (uid) => rpc(uid, `SELECT site_id, open, recent FROM public.service_call_counts() ORDER BY site_id`);
 const openOf = async (uid, code) => (await one(uid, `SELECT public.service_calls_open($1) AS j`, [code])).j;
 const save = (uid, kind, items) => one(uid, `SELECT public.wizenet_lookups_save($1, $2::jsonb) AS n`, [kind, JSON.stringify(items)]);
 const change = async (uid, ticket, field, value) => {
@@ -74,13 +74,13 @@ test("S1 · קריאה לאתר לפי קוד הפרויקט (parking_code '1226
   await call({ ticket_number: "S1-c", parking_code: "9999-1-01", status: "148" });           // אין אתר כזה
   await call({ ticket_number: "S1-d", project_code: s.code, parking_code: "", status: "148" }); // שדה ייעודי, אם יגיע
   const c = await counts(OPR);
-  assert.deepEqual(c.filter((r) => r.site_id === s.id), [{ site_id: s.id, open: 3 }]);
+  assert.deepEqual(c.filter((r) => r.site_id === s.id), [{ site_id: s.id, open: 3, recent: 3 }]);
   const j = await openOf(OPR, s.code);
   assert.deepEqual(j.map((x) => x.ticket).sort(), ["S1-a", "S1-b", "S1-d"]);
   assert.equal(j.find((x) => x.ticket === "S1-a").first_name, "דנה");
 });
 
-test("S2 · שורה לכל אירוע: המצב הוא השורה האחרונה של הקריאה; סטטוס סגור לפי הרשימה — יורד מהכרטיס", { skip }, async () => {
+test("S2 · שורה לכל אירוע: המצב הוא השורה האחרונה; סטטוס סגור — יורד מהפתוחות ונשאר בספירת היום", { skip }, async () => {
   const s = await newSite();
   await save(MGR, "status", [{ id: "148", name: "פתוחה" }, { id: "150", name: "סגורה" }, { id: "151", name: "בטיפול" }]);
   await call({ ticket_number: "S2-a", parking_code: s.code, status: "148" });
@@ -88,7 +88,12 @@ test("S2 · שורה לכל אירוע: המצב הוא השורה האחרונ�
   assert.deepEqual((await openOf(OPR, s.code)).map((x) => [x.ticket, x.status_id, x.status_name]), [["S2-a", "151", "בטיפול"]]);
   await call({ ticket_number: "S2-a", parking_code: s.code, status: "150" });                  // נסגרה בוויזנט
   assert.deepEqual(await openOf(OPR, s.code), []);
-  assert.equal((await counts(OPR)).find((r) => r.site_id === s.id), undefined);
+  // ⚠️ 14/10/2026: הכרטיס אינו מתרוקן ביום שבו נפתחו ונסגרו קריאות. open יורד ל-0, ו-recent סופר
+  // את מה שהיה היום (בעלת המוצר: "שזה יהיה על הכרטיס שמתאים לפי הקוד").
+  assert.deepEqual((await counts(OPR)).find((r) => r.site_id === s.id), { site_id: s.id, open: 0, recent: 1 });
+  // ועם p_hours — החלון מהכרטיס מראה גם את מה שנסגר היום, פתוחות קודם
+  assert.deepEqual((await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j.map((x) => [x.ticket, x.open]),
+    [["S2-a", false]]);
   // סטטוס שאינו ברשימה — נשאר פתוח (עדיף להציג קריאה שאולי נסגרה מאשר להעלים פתוחה)
   await call({ ticket_number: "S2-b", parking_code: s.code, status: "777" });
   assert.deepEqual((await openOf(OPR, s.code)).map((x) => [x.ticket, x.status_name]), [["S2-b", null]]);

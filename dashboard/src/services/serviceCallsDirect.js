@@ -20,9 +20,13 @@ export async function fetchServiceCallCounts() {
   return { bySite: countsBySite(await rpc("service_call_counts", {})) };
 }
 
-/** הקריאות הפתוחות של אתר, מהישנה לחדשה */
-export async function fetchServiceCalls(siteCode) {
-  return (await rpc("service_calls_open", { p_site_code: siteCode })) ?? [];
+/**
+ * הקריאות של אתר: הפתוחות (בכל גיל), ועם hours — גם מה שנסגר בחלון הזה. פתוחות קודם.
+ * ⚠️ hours נשלח רק כשהוא ניתן: קריאה בלי הפרמטר נפתרת גם מול מסד ישן.
+ */
+export async function fetchServiceCalls(siteCode, hours = null) {
+  const args = hours == null ? { p_site_code: siteCode } : { p_site_code: siteCode, p_hours: hours };
+  return (await rpc("service_calls_open", args)) ?? [];
 }
 
 // ⚠️ "קריאות היום" (14/10/2026): הסימון על הכרטיס מראה רק **פתוחות** ורק לאתר שמוכר לנו, וביום

@@ -38,7 +38,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
   const overlayRef = useRef(null);
   const pressedOnOverlay = useRef(false);
 
-  const load = useCallback(() => (recent ? fetchRecentServiceCalls(24) : fetchServiceCalls(site.code))
+  // ⚠️ גם מהכרטיס — 24 שעות: פתוחות בכל גיל, ומה שנסגר היום. "מה קרה כאן היום" ולא רק "מה פתוח".
+  const load = useCallback(() => (recent ? fetchRecentServiceCalls(24) : fetchServiceCalls(site.code, 24))
     .then((c) => { setCalls(c); setLoadError(""); })
     .catch((e) => setLoadError(e.message)), [recent, site?.code]);
 
@@ -130,9 +131,9 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
             <h2 className="tk-title">קריאות שירות</h2>
             <span className="tk-site">
               {/* ⚠️ ברשימת "היום" חלק מהקריאות סגורות — "N פתוחות" היה שקר על המספר שלידו */}
-              {siteName}{calls && <> · {recent
+              {siteName}{calls && <> · {calls.length
                 ? `${calls.length} קריאות · ${calls.filter((c) => c.open).length} פתוחות`
-                : (calls.length ? `${calls.length} פתוחות בוויזנט` : "אין קריאות פתוחות")}</>}
+                : "אין קריאות"}</>}
             </span>
           </div>
           <button type="button" className="tk-close" onClick={onClose} aria-label="סגירה">✕</button>
@@ -158,17 +159,17 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
         <div className="tk-body">
           {!calls && !loadError && <p className="tk-muted">טוען…</p>}
           {calls && calls.length === 0 && (
-            <p className="tk-empty">{recent ? "לא הגיעו קריאות ב-24 השעות האחרונות" : "✓ אין קריאות פתוחות"}</p>
+            <p className="tk-empty">{recent ? "לא הגיעו קריאות ב-24 השעות האחרונות" : "✓ אין קריאות פתוחות, ולא היו היום"}</p>
           )}
           {calls?.length > 0 && (
             <ul className="tk-list sc-list" aria-label={recent ? "קריאות מ-24 השעות האחרונות" : "קריאות פתוחות"}>
               {calls.map((c) => (
-                <li key={c.ticket} className={`sc-row${recent && !c.open ? " sc-row--closed" : ""}`}
+                <li key={c.ticket} className={`sc-row${c.open === false ? " sc-row--closed" : ""}`}
                   data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
                   <div className="sc-top">
                     <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
                     {/* ⚠️ ברשימת "היום" חייבים לדעת אם היא עדיין פתוחה — בכרטיס זה מובן מאליו, כאן לא */}
-                    {recent && (
+                    {c.open != null && (
                       <span className={`sc-state${c.open ? " sc-state--open" : ""}`}>{c.open ? "פתוחה" : "סגורה"}</span>
                     )}
                     <span className="sc-when"><bdi>{openedLabel(c)}</bdi></span>

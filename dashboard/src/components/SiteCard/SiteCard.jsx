@@ -643,18 +643,28 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ============================================================
   // ⚠️ רק כשיש קריאה פתוחה — בניגוד ל"משימות", שמופיע תמיד כי ממנו מוסיפים משימה. קריאות נפתחות בוויזנט, לא
   // כאן, ולכן כפתור קבוע בכל 70 הכרטיסים היה רעש בלי פעולה מאחוריו. אותו מראה כמו "משימות" עם מספר.
+  // ⚠️ 14/10/2026 (בעלת המוצר: "שזה יהיה על הכרטיס שמתאים לפי הקוד"): הסימון מופיע גם כשכל קריאות
+  // היום כבר נסגרו. אחרת יום שבו נפתחו ונסגרו שמונה קריאות השאיר שלושה כרטיסים מסומנים בלבד.
+  // המספר הוא הפתוחות כשיש; אחרת מה שהיה ב-24 השעות. המסגרת המודגשת (has-open) נשמרת לפתוחות בלבד.
   const openCalls = calls?.bySite[site.id]?.open ?? 0;
-  const callsLabel = `קריאות שירות בוויזנט — ${openCalls} פתוחות`;
+  const todayCalls = calls?.bySite[site.id]?.recent ?? 0;
+  const anyCalls = openCalls > 0 || todayCalls > 0;
+  const callsLabel = openCalls > 0
+    ? `קריאות שירות בוויזנט — ${openCalls} פתוחות, ${todayCalls} ב-24 השעות`
+    : `קריאות שירות בוויזנט — ${todayCalls} ב-24 השעות, כולן סגורות`;
+  const callsN = openCalls > 0 ? openCalls : todayCalls;
   const openCallsDialog = (e) => { e.stopPropagation(); calls.openSite(site); };
-  const callsPill = calls && openCalls > 0 && !isMini && (
-    <button type="button" className="tk-card-btn has-open sc-card-btn" onClick={openCallsDialog} aria-label={callsLabel}>
-      קריאות<span className="tk-card-n" aria-hidden="true">{openCalls}</span>
+  const callsPill = calls && anyCalls && !isMini && (
+    <button type="button" className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}`}
+      onClick={openCallsDialog} aria-label={callsLabel}>
+      קריאות<span className="tk-card-n" aria-hidden="true">{callsN}</span>
     </button>
   );
-  const callsButton = calls && openCalls > 0 && (
-    <button type="button" className="tk-site-btn has-open sc-site-btn" onClick={openCallsDialog} aria-label={callsLabel}>
+  const callsButton = calls && anyCalls && (
+    <button type="button" className={`tk-site-btn sc-site-btn${openCalls > 0 ? " has-open" : ""}`}
+      onClick={openCallsDialog} aria-label={callsLabel}>
       קריאות שירות
-      <span className="tk-count" aria-hidden="true">{openCalls}</span>
+      <span className="tk-count" aria-hidden="true">{callsN}</span>
     </button>
   );
   // ⚠️ "משימות" וקוד האתר — קבוצה אחת בקצה שורת המצב. בלוח בלי נורות היא נכנסת בשורה (נמדד:

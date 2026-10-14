@@ -121,21 +121,39 @@ REVOKE ALL ON FUNCTION app.service_calls_current() FROM PUBLIC;
 -- ============================================================
 -- מספר הקריאות הפתוחות לכל אתר — לסימון על הכרטיס. ⚠️ לעולם אינה זורקת (כמו task_counts): הסימון נטען יחד
 -- עם רשימת האתרים, ושגיאה כאן לא תפיל אותה. מי שאינו צוות — אפס שורות.
-CREATE OR REPLACE FUNCTION public.service_call_counts()
-RETURNS TABLE (site_id integer, open integer)
+-- ⚠️ שתי ספירות ולא אחת (בעלת המוצר, 14/10/2026: "שזה יהיה על הכרטיס שמתאים לפי הקוד"): `open` —
+-- קריאות שעדיין פתוחות, בכל גיל; `recent` — כל מה שהגיע ב-24 השעות, כולל סגורות. בלי השנייה, יום
+-- שבו נפתחו ונסגרו שמונה קריאות השאיר שלושה כרטיסים מסומנים, והשאר נראו כאילו לא קרה בהם דבר.
+-- ⚠️ `open` לא שינה משמעות, ו-p_hours ברירת-מחדל — בנייה ישנה שקוראת בלי ארגומנטים עדיין נפתרת
+-- ומקבלת את אותה עמודה. העמודה הנוספת פשוט לא נקראת שם.
+DROP FUNCTION IF EXISTS public.service_call_counts();
+CREATE OR REPLACE FUNCTION public.service_call_counts(p_hours integer DEFAULT 24)
+RETURNS TABLE (site_id integer, open integer, recent integer)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT c.site_id, count(*)::int
-    FROM app.service_calls_current() c
-   WHERE c.open AND c.site_id IS NOT NULL AND (SELECT app.is_staff())
+  WITH w AS (SELECT to_char(now() - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
+                            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS since)
+  SELECT c.site_id,
+         count(*) FILTER (WHERE c.open)::int,
+         count(*) FILTER (WHERE c.received_at > w.since)::int
+    FROM app.service_calls_current() c, w
+   WHERE c.site_id IS NOT NULL AND (SELECT app.is_staff())
+     AND (c.open OR c.received_at > w.since)
    GROUP BY c.site_id
 $$;
-REVOKE ALL ON FUNCTION public.service_call_counts() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.service_call_counts() TO authenticated;
+REVOKE ALL ON FUNCTION public.service_call_counts(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_call_counts(integer) TO authenticated;
 
 -- הקריאות הפתוחות של אתר, מהישנה לחדשה, עם שמות הסטטוס והסוג. ⚠️ jsonb יחיד (PostgREST חותך ב-1,000 שורות).
-CREATE OR REPLACE FUNCTION public.service_calls_open(p_site_code text)
+-- ⚠️ p_hours (14/10/2026): כשניתן — גם מה שנסגר בחלון הזה, כדי שהחלון מהכרטיס יראה את מה שקרה
+-- היום ולא רק את מה שעוד פתוח. בלי הפרמטר ההתנהגות כשהייתה (פתוחות בלבד), וקריאה ישנה עדיין נפתרת.
+DROP FUNCTION IF EXISTS public.service_calls_open(text);
+CREATE OR REPLACE FUNCTION public.service_calls_open(p_site_code text, p_hours integer DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_since text := CASE WHEN p_hours IS NULL THEN NULL
+                  ELSE to_char(now() - make_interval(hours => LEAST(GREATEST(p_hours, 1), 168)),
+                               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END;
 BEGIN
   PERFORM app.require_staff();
   RETURN COALESCE((
@@ -149,19 +167,22 @@ BEGIN
              'phone', c.payload ->> 'phone',
              'complaint', c.payload ->> 'customer_complaint',
              'notes', c.payload ->> 'notes',
+             'open', c.open,
              'status_id', c.status_id,
              'status_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id),
              'type_id', c.type_id,
              'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = c.type_id),
              'changed_by', c.changed_by,
              'changed_at', c.changed_at)
-           ORDER BY COALESCE(NULLIF(btrim(c.payload ->> 'opened_at'), ''), c.received_at), c.ticket)
+           -- פתוחות קודם, ובתוכן הישנה למעלה: מה שעוד דורש טיפול בראש הרשימה
+           ORDER BY c.open DESC, COALESCE(NULLIF(btrim(c.payload ->> 'opened_at'), ''), c.received_at), c.ticket)
       FROM app.service_calls_current() c
-     WHERE c.open AND c.site_code = btrim(COALESCE(p_site_code, ''))
+     WHERE c.site_code = btrim(COALESCE(p_site_code, ''))
+       AND (c.open OR (v_since IS NOT NULL AND c.received_at > v_since))
   ), '[]'::jsonb);
 END $fn$;
-REVOKE ALL ON FUNCTION public.service_calls_open(text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.service_calls_open(text) TO authenticated;
+REVOKE ALL ON FUNCTION public.service_calls_open(text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_open(text, integer) TO authenticated;
 
 -- ============================================================
 -- "קריאות היום" — כל הקריאות מה-24 שעות האחרונות (14/10/2026)

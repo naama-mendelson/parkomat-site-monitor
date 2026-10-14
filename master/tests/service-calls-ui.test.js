@@ -17,8 +17,11 @@ test("⚠️ ברירות המחדל: ההצגה דולקת, והעדכון לו
 
 test("countsBySite — לפי site_id, מחבר שורות, מתעלם משורה בלי אתר", async () => {
   const { countsBySite } = await import(U);
-  assert.deepEqual(countsBySite([{ site_id: 7, open: 2 }, { site_id: 9, open: "1" }, { site_id: null, open: 5 }, { site_id: 7, open: 1 }]),
-    { 7: { open: 3 }, 9: { open: 1 } });
+  assert.deepEqual(countsBySite([{ site_id: 7, open: 2, recent: 2 }, { site_id: 9, open: "1", recent: "3" },
+    { site_id: null, open: 5, recent: 5 }, { site_id: 7, open: 1, recent: 4 }]),
+    { 7: { open: 3, recent: 6 }, 9: { open: 1, recent: 3 } });
+  // ⚠️ מסד ישן אינו מחזיר recent — הכרטיס חוזר להתנהגות הקודמת ולא נשבר
+  assert.deepEqual(countsBySite([{ site_id: 7, open: 2 }]), { 7: { open: 2, recent: 0 } });
   assert.deepEqual(countsBySite(null), {});
 });
 
