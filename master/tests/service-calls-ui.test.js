@@ -87,3 +87,17 @@ test("אירוע service_calls אינו טוען מחדש את רשימת האת
   const { needsRefetch } = await import(P);
   assert.equal(needsRefetch({ type: "service_calls", code: "1307", action: "received" }), false);
 });
+
+// ⚠️ האיחוד עצמו ב-SQL (S11/S12). כאן רק מה שהשורה אומרת — ושהיא **אומרת** ולא מעלימה בשקט.
+test("dupInfo — שורה מאוחדת אומרת כמה; קריאה בודדת שקטה", async () => {
+  const { dupInfo } = await import(U);
+  assert.equal(dupInfo({ dup_n: 1 }), null);
+  assert.equal(dupInfo({}), null, "מסד ישן בלי dup_n — בלי סימון");
+  assert.equal(dupInfo({ dup_n: 0 }), null);
+  assert.equal(dupInfo(null), null);
+  const d = dupInfo({ dup_n: 8 });
+  assert.equal(d.n, 8);
+  assert.equal(d.mark, "×8");
+  assert.match(d.title, /^8 קריאות זהות/);
+  assert.equal(dupInfo({ dup_n: "4" }).mark, "×4", "מגיע כמחרוזת מ-jsonb");
+});

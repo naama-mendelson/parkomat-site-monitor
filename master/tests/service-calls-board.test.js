@@ -297,6 +297,137 @@ test("S10 · שתי העמודות הקריאות: שעת הפתיחה כמו ש
   assert.equal((await sup(`SELECT count(*)::int n FROM pg_trigger WHERE tgname = 'service_calls_local'`))[0].n, 1);
 });
 
+test("S11 · כפילות: אותו אדם, אותו טקסט, אותו רגע — שורה אחת; והקבוצה פתוחה אם אחת מהן פתוחה", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  await sup(`UPDATE wizenet_lookups SET closed = true WHERE kind = 'status' AND id = '9'`);
+  const T = "2026-10-14T12:00:";
+  const dup = (t, sec, extra = {}) => call({
+    ticket_number: t, parking_code: s.code, status: "1", phone: "054-0000001",
+    first_name: "ישראל", last_name: "ישראלי", customer_complaint: "המתקן לא מגיב",
+    opened_at: `${T}${String(sec).padStart(2, "0")}Z`, ...extra,
+  });
+
+  // שמונה קריאות נפרדות בפערים של 2–3 שניות, כמו באתר 1312
+  for (const [i, sec] of [21, 24, 26, 28, 30, 32, 35, 37].entries()) await dup(`D${i}`, sec);
+  let j = (await one(OPR, `SELECT public.service_calls_open($1) AS j`, [s.code])).j;
+  assert.equal(j.length, 1, "שמונה קריאות זהות — שורה אחת");
+  assert.equal(j[0].dup_n, 8);
+  assert.equal(j[0].ticket, "D0", "הנציגה היא הוותיקה");
+  assert.equal((await counts(OPR)).find((r) => r.site_id === s.id).open, 1, "והספירה על הכרטיס — אחת");
+
+  // ⚠️ פער גדול מהחלון — פנייה חוזרת אמיתית, ולא כפילות
+  await dup("D-later", 0, { opened_at: "2026-10-14T12:05:00Z" });
+  j = (await one(OPR, `SELECT public.service_calls_open($1) AS j`, [s.code])).j;
+  assert.deepEqual(j.map((x) => [x.ticket, x.dup_n]).sort(), [["D-later", 1], ["D0", 8]]);
+
+  // טקסט אחר באותו רגע — שתי קריאות
+  await dup("D-other", 22, { customer_complaint: "משהו אחר לגמרי" });
+  assert.equal((await one(OPR, `SELECT public.service_calls_open($1) AS j`, [s.code])).j.length, 3);
+
+  // ⚠️ אחת מהצרור נסגרה — הקבוצה עדיין פתוחה, והנציגה היא פתוחה
+  await dup("D0", 21, { status: "9" });
+  j = (await one(OPR, `SELECT public.service_calls_open($1) AS j`, [s.code])).j;
+  const grp = j.find((x) => x.dup_n === 8);
+  assert.equal(grp.open, true, "אחת נסגרה — הקבוצה פתוחה");
+  assert.notEqual(grp.ticket, "D0", "הנציגה התחלפה לפתוחה");
+  assert.equal(grp.status_id, "1", "והמצב המוצג הוא של הקריאה הפתוחה");
+
+  // כולן נסגרו — הקבוצה סגורה, ויורדת מהפתוחות אבל נשארת בספירת היום
+  for (const [i, sec] of [21, 24, 26, 28, 30, 32, 35, 37].entries()) await dup(`D${i}`, sec, { status: "9" });
+  const row = (await counts(OPR)).find((r) => r.site_id === s.id);
+  assert.equal(row.open, 2, "נשארו החוזרת והאחרת");
+  assert.equal(row.recent, 3, "וביום — שלוש שורות, לא עשר");
+  assert.equal((await one(OPR, `SELECT public.service_calls_recent(24) AS j`, [])).j
+    .filter((x) => x.site_code === s.code).length, 3, "וגם 'קריאות היום' מאוחד");
+});
+
+test("S12 · מה מפריד בין קריאות: אדם, טקסט ואתר — וכשאין טקסט בכלל, אין איחוד", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }]);
+  const list = async (code) => (await one(OPR, `SELECT public.service_calls_open($1) AS j`, [code ?? s.code])).j;
+  const put = (t, p) => call({ ticket_number: t, parking_code: s.code, status: "1", ...p });
+
+  // ⚠️ אותו טלפון, אותו רגע, **בלי טקסט בכלל** — שתי קריאות. זו ההגנה היחידה שנשארה:
+  // בלי טקסט אין במה להשוות, ומוקד שמתקשר בלי לכתוב דבר היה מאבד קריאות.
+  await put("E1", { phone: "050-1111111", opened_at: "2026-10-14T12:00:00Z" });
+  await put("E2", { phone: "050-1111111", opened_at: "2026-10-14T12:00:02Z" });
+  assert.deepEqual((await list()).map((x) => [x.ticket, x.dup_n]).sort(), [["E1", 1], ["E2", 1]],
+    "בלי טקסט — אין איחוד");
+
+  // שני אנשים **שונים**, אותו אתר, אותו טקסט, אותה שנייה — שתי קריאות
+  await put("W1", { phone: "050-2222222", customer_complaint: "המתקן לא מגיב", opened_at: "2026-10-14T12:10:00Z" });
+  await put("W2", { phone: "050-3333333", customer_complaint: "המתקן לא מגיב", opened_at: "2026-10-14T12:10:01Z" });
+  const two = (await list()).filter((x) => x.ticket.startsWith("W"));
+  assert.deepEqual(two.map((x) => x.dup_n), [1, 1], "שני אנשים אינם כפילות");
+
+  // אותו אדם, אותו טקסט, אותו רגע — אחת. וטלפון באותו מספר בכתיב אחר הוא אותו אדם.
+  await put("F1", { phone: "052-000-0002", customer_complaint: "בירור", opened_at: "2026-10-14T12:20:00Z" });
+  await put("F2", { phone: "0520000002", customer_complaint: "בירור", opened_at: "2026-10-14T12:20:03Z" });
+  const ph = (await list()).filter((x) => x.ticket.startsWith("F"));
+  assert.deepEqual(ph.map((x) => [x.ticket, x.dup_n]), [["F1", 2]], "מקפים אינם אדם אחר");
+
+  // בלי טלפון — מזהים לפי השם
+  const byName = (t, sec) => put(t, { first_name: "דמות", last_name: "לבדיקה",
+    customer_complaint: "טכנאי", opened_at: `2026-10-14T12:30:0${sec}Z` });
+  await byName("M1", 1); await byName("M2", 4);
+  assert.deepEqual((await list()).filter((x) => x.ticket.startsWith("M")).map((x) => [x.ticket, x.dup_n]),
+    [["M1", 2]], "אותו שם, אותו טקסט, אותו רגע");
+
+  // ⚠️ **אנונימי — כן מתאחד.** בלי טלפון ובלי שם, אבל עם אותו טקסט באותו רגע ובאותו אתר: זו אותה
+  // תקלה אחת, וזו בדיוק הכפילות שנתבקשה. ההחלטה מתועדת כאן כדי שלא תשתנה בשקט.
+  await put("A1", { customer_complaint: "דלת תקועה", opened_at: "2026-10-14T12:40:00Z" });
+  await put("A2", { customer_complaint: "דלת תקועה", opened_at: "2026-10-14T12:40:02Z" });
+  assert.deepEqual((await list()).filter((x) => x.ticket.startsWith("A")).map((x) => [x.ticket, x.dup_n]),
+    [["A1", 2]], "שתי פניות אנונימיות זהות — אחת");
+
+  // ⚠️ **הקיבוץ הוא לפי זמן, לא לפי מספר הקריאה.** שלוש קריאות שבהן סדר המספרים הפוך מסדר
+  // הפתיחה: Z ב-12:50:00, A ב-12:50:02, M ב-12:55:00. לפי זמן — Z ו-A הן אחת, M נפרדת. לפי
+  // מספר הקריאה היו יוצאות שלוש. ⚠️ מספרי הקריאה של ויזנט אכן עולים עם הזמן, ולכן הטעות הזו
+  // לא הייתה נראית בייצור — עד לקריאה אחת שתוזן באיחור.
+  const ooo = (t, mmss) => put(t, { phone: "050-9999999", customer_complaint: "סדר",
+    opened_at: `2026-10-14T12:${mmss}Z` });
+  await ooo("Z", "50:00"); await ooo("A", "50:02"); await ooo("M", "55:00");
+  assert.deepEqual((await list()).filter((x) => ["Z", "A", "M"].includes(x.ticket))
+    .map((x) => [x.ticket, x.dup_n]).sort(), [["M", 1], ["Z", 2]], "מקבצים לפי זמן ולא לפי מספר");
+
+  // ⚠️ **ההשוואה היא על השורה הראשונה.** נמדד בייצור: 48 מתוך 76 הקריאות שינו את הטקסט בין
+  // השורה הראשונה לאחרונה — ויזנט מקודדים את אותה הערה פעם `<br>`, פעם `<br />` ופעם מוברחת
+  // כ-`&lt;br /&gt;`. לפי השורה האחרונה הצרור הזה היה מתפצל, וכך באמת קרה באתר 1376 (3 במקום 4).
+  const NOTE0 = "0500000003<br>שורה שנייה <br>";
+  await put("G1", { phone: "050-8888888", customer_complaint: "טכנאי", notes: NOTE0,
+    opened_at: "2026-10-14T13:00:00Z" });
+  await put("G2", { phone: "050-8888888", customer_complaint: "טכנאי", notes: NOTE0,
+    opened_at: "2026-10-14T13:00:03Z" });
+  // ועכשיו עדכון על G1 שבו אותה הערה מוברחת — הטקסט האחרון שונה, הראשון זהה
+  await put("G1", { phone: "050-8888888", customer_complaint: "טכנאי",
+    notes: "0500000003&lt;br /&gt; שורה שנייה", opened_at: "2026-10-14T13:00:00Z" });
+  assert.deepEqual((await list()).filter((x) => x.ticket.startsWith("G")).map((x) => [x.ticket, x.dup_n]),
+    [["G1", 2]], "קידוד HTML שהשתנה בשורה מאוחרת אינו מפצל את הצרור");
+
+  // ⚠️ רווחים בלבד אינם טקסט אחר
+  await put("S1a", { phone: "050-7777777", customer_complaint: "דלת   תקועה", notes: " \n ",
+    opened_at: "2026-10-14T13:10:00Z" });
+  await put("S1b", { phone: "050-7777777", customer_complaint: "דלת תקועה", notes: "",
+    opened_at: "2026-10-14T13:10:02Z" });
+  assert.deepEqual((await list()).filter((x) => x.ticket.startsWith("S1")).map((x) => [x.ticket, x.dup_n]),
+    [["S1a", 2]], "רווחים כפולים ושורה חדשה אינם טקסט אחר");
+
+  // ⚠️ וגם זמן הקיבוץ מהשורה הראשונה: עדכון שמגיע עם opened_at אחר אינו מזיז את הקריאה לקבוצה
+  // אחרת. בייצור opened_at זהה בכל שורות הקריאה, ולכן טעות כאן לא הייתה נראית.
+  await put("H1", { phone: "050-6666666", customer_complaint: "זמן", opened_at: "2026-10-14T13:20:00Z" });
+  await put("H2", { phone: "050-6666666", customer_complaint: "זמן", opened_at: "2026-10-14T13:20:02Z" });
+  await put("H1", { phone: "050-6666666", customer_complaint: "זמן", opened_at: "2026-10-14T13:40:00Z" });
+  assert.deepEqual((await list()).filter((x) => x.ticket.startsWith("H")).map((x) => [x.ticket, x.dup_n]),
+    [["H1", 2]], "הקיבוץ לפי זמן הפתיחה הראשון");
+
+  // ⚠️ אותו אדם ואותו טקסט אבל **אתר אחר** — שתי קריאות
+  const s2 = await newSite();
+  await call({ ticket_number: "X1", parking_code: s2.code, status: "1", phone: "052-000-0002",
+    customer_complaint: "בירור", opened_at: "2026-10-14T12:20:01Z" });
+  assert.deepEqual((await list(s2.code)).map((x) => [x.ticket, x.dup_n]), [["X1", 1]], "אתר אחר — קריאה אחרת");
+});
+
 test("S7 · הקובץ אידמפוטנטי — החלה שנייה לא נכשלת ולא מכפילה טריגר", { skip }, async () => {
   const fs = require("node:fs"), path = require("node:path");
   const sql = fs.readFileSync(path.join(__dirname, "..", "db", "service-calls-board.postgres.sql"), "utf8");

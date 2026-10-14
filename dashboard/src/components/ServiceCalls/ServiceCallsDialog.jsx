@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchServiceCalls, fetchRecentServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
 } from "../../services/dataSource";
-import { callerName, openedLabel, optionsFor, callText, parkingDetail, callsSummary, israelLabel, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
+import { callerName, openedLabel, optionsFor, callText, parkingDetail, callsSummary, israelLabel, dupInfo, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
 import FaultTimer from "../SiteCard/FaultTimer";
 import "./ServiceCalls.css";
@@ -158,7 +158,9 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
           )}
           {calls?.length > 0 && (
             <ul className="tk-list sc-list" aria-label={recent ? "קריאות מ-24 השעות האחרונות" : "קריאות פתוחות"}>
-              {calls.map((c) => (
+              {calls.map((c) => {
+                const dup = dupInfo(c);
+                return (
                 <li key={c.ticket} className={`sc-row${c.open === false ? " sc-row--closed" : ""}`}
                   data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
                   <div className="sc-top">
@@ -169,6 +171,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                     {c.open && c.opened_utc && <FaultTimer since={c.opened_utc} tone="call" />}
                     <span className="sc-when"><bdi>{openedLabel(c)}</bdi></span>
                     <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
+                    {/* ⚠️ אותו אדם לחץ כמה פעמים — שורה אחת, והמספר נאמר ולא מוסתר */}
+                    {dup && <span className="sc-dup" title={dup.title} aria-label={dup.title}>{dup.mark}</span>}
                     {/* ⚠️ "חניה" רק כשהיא מוסיפה מידע (קוד מלא עם מתקן/כרטיס). מאז 08/10 מגיע קוד
                         הפרויקט לבדו, והוא כבר כתוב כקוד האתר — "חניה 3452" ליד "אתר 3452" הוא רעש. */}
                     {parkingDetail(c) && <span className="sc-parking">חניה <bdi>{parkingDetail(c)}</bdi></span>}
@@ -204,7 +208,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                   )}
                   {rowError?.ticket === c.ticket && <p className="tk-row-msg sc-row-msg" role="alert">{rowError.msg}</p>}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
           {/* ⚠️ גם הרענון עובר דרך WIZEAPI — חסום מחוץ לישראל, ולכן מוסתר עד שיהיה ממסר */}

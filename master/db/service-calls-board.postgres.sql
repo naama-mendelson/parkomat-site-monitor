@@ -79,13 +79,40 @@ REVOKE ALL ON FUNCTION app.service_call_project(jsonb) FROM PUBLIC;
 -- ב-service-calls.postgres.sql, שנטען לפני הקובץ הזה. הטריגר של opened_il שם זקוק לה.
 
 -- ============================================================
+-- ⚠️ כפילות: אותו אדם, אותו טקסט, באותו רגע — קריאה אחת על המסך (14/10/2026)
+-- ============================================================
+-- בעלת המוצר: "אם יש קריאה מאותו בן אדם באותו זמן עם אותו טקסט אז אל תכתבי אותה פעמיים חבל".
+--
+-- **נמדד בייצור באותו יום, וזה גדול:** באתר 1312 נפתחו **שמונה** קריאות נפרדות ב-16 שניות — אותו
+-- טלפון, אותו שם, "המתקן לא מגיב" מילה במילה (774526 עד 774533). באתר 1376 ארבע ב-8 שניות
+-- ("טכנאי"), באתר 1197 ארבע ב-18 שניות ("בירור"), ועוד ארבעה זוגות ב-2–3 שניות. ויזנט עצמם מנקים
+-- את זה בדיעבד: 15 קריאות מסומנות "מבוטל בשל כפילות" ואחת "קריאה כפולה".
+--
+-- ⚠️ **ולמה האיחוד כאן ולא בדלת הקליטה.** היא ביקשה "אל תכתבי", והתשובה היא: כל אחת מהשמונה היא
+-- **מספר קריאה נפרד אצל ויזנט** עם מחזור חיים משל עצמו, וויזנט ישלחו עליה עדכון סטטוס אחר כך. שורה
+-- שלא נשמרה פירושה שהעדכון ההוא יגיע כקריאה חדשה לגמרי — ויצוץ שוב על המסך, הפעם בלי שום דרך
+-- לקשור אותו לקבוצה. ועוד: הדלת מתוכננת לקבל הכול ולא לדחות דבר (ראו שם), כי הכתובת היא חוזה. לכן
+-- **נשמר הכול, מוצג פעם אחת** — והאיחוד יושב במקום היחיד שמחליט מהו המצב, כך שהספירה, הרשימה של
+-- האתר ו"קריאות היום" מסכימות ביניהן בלי שאיש יצטרך לזכור לסנן.
+--
+-- מה מגדיר "אותה קריאה": אותו קוד פרויקט, אותו אדם, אותו טקסט, ופער של עד דקה מהקריאה שלפניה.
+CREATE OR REPLACE FUNCTION app.service_call_dup_gap() RETURNS interval
+-- ⚠️ דקה, ולא חמש. הפער **בין קריאות עוקבות** בכל הצרורות שנמדדו הוא 2–5 שניות, כלומר פי 12 מרווח
+-- ביטחון; ומכיוון שהכלל משרשר (א' עם ב', ב' עם ג'), חלון רחב היה מאחד גם פנייה חוזרת אמיתית של
+-- אדם שאיש לא חזר אליו. שתי פניות בהפרש שתי דקות הן שתי פניות.
+LANGUAGE sql IMMUTABLE AS $$ SELECT interval '60 seconds' $$;
+REVOKE ALL ON FUNCTION app.service_call_dup_gap() FROM PUBLIC;
+
+-- ============================================================
 -- המצב הנוכחי של כל קריאה
 -- ============================================================
 -- שורה לכל ticket_number: השורה האחרונה שהגיעה מוויזנט, והשינוי האחרון שלנו בכל שדה — אם הוא חדש יותר
--- ממנה. open — לפי הרשימה (ראו בראש הקובץ).
+-- ממנה. open — לפי הרשימה (ראו בראש הקובץ). ואחרי זה: כפילויות מאוחדות לשורה אחת, עם dup_n.
+-- ⚠️ שינוי טיפוס ההחזרה (נוספה dup_n) אינו אפשרי ב-CREATE OR REPLACE — חייבים DROP קודם.
+DROP FUNCTION IF EXISTS app.service_calls_current();
 CREATE OR REPLACE FUNCTION app.service_calls_current()
 RETURNS TABLE (ticket text, site_id integer, site_code text, project text, payload jsonb, received_at text,
-               status_id text, type_id text, open boolean, changed_by text, changed_at text)
+               status_id text, type_id text, open boolean, changed_by text, changed_at text, dup_n integer)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   WITH last_in AS (
     SELECT DISTINCT ON (btrim(c.payload ->> 'ticket_number'))
@@ -93,6 +120,23 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
       FROM service_calls c
      WHERE c.payload IS NOT NULL AND NULLIF(btrim(c.payload ->> 'ticket_number'), '') IS NOT NULL
      ORDER BY btrim(c.payload ->> 'ticket_number'), c.id DESC
+  ),
+  -- ============================================================
+  -- ⚠️ השורה ה**ראשונה** של כל קריאה — ממנה נבנה מפתח הכפילות
+  -- ============================================================
+  -- נמדד בייצור (14/10/2026): **48 מתוך 76** הקריאות שינו את הטקסט שלהן בין השורה הראשונה
+  -- לאחרונה — לא בתוכן אלא בקידוד. ויזנט שולחים את אותה הערה פעם כ-`<br>`, פעם כ-`<br />` עם
+  -- שורה חדשה, ופעם מוברחת לגמרי כ-`&lt;br /&gt;`. צרור "טכנאי" באתר 1376 אוחד ל-3 במקום ל-4
+  -- בדיוק מזה: לקריאה אחת מהארבע הגיעה גרסה מוברחת בשורה האחרונה.
+  -- ⚠️ וניקוי טקסט לא היה מציל: אחרי שמסירים תגיות, `&lt;br /&gt;` מפוענח ל-`<br />` כטקסט
+  -- מילולי — ונשאר שונה. מה שכן פותר הוא להשוות את מה שהיה **ברגע הפתיחה**, וזה גם הנכון
+  -- עניינית: הכפילות היא עובדה על הפתיחה, לא על מה שהמוקד הוסיף אחר כך.
+  first_in AS (
+    SELECT DISTINCT ON (btrim(c.payload ->> 'ticket_number'))
+           btrim(c.payload ->> 'ticket_number') AS ticket, c.payload AS payload0
+      FROM service_calls c
+     WHERE c.payload IS NOT NULL AND NULLIF(btrim(c.payload ->> 'ticket_number'), '') IS NOT NULL
+     ORDER BY btrim(c.payload ->> 'ticket_number'), c.id        -- ASC — להבדיל מ-last_in
   ),
   last_ch AS (
     SELECT DISTINCT ON (ch.ticket, ch.field) ch.ticket, ch.field, ch.value, ch.changed_by, ch.changed_at
@@ -110,12 +154,81 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
       FROM last_in l
       LEFT JOIN last_ch st ON st.ticket = l.ticket AND st.field = 'status'
       LEFT JOIN last_ch ty ON ty.ticket = l.ticket AND ty.field = 'type'
+  ),
+  flat AS (
+    SELECT c.ticket, s.id AS site_id, s.code AS site_code, c.project, c.payload, c.received_at,
+           c.status_id, c.type_id,
+           NOT COALESCE((SELECT w.closed FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id), false) AS open,
+           c.changed_by, c.changed_at,
+           COALESCE(app.wizenet_ts(COALESCE(f0.payload0 ->> 'opened_at', c.payload ->> 'opened_at')),
+                    c.received_at::timestamptz) AS opened,
+           f0.payload0
+      FROM cur c
+      LEFT JOIN sites s ON s.code = c.project
+      JOIN first_in f0 ON f0.ticket = c.ticket
+  ),
+  -- ============================================================
+  -- מפתח הקבוצה — **במקום אחד**
+  -- ============================================================
+  -- ⚠️ שלוש חלונות־פונקציה למטה חייבים לחלק לפי אותו דבר בדיוק. בגרסה הראשונה המפתח היה כתוב
+  -- שלוש פעמים, ומוטציה שהסירה את האתר מאחד מהם **שרדה** את כל הבדיקות — כי השניים האחרים עוד
+  -- חילקו נכון. כלומר הכפילות לא רק מכוערת: היא מסתירה שגיאה. עכשיו הוא נבנה פעם אחת.
+  -- התו \x01 כמפריד, כדי ששדה לא יוכל להתחזות לגבול בין שדות.
+  keyed AS (
+    SELECT f.*,
+           COALESCE(f.project, '~')
+           -- מי: הטלפון בספרות בלבד ("052-000-0002" ו-"0520000002" הם אותו אדם); ובלי טלפון — השם.
+           -- ⚠️ בלי שניהם נשאר '' — כלומר שתי פניות אנונימיות עם אותו טקסט באותו רגע **כן** מתאחדות.
+           -- זו אותה תקלה אחת, וזה מה שנשאל.
+           || E'\x01' || CASE
+                WHEN regexp_replace(COALESCE(f.payload0 ->> 'phone', ''), '\D', '', 'g') <> ''
+                  THEN 'p:' || regexp_replace(COALESCE(f.payload0 ->> 'phone', ''), '\D', '', 'g')
+                ELSE 'n:' || lower(btrim(COALESCE(f.payload0 ->> 'first_name', '') || ' ' || COALESCE(f.payload0 ->> 'last_name', '')))
+              END
+           -- מה: התלונה וההערות. ⚠️ וכאן **ההגנה היחידה**: בלי טקסט בכלל אין במה להשוות, ולכן
+           -- הקריאה היא קבוצה של עצמה. בלעדיה, שתי קריאות ריקות של אותו מתקשר באותה שנייה היו
+           -- מתאחדות רק מפני ששתיהן ריקות — ומוקד שמתקשר בלי טקסט היה מאבד קריאות.
+           || E'\x01' || CASE
+                WHEN btrim(regexp_replace(COALESCE(f.payload0 ->> 'customer_complaint', '') || ' ' || COALESCE(f.payload0 ->> 'notes', ''), '\s+', ' ', 'g')) <> ''
+                  -- ⚠️ רווחים מנורמלים (כולל שורות חדשות): "א  ב\n" ו-"א ב" הם אותו טקסט. זה **לא**
+                  -- ניקוי HTML — ההשוואה היא על השורה הראשונה, ששם הקידוד זהה ממילא.
+                  -- ⚠️ והנרמול **לפני** הקיצוץ: `btrim` בפוסטגרס מקצץ רווחים בלבד, לא שורות חדשות
+                  -- ולא טאבים. בסדר ההפוך "\n" בסוף ההערה שרד את הקיצוץ, הפך לרווח נגרר, והקריאה
+                  -- לא התאחדה עם זהה לה. נתפס בבדיקה.
+                  THEN btrim(regexp_replace(COALESCE(f.payload0 ->> 'customer_complaint', '') || ' ' || COALESCE(f.payload0 ->> 'notes', ''), '\s+', ' ', 'g'))
+                ELSE 'ticket:' || f.ticket
+              END AS gkey
+      FROM flat f
+  ),
+  -- קבוצה חדשה מתחילה כשהפער מהקריאה שלפניה גדול מהחלון (או שאין קריאה לפניה)
+  gapped AS (
+    SELECT k.*,
+           CASE WHEN k.opened - lag(k.opened) OVER (PARTITION BY k.gkey ORDER BY k.opened, k.ticket)
+                     <= app.service_call_dup_gap() THEN 0 ELSE 1 END AS newgrp
+      FROM keyed k
+  ),
+  grouped AS (
+    SELECT g.*, sum(g.newgrp) OVER (PARTITION BY g.gkey ORDER BY g.opened, g.ticket) AS grp
+      FROM gapped g
+  ),
+  ranked AS (
+    -- ⚠️ `open DESC` ראשון בסדר הבחירה: הנציגה היא הפתוחה הוותיקה, ולכן המצב המוצג (status_id)
+    -- תמיד שייך לקריאה פתוחה כשהקבוצה פתוחה. בלי זה סגירה של הוותיקה מכבה את ההבהוב בעוד אחרת
+    -- פתוחה.
+    -- ⚠️ `bool_or` **עודף בכוונה** ביחס לסדר הזה (הנציגה כבר פתוחה אם מישהי פתוחה), ולכן מוטציה
+    -- שמחליפה אותו ב-`g.open` שקולה ואינה נתפסת. הוא נשאר כי הוא **אומר את הכלל** — "קבוצה
+    -- פתוחה אם אחת מהן פתוחה" — ולא משאיר אותו תלוי בסדר של ORDER BY רחוק.
+    SELECT g.*,
+           count(*)        OVER p AS n,
+           bool_or(g.open) OVER p AS any_open,
+           row_number()    OVER (PARTITION BY g.gkey, g.grp ORDER BY g.open DESC, g.opened, g.ticket) AS rn
+      FROM grouped g
+    WINDOW p AS (PARTITION BY g.gkey, g.grp)
   )
-  SELECT c.ticket, s.id, s.code, c.project, c.payload, c.received_at, c.status_id, c.type_id,
-         NOT COALESCE((SELECT w.closed FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id), false),
-         c.changed_by, c.changed_at
-    FROM cur c
-    LEFT JOIN sites s ON s.code = c.project
+  SELECT r.ticket, r.site_id, r.site_code, r.project, r.payload, r.received_at,
+         r.status_id, r.type_id, r.any_open, r.changed_by, r.changed_at, r.n::int
+    FROM ranked r
+   WHERE r.rn = 1
 $$;
 REVOKE ALL ON FUNCTION app.service_calls_current() FROM PUBLIC;
 
@@ -188,7 +301,9 @@ BEGIN
              'type_id', c.type_id,
              'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = c.type_id),
              'changed_by', c.changed_by,
-             'changed_at', c.changed_at)
+             'changed_at', c.changed_at,
+             -- כמה קריאות זהות אוחדו לשורה הזו (1 = אין כפילות)
+             'dup_n', c.dup_n)
            -- פתוחות קודם, ובתוכן הישנה למעלה: מה שעוד דורש טיפול בראש הרשימה
            ORDER BY c.open DESC, COALESCE(NULLIF(btrim(c.payload ->> 'opened_at'), ''), c.received_at), c.ticket)
       FROM app.service_calls_current() c
@@ -237,7 +352,9 @@ BEGIN
              'type_id', c.type_id,
              'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = c.type_id),
              'changed_by', c.changed_by,
-             'changed_at', c.changed_at)
+             'changed_at', c.changed_at,
+             -- כמה קריאות זהות אוחדו לשורה הזו (1 = אין כפילות)
+             'dup_n', c.dup_n)
            -- החדשה למעלה: מי שפותח את הרשימה שואל "מה קרה עכשיו"
            ORDER BY c.received_at DESC, c.ticket DESC)
       FROM app.service_calls_current() c

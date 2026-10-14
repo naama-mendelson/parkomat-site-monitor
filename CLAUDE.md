@@ -845,6 +845,125 @@ not exist should not be expressible.**
 silence a site — the same trap the TLS checkbox was removed for. ~~Turning it on is a
 hand edit.~~ Since 1.0.57, entering the password *is* the switch.
 
+### ⚠️ Duplicates: one person, one text, one moment — one row (14/10/2026)
+
+The owner: *"אם יש קריאה מאותו בן אדם באותו זמן עם אותו טקסט אז אל תכתבי אותה פעמיים חבל"*.
+
+**Measured in production the same day, and it is large:** at site 1312 **eight** separate tickets opened within
+16 seconds — same phone, same name, "המתקן לא מגיב" word for word (774526–774533). Four at site 1376 in 8
+seconds ("טכנאי"), four at 1197 in 18 seconds ("בירור"), and four more pairs 2–3 seconds apart. Wizenet clean
+it up afterwards by hand: 15 calls marked "מבוטל בשל כפילות" and one "קריאה כפולה". Live effect: 77 tickets
+collapse to 60 rows.
+
+- ⚠️ **The collapse is in `app.service_calls_current()`, not at the intake door.** She said "don't write it",
+  and the answer is: each of the eight is a **separate ticket number at Wizenet** with its own lifecycle, and
+  Wizenet send a status update for each one later. A row we never stored means that update arrives as a brand
+  new call and **pops up again** — with nothing left to tie it to the group. And the door is built to accept
+  everything and reject nothing, because the address is a contract. So **everything is stored, shown once** —
+  and because the collapse sits in the one place that decides state, the card count, the site's list, "קריאות
+  היום" and the header count all agree without anyone remembering to filter.
+- **The key is site + person + text + a gap of at most `app.service_call_dup_gap()` (60 seconds) from the
+  previous call.** ⚠️ Not five minutes: the gap *between consecutive calls* in every measured burst is 2–5
+  seconds, and the rule chains (a with b, b with c), so a wide window would also merge a genuine second call
+  from someone nobody came back to. Two calls two minutes apart are two calls.
+- ⚠️ **The key is built from the FIRST row of the ticket, not the last — and that is not a detail.** Measured:
+  **48 of 76** calls changed their text between their first row and their last. Not the content: the encoding.
+  Wizenet send the same note once as `<br>`, once as `<br />` with a newline, and once fully escaped as
+  `&lt;br /&gt;`. The "טכנאי" burst at 1376 collapsed to 3 instead of 4 for exactly that reason. ⚠️ And text
+  cleaning would not have saved it: after tags are stripped, `&lt;br /&gt;` decodes to a literal `<br />` and
+  stays different. What does work is comparing what was there **at the moment of opening** — which is also
+  right in substance: the duplication is a fact about the opening, not about what the call centre added later.
+- **The group key is assembled once** (`gkey`), because three window functions must partition by exactly the
+  same thing. In the first version it was written out three times, and a mutation that dropped the site from
+  one of them **survived** every test — the other two still partitioned correctly. Duplication there does not
+  just look bad: it hides a bug.
+- ⚠️ **If any call in the group is open, the group is open**, and the representative is the oldest open one, so
+  the status shown always belongs to an open call. Otherwise closing one of the eight would stop the pulse
+  while another was still open. (`bool_or` is deliberately redundant against the `open DESC` ordering — the
+  mutation that replaces it is equivalent and is not caught. It stays because it *states the rule* instead of
+  leaving it to a distant ORDER BY.)
+- **The one guard: no text at all means no merging.** A call with no complaint and no notes becomes a group of
+  itself. Without it, two empty calls from the same caller in the same second would merge merely because both
+  are empty — and a dispatcher who calls without typing anything would lose calls. Identity is *not* a guard:
+  two anonymous calls with the same text at the same moment **do** merge, because that is one fault.
+- ⚠️ **`btrim` in Postgres trims spaces only — not newlines, not tabs.** So the whitespace normalisation runs
+  **before** the trim. In the other order a `\n` at the end of a note survived, became a trailing space, and
+  the call did not merge with its twin. Caught by a test, not by reading.
+- **The row says `×8`, it does not hide quietly.** Eight presses by one person are *information* — they say
+  something there did not answer him — and an unmarked disappearance would also hide that seven more ticket
+  numbers exist that Wizenet will keep sending updates about. `dupInfo` in `utils/serviceCalls.js`, a neutral
+  outlined `.sc-dup`; the colour on the row already says open or closed.
+- Tests: S11 (eight identical → one, the window, different text, one closed in the group, all closed), S12
+  (no text, two different people, phone written differently, name without a phone, anonymous, another site,
+  re-encoded HTML, whitespace only, grouping by the first opening time, ticket order ≠ time order),
+  `service-calls-ui.test.js` for `dupInfo`. **19 of 20 SQL mutations caught**, the survivor being the
+  equivalent `bool_or`. Two of the test cases were added only after a mutation survived, and one of them
+  (whitespace) found the `btrim` bug.
+
+### ⚠️ An open call is the second sort key on the board (14/10/2026)
+
+The owner asked whether the card order is status → tier → failure rate (it is, plus "no communication" between
+maintenance and operating, and "operating" split into exit before entry), and then: *"אני רוצה שתוסיף המיון
+השני אחרי הראשון צריך להיות אם יש קריאה פתוחה"*.
+
+- The order is now **status → an open call → tier → failure rate**, in `utils/sortSites.js`.
+- **Binary: has one or does not.** A site with three open calls does not come before a site with one — inside
+  "has", tier and failure rate decide exactly as before. That is what was asked, and it is also right: the
+  number of calls is usually a measure of how many times one person pressed, not of urgency.
+- ⚠️ **A comparator factory, not a field on the site.** The count is not part of the site record — it lives in
+  `ServiceCallsContext` and refreshes on its own clock. Attaching it to the site object before sorting would
+  create new objects on every render and break `React.memo` on the cards: 78 cards repainting on every tick of
+  the stopwatch. With no lookup function (`makeCompareSites(null)`) the result is **exactly** the previous
+  order, which is what `compareSitesByPriority` still is — the supervisor table and its tie-breakers are
+  untouched.
+- ⚠️ **No `useMemo` in `OperatorView`**: the sort sits after the loading/error early returns, so a hook there
+  would be called conditionally. And `filtered` is a new array on every render anyway.
+- Tests in `sort-sites.test.js`: a call does not lift a site above a worse status; inside one status a `basic`
+  site with a call comes before a `vip` site without one; three calls do not beat one; no lookup = the old
+  order; an unmonitored site stays last even with an open call.
+
+### Does the pulse stop when Wizenet close the call? Yes — and here is where it does not
+
+Traced end to end on 14/10/2026 and measured, not assumed: **39 calls moved to a status marked closed, and all
+39 read `open = false`** — no false positives. Wizenet do send a new row on every status change (44 of 69
+tickets have more than one status), the AFTER INSERT trigger publishes an `events` row in the same transaction,
+`events` is in the `supabase_realtime` publication, `App.jsx` calls `loadCallCounts()` on that event with no
+debounce, `service_call_counts` is live SQL (no cron table in the way), and `has-open-call` is applied on
+`openCalls > 0` alone. So the pulse stops a second or two after the status changes, with no refresh and no
+click. What stays is the pill with the day's count — no accent frame, no stopwatch.
+
+The ways it does **not** stop, in order of how much they matter:
+
+- ⚠️ **A status Wizenet add tomorrow would pulse forever, and there is no working path in the UI to add it to
+  the list.** An id that is not in `wizenet_lookups` counts as open (deliberate: better to show a call that may
+  be closed than hide an open one). But the only way to add one is `wizenet_lookups_save`, reachable solely
+  from the `wizenet` Edge Function — and both links to it are hidden while `SERVICE_CALLS_WRITE=false`, and
+  even if shown, WIZEAPI blocks access from outside Israel. Today it is hand SQL or nothing. The live proof is
+  `TEST-001` with `status = 'test'`, open for nine days.
+- ⚠️ **A repeated failure of the counts RPC leaves the card pulsing, silently and indefinitely.**
+  `fetchServiceCallCounts().catch(() => {})` keeps the previous numbers so the button does not vanish — but
+  the price is a pulse that lies, with none of the dashed "not loaded" treatment the compliance lamps have.
+- ⚠️ **A missed Realtime event costs up to 5 minutes.** Realtime does not redeliver, and neither the channel's
+  reconnect nor returning to the tab refreshes the call counts — both paths call `syncNow`, which only checks
+  site statuses. The 5-minute timer is the only other route (and it stops entirely if the browser freezes the
+  tab).
+- **Three statuses left `closed = false` mean the call is parked, not active:** `156 מתקן מושבת (באישור מנהל)`,
+  `157 יש לחזור ללקוח עד התאריך שבהערות`, `155 טכנאי יצא מהאתר לא להשתמש`. A call parked on one of those pulses
+  for days and the stopwatch keeps running. By definition, not a bug — but it is the real answer to "when does
+  it stop".
+- **Two open calls at one site:** closing one does not stop the pulse. `open` is a count.
+- ⚠️ **An event with no `status` key would turn a closed call back into a pulsing one** (NULL → not in the
+  list → open). Not observed: all 130 rows carry `status`. But the feed does already contain one row of
+  another shape, carrying an `event` key and no `opened_at`.
+- **The current state is the last row by our own id, not by their `updated_at`.** A redelivered older event
+  after the closing one would reopen the call. Measured: in 69 of 69 tickets the highest id is also the newest
+  `updated_at`, so this is structural only.
+- **An unmonitored site never pulses at all** — the `monitored === false` branch returns early without the
+  class, though it does show the pill. The pulse was asked for so people would notice; at Sotefin sites it does
+  not happen.
+- `prefers-reduced-motion` on a VIP site: the static ring is overridden by `.is-vip`'s own `box-shadow`, so
+  only the border colour changes. It still clears with the class.
+
 ### Still open
 
 - **The password does not always survive an install.** It is far more dangerous now:
@@ -2310,6 +2429,9 @@ user)** may change a call's status and type.
   show a call that may be closed than to hide an open one. `closed` is guessed from the name only for a **new**
   row (סגור / נסגר / בוטל / הסתיים / טופל / הושלם) and is **never overwritten** by a reload; check it by eye.
   **13/10: 20 statuses and 11 types were loaded. 14/10: the owner marked ten statuses as closed.**
+  ⚠️ **And the list cannot be reloaded from the dashboard today.** Both links to the reload are hidden while
+  `SERVICE_CALLS_WRITE=false`, and the reload itself goes through WIZEAPI, which blocks access from outside
+  Israel. A status Wizenet add has to be inserted by hand in SQL — see the pulse section below.
 - **The Wizenet token never reaches the browser.** It is an Edge Function secret (`WIZENET_TOKEN`, plus
   `WIZENET_QRY_STATUS` / `WIZENET_QRY_TYPE`). ⚠️ Never in a file: the repo is public. The function checks
   `my_role()` against the database **before** calling Wizenet, and records the change **only after** Wizenet

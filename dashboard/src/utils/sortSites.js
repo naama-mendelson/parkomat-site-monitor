@@ -1,11 +1,12 @@
 // utils/sortSites.js — סדר הצגת אתרים לפי דחיפות (משותף לתצוגת הכרטיסים ולטבלה).
 //
 // ==========================================================
-// מה שדורש תשומת לב צף למעלה, בשלוש רמות:
+// מה שדורש תשומת לב צף למעלה, בארבע רמות:
 //   1. מצב:  תקלה → תחזוקה → אין תקשורת → יציאה → כניסה → מוכן
 //            ("בפעולה" מתפצל ליציאה/כניסה לפי כיוון הפעולה הנוכחית).
-//   2. דרגה: VIP → מורחב → בסיסי  (הכי חשוב קודם, בתוך אותו מצב).
-//   3. אחוז כשל: גבוה → נמוך       (הכי בעייתי קודם, בתוך אותה דרגה).
+//   2. קריאה פתוחה בוויזנט: יש → אין  (14/10/2026; בינארי, ראו למטה).
+//   3. דרגה: VIP → מורחב → בסיסי  (הכי חשוב קודם, בתוך אותו מצב).
+//   4. אחוז כשל: גבוה → נמוך       (הכי בעייתי קודם, בתוך אותה דרגה).
 //
 // שני הצדדים (כרטיס/שורת-טבלה) חולקים את אותם שמות שדות — status, tier,
 // lastOperation.entry_exit, failureRate — ולכן אותו קומפרטור משרת את שניהם.
@@ -36,10 +37,31 @@ function statusRank(site) {
 const TIER_RANK = { vip: 0, extended: 1, basic: 2 };
 const tierRank = (site) => TIER_RANK[site.tier] ?? TIER_RANK.basic;
 
-export function compareSitesByPriority(a, b) {
-  const byStatus = statusRank(a) - statusRank(b);
-  if (byStatus !== 0) return byStatus;
-  const byTier = tierRank(a) - tierRank(b);
-  if (byTier !== 0) return byTier;
-  return (b.failureRate ?? 0) - (a.failureRate ?? 0);   // אחוז כשל גבוה קודם
+// ============================================================
+// ⚠️ קריאה פתוחה בוויזנט — הדרגה השנייה, מיד אחרי המצב (14/10/2026)
+// ============================================================
+// בעלת המוצר: "אני רוצה שתוסיף המיון השני אחרי הראשון צריך להיות אם יש קריאה פתוחה".
+//
+// **בינארי: יש או אין.** אתר עם שלוש פתוחות אינו קודם לאתר עם אחת — בתוך "יש", הדרגה ואחוז
+// הכשל ממשיכים להחליט בדיוק כמו קודם. זה מה שנשאל, וגם מה שנכון: מספר הקריאות אינו מדד
+// לדחיפות, הוא לרוב מדד לכמה פעמים אותו אדם לחץ.
+//
+// ⚠️ **ולמה זו מפעל-קומפרטור ולא שדה על האתר.** מספר הקריאות אינו חלק מרשומת האתר — הוא חי
+// בהקשר נפרד (ServiceCallsContext) ומתרענן בקצב שלו. חיבור שלו לאובייקט האתר לפני המיון היה
+// יוצר אובייקטים חדשים בכל רינדור ושובר את React.memo של הכרטיסים: 78 כרטיסים שמצטיירים מחדש
+// בכל פעימה של הסטופר.
+// ⚠️ ובלי פונקציית חיפוש (null) מתקבל **בדיוק** הסדר הקודם, כולל שובר-השוויון של טבלת המפקח.
+export function makeCompareSites(openCallsOf) {
+  const callRank = (site) => (openCallsOf && openCallsOf(site) > 0 ? 0 : 1);
+  return function compareSites(a, b) {
+    const byStatus = statusRank(a) - statusRank(b);
+    if (byStatus !== 0) return byStatus;
+    const byCall = callRank(a) - callRank(b);
+    if (byCall !== 0) return byCall;
+    const byTier = tierRank(a) - tierRank(b);
+    if (byTier !== 0) return byTier;
+    return (b.failureRate ?? 0) - (a.failureRate ?? 0);   // אחוז כשל גבוה קודם
+  };
 }
+
+export const compareSitesByPriority = makeCompareSites(null);

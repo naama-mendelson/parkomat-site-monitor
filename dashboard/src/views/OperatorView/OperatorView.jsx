@@ -5,7 +5,8 @@ import SiteGrid from "../../components/SiteGrid/SiteGrid";
 import { LampAreasContext } from "../../components/Compliance/ComplianceLights";
 import { matchesSiteFilters } from "../../components/SiteFilterTile/SiteFilterTile";
 import { fuzzyMatch } from "../../utils/helpers";
-import { compareSitesByPriority } from "../../utils/sortSites";
+import { makeCompareSites } from "../../utils/sortSites";
+import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
 import "./OperatorView.css";
 
@@ -16,6 +17,7 @@ function OperatorView({
   // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
   // של הלוח היה נותן ערך חדש להקשר ומרנדר מחדש את כל המנורות בכל הכרטיסים.
   const lampAreas = useMemo(() => lampAreasFor(complianceView), [complianceView]);
+  const calls = useServiceCalls();
 
   // ============================================================
   // ⚠️ שגיאה **אינה** מוחקת מסך שיש בו נתונים
@@ -62,7 +64,13 @@ function OperatorView({
     return true;
   });
 
-  const ordered = [...filtered].sort(compareSitesByPriority);
+  // ⚠️ אתר עם קריאה פתוחה בוויזנט עולה מיד אחרי המצב (בעלת המוצר, 14/10/2026). בינארי.
+  // ⚠️ `calls` הוא null כשהתכונה כבויה או שהספירה עוד לא נטענה — ואז מתקבל בדיוק הסדר הקודם,
+  // ולא רשת שמתהפכת ברגע שהספירה מגיעה בלי שאיש הבין למה.
+  // ⚠️ **בלי useMemo כאן, בכוונה:** השורה הזו יושבת אחרי ה-return המוקדמים של טעינה/שגיאה (33, 37),
+  // והוק שם נקרא בתנאי. וממילא `filtered` הוא מערך חדש בכל רינדור, כך שאין מה לשמר.
+  const ordered = [...filtered].sort(
+    makeCompareSites(calls ? (s) => calls.bySite[s.id]?.open ?? 0 : null));
 
   return (
     <div className="operator-view">
