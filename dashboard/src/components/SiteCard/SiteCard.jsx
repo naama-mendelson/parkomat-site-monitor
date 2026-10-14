@@ -721,7 +721,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   if (expanded) {
     return (
       <div
-        className={`site-card is-expanded${stuck ? " is-stuck" : ""}`}
+        className={`site-card is-expanded${stuck ? " is-stuck" : ""}${openCalls > 0 ? " has-open-call" : ""}`}
         data-code={site.code}
         // ============================================================
         // ⚠️ הסגירה — היא פשוט לא הייתה כאן
@@ -849,7 +849,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ===== רגיל =====
   return (
     <div
-      className={`site-card density-${density}${stuck ? " is-stuck" : ""}`}
+      // ⚠️ קריאה פתוחה בוויזנט — הכרטיס כולו מהבהב (בעלת המוצר, 14/10/2026: "אני רוצה שישימו
+      // לב אליה"). הסימון לבדו קטן מדי בלוח של 78 כרטיסים.
+      className={`site-card density-${density}${stuck ? " is-stuck" : ""}${openCalls > 0 ? " has-open-call" : ""}`}
       data-code={site.code}
       style={{ borderInlineStartColor: colors.dot }}
       onClick={() => onToggle(site.code)}
