@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchServiceCalls, fetchRecentServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
 } from "../../services/dataSource";
-import { callerName, openedLabel, optionsFor, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
+import { callerName, openedLabel, optionsFor, callText, parkingDetail, callsSummary, israelLabel, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
 import "./ServiceCalls.css";
 
@@ -101,12 +101,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
     const label = field === "status" ? "סטטוס" : "סוג";
     // ⚠️ בלי ממסר אי אפשר לעדכן את ויזנט (ראו SERVICE_CALLS_WRITE) — מציגים את הערך ולא בורר שנתקע
     if (!SERVICE_CALLS_WRITE) {
-      return (
-        <span className="sc-field">
-          <span className="sc-field-cap">{label}</span>
-          <span className="sc-field-val">{curName || cur || "—"}</span>
-        </span>
-      );
+      const val = curName || cur;
+      return val ? <span className="sc-field-val" title={label}>{val}</span> : null;
     }
     return (
       <label className="sc-field">
@@ -131,9 +127,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
             <h2 className="tk-title">קריאות שירות</h2>
             <span className="tk-site">
               {/* ⚠️ ברשימת "היום" חלק מהקריאות סגורות — "N פתוחות" היה שקר על המספר שלידו */}
-              {siteName}{calls && <> · {calls.length
-                ? `${calls.length} קריאות · ${calls.filter((c) => c.open).length} פתוחות`
-                : "אין קריאות"}</>}
+              {siteName}{calls && <> · {calls.length ? callsSummary(calls) : "אין קריאות"}</>}
             </span>
           </div>
           <button type="button" className="tk-close" onClick={onClose} aria-label="סגירה">✕</button>
@@ -167,13 +161,14 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                 <li key={c.ticket} className={`sc-row${c.open === false ? " sc-row--closed" : ""}`}
                   data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
                   <div className="sc-top">
-                    <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
-                    {/* ⚠️ ברשימת "היום" חייבים לדעת אם היא עדיין פתוחה — בכרטיס זה מובן מאליו, כאן לא */}
                     {c.open != null && (
                       <span className={`sc-state${c.open ? " sc-state--open" : ""}`}>{c.open ? "פתוחה" : "סגורה"}</span>
                     )}
                     <span className="sc-when"><bdi>{openedLabel(c)}</bdi></span>
-                    {c.parking_code && <span className="sc-parking">חניה <bdi>{c.parking_code}</bdi></span>}
+                    <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
+                    {/* ⚠️ "חניה" רק כשהיא מוסיפה מידע (קוד מלא עם מתקן/כרטיס). מאז 08/10 מגיע קוד
+                        הפרויקט לבדו, והוא כבר כתוב כקוד האתר — "חניה 3452" ליד "אתר 3452" הוא רעש. */}
+                    {parkingDetail(c) && <span className="sc-parking">חניה <bdi>{parkingDetail(c)}</bdi></span>}
                   </div>
                   {/* ⚠️ קוד בלי אתר אצלנו — נאמר במפורש. אלה רבע מהקריאות ביום הראשון, והן לא
                       מופיעות בשום מקום אחר בדשבורד */}
@@ -184,12 +179,17 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                         : <span className="sc-site--none">קוד <bdi>{c.project || "—"}</bdi> — אין אתר כזה במערכת</span>}
                     </div>
                   )}
-                  <div className="sc-who">
-                    <b>{callerName(c)}</b>
-                    {c.phone && <a className="sc-phone" href={`tel:${String(c.phone).replace(/[^\d+]/g, "")}`}><bdi>{c.phone}</bdi></a>}
-                  </div>
-                  {c.complaint && <p className="sc-text">{c.complaint}</p>}
-                  {c.notes && <p className="sc-notes">{c.notes}</p>}
+                  {/* ⚠️ בלי שם ובלי טלפון אין שורה: "—" לבדו הוא רעש (בעלת המוצר, 14/10/2026) */}
+                  {(callerName(c) !== "—" || c.phone) && (
+                    <div className="sc-who">
+                      {callerName(c) !== "—" && <b>{callerName(c)}</b>}
+                      {c.phone && <a className="sc-phone" href={`tel:${String(c.phone).replace(/[^\d+]/g, "")}`}><bdi>{c.phone}</bdi></a>}
+                    </div>
+                  )}
+                  {/* ⚠️ טקסט מנוקה: ויזנט שולחים HTML, והטלפון חוזר בתוך ההערות */}
+                  {callText(c).map((line, i) => (
+                    <p key={i} className={i === 0 ? "sc-text" : "sc-notes"}>{line}</p>
+                  ))}
                   <div className="sc-fields">
                     {picker(c, "status")}
                     {picker(c, "type")}
@@ -197,7 +197,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                   </div>
                   {c.changed_by && (
                     <p className="sc-changed">שונה מהדשבורד ע״י {String(c.changed_by).replace(/@parkomat\.co\.il$/i, "")}
-                      {" · "}<bdi>{openedLabel({ opened_at: c.changed_at })}</bdi></p>
+                      {" · "}<bdi>{israelLabel(c.changed_at)}</bdi></p>
                   )}
                   {rowError?.ticket === c.ticket && <p className="tk-row-msg sc-row-msg" role="alert">{rowError.msg}</p>}
                 </li>
@@ -212,11 +212,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
               </button>
             </p>
           )}
-          {!noLists && !SERVICE_CALLS_WRITE && (
-            <p className="sc-foot tk-muted">
-              העדכון בוויזנט נעשה אצלם — הגישה ל-API שלהם מוגבלת לישראל.
-            </p>
-          )}
+
         </div>
       </div>
     </div>

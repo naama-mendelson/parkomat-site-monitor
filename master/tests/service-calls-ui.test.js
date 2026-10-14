@@ -25,11 +25,44 @@ test("countsBySite — לפי site_id, מחבר שורות, מתעלם משור�
   assert.deepEqual(countsBySite(null), {});
 });
 
+// ⚠️ ויזנט שולחים שעון ישראל עם סיומת Z (נמדד 14/10/2026: updated_at שנייה לפני ההגעה אלינו, ומסומן
+// שלוש שעות קדימה). המרה הציגה שעה שעוד לא הגיעה.
+test("⚠️ זמן מוויזנט מוצג כמו שנכתב; זמן שלנו מומר לשעון ישראל", async () => {
+  const { openedLabel, wizenetLabel, israelLabel } = await import(U);
+  assert.equal(wizenetLabel("2026-10-14T12:40:46Z"), "14/10 12:40", "בלי להוסיף שלוש שעות");
+  assert.equal(openedLabel({ opened_at: "2026-10-14T12:40:46Z", received_at: "2026-10-14T09:40:47.000Z" }), "14/10 12:40");
+  assert.equal(openedLabel({ received_at: "2026-10-14T09:40:47.000Z" }), "14/10 12:40", "בלי opened_at — שעת ההגעה שלנו, מומרת");
+  assert.equal(israelLabel("2026-10-14T09:40:47.000Z"), "14/10 12:40");
+  assert.equal(wizenetLabel("לא תאריך"), "לא תאריך");
+  assert.equal(wizenetLabel(null), "");
+});
+
+// ניקוי הטקסט שוויזנט שולחים: HTML, ישויות, והטלפון שחוזר בתוך ההערות
+test("cleanText / callText — בלי תגיות, בלי כפילות הטלפון, בלי 'ללא נושא'", async () => {
+  const { cleanText, callText, parkingDetail, callsSummary } = await import(U);
+  assert.equal(cleanText("0547721538<br />\r\n&nbsp;"), "0547721538");
+  assert.equal(cleanText("א<br>ב<br />ג"), "א · ב · ג");
+  assert.deepEqual(callText({ phone: "0547721538", complaint: "מבקשת עדכון", notes: "0547721538<br />\r\n&nbsp;" }),
+    ["מבקשת עדכון"], "ההערות היו רק הטלפון — יורדות");
+  assert.deepEqual(callText({ phone: "0532431800", complaint: "המתקן לא מגיב", notes: "0532431800<br />\r\nהחניה לא נפתחת" }),
+    ["המתקן לא מגיב", "החניה לא נפתחת"]);
+  assert.deepEqual(callText({ phone: "0547888542", complaint: "3461", notes: "0547888542~~~3461" }), [],
+    "קוד וטלפון בלבד — אין מה להציג");
+  assert.deepEqual(callText({ complaint: "ללא נושא", notes: "ישנה בעייה שחוזרת<br />\r\n0522327090", phone: "0522327090" }),
+    ["ישנה בעייה שחוזרת"]);
+  assert.equal(parkingDetail({ parking_code: "3452" }), "", "קוד הפרויקט לבדו — כבר כתוב כקוד האתר");
+  assert.equal(parkingDetail({ parking_code: "1226-1-02" }), "1226-1-02");
+  assert.equal(callsSummary([{ open: true }]), "קריאה אחת · פתוחה");
+  assert.equal(callsSummary([{ open: false }, { open: false }]), "2 קריאות · הכול סגור");
+  assert.equal(callsSummary([{ open: true }, { open: false }, { open: false }]), "3 קריאות · אחת פתוחה");
+});
+
 test("callerName / openedLabel — שם מלא או '—'; זמן בשעון ישראל; טקסט שאינו תאריך — כמו שהוא; בלי — שעת ההגעה", async () => {
   const { callerName, openedLabel } = await import(U);
   assert.equal(callerName({ first_name: " דנה ", last_name: "כהן" }), "דנה כהן");
   assert.equal(callerName({ first_name: "", last_name: null }), "—");
-  assert.equal(openedLabel({ opened_at: "2026-10-13T06:42:00.000Z" }), "13/10 09:42");     // UTC+3
+  // ⚠️ מאז 14/10/2026 זמן מוויזנט מוצג כמו שנכתב — הם שולחים שעון ישראל עם סיומת Z
+  assert.equal(openedLabel({ opened_at: "2026-10-13T06:42:00.000Z" }), "13/10 06:42");
   assert.equal(openedLabel({ opened_at: "13/10/2026 09:42" }), "13/10/2026 09:42");
   assert.equal(openedLabel({ received_at: "2026-01-15T10:05:00.000Z" }), "15/01 12:05");   // חורף, UTC+2
   assert.equal(openedLabel({}), "");
