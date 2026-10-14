@@ -163,6 +163,64 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.service_calls_open(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.service_calls_open(text) TO authenticated;
 
+-- ============================================================
+-- "קריאות היום" — כל הקריאות מה-24 שעות האחרונות (14/10/2026)
+-- ============================================================
+-- ⚠️ בעלת המוצר, אחרי שהתכונה עלתה: "לא רואים כלום". וזה היה נכון — מדדנו 22 קריאות ביום הראשון,
+-- מהן 18 כבר סגורות ו-3 לקודים שאין להם אתר אצלנו, ולכן הופיעה **גלולה אחת** על כרטיס אחד מ-78.
+-- הסימון על הכרטיס עונה על "מה פתוח עכשיו"; זה עונה על "מה קרה היום" — כולל סגורות, וכולל קודים
+-- שאין להם אתר, שאחרת אינם נראים בשום מקום (רבע מהקריאות ביום הראשון).
+-- ⚠️ jsonb יחיד, כמו service_calls_open: PostgREST חותך ב-1,000 שורות.
+-- ⚠️ הטווח מוגבל ל-168 שעות: זו פונקציה שרצה מהכותרת, ולא דלת לכל ההיסטוריה.
+CREATE OR REPLACE FUNCTION public.service_calls_recent(p_hours integer DEFAULT 24)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE v_h integer := LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168);
+BEGIN
+  PERFORM app.require_staff();
+  RETURN COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+             'ticket', c.ticket,
+             'opened_at', NULLIF(btrim(c.payload ->> 'opened_at'), ''),
+             'received_at', c.received_at,
+             'parking_code', NULLIF(btrim(c.payload ->> 'parking_code'), ''),
+             'project', c.project,
+             'site_code', c.site_code,
+             'site_name', (SELECT s.site_name FROM sites s WHERE s.id = c.site_id),
+             'first_name', c.payload ->> 'first_name',
+             'last_name', c.payload ->> 'last_name',
+             'phone', c.payload ->> 'phone',
+             'complaint', c.payload ->> 'customer_complaint',
+             'notes', c.payload ->> 'notes',
+             'open', c.open,
+             'status_id', c.status_id,
+             'status_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id),
+             'type_id', c.type_id,
+             'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = c.type_id),
+             'changed_by', c.changed_by,
+             'changed_at', c.changed_at)
+           -- החדשה למעלה: מי שפותח את הרשימה שואל "מה קרה עכשיו"
+           ORDER BY c.received_at DESC, c.ticket DESC)
+      FROM app.service_calls_current() c
+     WHERE c.received_at > to_char(now() - make_interval(hours => v_h), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ), '[]'::jsonb);
+END $fn$;
+REVOKE ALL ON FUNCTION public.service_calls_recent(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_recent(integer) TO authenticated;
+
+-- כמה קריאות היו ב-24 השעות — למספר על הכפתור בכותרת. ⚠️ אינה זורקת, כמו service_call_counts:
+-- היא נטענת עם הלוח, וכשל כאן לא יפיל אותו.
+CREATE OR REPLACE FUNCTION public.service_calls_recent_count(p_hours integer DEFAULT 24)
+RETURNS integer
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT count(*)::int FROM app.service_calls_current() c
+   WHERE (SELECT app.is_staff())
+     AND c.received_at > to_char(now() - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
+                                 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+$$;
+REVOKE ALL ON FUNCTION public.service_calls_recent_count(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_recent_count(integer) TO authenticated;
+
 -- הרשימות — לבוררים בחלון
 CREATE OR REPLACE FUNCTION public.wizenet_lookups_list()
 RETURNS jsonb

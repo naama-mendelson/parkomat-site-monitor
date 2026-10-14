@@ -9,7 +9,9 @@
 // ⚠️ אין כאן החלטה על הרשאה ולא על "פתוחה": מה פתוח — ב-SQL (לפי רשימת הסטטוסים של ויזנט); מי רשאי לשנות —
 // פונקציית ה-Edge מול המסד. שינוי נשלח לוויזנט קודם, ונרשם אצלנו רק אחרי שאישרו.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups } from "../../services/dataSource";
+import {
+  fetchServiceCalls, fetchRecentServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
+} from "../../services/dataSource";
 import { callerName, openedLabel, optionsFor, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
 import "./ServiceCalls.css";
@@ -21,8 +23,11 @@ import "./ServiceCalls.css";
  * @param {() => void} p.onClose
  * @param {() => void} [p.onChanged] — אחרי שינוי (ההורה מרענן את הסימון בכרטיס)
  */
-export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }) {
-  const siteName = site.site_name || site.code;
+export default function ServiceCallsDialog({ site = null, recent = false, rev = 0, onClose, onChanged }) {
+  // ⚠️ שני מצבים (14/10/2026): אתר אחד — הקריאות **הפתוחות** שלו; "קריאות היום" — כל מה שהגיע
+  // ב-24 השעות, כולל סגורות וכולל קודים שאין להם אתר אצלנו. בלי המצב השני, יום שלם של 22 קריאות
+  // הופיע כגלולה אחת על כרטיס אחד.
+  const siteName = recent ? "24 השעות האחרונות" : (site.site_name || site.code);
   const [calls, setCalls] = useState(null);
   const [lookups, setLookups] = useState({ status: [], type: [] });
   const [loadError, setLoadError] = useState("");
@@ -33,9 +38,9 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
   const overlayRef = useRef(null);
   const pressedOnOverlay = useRef(false);
 
-  const load = useCallback(() => fetchServiceCalls(site.code)
+  const load = useCallback(() => (recent ? fetchRecentServiceCalls(24) : fetchServiceCalls(site.code))
     .then((c) => { setCalls(c); setLoadError(""); })
-    .catch((e) => setLoadError(e.message)), [site.code]);
+    .catch((e) => setLoadError(e.message)), [recent, site?.code]);
 
   useEffect(() => { load(); }, [load, rev]);
   useEffect(() => { fetchServiceCallLookups().then(setLookups).catch(() => {}); }, []);
@@ -124,7 +129,10 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
           <div className="tk-head-text">
             <h2 className="tk-title">קריאות שירות</h2>
             <span className="tk-site">
-              {siteName}{calls && <> · {calls.length ? `${calls.length} פתוחות בוויזנט` : "אין קריאות פתוחות"}</>}
+              {/* ⚠️ ברשימת "היום" חלק מהקריאות סגורות — "N פתוחות" היה שקר על המספר שלידו */}
+              {siteName}{calls && <> · {recent
+                ? `${calls.length} קריאות · ${calls.filter((c) => c.open).length} פתוחות`
+                : (calls.length ? `${calls.length} פתוחות בוויזנט` : "אין קריאות פתוחות")}</>}
             </span>
           </div>
           <button type="button" className="tk-close" onClick={onClose} aria-label="סגירה">✕</button>
@@ -149,16 +157,32 @@ export default function ServiceCallsDialog({ site, rev = 0, onClose, onChanged }
 
         <div className="tk-body">
           {!calls && !loadError && <p className="tk-muted">טוען…</p>}
-          {calls && calls.length === 0 && <p className="tk-empty">✓ אין קריאות פתוחות</p>}
+          {calls && calls.length === 0 && (
+            <p className="tk-empty">{recent ? "לא הגיעו קריאות ב-24 השעות האחרונות" : "✓ אין קריאות פתוחות"}</p>
+          )}
           {calls?.length > 0 && (
-            <ul className="tk-list sc-list" aria-label="קריאות פתוחות">
+            <ul className="tk-list sc-list" aria-label={recent ? "קריאות מ-24 השעות האחרונות" : "קריאות פתוחות"}>
               {calls.map((c) => (
-                <li key={c.ticket} className="sc-row" data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
+                <li key={c.ticket} className={`sc-row${recent && !c.open ? " sc-row--closed" : ""}`}
+                  data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
                   <div className="sc-top">
                     <span className="sc-ticket">קריאה <bdi>{c.ticket}</bdi></span>
+                    {/* ⚠️ ברשימת "היום" חייבים לדעת אם היא עדיין פתוחה — בכרטיס זה מובן מאליו, כאן לא */}
+                    {recent && (
+                      <span className={`sc-state${c.open ? " sc-state--open" : ""}`}>{c.open ? "פתוחה" : "סגורה"}</span>
+                    )}
                     <span className="sc-when"><bdi>{openedLabel(c)}</bdi></span>
                     {c.parking_code && <span className="sc-parking">חניה <bdi>{c.parking_code}</bdi></span>}
                   </div>
+                  {/* ⚠️ קוד בלי אתר אצלנו — נאמר במפורש. אלה רבע מהקריאות ביום הראשון, והן לא
+                      מופיעות בשום מקום אחר בדשבורד */}
+                  {recent && (
+                    <div className="sc-site">
+                      {c.site_code
+                        ? <>אתר <bdi>{c.site_code}</bdi> · {c.site_name}</>
+                        : <span className="sc-site--none">קוד <bdi>{c.project || "—"}</bdi> — אין אתר כזה במערכת</span>}
+                    </div>
+                  )}
                   <div className="sc-who">
                     <b>{callerName(c)}</b>
                     {c.phone && <a className="sc-phone" href={`tel:${String(c.phone).replace(/[^\d+]/g, "")}`}><bdi>{c.phone}</bdi></a>}

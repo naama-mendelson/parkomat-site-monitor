@@ -42,6 +42,8 @@ function Header({
   onAdmin,
   complianceView,
   onComplianceViewChange,
+  callsToday = null,          // כמה קריאות ויזנט הגיעו ב-24 השעות; null = התכונה כבויה
+  onOpenCalls,
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
   // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
@@ -329,6 +331,15 @@ function Header({
                   (בעלת המוצר, 08/10/2026) */}
               {onComplianceViewChange && (
                 <ComplianceFilters sites={sites} value={complianceView} onChange={onComplianceViewChange} />
+              )}
+              {/* ⚠️ "קריאות היום" (בעלת המוצר, 14/10/2026, אחרי "לא רואים כלום"): הסימון על הכרטיס
+                  מראה רק קריאות **פתוחות** של אתר מוכר — 1 מתוך 22 ביום הראשון. כאן הכול. */}
+              {callsToday != null && (
+                <button type="button" className="filter-btn sc-head-btn" onClick={onOpenCalls}
+                  aria-label={`קריאות שירות מוויזנט ב-24 השעות האחרונות — ${callsToday}`}>
+                  <span className="filter-count">{callsToday}</span>
+                  <span className="filter-label">קריאות היום</span>
+                </button>
               )}
             </>
           }

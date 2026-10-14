@@ -12,7 +12,7 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts, fetchRecentServiceCallCount } from "./services/dataSource";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
 import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
@@ -70,6 +70,7 @@ function App() {
   const [taskCounts, setTaskCounts] = useState(null);
   // קריאות ויזנט (13/10/2026) — המספרים לכרטיסים, החלון הפתוח, ומונה לטעינה מחדש באירוע
   const [callCounts, setCallCounts] = useState(null);
+  const [callsToday, setCallsToday] = useState(0);   // כמה קריאות הגיעו ב-24 השעות — למספר שבכותרת
   const [callsOpen, setCallsOpen] = useState(null);
   const [callsRev, setCallsRev] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(null);
@@ -203,9 +204,12 @@ function App() {
     : null;
   // ⚠️ קריאות ויזנט — כמו המשימות: בעלייה, כל 5 דקות, ומיד בכל אירוע. כבוי (VITE_SERVICE_CALLS) — לא נטען
   // ולא מסומן. כשל משאיר את המספרים הקודמים.
+  // ⚠️ גם המספר ל"קריאות היום" (14/10/2026): הסימון על הכרטיס מראה רק פתוחות של אתר מוכר, וביום
+  // הראשון זה היה 1 מתוך 22 — "לא רואים כלום". הכפתור בכותרת הוא מה שקרה היום.
   const loadCallCounts = useCallback(() => {
     if (!useDirect || !SERVICE_CALLS_ENABLED) return;
     fetchServiceCallCounts().then(setCallCounts).catch(() => {});
+    fetchRecentServiceCallCount(24).then(setCallsToday).catch(() => {});
   }, []);
   useEffect(() => {
     loadCallCounts();
@@ -513,6 +517,8 @@ function App() {
         onSearchChange={setSearchQuery}
         complianceView={complianceView}
         onComplianceViewChange={setComplianceView}
+        callsToday={useDirect && SERVICE_CALLS_ENABLED ? callsToday : null}
+        onOpenCalls={() => setCallsOpen({ recent: true })}
         darkMode={darkMode}
         onToggleDarkMode={toggleTheme}
         onAdmin={() => setAdminOpen(true)}

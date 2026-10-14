@@ -169,6 +169,39 @@ test("S6 · קריאה שהגיעה מוויזנט מפרסמת אירוע (גם
     [["service_calls", s.code, "received"], ["service_calls", null, "received"], ["service_calls", s.code, "status"]]);
 });
 
+// ⚠️ "קריאות היום" (14/10/2026): הסימון על הכרטיס מראה רק פתוחות ורק לאתר שמוכר לנו. ביום הראשון
+// זה היה 1 מתוך 22 — 18 כבר סגורות ו-3 לקודים שאין להם אתר. הרשימה הזו היא מה שהיה.
+test("S8 · service_calls_recent — גם סגורות, וגם קוד שאין לו אתר; החדשה ראשונה", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "9", name: "נסגרה" }, { id: "1", name: "בטיפול" }]);
+  await sup(`UPDATE wizenet_lookups SET closed = true WHERE kind = 'status' AND id = '9'`);
+  await call({ ticket_number: "R-1", parking_code: `${s.code}-1-02`, status: "1", customer_complaint: "פתוחה אצלנו" });
+  await call({ ticket_number: "R-2", parking_code: `${s.code}-1-02`, status: "9", customer_complaint: "נסגרה" });
+  await call({ ticket_number: "R-3", parking_code: "9999", status: "1", customer_complaint: "קוד בלי אתר" });
+
+  const j = await one(OPR, `SELECT public.service_calls_recent(24) AS j`);
+  const rows = j.j.filter((x) => String(x.ticket).startsWith("R-"));
+  assert.equal(rows.length, 3, "כל השלוש — פתוחה, סגורה, ובלי אתר");
+  assert.deepEqual(rows.map((x) => x.ticket), ["R-3", "R-2", "R-1"], "החדשה למעלה");
+  const byT = Object.fromEntries(rows.map((x) => [x.ticket, x]));
+  assert.deepEqual([byT["R-1"].open, byT["R-2"].open, byT["R-3"].open], [true, false, true]);
+  assert.equal(byT["R-2"].status_name, "נסגרה", "שם הסטטוס ולא מספר");
+  assert.deepEqual([byT["R-1"].site_code, byT["R-1"].site_name], [s.code, s.code]);
+  assert.deepEqual([byT["R-3"].site_code, byT["R-3"].project], [null, "9999"], "קוד בלי אתר — נשאר ברשימה, בלי אתר");
+  // ⚠️ הסימון על הכרטיס לא השתנה: שם נספרות רק פתוחות של אתר מוכר (שאר האתרים — מבדיקות קודמות)
+  assert.equal((await counts(OPR)).find((c) => c.site_id === s.id)?.open, 1);
+
+  const n = await one(OPR, `SELECT public.service_calls_recent_count(24) AS n`);
+  assert.equal(n.n, j.j.length, "המספר על הכפתור זהה לאורך הרשימה");
+  const old = await one(OPR, `SELECT public.service_calls_recent(1) AS j`);
+  assert.ok(old.j.length >= 3, "טווח קצר עדיין כולל את מה שנכנס עכשיו");
+  // טווח חורג — נחתך ל-168 שעות ולא נכשל, ואפס/שלילי אינם מרוקנים את הרשימה
+  for (const h2 of [0, -5, 100000]) {
+    assert.ok((await one(OPR, `SELECT public.service_calls_recent($1) AS j`, [h2])).j.length >= 3, `p_hours=${h2}`);
+  }
+  await fails(rpc(AGT, `SELECT public.service_calls_recent(24)`), "42501");
+});
+
 test("S7 · הקובץ אידמפוטנטי — החלה שנייה לא נכשלת ולא מכפילה טריגר", { skip }, async () => {
   const fs = require("node:fs"), path = require("node:path");
   const sql = fs.readFileSync(path.join(__dirname, "..", "db", "service-calls-board.postgres.sql"), "utf8");

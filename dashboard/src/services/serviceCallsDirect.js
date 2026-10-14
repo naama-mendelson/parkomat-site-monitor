@@ -25,6 +25,18 @@ export async function fetchServiceCalls(siteCode) {
   return (await rpc("service_calls_open", { p_site_code: siteCode })) ?? [];
 }
 
+// ⚠️ "קריאות היום" (14/10/2026): הסימון על הכרטיס מראה רק **פתוחות** ורק לאתר שמוכר לנו, וביום
+// הראשון זה היה 1 מתוך 22. כאן הכול — כולל סגורות וכולל קודים שאין להם אתר, שאחרת אינם נראים בשום מקום.
+/** כל הקריאות מ-N השעות האחרונות, החדשה ראשונה */
+export async function fetchRecentServiceCalls(hours = 24) {
+  return (await rpc("service_calls_recent", { p_hours: hours })) ?? [];
+}
+
+/** כמה קריאות היו ב-N השעות — למספר על הכפתור בכותרת */
+export async function fetchRecentServiceCallCount(hours = 24) {
+  return Number(await rpc("service_calls_recent_count", { p_hours: hours })) || 0;
+}
+
 /** רשימות הסטטוסים והסוגים של ויזנט: { status: [{id,name,closed}], type: [{id,name}] } */
 export async function fetchServiceCallLookups() {
   return (await rpc("wizenet_lookups_list", {})) ?? { status: [], type: [] };
