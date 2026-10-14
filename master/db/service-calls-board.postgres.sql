@@ -75,26 +75,8 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 REVOKE ALL ON FUNCTION app.service_call_project(jsonb) FROM PUBLIC;
 
--- ============================================================
--- ⚠️ שעון ויזנט → זמן אמיתי
--- ============================================================
--- ויזנט שולחים **שעון ישראל** עם סיומת Z (נמדד 14/10/2026: updated_at הוא שנייה־שתיים לפני שעת
--- ההגעה שלנו ומסומן שלוש שעות קדימה; 87 מתוך 87 הודעות של הפיד). המחרוזת שלהם אינה UTC, ולכן
--- אי אפשר להמיר אותה ב-::timestamptz — זה היה מוסיף שלוש שעות על שלוש.
--- ⚠️ ולא מחסירים 3 שעות קבועות: ישראל היא UTC+3 בקיץ ו-UTC+2 בחורף, ומעבר השעון קרוב. כאן
--- הטקסט נקרא כשעון קיר מקומי ומומר דרך אזור הזמן — נכון בשני צדי המעבר.
-CREATE OR REPLACE FUNCTION app.wizenet_ts(p text)
-RETURNS timestamptz
--- ⚠️ STABLE ולא IMMUTABLE: ההמרה תלויה בבסיס הנתונים של אזורי הזמן, שיכול להתעדכן.
-LANGUAGE sql STABLE AS $$
-  SELECT CASE WHEN p ~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}'
-    -- ⚠️ המרה ישירה מטקסט ל-timestamp **בלי אזור**, ולא to_timestamp: הוא מחזיר timestamptz
-    -- ומפרש את הטקסט באזור של הסשן, ואז AT TIME ZONE הולך לכיוון ההפוך ומוסיף שלוש שעות
-    -- במקום להחסיר (נתפס בבדיקה S9).
-    THEN (replace(substring(btrim(p), 1, 19), 'T', ' '))::timestamp AT TIME ZONE 'Asia/Jerusalem'
-  END
-$$;
-REVOKE ALL ON FUNCTION app.wizenet_ts(text) FROM PUBLIC;
+-- ⚠️ `app.wizenet_ts` — ההמרה משעון ויזנט (שעון ישראל עם סיומת Z מטעה) לזמן אמיתי — מוגדרת
+-- ב-service-calls.postgres.sql, שנטען לפני הקובץ הזה. הטריגר של opened_il שם זקוק לה.
 
 -- ============================================================
 -- המצב הנוכחי של כל קריאה

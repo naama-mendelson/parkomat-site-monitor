@@ -144,3 +144,75 @@ GRANT USAGE, SELECT ON SEQUENCE service_calls_id_seq TO authenticated;
 -- ⚠️ anon אינו מקבל דבר, כמו בכל הפרויקט. הדלת החיצונית אינה נפתחת
 -- למפתח הפרסום — היא נפתחת לזהות אחת ויחידה.
 REVOKE ALL ON service_calls FROM anon;
+
+-- ============================================================
+-- ⚠️ שעון ויזנט → זמן אמיתי
+-- ============================================================
+-- ויזנט שולחים **שעון ישראל** עם סיומת Z (נמדד 14/10/2026: updated_at הוא שנייה־שתיים לפני שעת
+-- ההגעה שלנו ומסומן שלוש שעות קדימה; 87 מתוך 87 הודעות של הפיד). המחרוזת שלהם אינה UTC, ולכן
+-- אי אפשר להמיר אותה ב-::timestamptz — זה היה מוסיף שלוש שעות על שלוש.
+-- ⚠️ ולא מחסירים 3 שעות קבועות: ישראל היא UTC+3 בקיץ ו-UTC+2 בחורף, ומעבר השעון קרוב. כאן
+-- הטקסט נקרא כשעון קיר מקומי ומומר דרך אזור הזמן — נכון בשני צדי המעבר.
+-- ⚠️ מוגדרת **כאן** ולא ב-service-calls-board: הטריגר שלמטה והמילוי החד־פעמי קוראים לה, וקובץ
+-- הלוח נטען אחרי הקובץ הזה. הגדרה שם היתה מפילה עלייה של מסד חדש (שחזור, מסד בדיקות).
+CREATE OR REPLACE FUNCTION app.wizenet_ts(p text)
+RETURNS timestamptz
+-- ⚠️ STABLE ולא IMMUTABLE: ההמרה תלויה בבסיס הנתונים של אזורי הזמן, שיכול להתעדכן.
+LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN p ~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}'
+    -- ⚠️ המרה ישירה מטקסט ל-timestamp **בלי אזור**, ולא to_timestamp: הוא מחזיר timestamptz
+    -- ומפרש את הטקסט באזור של הסשן, ואז AT TIME ZONE הולך לכיוון ההפוך ומוסיף שלוש שעות
+    -- במקום להחסיר (נתפס בבדיקה S9).
+    THEN (replace(substring(btrim(p), 1, 19), 'T', ' '))::timestamp AT TIME ZONE 'Asia/Jerusalem'
+  END
+$$;
+REVOKE ALL ON FUNCTION app.wizenet_ts(text) FROM PUBLIC;
+
+-- ============================================================
+-- שתי עמודות קריאות־לעין: מתי הפנייה נפתחה, ומתי היא הגיעה אלינו
+-- ============================================================
+-- בעלת המוצר (14/10/2026), מול הטבלה במסך של Supabase: "תעשה לי בטבלה עמודה ששם כתוב באיזה
+-- שעה הגיעה הפניה". `received_at` הוא טקסט UTC ("2026-10-14T09:56:48.800Z") — נכון, ובלתי קריא:
+-- גם אינו שעון ישראל וגם אינו מופרד ליום ולשעה.
+--
+-- opened_il   — השעה שבה הפנייה **נפתחה אצל ויזנט**, בשעון ישראל. זה מה שהדייר חווה.
+-- received_il — השעה שבה ההודעה הגיעה **אלינו**, בשעון ישראל.
+--
+-- ⚠️ **שתיים ולא אחת, וזו הנקודה:** הטבלה מחזיקה שורה לכל **אירוע** — גם שינוי סטטוס של קריאה
+-- מלפני שבוע הוא שורה חדשה, ואז "מתי הגיעה" פירושו שני דברים שונים לגמרי. ההפרש ביניהן הוא
+-- ההשהיה, וזו בדיוק השאלה שנשאלה באותו יום — "למה זה מגיע רק עכשיו?". נמדד בייצור: חציון 2.8
+-- שניות מפתיחת הקריאה ועד שהיא כאן.
+--
+-- ⚠️ למה טריגר ולא GENERATED: עמודה מחושבת חייבת ביטוי IMMUTABLE, והמרת אזור זמן היא STABLE.
+-- ⚠️ ו-SECURITY DEFINER אינו נוי: המכניס היחיד לטבלה הזו הוא זהות הקליטה, ו-`app.wizenet_ts`
+-- נשללה מ-PUBLIC — טריגר רגיל היה רץ בהרשאות של המכניס ונופל על "permission denied", כלומר
+-- **כל קריאה חדשה היתה נדחית**. אותה סיבה ש-`app.service_calls_event` הוא DEFINER. נבדק ב-S10.
+ALTER TABLE service_calls ADD COLUMN IF NOT EXISTS opened_il   text;
+ALTER TABLE service_calls ADD COLUMN IF NOT EXISTS received_il text;
+
+CREATE OR REPLACE FUNCTION app.service_calls_local() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+BEGIN
+  -- ⚠️ opened_at של ויזנט הוא כבר שעון ישראל, ו-wizenet_ts קוראת אותו כשעון קיר; ה-AT TIME ZONE
+  -- כאן רק מחזיר אותו לאותו שעון. הודעה בלי opened_at משאירה NULL — ולא את השעה שלנו, שהיתה
+  -- נראית כמו שעת פתיחה אמיתית.
+  NEW.opened_il := to_char(app.wizenet_ts(NEW.payload ->> 'opened_at') AT TIME ZONE 'Asia/Jerusalem',
+                           'DD/MM/YYYY HH24:MI:SS');
+  -- received_at הוא UTC אמיתי — כאן כן ממירים.
+  NEW.received_il := to_char(NEW.received_at::timestamptz AT TIME ZONE 'Asia/Jerusalem',
+                             'DD/MM/YYYY HH24:MI:SS');
+  RETURN NEW;
+END $fn$;
+REVOKE ALL ON FUNCTION app.service_calls_local() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS service_calls_local ON service_calls;
+CREATE TRIGGER service_calls_local BEFORE INSERT ON service_calls
+  FOR EACH ROW EXECUTE FUNCTION app.service_calls_local();
+
+-- מילוי השורות שכבר קיימות. אידמפוטנטי: רק מה שחסר.
+-- ⚠️ התנאי הוא received_il ולא opened_il: השנייה היא NULL לגיטימית בהודעה בלי opened_at, ותנאי
+-- עליה היה מרענן את אותן שורות בכל החלה.
+UPDATE service_calls SET
+  opened_il   = to_char(app.wizenet_ts(payload ->> 'opened_at') AT TIME ZONE 'Asia/Jerusalem', 'DD/MM/YYYY HH24:MI:SS'),
+  received_il = to_char(received_at::timestamptz AT TIME ZONE 'Asia/Jerusalem', 'DD/MM/YYYY HH24:MI:SS')
+ WHERE received_il IS NULL;

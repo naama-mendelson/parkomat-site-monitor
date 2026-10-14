@@ -246,6 +246,57 @@ test("S9 · שעון ויזנט → זמן אמיתי, ו-oldest_open לסטופ
   assert.ok(j2.find((x) => x.ticket === "T-none").opened_utc, "נופל לשעת ההגעה");
 });
 
+test("S10 · שתי העמודות הקריאות: שעת הפתיחה כמו שוויזנט כתבו, ושעת ההגעה בשעון ישראל — בשני צדי מעבר השעון", { skip }, async () => {
+  const s = await newSite();
+  // ⚠️ מכניס **בזהות הקולט**, כמו בייצור. טריגר שאינו SECURITY DEFINER היה נופל כאן על
+  // permission denied ל-app.wizenet_ts (נשללה מ-PUBLIC), כלומר כל קריאה חדשה היתה נדחית.
+  const put = async (p, receivedAt) => {
+    const raw = JSON.stringify(p);
+    await h.as("authenticated", INT, (tx) => tx.query(
+      `INSERT INTO service_calls (raw, payload, source, received_at) VALUES ($1, $3::jsonb, 'wizenet', $2)`,
+      [raw, receivedAt, raw]));
+    return (await sup(`SELECT opened_il, received_il FROM service_calls WHERE payload->>'ticket_number' = $1`,
+      [p.ticket_number]))[0];
+  };
+
+  // קיץ (+3): ההודעה הגיעה ב-09:40:49 UTC, כלומר 12:40:49 בישראל — שלוש שניות אחרי הפתיחה
+  let r = await put({ ticket_number: "S10-a", parking_code: s.code, status: "1", opened_at: "2026-10-14T12:40:46Z" },
+    "2026-10-14T09:40:49.000Z");
+  assert.equal(r.opened_il, "14/10/2026 12:40:46", "שעת הפתיחה — כמו שוויזנט כתבו, בלי שום הזזה");
+  assert.equal(r.received_il, "14/10/2026 12:40:49", "שעת ההגעה — UTC מומר ל-+3");
+
+  // ⚠️ חורף (+2): אותה שעת UTC היא 11:40 בישראל ולא 12:40. הזזה קבועה של 3 שעות טועה כאן בשעה,
+  // ובמקביל שעת הפתיחה **אינה** זזה — שתי העמודות נבדקות יחד בדיוק כדי להבדיל בין השתיים.
+  r = await put({ ticket_number: "S10-b", parking_code: s.code, status: "1", opened_at: "2026-02-01T12:40:46Z" },
+    "2026-02-01T09:40:49.000Z");
+  assert.equal(r.opened_il, "01/02/2026 12:40:46");
+  assert.equal(r.received_il, "01/02/2026 11:40:49", "בחורף ישראל היא +2");
+
+  // הודעה בלי opened_at — שעת פתיחה ריקה, ולא שעת ההגעה במסווה
+  r = await put({ ticket_number: "S10-c", parking_code: s.code, status: "1" }, "2026-10-14T09:00:00.000Z");
+  assert.equal(r.opened_il, null);
+  assert.equal(r.received_il, "14/10/2026 12:00:00");
+
+  // המילוי החד־פעמי: שורה שהעמודות שלה ריקות (כמו כל 90 השורות שקדמו לשינוי) מתמלאת בהחלה,
+  // ושורה שכבר מולאה אינה נכתבת שוב — אחרת כל החלה היתה כותבת מחדש את הטבלה כולה.
+  await sup(`UPDATE service_calls SET opened_il = NULL, received_il = NULL WHERE payload->>'ticket_number' = 'S10-a'`);
+  await sup(`UPDATE service_calls SET received_il = 'שומר' WHERE payload->>'ticket_number' IN ('S10-b','S10-c')`);
+  const fs = require("node:fs"), path = require("node:path");
+  const sql = fs.readFileSync(path.join(__dirname, "..", "db", "service-calls.postgres.sql"), "utf8");
+  await h.pg.exec(sql);
+  await h.pg.exec(sql);                      // ⚠️ אידמפוטנטי — הקובץ הזה לא נבדק בהחלה כפולה עד כה
+  const after = await sup(`SELECT opened_il, received_il FROM service_calls
+                            WHERE payload->>'ticket_number' IN ('S10-a','S10-b','S10-c')
+                            ORDER BY payload->>'ticket_number'`);
+  assert.equal(after[0].opened_il, "14/10/2026 12:40:46", "התמלאה בהחלה");
+  assert.equal(after[0].received_il, "14/10/2026 12:40:49");
+  assert.equal(after[1].received_il, "שומר", "שורה שמולאה אינה נכתבת שוב");
+  // ⚠️ וגם שורה שאין לה opened_at: התנאי הוא received_il דווקא כדי שהיא לא תיכתב מחדש בכל החלה
+  assert.equal(after[2].received_il, "שומר", "גם שורה בלי שעת פתיחה אינה נכתבת שוב");
+  // ⚠️ והטריגר הוא BEFORE INSERT בלבד: שתי ה-UPDATE למעלה שרדו, ולא "תוקנו" חזרה.
+  assert.equal((await sup(`SELECT count(*)::int n FROM pg_trigger WHERE tgname = 'service_calls_local'`))[0].n, 1);
+});
+
 test("S7 · הקובץ אידמפוטנטי — החלה שנייה לא נכשלת ולא מכפילה טריגר", { skip }, async () => {
   const fs = require("node:fs"), path = require("node:path");
   const sql = fs.readFileSync(path.join(__dirname, "..", "db", "service-calls-board.postgres.sql"), "utf8");

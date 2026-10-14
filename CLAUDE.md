@@ -2283,7 +2283,7 @@ the same message: *"שהעמוד מנהל בקרה שהאתרים ימוינו �
 (most sites are at 0%) fall back to the old urgency order (`compareSitesByPriority`: status → tier).
 Clicking a header still sorts by that column.
 
-## Wizenet service calls on the site card (built 13/10/2026, OFF until the lists are loaded)
+## Wizenet service calls on the site card (built 13/10/2026, live since 14/10/2026)
 
 The operations email (24/09/2026): the call centre sees a site in fault, but maybe no tenant opened a call in Wizenet, so
 show the calls next to the system data. The owner chose **a marker on the site card**, and **anyone (any staff
@@ -2291,44 +2291,109 @@ user)** may change a call's status and type.
 
 | Piece | Where |
 |---|---|
-| Intake (already live since 05/10) | `supabase/functions/service-calls` → `service_calls` (insert-only identity). One row **per event**, not per call |
+| Intake (live since 05/10) | `supabase/functions/service-calls` → `service_calls` (insert-only identity). One row **per event**, not per call |
+| The table, the clock converter, the readable columns | `master/db/service-calls.postgres.sql` — `app.wizenet_ts`, `opened_il` / `received_il` and their trigger |
 | Board SQL | `master/db/service-calls-board.postgres.sql` (loaded after `tasks`: it needs `require_staff`, audit, events) |
 | Relay to Wizenet | `supabase/functions/wizenet` — `handler.ts` (all logic, tested in Node) + `index.ts` (Deno wiring) |
 | Dashboard | `services/serviceCallsDirect.js`, `utils/serviceCalls.js`, `components/ServiceCalls/`, `SiteCard` (`callsPill` / `callsButton`), `App` (counts + event) |
-| Tests | `service-calls-board.test.js` (7, 16/16 SQL mutations), `wizenet-fn.test.js` (9), `service-calls-ui.test.js` (5); browser `e2e/probe-calls.mjs` (25) |
+| Tests | `service-calls-board.test.js` (10 tests, 16/16 + 8/8 SQL mutations), `wizenet-fn.test.js` (9), `service-calls-ui.test.js`; browser `e2e/probe-calls.mjs` (30) + `probe-calls-today.mjs` (20) |
 
 - **A call's state is its last row** (by `ticket_number`), and above it our last change per field **if newer**
   (`service_call_changes`). We may not get an update back from Wizenet for a change made through their API; that
   is the open question to Wizenet.
 - **Site = project code:** `project_code` if they send one (operations suggested switching to it), else the first part of
   `parking_code` (`1226-1-02` → `1226`) matched to `sites.code`. A call with no matching site is counted nowhere.
+  ⚠️ **11 project codes that arrive have no site anywhere in our data** — not in `sites`, not on the traffic-light
+  board, not in FixFlow. Their calls are therefore invisible. Registering them as "ללא בקר מחובר" sites is the fix,
+  and the code alone is enough to register one.
 - **Open = its status is not marked `closed` in `wizenet_lookups`.** An unknown status counts as open: better to
   show a call that may be closed than to hide an open one. `closed` is guessed from the name only for a **new**
   row (סגור / נסגר / בוטל / הסתיים / טופל / הושלם) and is **never overwritten** by a reload; check it by eye.
+  **13/10: 20 statuses and 11 types were loaded. 14/10: the owner marked ten statuses as closed.**
 - **The Wizenet token never reaches the browser.** It is an Edge Function secret (`WIZENET_TOKEN`, plus
   `WIZENET_QRY_STATUS` / `WIZENET_QRY_TYPE`). ⚠️ Never in a file: the repo is public. The function checks
   `my_role()` against the database **before** calling Wizenet, and records the change **only after** Wizenet
   answered `update successfully` (a 200 with an error in the body is an error).
-- **The card marker shows only when there is an open call** (unlike "משימות", which is always there because tasks
-  are added from it). Same look as the tasks pill, in `.card-row-end`.
-- ⚠️ **OFF by default:** `VITE_SERVICE_CALLS` (like `PM_ENABLED`). Without the status list there is no way to know
-  which calls are closed, and the pickers would show numbers. `service-calls-ui.test.js` pins the default.
-- **To turn it on, in order:**
-  1. `apply-sql --apply` (the new file).
-  2. `supabase secrets set WIZENET_TOKEN=… WIZENET_QRY_STATUS=… WIZENET_QRY_TYPE=…` and
-     `supabase functions deploy wizenet` (the CLI is not installed on the dev machine yet).
-  3. Load the lists once: the link "טעינת הרשימות מוויזנט" in the calls dialog (any staff user; afterwards a quiet
-     "רענון…" link at the bottom). Then check the names and the `closed` guesses.
-  4. Tell Wizenet to switch on the push (their mechanism is ready and waiting for us).
-  5. `VITE_SERVICE_CALLS=true` in Pages.
-- ⚠️ **13/10/2026: steps 1–2 are done, and the WIZEAPI server answers only from Israel.** The three secrets are set and
-  `wizenet` is deployed (the CLI is now logged in on the dev machine; deploy with `npx supabase functions deploy wizenet
-  --project-ref xvfsikwaaaohnmldjbtv --use-api`). The token works: from the dev PC the status list came back at once.
-  From the function, every call timed out. Measured with check-host.net: `parkomat.wizenet.co.il` (37.19.124.254, Triple C,
-  Tel Aviv) accepts TCP 443 from two Israeli nodes and from **none** in DE/NL/FR/UK/US, twice; same DNS answer everywhere;
-  `www.wizenet.co.il`, `www.parkomat.co.il` and `www.gov.il` are reachable from the same foreign nodes. Supabase runs in
-  Germany, so steps 3 and the status/type change wait for Wizenet to open WIZEAPI to foreign access (asked 13/10). The
-  browser cannot be the relay either: no CORS headers, and the token would leak. Their push **to** us is unaffected.
-- **Found on that deploy:** Deno's timeout message is `"Signal timed out."`, so `/timeout|abort/` missed it and the user
-  saw "הפעולה נכשלה". The handler now checks the error name first, and says whether Wizenet or Supabase did not answer
+
+### ⚠️ Wizenet send **Israel local time** with a `Z` suffix — and a whole screen read three hours into the future
+
+This is the one trap in the feature, and it was visible to the owner before it was understood: *"הזמן שמוצג לא הגיוני,
+עדיין לא הגיע השעה הזו!!!"*. 74 calls were displayed at a time that had not yet arrived.
+
+- **Measured, not inferred (14/10/2026):** of the 87 feed messages, **87** had `updated_at` exactly +3.00 h against our
+  own receipt — i.e. a second or two *before* we got it, stamped three hours ahead. (The only two outliers were rows
+  hand-sent on 08/10 during testing.) So their `Z` is not UTC; it is a wall clock.
+- **`app.wizenet_ts(text)`** is the single place that converts: it reads the text as a *local* wall clock and converts
+  through `AT TIME ZONE 'Asia/Jerusalem'`. ⚠️ **Not a fixed −3 h:** Israel is +3 in summer and +2 in winter, and the
+  changeover is close. ⚠️ And **not `to_timestamp`**, which returns `timestamptz` and sends `AT TIME ZONE` the other
+  way, *adding* three hours instead of subtracting (caught by test S9, after it had happened).
+- **`STABLE`, not `IMMUTABLE`** — the conversion depends on the time-zone database, which can be updated.
+- ⚠️ **It is defined in `service-calls.postgres.sql`, not in the board file**, because the readable-column trigger and
+  its backfill call it and the board file loads *after*. Defining it there would have failed the boot of any fresh
+  database — a restore, or the test database — and passed every existing test.
+- **Two readable columns on the table itself** (the owner, looking at the Supabase table editor: *"תעשה לי בטבלה
+  עמודה ששם כתוב באיזה שעה הגיעה הפניה"*). `received_at` is correct and unreadable: UTC, one run-on string.
+  - `opened_il` — when the call was **opened at Wizenet**, Israel time. What the tenant experienced.
+  - `received_il` — when the message reached **us**, Israel time.
+  - ⚠️ **Two and not one, and that is the point:** the table holds one row per *event*, so a status change on a
+    week-old call is a new row, and "when did it arrive" then means two different things. The gap between the two
+    columns is the latency, readable by eye — which is exactly the question that was asked the same day, *"למה זה
+    מגיע רק עכשיו?"*.
+  - ⚠️ **A trigger, not `GENERATED`:** a generated column needs an `IMMUTABLE` expression and a time-zone conversion
+    is `STABLE`. That fails on apply, not in tests.
+  - ⚠️ **And `SECURITY DEFINER` is not decoration:** the only writer to this table is the intake identity, and
+    `app.wizenet_ts` is revoked from `PUBLIC` — a plain trigger runs with the inserter's rights and dies on
+    *permission denied*, i.e. **every new call would be rejected**. The mutation that drops it fails 7 of the 10 tests.
+  - The backfill is `WHERE received_il IS NULL`, so an apply does not rewrite the whole table; the condition is on
+    `received_il` and not `opened_il` because the latter is legitimately NULL for a message with no `opened_at`.
+  - Test S10, 8/8 mutations caught. It is also the first test to re-apply `service-calls.postgres.sql` twice.
+- **The latency, measured in production (14/10/2026)**, first message per call, calls opened after the feed went live
+  (43 of them): **minimum 1.2 s, median 2.8 s, p90 4.1 s, maximum 11.5 s.** Push → our receipt is a median of 1.5 s,
+  and insert → `events` row is 0 ms (same transaction).
+  ⚠️ **Measure on the first message per call, and only on calls opened after the feed went on.** A status update on an
+  older call is also a row, and counting those gives a median of ~175 s and a maximum of 29 hours — a number about the
+  historical gap, not about the feed. That mistake was made and corrected here.
+
+### What is on the card, and what is still off
+
+- ⚠️ **ON since 14/10/2026:** `SERVICE_CALLS_ENABLED` defaults to on; `VITE_SERVICE_CALLS=false` turns it off. It was
+  off until the status list existed, because without it nothing can tell a closed call from an open one.
+  `service-calls-ui.test.js` pins the default.
+- ⚠️ **Changing a status or a type is off, and not because of us:** `SERVICE_CALLS_WRITE` defaults to false. The update
+  goes to WIZEAPI, and Wizenet block access from outside Israel (their answer, 14/10/2026: the token is an additional
+  layer and does not replace the restriction). Supabase Edge Functions have no fixed outbound address, so until a relay
+  with a static IP exists the calls are **display only**. Without the flag the picker looks like it works and every
+  click ends in "ויזנט לא ענו בזמן" after 15 seconds. The browser cannot be the relay either: no CORS headers, and the
+  token would leak. Their push **to** us is unaffected.
+- **The marker counts the day's calls, not only the open ones** (the owner wanted the call visible on the site's card).
+  When something is open the whole card **pulses** (`has-open-call`, `@keyframes callPulse`, 1.8 s, with a
+  `prefers-reduced-motion` fallback) — her words: *"אם יש בקשה פתוחה היא צריכה להבהב על כל הכרטיס כי אני רוצה שישימו
+  לב אליה"*.
+- **A stopwatch, not a timestamp** (*"אני רוצה שיהיה כזה סטופר לפני כמה זמן נפתחה הפניה"*): the same `FaultTimer` used
+  for faults, in a new `--call` tone — the accent colour and not red, because an open call is not a fault in the
+  machine. On the card it replaces the count while something is open (the count stays in `aria-label`); in the dialog
+  every open call has one. It needs a real timestamp, which is why `service_call_counts` returns `oldest_open` and
+  `service_calls_open` / `_recent` return `opened_utc` per call, both through `app.wizenet_ts`, both falling back to our
+  receipt time when `opened_at` is missing — a stopwatch starting from zero on missing data is a lie.
+- ⚠️ **A card bug found on the way, and fixed:** `.card-row-end` did not wrap, so the site code was squeezed to zero
+  width and **disappeared** — it did not move to the next line, it was simply not drawn. Nothing there shrinks now and
+  the row breaks instead. The cost: a card with an open call is 128px (100 with the count, 74 with no call), and the
+  grid aligns a whole row to it.
+- **"קריאות היום" in the header** — everything that arrived in the last 24 hours, including calls with no matching
+  site. `service_calls_recent(p_hours)` / `service_calls_recent_count(p_hours)`, capped at 168 hours.
+
+### Still open
+
+- ⚠️ **Retention is approved and not applied.** The owner, shown the table: *"אין צורך שישמרו"*. The rows carry a
+  tenant's name, phone and complaint, and they accumulate with no policy at all — unlike every other table (events 7
+  days, ingest drops 14, the yearly cleanup 12 months). `app.prune_service_calls(30)` is written: **an open call is
+  kept at any age**, only closed ones are deleted and only after 30 days, "closed" is decided by `wizenet_lookups` so
+  an unknown status is never deleted, and a row with no ticket number goes by age alone. It is not in the repo SQL and
+  not applied — the apply deletes production rows and wants saying out loud first.
+- Opening WIZEAPI to foreign access (asked of Wizenet 13/10), or a relay with a fixed IP. Until then, display only.
+  The three secrets are set and the function is deployed; redeploy it with
+  `npx supabase functions deploy wizenet --project-ref xvfsikwaaaohnmldjbtv --use-api` (the CLI is logged in on the dev
+  machine). ⚠️ Deno phrases a timeout as `"Signal timed out."`, so `/timeout|abort/` missed it and the user saw
+  "הפעולה נכשלה"; the handler checks the error name first and says whether Wizenet or Supabase failed to answer
   (`wizenet: true` on errors from the Wizenet fetch). 5/5 mutations caught.
+- The 11 project codes with no site.
