@@ -654,10 +654,19 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     : `קריאות שירות בוויזנט — ${todayCalls} ב-24 השעות, כולן סגורות`;
   const callsN = openCalls > 0 ? openCalls : todayCalls;
   const openCallsDialog = (e) => { e.stopPropagation(); calls.openSite(site); };
+  // ⚠️ בצפיפות compact — אייקון במקום המילה "קריאות". נמדד (14/10/2026): שורת הקצה היא 180px,
+  // ובתוכה משימות 67 + קריאות 63 + הקוד 34 — לא נכנס, הגלולה יורדת שורה והכרטיס גדל ל-100px,
+  // ועם הרשת גדלה איתו כל השורה. עם האייקון הכרטיס נשאר 74. השם המלא נשאר ב-aria-label,
+  // והכרטיס ממילא פועם כשיש קריאה פתוחה — לא צריך מילה כדי שישימו לב.
   const callsPill = calls && anyCalls && !isMini && (
     <button type="button" className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}`}
-      onClick={openCallsDialog} aria-label={callsLabel}>
-      קריאות<span className="tk-card-n" aria-hidden="true">{callsN}</span>
+      onClick={openCallsDialog} aria-label={callsLabel} title={callsLabel}>
+      {density === "compact" ? (
+        <svg className="sc-ico" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z" />
+        </svg>
+      ) : "קריאות"}
+      <span className="tk-card-n" aria-hidden="true">{callsN}</span>
     </button>
   );
   const callsButton = calls && anyCalls && (

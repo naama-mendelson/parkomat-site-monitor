@@ -61,3 +61,6 @@
 }
 /* רענון הרשימות — קישור שקט בתחתית, לא כפתור: פעולה של פעם בכמה חודשים */
 .sc-foot { margin: 10px 0 0; font-size: 0.82em; text-align: start; }
+
+/* ⚠️ בצפיפות compact הגלולה היא אייקון + מספר, כדי שהכרטיס יישאר 74px (ראו SiteCard.jsx) */
+.sc-ico { flex: none; opacity: 0.9; }
