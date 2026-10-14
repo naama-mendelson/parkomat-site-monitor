@@ -452,6 +452,8 @@
   border-color: var(--accent);
 }
 .tk-site-btn.has-open { border-color: var(--accent); }
+/* ⚠️ האייקון של compact. 800 מותר כאן — זה מספר, לא עברית (ראו tests/hebrew-weight.test.js) */
+.tk-ico-sm { flex: none; opacity: 0.9; }
 .tk-card-n { font-weight: 800; }
 @media (pointer: coarse) {
   .tk-card-btn::before { height: 44px; }

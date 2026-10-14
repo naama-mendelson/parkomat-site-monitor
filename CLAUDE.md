@@ -922,6 +922,32 @@ maintenance and operating, and "operating" split into exit before entry), and th
   site with a call comes before a `vip` site without one; three calls do not beat one; no lookup = the old
   order; an unmonitored site stays last even with an open call.
 
+### ⚠️ The compact card had grown to seven rows — icons, and a stopwatch without its own pill (14/10/2026)
+
+The owner, looking at the card for Florentin (3468): *"זה לא הגיוניייי מה קורה פה"*. Measured first: **every item
+on it was true.** A real fault at 16:08:07 ("מנהל דולים - דלתות חניון פתוחות", a site-level fault), unit 1
+waiting and unit 2 in maintenance (both true at once — `displayStatusFor` takes the worst of *the site status and
+the units together*, and that rule is itself the fix for two earlier wrong versions, recorded at this same site),
+two open defects, an open service call, and `12:22` — which is **12 minutes 22 seconds**, the stopwatch format
+below one hour, not a clock. Nothing was wrong except that the card was unreadable.
+
+Her choice, given the options: **icons only, and keep the stopwatch.**
+
+- **The tasks pill is an icon in compact**, like the calls pill since the morning. 67px → 40px. The full label
+  stays in `aria-label` and `title`.
+- ⚠️ **And the real culprit was the stopwatch's own pill.** Inside the card pill the `FaultTimer` drew its own
+  background, 2×8 padding and a pulsing dot — 27px of chrome inside a 110px pill, in a row that has 180px for
+  three items. It is now plain text there (`.tk-card-btn .fault-timer`), and the dot is hidden: the pill is
+  already drawn, and the whole card already pulses. In the calls dialog and on the expanded card it is unchanged.
+- **Measured in the harness at 1371px, 79 cards:** the end group needs **172px of 180** and no longer wraps on any
+  card; every card is **100px** again instead of 124. `probe-tasks` 225/225, `probe-calls` 30/30,
+  `probe-calls-today` 20/20.
+- ⚠️ **The measurement itself was wrong first, and said "2 rows" about every card.** It counted distinct `top`
+  values among the children — but items of different heights on the same line have different tops. Count rows from
+  the container's height divided by the tallest child, not from `top`.
+- **Declined, and worth recording:** hiding the two system chips on the collapsed card, moving the code back to the
+  name row, and hiding the compliance lamps during a fault. All three stay.
+
 ### Does the pulse stop when Wizenet close the call? Yes — and here is where it does not
 
 Traced end to end on 14/10/2026 and measured, not assumed: **39 calls moved to a status marked closed, and all

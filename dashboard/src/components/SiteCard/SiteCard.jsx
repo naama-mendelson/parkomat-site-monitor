@@ -625,10 +625,20 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const openTasks = tasks?.bySite[site.id]?.open ?? 0;
   const tasksLabel = `משימות${openTasks ? ` — ${openTasks} פתוחות` : ""}`;
   const openTasksDialog = (e) => { e.stopPropagation(); tasks.openSite(site); };
+  // ⚠️ בצפיפות compact — אייקון במקום המילה "משימות" (בעלת המוצר, 14/10/2026, מול כרטיס פלורנטין
+  // שנשבר לשבע שורות: "זה לא הגיוני מה קורה פה"). שורת הקצה מחזיקה שלושה פריטים — משימות, קריאות
+  // והקוד — ושלושתם במילים לא נכנסים ב-180px, אז הקוד ירד לשורה משלו. אותו שיקול בדיוק שהפך את
+  // גלולת הקריאות לאייקון שעות קודם. השם המלא נשאר ב-aria-label וב-title.
   const taskPill = tasks && !isMini && (
     <button type="button" className={`tk-card-btn${openTasks ? " has-open" : ""}`}
-      onClick={openTasksDialog} aria-label={tasksLabel}>
-      משימות{openTasks > 0 && <span className="tk-card-n" aria-hidden="true">{openTasks}</span>}
+      onClick={openTasksDialog} aria-label={tasksLabel}
+      title={density === "compact" ? tasksLabel : undefined}>
+      {density === "compact" ? (
+        <svg className="tk-ico-sm" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M4 6h2v2H4V6zm4 .5h12v1.5H8V6.5zM4 11h2v2H4v-2zm4 .5h12V13H8v-1.5zM4 16h2v2H4v-2zm4 .5h12V18H8v-1.5z" />
+        </svg>
+      ) : "משימות"}
+      {openTasks > 0 && <span className="tk-card-n" aria-hidden="true">{openTasks}</span>}
     </button>
   );
   const taskButton = tasks && (
@@ -685,9 +695,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         : <span className="tk-count" aria-hidden="true">{callsN}</span>}
     </button>
   );
-  // ⚠️ "משימות" וקוד האתר — קבוצה אחת בקצה שורת המצב. בלוח בלי נורות היא נכנסת בשורה (נמדד:
-  // 57 + 107 מתוך 180px); כשאין מקום — נורות הבודק, או שעון תקלה ארוך — שתיהן יורדות שורה יחד,
-  // ולא הקוד לבדו מתחת ל"משימות".
+  // ⚠️ משימות, קריאות וקוד האתר — קבוצה אחת בקצה שורת המצב. מאז 14/10/2026 שתי הגלולות הן
+  // אייקונים ב-compact, ולכן השלושה נכנסים בשורה אחת; כשאין מקום (נורות הבודק, שעון תקלה ארוך)
+  // הם יורדים שורה יחד, ולא הקוד לבדו מתחת לשאר.
   const rowEnd = (callsPill || taskPill || codeInRow) && (
     <span className="card-row-end">{callsPill}{taskPill}{codeInRow}</span>
   );
