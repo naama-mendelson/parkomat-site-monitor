@@ -2661,6 +2661,13 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     data) and תרצה 28 חולון (MX-102, not in the list). After it, `site_service_links` gives 128 multiplier sites a plan
     (104 basic, 20 no_service, 3 none, 1 ext). The 20 Wizenet project codes with calls and no site are **not** multipliers
     (מאנה 6, יונה הנביא 36, גרוזנברג 7… all "בהסכם שירות" in the list): robotic sites never registered, the owner's call.
+  - **`tools/check-multipliers.js [csv]`** (owner: *"תעשה בדיקות שכל הנתונים אמינים"*): 29 read-only checks — sites,
+    board ↔ sites, Wizenet list ↔ our codes (street + number), the link to the plan, calls, identities, compliance rows.
+    Clean state 15/10/2026: 23/29, the six ⚠️ being **findings, not bugs**: ברנדיס 10 (the list says 1366, held by a
+    monitored site), ארנון 3 typed as 2419 (the list: 2420), and four monitored sites whose code does not match the list
+    (1366 ≈ 1336 שד' ירושלים 8; 1200 ≈ 1280 אהרונסון 40; 2222 ≈ 1080 גרוזנברג 7, whose 9 calls are orphaned; 3439 ≈
+    3493 מסריק 1). ⚠️ Changing a monitored site's code changes its agent user (`site-{code}@`), so each fix needs a new
+    identity and a password on the site PC — the owner decides, nothing was changed.
   - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
   - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
     runs them from `master` on the dev PC.
