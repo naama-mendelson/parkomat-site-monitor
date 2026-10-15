@@ -2614,17 +2614,25 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
   "הפעולה נכשלה"; the handler checks the error name first and says whether Wizenet or Supabase failed to answer
   (`wizenet: true` on errors from the Wizenet fetch). 5/5 mutations caught.
 - ~~The 11 project codes with no site.~~ **Measured 15/10/2026: 25 codes, 79 of 184 current calls.** Wizenet send no project
-  name, so there is nothing to name them from. The owner: *"תציג אותם, אני אסווג להם סוג ואכניס קוד למה שצריך"*, and on
-  the order: *"הם תמיד יהיו בסוף המסך אלא אם כן יש קריאה, ואז הם נמצאים במיון אחרי התקלה"*. Built the same day:
-  - `tools/register-wizenet-sites.js` (dry run by default, `--apply`): registers each code through `register_site` with
-    `p_monitored = false` and the temporary name "אתר <code>", as a temporary manager (`lib/gate-user`, like
-    `check-writes`). Matching is live (`app.service_calls_current` joins `sites.code` at read time), so the old calls
-    attach by themselves. 409 = already exists = skip. ⚠️ **Not yet run in production** — the auto-mode classifier
-    blocked it; the owner runs it. Only four-digit codes: `'0'` and NULL come from test messages.
-  - `utils/sortSites.js`: an unmonitored site with an open call ranks **0.5**, right after `error` and before
-    `maintenance`; without a call it stays last (7). `makeCompareSites(null)` is unchanged. `sort-sites.test.js`.
-  - The unmonitored card now carries `has-open-call` (it pulses) — until then that branch skipped the class, which
-    the pulse section above records as a gap. Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
+  name. ⚠️ **They were registered as sites by mistake and must be undone.** "תציג אותם" was read as these codes; the owner:
+  *"לא הבנת, תעיף אותם, לא התכוונתי לזה! אני רוצה שהאתרים שנמצאים במכפילים שברמזור — ליצור אותם ולערוך ידנית את
+  הקוד שלהם"*. "המכפילים" is the **`multipliers` board of the traffic light** (130 rows: אתר, סוג הסכם שירות, סוג
+  מתקן, עם/בלי שלט…), which has **no "קוד אתר" column**. What exists now:
+  - `tools/undo-wizenet-sites.js` (dry run / `--apply`): deletes the 25 — the criterion is structural, an unmonitored site
+    named exactly "אתר <its code>"; one that was renamed by hand is kept. The calls stay and simply detach again.
+  - `tools/create-multiplier-sites.js` (dry run / `--apply`): one unmonitored site per board row, name = the "אתר" cell,
+    temporary code `MX-001`…`MX-130` in board order (not digits, so it cannot pass for a project code), no type (no
+    "מכפיל" in `site-types`; she classifies), tier `basic` (the only values `sites.tier` takes). Idempotent by name and
+    code. The real code is typed in AdminPanel's edit row ("קוד" → `update_site p_new_code`, manager only) — that is what
+    attaches the Wizenet calls. ⚠️ The tier badge will read "לא חובר": `site_service_links` reads `board = 'robotic'`
+    only, and the multipliers board has no code column to link by. Open question for the owner.
+  - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
+  - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
+    runs them from `master` on the dev PC.
+  - The sort and the pulse below were built for this and stay: `utils/sortSites.js` — an unmonitored site with an open
+    call ranks **0.5**, right after `error` and before `maintenance`; without a call it stays last (7).
+    `makeCompareSites(null)` is unchanged (`sort-sites.test.js`). The unmonitored card now carries `has-open-call`.
+    Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
 
 ## Wizenet relay — status changes go out through site PCs (built 15/10/2026)
 
