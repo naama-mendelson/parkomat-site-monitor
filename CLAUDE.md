@@ -2531,14 +2531,15 @@ This is the one trap in the feature, and it was visible to the owner before it w
 - ⚠️ **ON since 14/10/2026:** `SERVICE_CALLS_ENABLED` defaults to on; `VITE_SERVICE_CALLS=false` turns it off. It was
   off until the status list existed, because without it nothing can tell a closed call from an open one.
   `service-calls-ui.test.js` pins the default.
-- ⚠️ **Changing a status or a type is off, and not because of us:** `SERVICE_CALLS_WRITE` defaults to false. The update
-  goes to WIZEAPI, and Wizenet block access from outside Israel (their answer, 14/10/2026: the token is an additional
-  layer and does not replace the restriction). Supabase Edge Functions have no fixed outbound address, so until a relay
-  with a static IP exists the calls are **display only**. Without the flag the picker looks like it works and every
-  click ends in "ויזנט לא ענו בזמן" after 15 seconds. The browser cannot be the relay either: no CORS headers, and the
-  token would leak. Their push **to** us is unaffected.
-  ⚠️ **The relay was built on 15/10/2026, through site PCs** (see *Wizenet relay* below). The flag stays false until
-  the live test passes.
+- ✅ **Changing a status or a type is ON since 15/10/2026, through the relay** (`SERVICE_CALLS_WRITE` defaults to true;
+  `VITE_SERVICE_CALLS_WRITE=false` turns it off). Until then it was off, and not because of us: the update goes to
+  WIZEAPI, and Wizenet block access from outside Israel (their answer, 14/10/2026: the token is an additional layer and
+  does not replace the restriction). Supabase Edge Functions have no fixed outbound address, so without the flag the
+  picker looked like it worked and every click ended in "ויזנט לא ענו בזמן" after 15 seconds. The browser cannot be the
+  relay either: no CORS headers, and the token would leak. The relay (site PCs, see *Wizenet relay* below) passed the
+  live test through a real relay (1414 claimed a list refresh in 0.5 s), and the owner asked for it: *"אי אפשר
+  מה-DASHBOARD לשנות סוג וסטטוס — תן את האופציה"*. ⚠️ As in Wizenet itself, some statuses send the tenant an SMS (the
+  list has "ללא SMS" variants). Their push **to** us is unaffected.
 - **The marker counts the day's calls, not only the open ones** (the owner wanted the call visible on the site's card).
   When something is open the whole card **pulses** (`has-open-call`, `@keyframes callPulse`, 1.8 s, with a
   `prefers-reduced-motion` fallback) — her words: *"אם יש בקשה פתוחה היא צריכה להבהב על כל הכרטיס כי אני רוצה שישימו
@@ -2684,3 +2685,9 @@ refresh is read only, so a timeout there **is** handed back.
 **Rollout order:** apply the SQL (dry run first), deploy the `wizenet` function, install 1.0.60 at the three sites, insert
 the three `wizenet_relays` rows, live test (refresh the lists, then one real change the owner picks), then flip
 `SERVICE_CALLS_WRITE`. Rollback: `UPDATE wizenet_relays SET enabled = false`; the picker greys out within 3 minutes.
+
+✅ **Done 15/10/2026, ~11:10–11:30:** 1.0.60 installed at 1399, 1414 and 3513; all three report `socket_ok` and poll
+every minute. The safe test through the real relays passed (1414 claimed a list refresh in 0.50 s, done in 1.01 s), and
+the flag was flipped at the owner's request: the first real change is hers, from the dashboard. At 1399 the agent started
+three times between 11:08:17 and 11:08:48 and then settled (one process, `LocalAppData` install); the cause was being
+checked when the flag went on.

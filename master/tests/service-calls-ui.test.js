@@ -8,11 +8,12 @@ const U = pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/serviceC
 const P = pathToFileURL(path.join(__dirname, "../../dashboard/src/utils/sitePatch.js")).href;
 
 // ⚠️ 14/10/2026: הרשימות נטענו, עשרה סטטוסים סומנו כסגורים וויזנט הדליקו את השליחה — ההצגה דולקת
-// כברירת מחדל. העדכון **חזרה** נשאר כבוי: ה-API שלהם חסום מחוץ לישראל ואין לנו כתובת יוצאת קבועה.
-test("⚠️ ברירות המחדל: ההצגה דולקת, והעדכון לוויזנט כבוי", async () => {
+// כברירת מחדל. ⚠️ 15/10/2026: גם העדכון **חזרה** דולק — דרך הממסר (מחשבי אתרים בישראל), אחרי בדיקה חיה.
+// Pages בונה בלי משתני סביבה, ולכן ברירת המחדל היא מה שרץ באתר החי — והיא נבדקת כאן.
+test("⚠️ ברירות המחדל: ההצגה דולקת, והעדכון לוויזנט דולק (דרך הממסר)", async () => {
   const { SERVICE_CALLS_ENABLED, SERVICE_CALLS_WRITE } = await import(U);
   assert.equal(SERVICE_CALLS_ENABLED, true);
-  assert.equal(SERVICE_CALLS_WRITE, false, "בורר שנראה עובד ונתקע 15 שניות גרוע מערך לקריאה בלבד");
+  assert.equal(SERVICE_CALLS_WRITE, true);
 });
 
 test("countsBySite — לפי site_id, מחבר שורות, מתעלם משורה בלי אתר", async () => {
