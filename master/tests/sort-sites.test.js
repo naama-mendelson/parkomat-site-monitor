@@ -78,10 +78,27 @@ test("⚠️ בלי פונקציית קריאות (התכונה כבויה, או
   assert.deepEqual(sites.slice().sort(makeCompareSites(() => 0)).map((s) => s.code), was);
 });
 
-test("אתר ללא בקר מחובר נשאר אחרון גם כשיש לו קריאה פתוחה", () => {
-  // ⚠️ יש לו בודק, תחזוקה, משימות — וקריאות שירות. אבל אין לו מצב, ולכן הוא לא מטפס.
+test("אתר ללא בקר מחובר עם קריאה פתוחה — מיד אחרי התקלות; בלי קריאה — אחרון (15/10/2026)", () => {
+  // בעלת המוצר: "הם תמיד יהיו בסוף המסך אלא אם כן יש קריאה, ואז הם נמצאים במיון אחרי התקלה".
+  // ⚠️ עד 15/10 הכלל היה הפוך: "נשאר אחרון גם כשיש לו קריאה פתוחה".
   assert.deepEqual(orderWith({ shell: 2 }, [
+    { code: "ready", status: "ready" },
+    { code: "shell", status: "no_comm", monitored: false },
+    { code: "maint", status: "maintenance" },
+    { code: "nocomm", status: "no_comm" },
+    { code: "err", status: "error" },
+  ]), ["err", "shell", "maint", "nocomm", "ready"]);
+  // תקלה עם קריאה ובלי — שתיהן לפני האתר ללא בקר: המצב קודם לקריאה
+  assert.deepEqual(orderWith({ shell: 1, errc: 1 }, [
+    { code: "shell", status: "no_comm", monitored: false },
+    { code: "err", status: "error" },
+    { code: "errc", status: "error" },
+  ]), ["errc", "err", "shell"]);
+  // בלי קריאה — אחרון, גם אחרי "מוכן"; ובלי פונקציית חיפוש — הסדר הישן
+  assert.deepEqual(orderWith({ shell: 0 }, [
     { code: "shell", status: "no_comm", monitored: false },
     { code: "ready", status: "ready" },
   ]), ["ready", "shell"]);
+  assert.deepEqual([{ code: "shell", status: "no_comm", monitored: false }, { code: "ready", status: "ready" }]
+    .sort(makeCompareSites(null)).map((s) => s.code), ["ready", "shell"]);
 });

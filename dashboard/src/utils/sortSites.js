@@ -4,6 +4,7 @@
 // מה שדורש תשומת לב צף למעלה, בארבע רמות:
 //   1. מצב:  תקלה → תחזוקה → אין תקשורת → יציאה → כניסה → מוכן
 //            ("בפעולה" מתפצל ליציאה/כניסה לפי כיוון הפעולה הנוכחית).
+//            ⚠️ אתר ללא בקר מחובר — אחרון; אלא אם יש לו קריאה פתוחה, ואז מיד אחרי התקלות (15/10/2026).
 //   2. קריאה פתוחה בוויזנט: יש → אין  (14/10/2026; בינארי, ראו למטה).
 //   3. דרגה: VIP → מורחב → בסיסי  (הכי חשוב קודם, בתוך אותו מצב).
 //   4. אחוז כשל: גבוה → נמוך       (הכי בעייתי קודם, בתוך אותה דרגה).
@@ -12,7 +13,7 @@
 // lastOperation.entry_exit, failureRate — ולכן אותו קומפרטור משרת את שניהם.
 // ==========================================================
 
-function statusRank(site) {
+function statusRank(site, hasCall = false) {
   // ⚠️ **`displayStatus` ולא `status`.** באתר דו-מערכתי `status` הוא
   // המצב של המערכת **הטובה** — זה מה שמחשב זמינות ואחוז כשל, וזו
   // ההחלטה שנקבעה. אבל הסדר על המסך שואל שאלה אחרת: *"במה לטפל
@@ -22,7 +23,10 @@ function statusRank(site) {
   // באתר חד-מערכתי השניים זהים, ולכן שום דבר שם לא משתנה.
   // ⚠️ אתר בלי בקר מחובר (07/10/2026) — אין לו מצב, ולכן אחרון: ה-'no_comm' שבמסד הוא
   // ברירת מחדל ולא מידע, ובלי זה הוא היה מתמיין בין המנותקים האמיתיים.
-  if (site.monitored === false) return 7;
+  // ⚠️ ועם קריאה פתוחה — מיד אחרי התקלות (בעלת המוצר, 15/10/2026, על האתרים שמגיעים רק מוויזנט: "הם תמיד
+  // יהיו בסוף המסך אלא אם כן יש קריאה, ואז הם נמצאים במיון אחרי התקלה"). קריאה היא המידע היחיד שיש על
+  // אתר כזה, ולכן היא מה שמעלה אותו — לפני תחזוקה ומנותקים, שעליהם המערכת כבר יודעת.
+  if (site.monitored === false) return hasCall ? 0.5 : 7;
   switch (site.displayStatus ?? site.status) {
     case "error":       return 0;
     case "maintenance": return 1;
@@ -54,7 +58,7 @@ const tierRank = (site) => TIER_RANK[site.tier] ?? TIER_RANK.basic;
 export function makeCompareSites(openCallsOf) {
   const callRank = (site) => (openCallsOf && openCallsOf(site) > 0 ? 0 : 1);
   return function compareSites(a, b) {
-    const byStatus = statusRank(a) - statusRank(b);
+    const byStatus = statusRank(a, callRank(a) === 0) - statusRank(b, callRank(b) === 0);
     if (byStatus !== 0) return byStatus;
     const byCall = callRank(a) - callRank(b);
     if (byCall !== 0) return byCall;

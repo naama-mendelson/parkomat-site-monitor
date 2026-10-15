@@ -984,7 +984,7 @@ The ways it does **not** stop, in order of how much they matter:
 - **The current state is the last row by our own id, not by their `updated_at`.** A redelivered older event
   after the closing one would reopen the call. Measured: in 69 of 69 tickets the highest id is also the newest
   `updated_at`, so this is structural only.
-- **An unmonitored site never pulses at all** — the `monitored === false` branch returns early without the
+- ~~**An unmonitored site never pulses at all**~~ (fixed 15/10/2026, see *Still open* below: it pulses now) — the `monitored === false` branch returned early without the
   class, though it does show the pill. The pulse was asked for so people would notice; at Sotefin sites it does
   not happen.
 - `prefers-reduced-motion` on a VIP site: the static ring is overridden by `.is-vip`'s own `box-shadow`, so
@@ -2613,7 +2613,18 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
   machine). ⚠️ Deno phrases a timeout as `"Signal timed out."`, so `/timeout|abort/` missed it and the user saw
   "הפעולה נכשלה"; the handler checks the error name first and says whether Wizenet or Supabase failed to answer
   (`wizenet: true` on errors from the Wizenet fetch). 5/5 mutations caught.
-- The 11 project codes with no site.
+- ~~The 11 project codes with no site.~~ **Measured 15/10/2026: 25 codes, 79 of 184 current calls.** Wizenet send no project
+  name, so there is nothing to name them from. The owner: *"תציג אותם, אני אסווג להם סוג ואכניס קוד למה שצריך"*, and on
+  the order: *"הם תמיד יהיו בסוף המסך אלא אם כן יש קריאה, ואז הם נמצאים במיון אחרי התקלה"*. Built the same day:
+  - `tools/register-wizenet-sites.js` (dry run by default, `--apply`): registers each code through `register_site` with
+    `p_monitored = false` and the temporary name "אתר <code>", as a temporary manager (`lib/gate-user`, like
+    `check-writes`). Matching is live (`app.service_calls_current` joins `sites.code` at read time), so the old calls
+    attach by themselves. 409 = already exists = skip. ⚠️ **Not yet run in production** — the auto-mode classifier
+    blocked it; the owner runs it. Only four-digit codes: `'0'` and NULL come from test messages.
+  - `utils/sortSites.js`: an unmonitored site with an open call ranks **0.5**, right after `error` and before
+    `maintenance`; without a call it stays last (7). `makeCompareSites(null)` is unchanged. `sort-sites.test.js`.
+  - The unmonitored card now carries `has-open-call` (it pulses) — until then that branch skipped the class, which
+    the pulse section above records as a gap. Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
 
 ## Wizenet relay — status changes go out through site PCs (built 15/10/2026)
 

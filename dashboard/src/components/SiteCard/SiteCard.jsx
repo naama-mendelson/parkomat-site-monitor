@@ -716,7 +716,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       // הזה אין לחיצה ואין כרטיס מורחב: הנורה היא הדרך היחידה מהלוח לעמוד הבודק ולתחזוקה, ואתר כזה
       // קיים במערכת רק בשבילם. ההקשר כאן דורס את זה שהלוח מספק.
       <LampAreasContext.Provider value={COMPLIANCE_AREAS}>
-      <div className={`site-card density-${density} is-unmonitored`} data-code={site.code}
+      {/* ⚠️ קריאה פתוחה — הכרטיס פועם כמו כל כרטיס (15/10/2026): עד אז הענף הזה דילג על has-open-call. מאז שאתר
+          כזה עולה במיון "מיד אחרי התקלות" כשיש לו קריאה, הפעימה היא מה שאומר למה הוא שם. */}
+      <div className={`site-card density-${density} is-unmonitored${openCalls > 0 ? " has-open-call" : ""}`} data-code={site.code}
            onMouseEnter={() => onHover?.(site.code)}>
         <div className="card-header">
           <span className="card-name">
