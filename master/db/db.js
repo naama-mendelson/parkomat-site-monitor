@@ -719,6 +719,9 @@ function init() {
         "tasks.postgres.sql",
         // קריאות ויזנט על כרטיס האתר (13/10/2026) — אחרי compliance (require_staff) ואחרי writes (audit/event)
         "service-calls-board.postgres.sql",
+        // עדכון קריאות בוויזנט דרך מחשבי אתרים (15/10/2026) — אחרי board (app.service_call_store_change,
+        // app.wizenet_lookups_store, app.service_calls_current) ואחרי security (app.agent_site_id)
+        "wizenet-relay.postgres.sql",
         // ⚠️ אחרון: מריץ את site_stats / site_uptime / site_uptime_service (חישוב ראשון),
         // ו-app.is_active_user למדיניות. ה-cron שמרענן אותו — ב-cron.postgres.sql למטה.
         "card-metrics.postgres.sql"]) {

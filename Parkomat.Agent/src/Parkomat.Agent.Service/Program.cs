@@ -32,6 +32,10 @@ builder.Logging.AddFileLogger();
 // רושם את ה-Worker — הלב שרץ ברקע.
 builder.Services.AddHostedService<Worker>();
 
+// הממסר לוויזנט (15/10/2026) — שירות נפרד, רדום בכל אתר שאינו ברשימת הממסרים במסד. ⚠️ אחרי ה-Worker, ואינו
+// זורק לעולם: חריגה ממנו הייתה עוצרת את ה-Host, כלומר גם את קריאת הבקר. ראו WizenetRelayService.
+builder.Services.AddHostedService<WizenetRelayService>();
+
 // מוודא שתיקיית ההגדרות (C:\ProgramData\Parkomat\Agent) קיימת
 // לפני שה-Worker מנסה לקרוא ממנה.
 AgentPaths.EnsureBaseFolderExists();

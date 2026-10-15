@@ -953,3 +953,67 @@ fault showed on the card as "מערכת 2: תקלה" with no word on what. The o
 - The card shows it in the existing fault line: "⚠ מערכת 2: <text>" (`systemFaultText` in `shared/site-systems.mjs`).
   A whole-site fault still wins, and nothing is shown on a `no_comm` site or when the snapshot is older than 3 minutes.
 - Tests: `SystemFaultTextTests.cs` (8); browser `e2e/probe-sysfault.mjs` (8).
+
+## The Wizenet relay (1.0.60, 15/10/2026)
+
+Wizenet's API answers only from Israel, and Supabase is abroad, so three site PCs (1399, 1414, 3513) send service-call
+status changes to Wizenet on the dashboard's behalf. The queue, every decision, and the contract are in
+`master/db/wizenet-relay.postgres.sql`; the root `CLAUDE.md` (*Wizenet relay*) has the whole flow. This section is what
+the agent does.
+
+| Piece | Where | Job |
+|---|---|---|
+| `RelayApi` | `Core/Wizenet` | its own Supabase session; `wizenet_relay_me`, `wizenet_claim`, `wizenet_complete`, and the token from the `wizenet` Edge Function |
+| `WizenetForwarder` | `Core/Wizenet` | POSTs exactly the calls in the request to WIZEAPI and returns status + text |
+| `RealtimeDoorbell` | `Core/Wizenet` | Supabase Realtime (Phoenix 1.0.0 over `ClientWebSocket`) on `events`, `type=eq.service_calls`; rings on `action: relay` |
+| `WizenetRelayLoop` | `Core/Wizenet` | dormant until the database says "relay", then: bell + a claim every 60 s, drain, answer |
+| `WizenetRelayService` | `Service` | a second `BackgroundService` beside `Worker` |
+
+- **A separate hosted service, not a stage in `Worker`.** A Wizenet call can take 15 s, and two of them 30 s, which is
+  the wedged threshold the Tray kills the agent at (`alive`). Inside the Worker loop that would endanger the site's own
+  reporting. Here it runs in parallel and never touches `alive`.
+- ⚠️ **Nothing may escape it.** Since .NET 6 an exception out of `ExecuteAsync` stops the **whole host**, PLC reading
+  included. Everything is inside `try`, the loop catches every failure and retries, and the first statement is an `await`
+  (an exception before the first await escapes from `StartAsync` and the agent never starts at all).
+  `NothingEscapesTheRelayServiceAndItOnlyReadsTheConfig` pins it.
+- **Its own Supabase session, not `SupabaseWriter`'s.** One more sign-in an hour buys a separate failure domain: a stuck
+  relay cannot delay the site's own batches. Same `TokenPolicy`, same password sign-in.
+- **`ConfigStore.Load()`, never `LoadAtStartup()`**: the latter applies the installer's reset flag, which is the
+  Worker's job, once. The relay starts 20 s after the Worker for the same reason.
+- **Dormant by default.** Every 1.0.60 site runs the loop. Only a site the database lists (`wizenet_relays`) opens a
+  socket, fetches the token, and claims. The others ask `wizenet_relay_me` once every 30 minutes. Nothing is typed at
+  the site. A removed site gets 403 on its next claim, closes the socket and **forgets the token**.
+- ⚠️ **The token lives in memory only.** It comes from the `wizenet` Edge Function (`relay_config`), which hands it over
+  only when the database confirms the caller is a relay. It is never written to `config.json` (which is plain text) or
+  the log, and it is dropped after a 3xx/401/403 from Wizenet and fetched again.
+- ⚠️ **No redirects** (`AllowAutoRedirect = false`): Wizenet answer a bad token with `302` to their login page. Following
+  it would turn that into a `200` HTML page that reads as a meaningless error instead of "token rejected".
+- **An allow-list of three functions, and of their body shapes** (`WizenetForwarder.BodyProblem`). The relay holds the
+  token, so even a database takeover must not make it call, say, a delete. ⚠️ The shape too (review, 15/10):
+  `wizeApp_getBIReportQuery` runs whatever report its QRYID names, so its body must be exactly one of the two
+  placeholders; an update must be exactly a ticket number and a value number. A new Wizenet function means a new agent
+  version, and that is the intended cost.
+- **Placeholders** (`{{qry_status}}`) are filled from the Edge Function's `vars`. An empty value is not sent: the
+  answer is `{"error":"config"}` and the dashboard shows what is missing.
+- ⚠️ **Hebrew is sent unescaped** (`WizenetForwarder.Json`, `UnicodeRanges.All`), as in `BatchPayload`. The default would
+  send every status name as `\u05XX`, six times larger, and the diagnostic copy in the database would be unreadable.
+  Caught by a test, not by reading.
+- **The doorbell is only a doorbell.** Realtime does not redeliver, so the loop also claims every 60 s (that claim is the
+  relay's sign of life too). The bell rings on every (re)subscribe, to catch what arrived while it was down. Every
+  heartbeat it sends `access_token` if the session renewed the JWT. Without that, Supabase closes the channel after an
+  hour, silently. Two heartbeats with no message from the server count as a dead connection (NAT drops are silent).
+- ⚠️ **It never loops fast** (review, 15/10). After leaving the active state it waits the dormant interval before asking
+  again: a 403 on claim while `wizenet_relay_me` still says true (a missing grant after a bad apply) used to be sign-in,
+  socket, warning, return, many times a second. A site that cannot ask at all backs off 30 s, 60 s, 120 s… up to 30
+  minutes: every 1.0.60 site runs this loop, and a fixed 30 s would be hundreds of thousands of requests a day.
+- **The doorbell's backoff resets only after a connection that held for 2 minutes**, not when the join is acknowledged.
+  Supabase can acknowledge the join and then send a `system` error; resetting on the acknowledgement was a reconnect
+  every 5 seconds, each one also a ring.
+- **One request is answered even when no token came**, with `{"error":"config","detail":"לא התקבל טוקן: …"}`. Otherwise
+  it would wait to expire and the person who clicked would read "לא ידוע אם השינוי הגיע" about a change that was
+  certainly not sent.
+- **The log** has one line per request (`request N (attempt k) sent — HTTP 200`), status codes only, never the text or
+  the token. Network failures are a warning only on the first in a row.
+- Tests: `WizenetRelayTests.cs` (32): a fake HTTP handler counts and inspects every request, and a fake
+  `IRealtimeConnection` drives the Phoenix protocol: join contents, rings, heartbeat, token renewal, four kinds of
+  channel end, silence. 33/33 mutations caught (copy under Documents, `--filter WizenetRelayTests`).

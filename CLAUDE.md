@@ -18,7 +18,7 @@ Agent (on site) ──HTTPS──→ Supabase (Postgres + pg_cron + Edge Functio
 - **Agents in the field:** 1.0.55 (42), 1.0.57 (34), 1.0.59 (2: the two-system sites 3468 and 1102).
 - **Dashboard:** deployed by `git push` to `main` (Cloudflare Pages). DELL008's copy is not what people open.
 - **Edge Functions:** `invite-user`, `provision-agent`, `notify-fault`, `service-calls` (Wizenet → us),
-  `wizenet` (us → Wizenet; deployed, but Wizenet's API answers only from Israel, see *Wizenet service calls*).
+  `wizenet` (since 15/10/2026: only hands the Wizenet token to relay PCs, see *Wizenet relay*).
 - **Database:** 153 MB of 500 MB on the free plan; the largest table is `inspection_files` (45 MB of PDFs).
 
 ## ⚠️ Decision, 17/09/2026 — `master` is being retired. Target: Supabase + dashboard only
@@ -2537,6 +2537,8 @@ This is the one trap in the feature, and it was visible to the owner before it w
   with a static IP exists the calls are **display only**. Without the flag the picker looks like it works and every
   click ends in "ויזנט לא ענו בזמן" after 15 seconds. The browser cannot be the relay either: no CORS headers, and the
   token would leak. Their push **to** us is unaffected.
+  ⚠️ **The relay was built on 15/10/2026, through site PCs** (see *Wizenet relay* below). The flag stays false until
+  the live test passes.
 - **The marker counts the day's calls, not only the open ones** (the owner wanted the call visible on the site's card).
   When something is open the whole card **pulses** (`has-open-call`, `@keyframes callPulse`, 1.8 s, with a
   `prefers-reduced-motion` fallback) — her words: *"אם יש בקשה פתוחה היא צריכה להבהב על כל הכרטיס כי אני רוצה שישימו
@@ -2562,10 +2564,88 @@ This is the one trap in the feature, and it was visible to the owner before it w
   kept at any age**, only closed ones are deleted and only after 30 days, "closed" is decided by `wizenet_lookups` so
   an unknown status is never deleted, and a row with no ticket number goes by age alone. It is not in the repo SQL and
   not applied — the apply deletes production rows and wants saying out loud first.
-- Opening WIZEAPI to foreign access (asked of Wizenet 13/10), or a relay with a fixed IP. Until then, display only.
-  The three secrets are set and the function is deployed; redeploy it with
+- ~~Opening WIZEAPI to foreign access (asked of Wizenet 13/10), or a relay with a fixed IP.~~ Built differently on
+  15/10/2026: site PCs in Israel (*Wizenet relay* below). The three secrets are set and the function is deployed;
+  redeploy it with
   `npx supabase functions deploy wizenet --project-ref xvfsikwaaaohnmldjbtv --use-api` (the CLI is logged in on the dev
   machine). ⚠️ Deno phrases a timeout as `"Signal timed out."`, so `/timeout|abort/` missed it and the user saw
   "הפעולה נכשלה"; the handler checks the error name first and says whether Wizenet or Supabase failed to answer
   (`wizenet: true` on errors from the Wizenet fetch). 5/5 mutations caught.
 - The 11 project codes with no site.
+
+## Wizenet relay — status changes go out through site PCs (built 15/10/2026)
+
+WIZEAPI answers only from Israel (Alex, Wizenet, 14/10: *"מוגבלת לפניות מישראל… לחלופין, ניתן לבצע את הפניות דרך שרת
+בישראל"*). The owner's idea, instead of a paid server with a fixed IP: *"לכל אתר יש מחשב… אני רוצה שנשתמש ב-1 מהם ונעשה
+כמה לגיבוי"*, with a WebSocket for speed. Measured first: from an Israeli PC a request with no token gets `302` to the
+login page in 0.7 s, and from Supabase it hangs until the timeout. It is a **country** block, not an address list, so
+any site PC passes with nothing to ask of Wizenet. Chosen relays: **1399, 1414, 3513**: no disconnects of their own in 30
+days, three cities, none of them a firewall-restricted site.
+
+```
+dashboard → wizenet_request_update (staff) → wizenet_requests row + events "doorbell"
+  → agent at a relay site hears it (Realtime) or asks anyway every 60 s → wizenet_claim
+  → POST to WIZEAPI from Israel → wizenet_complete with the raw answer
+  → SQL decides success ("update successfully") and only then records the change
+dashboard asks wizenet_request_status every second until done / failed / expired
+```
+
+| Piece | Where |
+|---|---|
+| Queue, relays, claim/complete, parsing, expiry, daily job | `master/db/wizenet-relay.postgres.sql` (after the board file in `db.js`); cron `parkomat-wizenet-daily` |
+| Recording (no longer public) | `app.service_call_store_change`, `app.wizenet_lookups_store` in `service-calls-board.postgres.sql` |
+| Token door | `supabase/functions/wizenet`, action `relay_config` only |
+| Agent | `Parkomat.Agent.Core/Wizenet/*` + `WizenetRelayService` (1.0.60); see `Parkomat.Agent/CLAUDE.md` |
+| Dashboard | `serviceCallsDirect.js` (`waitForWizenet`), `ServiceCallsDialog.jsx` ("אין כרגע ממסר פעיל") |
+| Tests | `wizenet-relay.test.js` (17), `service-calls-board.test.js` S5א, `wizenet-fn.test.js` (5), `service-calls-direct.test.js` (7), agent `WizenetRelayTests.cs` (32), browser `e2e/probe-relay.mjs` (26) |
+
+- **All decisions are in SQL; the agent is dumb.** The request row carries the exact Wizenet calls (`func` + `body`);
+  the agent sends them and returns HTTP status and text. What counts as success, the Hebrew error messages, and parsing
+  the status list (`app.wizenet_parse_lookup`, ported from `parseLookup`) are SQL. A Wizenet-side change is a SQL change,
+  not a reinstall at three sites. The one exception is an **allow-list of three function names in the agent**: whoever
+  takes over the database still cannot make a relay call another Wizenet function with the token.
+- ⚠️ **The token is never in a file or in the database.** It stays an Edge Function secret; the relay asks for it
+  (`relay_config`) and keeps it in memory. The function hands it over only when `wizenet_relay_me()` says the caller is a
+  relay. That is decided in SQL from the identity (`app.agent_site_id()` + an enabled row in `wizenet_relays`), not from
+  a parameter. A token Wizenet reject (3xx, 401, 403) is dropped and asked for again.
+- **A relay is a row, not a setting.** Every 1.0.60 agent runs the loop, but only a site in `wizenet_relays` opens a
+  socket and claims; the others ask once every 30 minutes. Removing a row stops that relay within a minute
+  (`wizenet_claim` returns 42501 → 403), and it forgets the token.
+- ⚠️ **The doorbell is `events`, type `service_calls`, action `relay`, carrying the request id only.** Not a new type:
+  an old bundle (wall screen, PWA) treats an unknown type as "reload everything", which is what overloaded the database on
+  07/10. On `service_calls` an old bundle reloads the call counts, one light query. The new bundle ignores `relay`.
+- ⚠️ **Realtime is only the doorbell.** It does not redeliver, and site internet is flaky. The request lives in the
+  table, and the relay also claims every 60 s; that call is its sign of life (`polled_at`). Alive = asked within 3
+  minutes. Typical latency is about a second, at worst a minute while the socket is down.
+- **Three clocks** (`app.wizenet_request_ttl` 2 min, `app.wizenet_claim_lease` 120 s, `app.wizenet_relay_fresh` 3 min).
+  ⚠️ The lease was 60 s and the review measured a relay's worst case at about 90 s (sign-in, a 401 retry, the token, two
+  15 s Wizenet calls): another relay would have resent a change already made, and the first one's success been rejected.
+  Nobody claimed it in 2 minutes: expired, **"לא נשלח"**. Claimed, and no answer after the lease: expired, **"לא ידוע
+  אם השינוי הגיע"**. A claimed request does not expire inside its lease, or a late `update successfully` would be thrown
+  away. A late answer from a relay whose lease passed is rejected (`claimed_site` + `attempt`).
+- **Refused at once, not queued to expire:** no live relay (PT503), 20 open requests (PT429), unknown ticket (PT404).
+- ⚠️ **A relay that did not reach Wizenet hands the request back** (review, 15/10). A relay whose ISP Wizenet do not see
+  as Israeli, or with broken DNS, still asks the queue, so it is "alive", wins its share of doorbells, and failed every
+  request it took. Now a `network` / `config` answer (nothing reached Wizenet) puts the request back to `pending`, adds
+  the relay to `failed_sites` (it never claims that request again), and rings again. If every live relay has failed it,
+  it fails at once with the reason. A **timeout** still fails: Wizenet may have applied it, so it is not resent.
+- **The dashboard waits through a failed status check** (review, 15/10). One fetch failing on a phone used to report
+  "הפעולה נכשלה" while the request was still queued and applied seconds later, inviting a second click. Only PT404
+  ends the wait early; the safety cap is 5 minutes. Busy state and errors are per call, since a change now takes seconds.
+- ⚠️ **15/10/2026: `public.wizenet_lookups_save` and `public.service_call_record_change` were dropped.** Until then any
+  staff user could record "a change Wizenet confirmed", or load "a list from Wizenet", straight from the browser with
+  nobody asking Wizenet. They are now internal (`app.*`, no grants) and only `wizenet_complete` reaches them. The name
+  and role recorded are the requester's, not the relay's.
+- **Daily at 04:07 UTC** `app.wizenet_daily()` prunes requests older than 30 days and, if a relay is alive, refreshes the
+  status and type lists. This closes "a new Wizenet status pulses forever": it is in the list within a day (whether it
+  counts as closed is still a guess from the name).
+- Mutations: **SQL 44/44** (isolated copies, `scratchpad/sqlmut*`, `mut-relay.cjs`), **agent 33/33** (a copy under
+  Documents). Two SQL mutants survived at first: a redundant "relay alive" check in the daily job (removed, and its
+  swallow narrowed from `WHEN others` to PT503/PT429 so a real bug is not hidden), and a disabled relay counted in the
+  status (a test added). ⚠️ A mutation script that does `src.replace(from, to)` with a **string** reads `$'` in `to` as
+  a JS replace pattern, so two mutants of regexes ending in `$'` produced a broken file and "failed" every test. Use a
+  replacement function.
+
+**Rollout order:** apply the SQL (dry run first), deploy the `wizenet` function, install 1.0.60 at the three sites, insert
+the three `wizenet_relays` rows, live test (refresh the lists, then one real change the owner picks), then flip
+`SERVICE_CALLS_WRITE`. Rollback: `UPDATE wizenet_relays SET enabled = false`; the picker greys out within 3 minutes.

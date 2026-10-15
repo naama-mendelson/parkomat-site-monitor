@@ -15,7 +15,9 @@ export const SERVICE_CALLS_ENABLED = String(import.meta.env?.VITE_SERVICE_CALLS 
 // שכבת אבטחה נוספת ואינו מחליף את הגבלת הגישה. ל-Edge Functions של Supabase אין
 // כתובת יוצאת קבועה, ולכן עד שיוקם ממסר עם IP קבוע — הקריאות **מוצגות בלבד**.
 // ⚠️ בלי הדגל הזה הבורר נראה עובד, ולחיצה עליו מסתיימת ב"ויזנט לא ענו בזמן" אחרי 15 שניות.
-// ההחזרה: VITE_SERVICE_CALLS_WRITE=true, אחרי שהממסר קיים והכתובת אושרה אצלם.
+// ⚠️ 15/10/2026: הממסר נבנה — מחשבי אתרים בישראל (db/wizenet-relay.postgres.sql), בלי צורך באישור כתובת אצלם.
+// הדגל נשאר כבוי עד שהבדיקה החיה עוברת (רענון הרשימות דרך הממסר, ואז שינוי אמיתי אחד). גם כשהוא דולק, הבורר
+// אפור כשאין ממסר חי — זה כבר נקבע בזמן ריצה (wizenet_relays_status), לא בבנייה.
 export const SERVICE_CALLS_WRITE = String(import.meta.env?.VITE_SERVICE_CALLS_WRITE ?? "false") === "true";
 
 /**

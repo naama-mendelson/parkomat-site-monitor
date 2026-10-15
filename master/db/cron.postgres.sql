@@ -1070,3 +1070,11 @@ SELECT app.ensure_cron_job('parkomat-agent-silence', '* * * * *',
 -- ממעבד אחד — מול ~12 שניות **לכל מסך בכל דקה** לפני 07/10/2026.
 SELECT app.ensure_cron_job('parkomat-card-metrics', '*/10 * * * *',
                            'SELECT app.refresh_site_card_metrics()');
+
+-- ============================================================
+-- ויזנט — רענון רשימות הסטטוסים והסוגים, וגריפת בקשות הממסר (15/10/2026)
+-- ============================================================
+-- ראה wizenet-relay.postgres.sql. ⚠️ 04:07 UTC (07:07 בקיץ בישראל) ולא בלילה: הפנייה יוצאת ממחשב באתר
+-- לשרת של ויזנט, ושניהם עדיפים ערים. בלי ממסר חי באותה דקה — מדלגים עד מחר.
+SELECT app.ensure_cron_job('parkomat-wizenet-daily', '7 4 * * *',
+                           'SELECT app.wizenet_daily()');

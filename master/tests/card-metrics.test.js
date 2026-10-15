@@ -204,11 +204,11 @@ test("⚠️ החלה חוזרת של cron.postgres.sql אינה מדליקה מ
 // בכל פעם, היסטוריית הרצות קטועה, והשהיה ידנית שמתבטלת. עכשיו כולן עוברות דרך ensure_cron_job.
 test("⚠️ כל משימות ה-cron: החלה חוזרת שומרת jobid והשהיה, ומחזירה לוח ופקודה מהקוד", { skip }, async () => {
   const JOBS = ["parkomat-agent-silence", "parkomat-card-metrics", "parkomat-prune-events",
-    "parkomat-cleanup-old", "parkomat-prune-ingest-drops", "parkomat-ingestion-health"];
+    "parkomat-cleanup-old", "parkomat-prune-ingest-drops", "parkomat-ingestion-health", "parkomat-wizenet-daily"];
   const all = async () => Object.fromEntries((await q(
     `SELECT jobname, jobid, schedule, command, active FROM cron.job WHERE jobname = ANY($1)`, [JOBS])).map((r) => [r.jobname, r]));
   const before = await all();
-  assert.deepEqual(Object.keys(before).sort(), [...JOBS].sort(), "כל שש המשימות מתוזמנות");
+  assert.deepEqual(Object.keys(before).sort(), [...JOBS].sort(), "כל המשימות מתוזמנות");
   await q(`UPDATE cron.job SET active = false, schedule = '0 0 * * *', command = 'SELECT 1' WHERE jobname = ANY($1)`, [JOBS]);
   await h.pg.exec(fs.readFileSync(path.join(__dirname, "../db/cron.postgres.sql"), "utf8"));
   const after = await all();

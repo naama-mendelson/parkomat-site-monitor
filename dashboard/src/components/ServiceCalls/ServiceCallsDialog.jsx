@@ -7,10 +7,11 @@
 // זה סגירת החלון הייתה מקפלת את הכרטיס שמתחתיו.
 //
 // ⚠️ אין כאן החלטה על הרשאה ולא על "פתוחה": מה פתוח — ב-SQL (לפי רשימת הסטטוסים של ויזנט); מי רשאי לשנות —
-// פונקציית ה-Edge מול המסד. שינוי נשלח לוויזנט קודם, ונרשם אצלנו רק אחרי שאישרו.
+// המסד. שינוי נשלח לוויזנט קודם — דרך ממסר, מחשב באתר בישראל (15/10/2026) — ונרשם אצלנו רק אחרי שאישרו.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchServiceCalls, fetchRecentServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
+  fetchWizenetRelayStatus,
 } from "../../services/dataSource";
 import { callerName, openedLabel, optionsFor, callText, parkingDetail, callsSummary, israelLabel, dupInfo, SERVICE_CALLS_WRITE } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
@@ -32,10 +33,25 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
   const [calls, setCalls] = useState(null);
   const [lookups, setLookups] = useState({ status: [], type: [] });
   const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState(null);           // מספר הקריאה שבעדכון
-  const [rowError, setRowError] = useState(null);   // { ticket, msg }
+  // ⚠️ לכל קריאה בנפרד (סקירה, 15/10/2026): שינוי דרך הממסר לוקח שניות, ולפעמים יותר. עם דגל אחד, סיום של קריאה א'
+  // שחרר את הבורר של ב' באמצע השליחה שלה (והוא הציג את הערך הישן — הזמנה ללחוץ שוב), ותחילת ב' מחקה את השגיאה של א'.
+  const [busy, setBusy] = useState(() => new Set());        // מספרי הקריאות שבשליחה
+  const [rowErrors, setRowErrors] = useState({});           // { [ticket]: msg }
+  const setRowError = (ticket, msg) => setRowErrors((m) => {
+    const next = { ...m };
+    if (msg) next[ticket] = msg; else delete next[ticket];
+    return next;
+  });
+  const setBusyFor = (ticket, on) => setBusy((b) => {
+    const next = new Set(b);
+    if (on) next.add(ticket); else next.delete(ticket);
+    return next;
+  });
   const [listsBusy, setListsBusy] = useState(false);
   const [listsMsg, setListsMsg] = useState(null);   // { ok, text }
+  // ⚠️ null = לא ידוע (עוד לא נטען, או שהשאלה נכשלה) — אז הבורר פעיל, והמסד יסרב בהודעה ברורה אם אין ממסר.
+  // רק "0 חיים" ידוע מאפיר אותו מראש: בלי זה הלחיצה הייתה מסתיימת בסירוב, בלי שום רמז לפני.
+  const [relay, setRelay] = useState(null);         // { alive, enabled }
   const overlayRef = useRef(null);
   const pressedOnOverlay = useRef(false);
 
@@ -46,6 +62,11 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
 
   useEffect(() => { load(); }, [load, rev]);
   useEffect(() => { fetchServiceCallLookups().then(setLookups).catch(() => {}); }, []);
+  const loadRelay = useCallback(() => {
+    if (SERVICE_CALLS_WRITE) fetchWizenetRelayStatus().then(setRelay).catch(() => setRelay(null));
+  }, []);
+  useEffect(() => { loadRelay(); }, [loadRelay]);
+  const noRelay = relay?.alive === 0;
 
   // Escape סוגר — רק כשאין חלון אחר מעליו (אותו כלל כמו בחלון המשימות)
   useEffect(() => {
@@ -62,18 +83,19 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
 
   const change = async (c, field, value) => {
     if (!value || value === (field === "status" ? c.status_id : c.type_id)) return;
-    setBusy(c.ticket);
-    setRowError(null);
+    setBusyFor(c.ticket, true);
+    setRowError(c.ticket, null);
     try {
       const r = await updateServiceCall(c.ticket, field, value);
-      if (r?.warning) setRowError({ ticket: c.ticket, msg: r.warning });
+      if (r?.warning) setRowError(c.ticket, r.warning);
       onChanged?.();
     } catch (e) {
-      setRowError({ ticket: c.ticket, msg: e.message });
+      setRowError(c.ticket, e.message);
     } finally {
       // ⚠️ טוענים גם אחרי כשל: הבורר חוזר לערך האמיתי, ולא נשאר על מה שנבחר ולא נשמר
       await load();
-      setBusy(null);
+      loadRelay();
+      setBusyFor(c.ticket, false);
     }
   };
 
@@ -86,7 +108,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
       const r = await refreshServiceCallLookups();
       setLookups(await fetchServiceCallLookups());
       await load();
-      setListsMsg({ ok: true, text: `נטענו ${r?.status ?? 0} סטטוסים ו-${r?.type ?? 0} סוגי קריאה` });
+      setListsMsg({ ok: true, text: r?.result || "הרשימות נטענו" });
     } catch (e) {
       setListsMsg({ ok: false, text: e.message });
     } finally {
@@ -108,7 +130,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
     return (
       <label className="sc-field">
         <span className="sc-field-cap">{label}</span>
-        <select className="sc-select" value={cur ?? ""} disabled={busy === c.ticket || list.length === 0}
+        <select className="sc-select" value={cur ?? ""} disabled={busy.has(c.ticket) || list.length === 0 || noRelay}
           aria-label={`${label} של קריאה ${c.ticket}`}
           onChange={(e) => change(c, field, e.target.value)}>
           {cur == null && <option value="">—</option>}
@@ -143,13 +165,17 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
           <p className="tk-muted sc-note">
             רשימות הסטטוסים והסוגים של ויזנט עוד לא נטענו — אי אפשר לשנות כרגע.{" "}
             {SERVICE_CALLS_WRITE && (
-              <button type="button" className="tk-link" disabled={listsBusy} onClick={reloadLists}>
+              <button type="button" className="tk-link" disabled={listsBusy || noRelay} onClick={reloadLists}>
                 {listsBusy ? "טוען מוויזנט…" : "טעינת הרשימות מוויזנט"}
               </button>
             )}
           </p>
         )}
         {listsMsg && <p className={listsMsg.ok ? "tk-muted sc-note" : "tk-error"} role="status">{listsMsg.text}</p>}
+        {/* ⚠️ שורה אחת, ורק כשיש מה לשנות: בלי קריאות אין בורר, ואין מה להסביר */}
+        {SERVICE_CALLS_WRITE && noRelay && calls?.length > 0 && (
+          <p className="tk-muted sc-note" role="status">אין כרגע ממסר פעיל לוויזנט — אי אפשר לשנות סטטוס או סוג</p>
+        )}
 
         <div className="tk-body">
           {!calls && !loadError && <p className="tk-muted">טוען…</p>}
@@ -162,7 +188,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                 const dup = dupInfo(c);
                 return (
                 <li key={c.ticket} className={`sc-row${c.open === false ? " sc-row--closed" : ""}`}
-                  data-ticket={c.ticket} aria-busy={busy === c.ticket || undefined}>
+                  data-ticket={c.ticket} aria-busy={busy.has(c.ticket) || undefined}>
                   <div className="sc-top">
                     {c.open != null && (
                       <span className={`sc-state${c.open ? " sc-state--open" : ""}`}>{c.open ? "פתוחה" : "סגורה"}</span>
@@ -200,22 +226,22 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
                   <div className="sc-fields">
                     {picker(c, "status")}
                     {picker(c, "type")}
-                    {busy === c.ticket && <span className="tk-muted sc-busy">שומר בוויזנט…</span>}
+                    {busy.has(c.ticket) && <span className="tk-muted sc-busy">נשלח לוויזנט…</span>}
                   </div>
                   {c.changed_by && (
                     <p className="sc-changed">שונה מהדשבורד ע״י {String(c.changed_by).replace(/@parkomat\.co\.il$/i, "")}
                       {" · "}<bdi>{israelLabel(c.changed_at)}</bdi></p>
                   )}
-                  {rowError?.ticket === c.ticket && <p className="tk-row-msg sc-row-msg" role="alert">{rowError.msg}</p>}
+                  {rowErrors[c.ticket] && <p className="tk-row-msg sc-row-msg" role="alert">{rowErrors[c.ticket]}</p>}
                 </li>
                 );
               })}
             </ul>
           )}
-          {/* ⚠️ גם הרענון עובר דרך WIZEAPI — חסום מחוץ לישראל, ולכן מוסתר עד שיהיה ממסר */}
+          {/* ⚠️ גם הרענון עובר דרך WIZEAPI — חסום מחוץ לישראל, ולכן דרך הממסר */}
           {!noLists && SERVICE_CALLS_WRITE && (
             <p className="sc-foot">
-              <button type="button" className="tk-link" disabled={listsBusy} onClick={reloadLists}>
+              <button type="button" className="tk-link" disabled={listsBusy || noRelay} onClick={reloadLists}>
                 {listsBusy ? "טוען מוויזנט…" : "רענון רשימות הסטטוסים והסוגים מוויזנט"}
               </button>
             </p>

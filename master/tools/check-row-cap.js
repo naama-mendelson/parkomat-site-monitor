@@ -109,8 +109,11 @@ const BOUNDED = {
   service_call_counts: "שורה לאתר — רק אתרים עם קריאה פתוחה",
   service_calls_open: "jsonb יחיד — הקריאות הפתוחות של אתר אחד",
   wizenet_lookups_list: "jsonb יחיד — שתי הרשימות של ויזנט",
-  wizenet_lookups_save: "כתיבה",
-  service_call_record_change: "כתיבה",
+  // הממסר לוויזנט (15/10/2026) — תור; הדפדפן מכניס ושואל, מחשב באתר מבצע
+  wizenet_request_update: "כתיבה — מחזיר מספר בקשה",
+  wizenet_request_lookups: "כתיבה — מחזיר מספר בקשה",
+  wizenet_request_status: "jsonb יחיד — בקשה אחת",
+  wizenet_relays_status: "jsonb יחיד — שני מספרים",
   inspection_defect_save: "כתיבה",
   inspection_defect_delete: "כתיבה",
   inspection_defect_photo_add: "כתיבה",

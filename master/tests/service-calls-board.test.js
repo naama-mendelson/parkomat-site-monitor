@@ -44,9 +44,17 @@ async function call(p) {
 }
 const counts = async (uid) => rpc(uid, `SELECT site_id, open, recent, oldest_open FROM public.service_call_counts() ORDER BY site_id`);
 const openOf = async (uid, code) => (await one(uid, `SELECT public.service_calls_open($1) AS j`, [code])).j;
-const save = (uid, kind, items) => one(uid, `SELECT public.wizenet_lookups_save($1, $2::jsonb) AS n`, [kind, JSON.stringify(items)]);
+// ⚠️ 15/10/2026: הרישום אינו ציבורי עוד — רק הממסר מגיע אליו, אחרי שוויזנט ענו (wizenet-relay.test.js). כאן
+// הפונקציות הפנימיות נקראות ישירות, בשם ובמשתמש של מי שלחץ — בדיוק מה ש-app.wizenet_complete מעביר להן.
+// ⚠️ בזהות הסוכן ובתפקיד postgres — כמו בתוך app.wizenet_complete (SECURITY DEFINER, שנקרא מהממסר). דרך `sup` בלי
+// זהות, התביעות שבדיקה קודמת השאירה ריקות ('') שוברות את current_actor על ''::json.
+const sys = async (sql, params = []) => (await h.as("postgres", AGT, (tx) => tx.query(sql, params))).rows;
+const who = async (uid) => (await sup(`SELECT id, COALESCE(NULLIF(btrim(full_name), ''), email) AS name FROM app_users WHERE supabase_uid = $1`, [uid]))[0];
+const save = async (uid, kind, items) => (await sys(`SELECT app.wizenet_lookups_store($1, $2::jsonb, $3) AS n`,
+  [kind, JSON.stringify(items), (await who(uid)).name]))[0];
 const change = async (uid, ticket, field, value) => {
-  const r = await one(uid, `SELECT public.service_call_record_change($1, $2, $3) AS at`, [ticket, field, value]);
+  const u = await who(uid);
+  const r = (await sys(`SELECT app.service_call_store_change($1, $2, $3, $4, $5) AS at`, [ticket, field, value, u.name, u.id]))[0];
   await sleep(5);
   return r;
 };
@@ -115,7 +123,7 @@ test("S3 · שמירת רשימה: closed מנוחש לפי השם בשורה ח
   await save(OPR, "type", [{ id: "9", name: "תקלה שטופלה" }]);
   assert.equal((await sup(`SELECT closed FROM wizenet_lookups WHERE kind = 'type' AND id = '9'`))[0].closed, false);
   await fails(save(OPR, "priority", []), "23514", /סוג רשימה/);
-  await fails(one(OPR, `SELECT public.wizenet_lookups_save('status', '{"a":1}'::jsonb)`), "23514", /רשימה לא תקינה/);
+  await fails(sys(`SELECT app.wizenet_lookups_store('status', '{"a":1}'::jsonb, 'x')`), "23514", /רשימה לא תקינה/);
   const lists = (await one(OPR, `SELECT public.wizenet_lookups_list() AS j`)).j;
   assert.deepEqual(lists.type, [{ id: "9", name: "תקלה שטופלה" }]);
   assert.equal(lists.status.length, 2);
@@ -149,8 +157,6 @@ test("S4 · שינוי מהדשבורד: גובר על השורה של ויזנ�
 test("S5 · הרשאות: סוכן וקולט — אין; anon — אין; הספירה לעולם לא זורקת; הטבלאות סגורות", { skip }, async () => {
   for (const uid of [AGT, INT]) {
     await fails(openOf(uid, "1"), "42501");
-    await fails(save(uid, "status", []), "42501");
-    await fails(change(uid, "x", "status", "1"), "42501");
     await fails(one(uid, `SELECT public.wizenet_lookups_list()`), "42501");
     assert.deepEqual(await counts(uid), [], "הסימון נטען עם רשימת האתרים — שגיאה כאן הייתה מפילה אותה");
   }
@@ -162,6 +168,17 @@ test("S5 · הרשאות: סוכן וקולט — אין; anon — אין; הס�
     for (const t of ["wizenet_lookups", "service_call_changes"]) {
       await fails(rpc(uid, `SELECT * FROM ${t}`), "42501", /permission denied/);
     }
+  }
+});
+
+// ⚠️ 15/10/2026: עד היום כל איש צוות יכול היה לרשום מהדפדפן "שינוי שוויזנט אישרו" ולטעון "רשימה מוויזנט"
+// בלי שאיש פנה לוויזנט. הפונקציות הציבוריות נמחקו, והפנימיות אינן ניתנות לקריאה — לא למנהל ולא לבקר.
+test("S5א · הרישום והרשימות — לא מהדפדפן: הפונקציות הציבוריות אינן, והפנימיות חסומות לכולם", { skip }, async () => {
+  const gone = await sup(`SELECT proname FROM pg_proc WHERE proname IN ('wizenet_lookups_save', 'service_call_record_change')`);
+  assert.deepEqual(gone, []);
+  for (const uid of [MGR, OPR, AGT]) {
+    await fails(rpc(uid, `SELECT app.wizenet_lookups_store('status', '[]'::jsonb, 'x')`), "42501");
+    await fails(rpc(uid, `SELECT app.service_call_store_change('1', 'status', '1', 'x', NULL)`), "42501");
   }
 });
 

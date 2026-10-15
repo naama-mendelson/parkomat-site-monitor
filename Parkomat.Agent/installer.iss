@@ -289,7 +289,7 @@
 ;          באילו מערכות בתקלה**, ולא רק כשמתחילה "תקלה כלשהי" — אחרת מערכת 2 קיבלה את הטקסט של מערכת 1
 ;          עד 5 דקות. (2) **קריאה אחת של הטקסט** במקום ההמתנה ליציבות: כשהבקר לא עונה על אזור הטקסט
 ;          ההמתנה הגיעה ל-~34 שניות, מעל סף ה-watchdog, וחזרה כל 30 שניות — הסוכן היה נהרג בלולאה.
-#define MyAppVersion "1.0.59"
+#define MyAppVersion "1.0.60"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"

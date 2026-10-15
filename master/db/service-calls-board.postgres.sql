@@ -24,7 +24,8 @@
 -- ============================================================
 -- הרשימות של ויזנט — סטטוסים וסוגי קריאה
 -- ============================================================
--- ממולאות על ידי פונקציית ה-Edge (wizenet) מתוך ה-API שלהם. closed — מה נחשב סגור; ראו wizenet_lookups_save.
+-- ממולאות דרך הממסר (מחשב אתר; db/wizenet-relay.postgres.sql) מתוך ה-API שלהם. closed — מה נחשב סגור; ראו
+-- app.wizenet_lookups_store.
 CREATE TABLE IF NOT EXISTS wizenet_lookups (
   kind        text NOT NULL,
   id          text NOT NULL,
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS wizenet_lookups (
 -- ============================================================
 -- שינויים שנעשו מהדשבורד — מי, מתי, מה
 -- ============================================================
--- ⚠️ נרשם **רק אחרי** שוויזנט אישרו (ראו פונקציית ה-Edge): רישום לפני האישור היה מציג על המסך סטטוס
+-- ⚠️ נרשם **רק אחרי** שוויזנט אישרו (app.wizenet_complete, מהממסר): רישום לפני האישור היה מציג על המסך סטטוס
 -- שאינו קיים אצלם.
 CREATE TABLE IF NOT EXISTS service_call_changes (
   id               bigserial PRIMARY KEY,
@@ -393,16 +394,23 @@ REVOKE ALL ON FUNCTION public.wizenet_lookups_list() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.wizenet_lookups_list() TO authenticated;
 
 -- ============================================================
--- כתיבה — דרך פונקציית ה-Edge, בזהות הקורא
+-- כתיבה — רק מהממסר, אחרי שוויזנט ענו (db/wizenet-relay.postgres.sql)
 -- ============================================================
+-- ⚠️ 15/10/2026: שתי הפונקציות כאן היו ציבוריות (public.wizenet_lookups_save, public.service_call_record_change),
+-- כי פונקציית ה-Edge קראה להן בזהות הלוחץ. המשמעות: כל איש צוות יכול היה לרשום מהדפדפן "שינוי שוויזנט אישרו"
+-- בלי שאיש פנה לוויזנט — המסך היה מציג סטטוס שאינו קיים אצלם. עכשיו השינוי עובר דרך מחשב אתר (ממסר), ורק
+-- app.wizenet_complete קוראת לפונקציות האלה — אחרי שהממסר החזיר את התשובה של ויזנט. אין להן הרשאה לאיש.
+DROP FUNCTION IF EXISTS public.wizenet_lookups_save(text, jsonb);
+DROP FUNCTION IF EXISTS public.service_call_record_change(text, text, text);
+
 -- שמירת רשימה שנשלפה מוויזנט: [{ "id": "...", "name": "..." }, ...]. מעדכנת שמות ומוסיפה חדשים; ⚠️ closed
 -- של שורה קיימת **אינו נדרס** — מי שסימן "סגורה" ביד לא יאבד את זה בטעינה הבאה. בשורה חדשה — ניחוש לפי השם
 -- (סגור / בוטל / הסתיים / טופל), שאותו בודקים בעין לפני שמדליקים את התכונה.
-CREATE OR REPLACE FUNCTION public.wizenet_lookups_save(p_kind text, p_items jsonb)
+CREATE OR REPLACE FUNCTION app.wizenet_lookups_store(p_kind text, p_items jsonb, p_actor text)
 RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := COALESCE(NULLIF(btrim(p_actor), ''), 'מערכת');
   v_n integer;
 BEGIN
   IF p_kind NOT IN ('status', 'type') THEN
@@ -423,16 +431,18 @@ BEGIN
     jsonb_build_object('count', v_n));
   RETURN v_n;
 END $fn$;
-REVOKE ALL ON FUNCTION public.wizenet_lookups_save(text, jsonb) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.wizenet_lookups_save(text, jsonb) TO authenticated;
+REVOKE ALL ON FUNCTION app.wizenet_lookups_store(text, jsonb, text) FROM PUBLIC;
 
 -- רישום שינוי שוויזנט כבר אישר. ⚠️ ערך חייב להיות ברשימה, כשיש רשימה — ערך שאינו שם היה נשמר ומוצג
 -- כמספר; כשאין רשימה בכלל (לפני הטעינה הראשונה) — נבדק אצל ויזנט בלבד ("not found").
-CREATE OR REPLACE FUNCTION public.service_call_record_change(p_ticket text, p_field text, p_value text)
+-- ⚠️ השם והמשתמש — של מי **שלחץ**, ולא של הממסר שקורא לפונקציה: "שונה מהדשבורד ע״י" מציג אותם, והממסר
+-- הוא רק הדרך. הם נלקחו מהזהות המאומתת ברגע הבקשה (wizenet_requests.requested_by).
+CREATE OR REPLACE FUNCTION app.service_call_store_change(p_ticket text, p_field text, p_value text,
+                                                         p_actor text, p_actor_user integer)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := COALESCE(NULLIF(btrim(p_actor), ''), 'מערכת');
   v_ticket text := NULLIF(btrim(COALESCE(p_ticket, '')), '');
   v_value text := NULLIF(btrim(COALESCE(p_value, '')), '');
   v_site text;
@@ -451,15 +461,16 @@ BEGIN
   SELECT c.site_code INTO v_site FROM app.service_calls_current() c WHERE c.ticket = v_ticket;
   IF NOT FOUND THEN RAISE EXCEPTION 'הקריאה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
   INSERT INTO service_call_changes (ticket, field, value, changed_by, changed_by_user, changed_at)
-  VALUES (v_ticket, p_field, v_value, v_actor, app.current_app_user(), v_now);
-  PERFORM app.record_write_audit('service_call.' || p_field, v_actor, app.current_app_role(), 'service_call',
-    v_ticket, jsonb_build_object('value', v_value));
+  VALUES (v_ticket, p_field, v_value, v_actor, p_actor_user, v_now);
+  -- ⚠️ התפקיד — של מי שלחץ (מהטבלה), לא של הממסר: שורת ביקורת "בקר שינה סטטוס" ולא "סוכן שינה סטטוס"
+  PERFORM app.record_write_audit('service_call.' || p_field, v_actor,
+    COALESCE((SELECT u.role FROM app_users u WHERE u.id = p_actor_user), 'system'), 'service_call',
+    v_ticket, jsonb_build_object('value', v_value, 'via', 'relay'));
   PERFORM app.record_write_event(COALESCE(v_site, '*'), 'service_calls',
     jsonb_build_object('type', 'service_calls', 'code', v_site, 'action', p_field));
   RETURN v_now;
 END $fn$;
-REVOKE ALL ON FUNCTION public.service_call_record_change(text, text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.service_call_record_change(text, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION app.service_call_store_change(text, text, text, text, integer) FROM PUBLIC;
 
 -- ============================================================
 -- קריאה שהגיעה מוויזנט — אירוע, כדי שהסימון על הכרטיס יתעדכן מיד

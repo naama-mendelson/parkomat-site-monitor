@@ -340,6 +340,9 @@ function App() {
       }
       // 0א'. קריאת ויזנט הגיעה או שונתה — המספר בכרטיס, והחלון אם פתוח
       if (data?.type === "service_calls") {
+        // ⚠️ "relay" הוא הפעמון לממסר (בקשה נכנסה לתור) — עוד לא השתנה כלום. השינוי עצמו מגיע באירוע נפרד
+        // (action status / type) אחרי שוויזנט ענו. (דשבורד ישן מרענן כאן את המספרים — שאילתה קלה אחת, ולא יותר.)
+        if (data.action === "relay") return;
         loadCallCounts();
         setCallsRev((v) => v + 1);
         return;

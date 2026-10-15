@@ -1,12 +1,10 @@
 // services/serviceCallsDirect.js — קריאות השירות של ויזנט: הספירה לכרטיס, הרשימה לאתר, ושינוי סטטוס/סוג.
 //
-// הקריאה — RPC (db/service-calls-board.postgres.sql). השינוי — דרך פונקציית ה-Edge "wizenet", כי ה-API של ויזנט
-// דורש טוקן שאסור שיגיע לדפדפן. ⚠️ אין כאן החלטה על הרשאה: הפונקציה בודקת my_role() מול המסד, והמסד אוכף
-// את הרישום (app.require_staff).
+// הקריאה — RPC (db/service-calls-board.postgres.sql). השינוי — תור במסד שמחשב באתר מבצע (db/wizenet-relay.postgres.sql):
+// ה-API של ויזנט דורש טוקן שאסור שיגיע לדפדפן, ועונה רק לפניות מישראל. ⚠️ אין כאן החלטה על הרשאה: המסד אוכף
+// (app.require_staff), ורושם את השינוי רק אחרי שוויזנט ענו.
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { countsBySite } from "../utils/serviceCalls";
-
-const FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 async function rpc(name, args) {
   if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
@@ -46,30 +44,59 @@ export async function fetchServiceCallLookups() {
   return (await rpc("wizenet_lookups_list", {})) ?? { status: [], type: [] };
 }
 
-async function callWizenet(body) {
-  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("נדרשת התחברות מחדש");
-  const res = await fetch(`${FUNCTIONS_URL}/wizenet`, {
-    method: "POST",
-    headers: {
-      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const out = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(out.error || "הפעולה מול ויזנט נכשלה");
-  return out;
+// ============================================================
+// שינוי בוויזנט — דרך ממסר (מחשב באתר), 15/10/2026
+// ============================================================
+// ⚠️ ויזנט עונים רק לפניות מישראל, ולכן הפנייה יוצאת ממחשב באתר (db/wizenet-relay.postgres.sql). הדפדפן לא מדבר
+// עם ויזנט ולא עם הממסר: הוא מכניס בקשה לתור, ושואל מה קרה לה עד שהיא נסגרת — הצלחה, כשל, או פקיעה. המסד הוא
+// שקובע מתי בקשה נסגרת (2 דקות בלי ממסר; דקה נוספת לממסר שלקח ולא חזר), ולכן כאן אין טיימר "הצלחה מדומה".
+// ⚠️ שאלה כל שנייה ולא Realtime: אירוע שפוספס היה משאיר את החלון על "נשלח…" לנצח (Realtime אינו שולח שוב),
+// ובקשה היא דבר של שניות — עשרות שאלות קטנות לכל היותר.
+const FINAL = new Set(["done", "failed", "expired"]);
+
+/**
+ * מחכה שבקשה לממסר תיסגר. ⚠️ התקרה כאן (5 דקות) היא רשת ביטחון בלבד: המסד סוגר כל בקשה תוך 4 לכל היותר
+ * (2 דקות בלי ממסר, ועוד חכירה של 2 לממסר שלקח ולא חזר).
+ * ⚠️ שאלה שנכשלה (רשת בטלפון, הפסקה רגעית) **אינה** כשל של הבקשה — היא עדיין בתור, והממסר יבצע אותה. "הפעולה נכשלה"
+ * כאן היה שולח את המשתמש ללחוץ שוב, ושינוי אחד היה נשלח פעמיים (סקירה, 15/10/2026). ממשיכים לשאול עד התקרה; רק
+ * "הבקשה לא נמצאה" (PT404) סופית.
+ * @returns {Promise<{state:string, result:string}>}
+ */
+export async function waitForWizenet(id, { intervalMs = 1000, maxMs = 300_000, sleep } = {}) {
+  const pause = sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const until = Date.now() + maxMs;
+  for (;;) {
+    // supabase-js מחזיר כשל רשת כ-error, אבל לא מבטיח שלא יזרוק — שני המקרים הם "לשאול שוב"
+    const { data: st, error } = await supabase.rpc("wizenet_request_status", { p_id: id })
+      .then((r) => r, (e) => ({ data: null, error: { message: String(e?.message ?? e) } }));
+    if (error?.code === "PT404") throw new Error(error.message || "הבקשה לא נמצאה");
+    if (!error && FINAL.has(st?.state)) return st;
+    if (Date.now() > until) return { state: "expired", result: "אין תשובה מוויזנט — לא ידוע אם השינוי נשמר" };
+    await pause(intervalMs);
+  }
 }
 
-/** שינוי סטטוס או סוג של קריאה — אצל ויזנט, ואחרי האישור שלהם גם אצלנו. field: "status" | "type" */
-export async function updateServiceCall(ticket, field, value) {
-  return callWizenet({ action: "update", field, callid: String(ticket), value: String(value) });
+/** האם יש היום ממסר חי: { alive, enabled } */
+export async function fetchWizenetRelayStatus() {
+  return (await rpc("wizenet_relays_status", {})) ?? { alive: 0, enabled: 0 };
 }
 
-/** טעינת הרשימות מוויזנט אל המסד (חד-פעמי, ואחרי שינוי אצלם) */
-export async function refreshServiceCallLookups() {
-  return callWizenet({ action: "lookups" });
+/**
+ * שינוי סטטוס או סוג של קריאה — אצל ויזנט (דרך הממסר), ואחרי האישור שלהם גם אצלנו. field: "status" | "type"
+ * ⚠️ נזרק על כשל ועל פקיעה, עם ההסבר מהמסד בעברית. "עודכן בוויזנט אבל לא נרשם אצלנו" אינו כשל — השינוי קרה —
+ * ולכן הוא חוזר כ-warning, כמו קודם.
+ */
+export async function updateServiceCall(ticket, field, value, opts) {
+  const id = await rpc("wizenet_request_update", { p_ticket: String(ticket), p_field: field, p_value: String(value) });
+  const st = await waitForWizenet(id, opts);
+  if (st.state !== "done") throw new Error(st.result || "השינוי לא נשמר בוויזנט");
+  return st.result && st.result !== "עודכן בוויזנט" ? { ok: true, warning: st.result } : { ok: true };
+}
+
+/** טעינת הרשימות מוויזנט אל המסד (דרך הממסר). מחזיר { result } — "נטענו N סטטוסים ו-M סוגי קריאה" */
+export async function refreshServiceCallLookups(opts) {
+  const id = await rpc("wizenet_request_lookups", {});
+  const st = await waitForWizenet(id, opts);
+  if (st.state !== "done") throw new Error(st.result || "טעינת הרשימות נכשלה");
+  return { result: st.result };
 }

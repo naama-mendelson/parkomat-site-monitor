@@ -1,4 +1,5 @@
-// supabase/functions/wizenet — הממסר לוויזנט. כל ההיגיון ב-handler.ts (שנבדק ב-Node); כאן רק החיבור.
+// supabase/functions/wizenet — הדלת לטוקן של ויזנט, לממסרים (מחשבי אתרים) בלבד. ההיגיון ב-handler.ts (שנבדק
+// ב-Node); כאן רק החיבור.
 //
 // פריסה (פעם אחת, ממחשב הפיתוח):
 //   supabase secrets set WIZENET_TOKEN=... WIZENET_QRY_STATUS=... WIZENET_QRY_TYPE=...
