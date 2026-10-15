@@ -20,6 +20,7 @@ import {
 } from "../../utils/serviceCalls";
 import "../Tasks/Tasks.css";
 import FaultTimer from "../SiteCard/FaultTimer";
+import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
 import "./ServiceCalls.css";
 
 /**
@@ -107,9 +108,13 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
   const noRelay = relay?.alive === 0;
 
   // Escape סוגר — רק כשאין חלון אחר מעליו (אותו כלל כמו בחלון המשימות)
+  // ⚠️ ורשימה פתוחה של הבורר (ChoiceSelect, ב-portal) היא "חלון מעליו": Escape שם סוגר את הרשימה בלבד. המאזין כאן
+  // הוא capture על window ורץ לפני ה-stopPropagation של הרשימה — בלי השורה הזו Escape על הרשימה סגר את כל החלון
+  // (נמדד ברתמה, 15/10/2026).
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "Escape") return;
+      if (document.querySelector(".cs-menu")) return;
       const all = document.querySelectorAll(".tk-overlay");
       if (all[all.length - 1] !== overlayRef.current) return;
       e.stopPropagation();
@@ -144,7 +149,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
       setTimeout(() => {
         const dlg = dialogRef.current, a = document.activeElement;
         if (!dlg || (a && a !== document.body)) return;
-        const sel = dlg.querySelector(`.sc-row[data-ticket="${CSS.escape(String(c.ticket))}"] select[data-field="${field}"]`);
+        const sel = dlg.querySelector(`.sc-row[data-ticket="${CSS.escape(String(c.ticket))}"] .cs-btn[data-name="${field}"]`);
         (sel && !sel.disabled ? sel : dlg).focus({ preventScroll: true });
       }, 0);
     }
@@ -178,16 +183,24 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
       const val = curName || cur;
       return val ? <span className="sc-field-val" title={label}>{val}</span> : null;
     }
+    // ⚠️ הרשימה המעוצבת ולא <select> (בעלת המוצר, 15/10/2026, על רשימת הסטטוסים הפתוחה: "שיראה יותר יפה").
+    // את הרשימה של <select> מציירת מערכת ההפעלה — לבנה, בלי גופן ובלי ריווח שלנו — ואי אפשר לעצב אותה. ChoiceSelect
+    // נבנה בדיוק לזה (סוג המעלית), ועם portal ו-z-index 3000 הוא צף מעל החלון. ⚠️ הערך הנוכחי נשאר ברשימה גם כשאינו
+    // ברשימת ויזנט (optionsFor); בלי ערך — "—" ככתוב ריק, לא כאפשרות.
     return (
-      <label className="sc-field">
-        <span className="sc-field-cap">{label}</span>
-        <select className="sc-select" data-field={field} value={cur ?? ""} disabled={busy.has(c.ticket) || list.length === 0 || noRelay}
-          aria-label={`${label} של קריאה ${c.ticket}`}
-          onChange={(e) => change(c, field, e.target.value)}>
-          {cur == null && <option value="">—</option>}
-          {optionsFor(list, cur, curName).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
-      </label>
+      <div className="sc-field">
+        <span className="sc-field-cap" aria-hidden="true">{label}</span>
+        <ChoiceSelect
+          name={field}
+          label={`${label} של קריאה ${c.ticket}`}
+          value={cur == null ? "" : String(cur)}
+          options={optionsFor(list, cur, curName).map((o) => ({ value: o.id, label: o.name }))}
+          placeholder="—"
+          menuMinWidth={300}
+          disabled={busy.has(c.ticket) || list.length === 0 || noRelay}
+          onChange={(v) => change(c, field, v)}
+        />
+      </div>
     );
   };
 

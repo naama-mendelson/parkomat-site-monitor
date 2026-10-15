@@ -26,16 +26,12 @@
 .sc-fields { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 2px; }
 .sc-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .sc-field-cap { font-size: 0.78em; font-weight: 700; color: var(--text-secondary); }
-.sc-select {
-  height: 38px;
+/* הבורר — ChoiceSelect (15/10/2026, במקום <select>): אותה מידה שהייתה ל-<select>, 38px, ו-44 בטלפון */
+.sc-field .cs-btn {
+  min-height: 38px;
   min-width: 150px;
   max-width: 100%;
   padding: 0 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font: inherit;
   font-size: 0.9em;
 }
 /* "קריאות היום" — כל מה שהגיע ב-24 שעות, כולל סגורות וקודים בלי אתר (14/10/2026) */
@@ -51,8 +47,6 @@
    ותוריד מידע לא ברור ושלא צריך") — שתי מילים מתחת לתלונה אומרות את אותו דבר בלי רעש. */
 .sc-field-val { font-size: 0.85em; color: var(--text-secondary); overflow-wrap: anywhere; }
 .sc-field-val + .sc-field-val::before { content: "· "; }
-.sc-select:disabled { opacity: 0.6; }
-.sc-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sc-busy { font-size: 0.85em; padding-bottom: 9px; }
 .sc-changed { margin: 0; font-size: 0.8em; color: var(--text-secondary); }
 .sc-row-msg { width: 100%; }
@@ -90,7 +84,7 @@
 
 @media (max-width: 640px) {
   .sc-field { flex: 1 1 140px; }
-  .sc-select { width: 100%; height: 44px; }
+  .sc-field .cs-btn { width: 100%; min-height: 44px; }
 }
 /* רענון הרשימות — קישור שקט בתחתית, לא כפתור: פעולה של פעם בכמה חודשים */
 .sc-foot { margin: 10px 0 0; font-size: 0.82em; text-align: start; }

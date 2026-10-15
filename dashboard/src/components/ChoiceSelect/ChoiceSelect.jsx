@@ -29,8 +29,12 @@ const MAX_H = 320;
  *   כאפשרות עם value "".
  * @param {string} [p.name] — data-name על הכפתור (בדיקות, ותווית של השדה)
  * @param {boolean} [p.invalid] — מסגרת אדומה ו-aria-invalid
+ * @param {boolean} [p.disabled] — כמו <select disabled>: לא נפתח, לא מקבל מיקוד (קריאות שירות: בזמן שליחה, בלי
+ *   רשימות, או בלי ממסר)
+ * @param {number} [p.menuMinWidth] — רוחב מינימלי לרשימה (ברירת מחדל 200). רשימה עם שמות ארוכים — כמו הסטטוסים
+ *   של ויזנט, "לא לבחור את זה (חזל"ש מרחוק ללא SMS)" — מבקשת יותר, כדי שהשורה לא תישבר לשתיים.
  */
-export default function ChoiceSelect({ value, options, onChange, label, placeholder = "— לבחור —", name, invalid = false }) {
+export default function ChoiceSelect({ value, options, onChange, label, placeholder = "— לבחור —", name, invalid = false, disabled = false, menuMinWidth = 200 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [pos, setPos] = useState(null);
@@ -48,7 +52,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
     if (!b) return;
     const vw = document.documentElement.clientWidth;
     const vh = window.innerHeight;
-    const width = Math.min(Math.max(b.width, 200), vw - 2 * EDGE);
+    const width = Math.min(Math.max(b.width, menuMinWidth), vw - 2 * EDGE);
     const rtl = getComputedStyle(btn.current).direction === "rtl";
     const left = Math.min(Math.max(EDGE, rtl ? b.right - width : b.left), vw - EDGE - width);
     const below = vh - b.bottom - GAP - EDGE;
@@ -57,7 +61,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
     const up = below < need && above > below;
     setPos({ left, width, up, maxH: Math.max(120, Math.min(MAX_H, up ? above : below)),
       top: up ? null : b.bottom + GAP, bottom: up ? vh - b.top + GAP : null });
-  }, []);
+  }, [menuMinWidth]);
 
   const close = (refocus = true) => {
     setOpen(false);
@@ -122,6 +126,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
         ref={btn}
         type="button"
         className={`cs-btn${open ? " is-open" : ""}${invalid ? " is-invalid" : ""}${shown ? "" : " is-empty"}`}
+        disabled={disabled || undefined}
         data-name={name}
         data-value={value || ""}
         aria-haspopup="listbox"

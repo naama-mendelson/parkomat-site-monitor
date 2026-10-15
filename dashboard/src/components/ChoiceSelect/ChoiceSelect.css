@@ -28,6 +28,9 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .cs-btn.is-invalid { border-color: var(--status-error); }
+/* כמו <select disabled>: דהוי, בלי יד, ובלי הדגשת מסגרת ב-hover */
+.cs-btn:disabled { opacity: 0.6; cursor: default; }
+.cs-btn:disabled:hover { border-color: var(--border-color); }
 .cs-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cs-btn.is-empty .cs-value { color: var(--text-muted); }
 .cs-chevron {
