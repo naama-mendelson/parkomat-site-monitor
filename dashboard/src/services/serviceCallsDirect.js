@@ -34,9 +34,23 @@ export async function fetchRecentServiceCalls(hours = 24) {
   return (await rpc("service_calls_recent", { p_hours: hours })) ?? [];
 }
 
-/** כמה קריאות היו ב-N השעות — למספר על הכפתור בכותרת */
-export async function fetchRecentServiceCallCount(hours = 24) {
-  return Number(await rpc("service_calls_recent_count", { p_hours: hours })) || 0;
+/**
+ * לאריח "קריאות היום" בכותרת: { total, open } — כמה בכלל, וכמה מהן פתוחות (15/10/2026, בעלת המוצר: "שיהיה כתוב
+ * כמה פתוחות"). ⚠️ אותה קבוצה בדיוק כמו fetchRecentServiceCalls — כולל פתוחות בכל גיל — כדי שהמספר והרשימה
+ * שנפתחת ממנו לא ייפרדו.
+ */
+export async function fetchRecentServiceCallSummary(hours = 24) {
+  const r = await rpc("service_calls_recent_summary", { p_hours: hours });
+  return { total: Number(r?.total) || 0, open: Number(r?.open) || 0 };
+}
+
+/**
+ * "להיסטוריה" (15/10/2026): הקריאות של אתר שכבר נסגרו, החדשה למעלה — { calls, total }. total הוא כמה יש בכלל;
+ * המסד מחזיר עד 100 (ראו service_calls_history), והחלון אומר כשיש יותר.
+ */
+export async function fetchServiceCallHistory(siteCode) {
+  const r = await rpc("service_calls_history", { p_site_code: siteCode });
+  return { calls: r?.calls ?? [], total: Number(r?.total) || 0 };
 }
 
 /** רשימות הסטטוסים והסוגים של ויזנט: { status: [{id,name,closed}], type: [{id,name}] } */

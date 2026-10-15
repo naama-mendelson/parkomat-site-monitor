@@ -58,6 +58,36 @@
 .sc-row-msg { width: 100%; }
 .sc-note { margin: 0; }
 
+/* "להיסטוריה" / "לקריאות הפתוחות" (15/10/2026) — ליד הסגירה, באותו גובה ובאותה מסגרת. הסגירה נשארת בקצה. */
+.sc-view-btn {
+  margin-inline-start: auto;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.86em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sc-view-btn + .tk-close { margin-inline-start: 0; }
+/* ריק — לא תופס מקום ולא נראה, אבל נשאר אזור הודעות (display: none היה מוציא אותו מעץ הנגישות) */
+.sc-moved:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* החלון מקבל מיקוד מהקוד (אחרי שינוי שהוציא שורה) — בלי מסגרת סביב כל החלון */
+.sc-dialog:focus { outline: none; }
+.sc-view-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sc-more { margin: 8px 0 0; }
+
 @media (max-width: 640px) {
   .sc-field { flex: 1 1 140px; }
   .sc-select { width: 100%; height: 44px; }

@@ -234,6 +234,25 @@ $$;
 REVOKE ALL ON FUNCTION app.service_calls_current() FROM PUBLIC;
 
 -- ============================================================
+-- "24 השעות האחרונות" — הגדרה אחת לכל מי שסופר (15/10/2026)
+-- ============================================================
+-- ⚠️ קריאה שייכת לחלון אם **הדבר האחרון שקרה לה** בתוכו: השורה האחרונה מוויזנט (received_at), או השינוי שלנו
+-- מהדשבורד (changed_at) — מה שמאוחר יותר. service_calls_current מחזירה changed_at רק כשהוא מאוחר מהשורה של
+-- ויזנט, ולכן COALESCE(c.changed_at, c.received_at) הוא בדיוק "האחרון". בלי השינוי שלנו, סגירה **היום** של קריאה
+-- ישנה הוציאה אותה מ"קריאות היום" ומהספירה (סקירה, 15/10/2026) — ובבנייה ישנה, בלי שום הסבר.
+-- ⚠️ ותחילת החלון — כאן בלבד. ארבעה סופרים לפיה: הכרטיס (service_call_counts), החלון מהכרטיס בבנייה ישנה
+-- (p_hours), הרשימה של "קריאות היום" והאריח. עותק לכל אחד היה נפרד בשקט מהשאר — וזה בדיוק המקום שבו האריח
+-- והרשימה שהוא פותח חייבים להסכים. ⚠️ ובשעון UTC מפורש: to_char על timestamptz כותב באזור הזמן של הסשן,
+-- וה-"Z" שבתבנית היה משקר בכל סשן שאינו UTC.
+CREATE OR REPLACE FUNCTION app.service_calls_since(p_hours integer)
+RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT to_char((now() AT TIME ZONE 'UTC') - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
+                 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+$$;
+REVOKE ALL ON FUNCTION app.service_calls_since(integer) FROM PUBLIC;
+
+-- ============================================================
 -- קריאה — מהדשבורד
 -- ============================================================
 -- מספר הקריאות הפתוחות לכל אתר — לסימון על הכרטיס. ⚠️ לעולם אינה זורקת (כמו task_counts): הסימון נטען יחד
@@ -254,66 +273,114 @@ CREATE OR REPLACE FUNCTION public.service_call_counts(p_hours integer DEFAULT 24
 -- ⚠️ נופל חזרה לשעת ההגעה אלינו כשאין opened_at: סטופר שמתחיל מאפס על נתון חסר הוא שקר.
 RETURNS TABLE (site_id integer, open integer, recent integer, oldest_open text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  WITH w AS (SELECT to_char(now() - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
-                            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS since)
+  WITH w AS (SELECT app.service_calls_since(p_hours) AS since)
   SELECT c.site_id,
          count(*) FILTER (WHERE c.open)::int,
-         count(*) FILTER (WHERE c.received_at > w.since)::int,
+         -- הדבר האחרון שקרה לקריאה — ויזנט או אנחנו (ראו app.service_calls_since)
+         count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since)::int,
          to_char(min(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz))
                    FILTER (WHERE c.open) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
     FROM app.service_calls_current() c, w
    WHERE c.site_id IS NOT NULL AND (SELECT app.is_staff())
-     AND (c.open OR c.received_at > w.since)
+     AND (c.open OR COALESCE(c.changed_at, c.received_at) > w.since)
    GROUP BY c.site_id
 $$;
 REVOKE ALL ON FUNCTION public.service_call_counts(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.service_call_counts(integer) TO authenticated;
 
--- הקריאות הפתוחות של אתר, מהישנה לחדשה, עם שמות הסטטוס והסוג. ⚠️ jsonb יחיד (PostgREST חותך ב-1,000 שורות).
--- ⚠️ p_hours (14/10/2026): כשניתן — גם מה שנסגר בחלון הזה, כדי שהחלון מהכרטיס יראה את מה שקרה
--- היום ולא רק את מה שעוד פתוח. בלי הפרמטר ההתנהגות כשהייתה (פתוחות בלבד), וקריאה ישנה עדיין נפתרת.
+-- ============================================================
+-- הקריאות של אתר — הבונה היחיד (15/10/2026)
+-- ============================================================
+-- בעלת המוצר: "כשלוחצים על כרטיס כדי לראות את הקריאות — יראו רק קריאות פתוחות, ויהיה כפתור 'להיסטוריה',
+-- וכשלוחצים עליו רואים את הקריאות הקודמות שכבר נסגרו". שתי רשימות, ושורה אחת לכל קריאה באותה צורה בדיוק —
+-- ⚠️ ולכן בונה אחד: עותק שני של 18 השדות היה נפרד בשקט מהראשון (שדה שנוסף לאחד ולא לשני — הוא מוצג רק
+-- בפתוחות, או רק בהיסטוריה). שתי הפונקציות הציבוריות למטה הן עטיפות דקות.
+--   p_history = false: פתוחות (בכל גיל), ועם p_hours — גם מה שנסגר בחלון הזה. פתוחות קודם, הישנה למעלה.
+--   p_history = true:  הסגורות בלבד, החדשה למעלה (לפי מועד הפתיחה — "הקריאות הקודמות").
+-- מחזיר { calls: [...], total: N } — total הוא כמה יש בכלל, לפני p_limit.
+-- ⚠️ הסדר — לפי **הרגע האמיתי** של הפתיחה (opened_ts, אותו ביטוי כמו opened_utc לסטופר), ולא לפי הטקסט: opened_at
+-- הוא שעון הקיר של ויזנט עם Z מטעה (שלוש שעות קדימה בקיץ), ו-received_at — UTC אמיתי. השוואת שני הטקסטים שמה קריאה
+-- בלי opened_at במקום הלא נכון, וגם החליטה מי נכנסת למאה (סקירה, 15/10/2026).
+CREATE OR REPLACE FUNCTION app.service_calls_site(p_site_code text, p_hours integer, p_history boolean, p_limit integer)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_since text := CASE WHEN p_hours IS NULL THEN NULL ELSE app.service_calls_since(p_hours) END;
+  v_site text := btrim(COALESCE(p_site_code, ''));
+BEGIN
+  RETURN (
+    WITH pick AS (
+      SELECT c.*, COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz) AS opened_ts
+        FROM app.service_calls_current() c
+       WHERE c.site_code = v_site
+         AND CASE WHEN p_history THEN NOT c.open
+                  ELSE c.open OR (v_since IS NOT NULL AND COALESCE(c.changed_at, c.received_at) > v_since) END
+    ), ranked AS (
+      SELECT k.*, row_number() OVER (ORDER BY
+               -- פתוחות: מה שעוד דורש טיפול בראש הרשימה, ובתוכן הישנה למעלה
+               CASE WHEN p_history THEN NULL ELSE NOT k.open END,
+               CASE WHEN p_history THEN NULL ELSE k.opened_ts END,
+               CASE WHEN p_history THEN NULL ELSE k.ticket END,
+               -- היסטוריה: החדשה למעלה
+               CASE WHEN p_history THEN k.opened_ts END DESC,
+               CASE WHEN p_history THEN k.ticket END DESC) AS rn
+        FROM pick k
+    )
+    SELECT jsonb_build_object(
+      'total', (SELECT count(*)::int FROM pick),
+      'calls', COALESCE(jsonb_agg(jsonb_build_object(
+             'ticket', r.ticket,
+             'opened_at', NULLIF(btrim(r.payload ->> 'opened_at'), ''),
+             -- ⚠️ זמן אמיתי לסטופר. opened_at עצמו הוא שעון הקיר שלהם ואי אפשר לחשב ממנו משך.
+             'opened_utc', to_char(r.opened_ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+             'received_at', r.received_at,
+             'parking_code', NULLIF(btrim(r.payload ->> 'parking_code'), ''),
+             'first_name', r.payload ->> 'first_name',
+             'last_name', r.payload ->> 'last_name',
+             'phone', r.payload ->> 'phone',
+             'complaint', r.payload ->> 'customer_complaint',
+             'notes', r.payload ->> 'notes',
+             'open', r.open,
+             'status_id', r.status_id,
+             'status_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = r.status_id),
+             'type_id', r.type_id,
+             'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = r.type_id),
+             'changed_by', r.changed_by,
+             'changed_at', r.changed_at,
+             -- כמה קריאות זהות אוחדו לשורה הזו (1 = אין כפילות)
+             'dup_n', r.dup_n) ORDER BY r.rn), '[]'::jsonb))
+      FROM ranked r
+     WHERE p_limit IS NULL OR r.rn <= p_limit
+  );
+END $fn$;
+REVOKE ALL ON FUNCTION app.service_calls_site(text, integer, boolean, integer) FROM PUBLIC;
+
+-- הקריאות הפתוחות של אתר, מהישנה לחדשה. ⚠️ jsonb יחיד (PostgREST חותך ב-1,000 שורות).
+-- ⚠️ p_hours (14/10/2026): כשניתן — גם מה שנסגר בחלון הזה. בלי הפרמטר: פתוחות בלבד — וזה מה שהחלון מהכרטיס מבקש
+-- מ-15/10 ("יראו רק קריאות פתוחות"). הפרמטר נשאר בשביל בנייה ישנה של הדשבורד (מסך קיר, PWA) שעוד שולחת אותו.
 DROP FUNCTION IF EXISTS public.service_calls_open(text);
 CREATE OR REPLACE FUNCTION public.service_calls_open(p_site_code text, p_hours integer DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
-DECLARE
-  v_since text := CASE WHEN p_hours IS NULL THEN NULL
-                  ELSE to_char(now() - make_interval(hours => LEAST(GREATEST(p_hours, 1), 168)),
-                               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END;
 BEGIN
   PERFORM app.require_staff();
-  RETURN COALESCE((
-    SELECT jsonb_agg(jsonb_build_object(
-             'ticket', c.ticket,
-             'opened_at', NULLIF(btrim(c.payload ->> 'opened_at'), ''),
-             -- ⚠️ זמן אמיתי לסטופר. opened_at עצמו הוא שעון הקיר שלהם ואי אפשר לחשב ממנו משך.
-             'opened_utc', to_char(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz)
-                                     AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-             'received_at', c.received_at,
-             'parking_code', NULLIF(btrim(c.payload ->> 'parking_code'), ''),
-             'first_name', c.payload ->> 'first_name',
-             'last_name', c.payload ->> 'last_name',
-             'phone', c.payload ->> 'phone',
-             'complaint', c.payload ->> 'customer_complaint',
-             'notes', c.payload ->> 'notes',
-             'open', c.open,
-             'status_id', c.status_id,
-             'status_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id),
-             'type_id', c.type_id,
-             'type_name', (SELECT w.name FROM wizenet_lookups w WHERE w.kind = 'type' AND w.id = c.type_id),
-             'changed_by', c.changed_by,
-             'changed_at', c.changed_at,
-             -- כמה קריאות זהות אוחדו לשורה הזו (1 = אין כפילות)
-             'dup_n', c.dup_n)
-           -- פתוחות קודם, ובתוכן הישנה למעלה: מה שעוד דורש טיפול בראש הרשימה
-           ORDER BY c.open DESC, COALESCE(NULLIF(btrim(c.payload ->> 'opened_at'), ''), c.received_at), c.ticket)
-      FROM app.service_calls_current() c
-     WHERE c.site_code = btrim(COALESCE(p_site_code, ''))
-       AND (c.open OR (v_since IS NOT NULL AND c.received_at > v_since))
-  ), '[]'::jsonb);
+  RETURN app.service_calls_site(p_site_code, p_hours, false, NULL) -> 'calls';
 END $fn$;
 REVOKE ALL ON FUNCTION public.service_calls_open(text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.service_calls_open(text, integer) TO authenticated;
+
+-- "להיסטוריה" (15/10/2026): הקריאות של אתר שכבר נסגרו, החדשה למעלה. { calls, total }.
+-- ⚠️ תקרה (100, ולכל היותר 500): הקריאות נצברות בלי רטנציה עדיין, ורשימה בלי גבול היא jsonb שגדל לנצח בכל
+-- פתיחה. total — כמה יש בכלל, כדי שהחלון יאמר "מוצגות 100 האחרונות מתוך N" ולא יעלים את השאר בשקט.
+CREATE OR REPLACE FUNCTION public.service_calls_history(p_site_code text, p_limit integer DEFAULT 100)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+BEGIN
+  PERFORM app.require_staff();
+  RETURN app.service_calls_site(p_site_code, NULL, true, LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500));
+END $fn$;
+REVOKE ALL ON FUNCTION public.service_calls_history(text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_history(text, integer) TO authenticated;
 
 -- ============================================================
 -- "קריאות היום" — כל הקריאות מה-24 שעות האחרונות (14/10/2026)
@@ -324,10 +391,14 @@ GRANT EXECUTE ON FUNCTION public.service_calls_open(text, integer) TO authentica
 -- שאין להם אתר, שאחרת אינם נראים בשום מקום (רבע מהקריאות ביום הראשון).
 -- ⚠️ jsonb יחיד, כמו service_calls_open: PostgREST חותך ב-1,000 שורות.
 -- ⚠️ הטווח מוגבל ל-168 שעות: זו פונקציה שרצה מהכותרת, ולא דלת לכל ההיסטוריה.
+-- ⚠️ 15/10/2026 — שתי קבוצות ברשימה אחת: מה שקרה בחלון (in_window = true — זה "קריאות היום", ורק זה נספר כך),
+-- ועוד כל קריאה **פתוחה** בכל גיל (in_window = false), כי האריח אומר גם "כמה פתוחות" ומי שלוחץ צריך לראות אותן.
+-- ⚠️ הגרסה הראשונה צירפה את הפתוחות הישנות גם **לספירה** של היום (סקירה, 15/10/2026): בבוקר שקט האריח היה
+-- אומר "2 קריאות היום" על שתי קריאות מלפני שבוע — ו-TEST-001 (סטטוס לא מוכר, ולכן "פתוחה") הייתה "של היום" לנצח.
 CREATE OR REPLACE FUNCTION public.service_calls_recent(p_hours integer DEFAULT 24)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
-DECLARE v_h integer := LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168);
+DECLARE v_since text := app.service_calls_since(p_hours);
 BEGIN
   PERFORM app.require_staff();
   RETURN COALESCE((
@@ -355,28 +426,57 @@ BEGIN
              'changed_by', c.changed_by,
              'changed_at', c.changed_at,
              -- כמה קריאות זהות אוחדו לשורה הזו (1 = אין כפילות)
-             'dup_n', c.dup_n)
-           -- החדשה למעלה: מי שפותח את הרשימה שואל "מה קרה עכשיו"
-           ORDER BY c.received_at DESC, c.ticket DESC)
+             'dup_n', c.dup_n,
+             -- בחלון ("היום"), או כאן רק כי היא פתוחה (ראו למעלה)
+             'in_window', COALESCE(c.changed_at, c.received_at) > v_since)
+           -- החדשה למעלה: מי שפותח את הרשימה שואל "מה קרה עכשיו" — גם שינוי שלנו הוא "עכשיו"
+           ORDER BY COALESCE(c.changed_at, c.received_at) DESC, c.ticket DESC)
       FROM app.service_calls_current() c
-     WHERE c.received_at > to_char(now() - make_interval(hours => v_h), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+     -- ⚠️ ועוד כל קריאה פתוחה, בכל גיל: האריח אומר "כמה פתוחות", והרשימה שנפתחת ממנו חייבת להראות את אותן
+     -- קריאות. נמדד ב-15/10: 14 פתוחות, ואחת מהן לא עודכנה ביממה — בלי זה היא לא הייתה כאן.
+     WHERE COALESCE(c.changed_at, c.received_at) > v_since
+        OR c.open
   ), '[]'::jsonb);
 END $fn$;
 REVOKE ALL ON FUNCTION public.service_calls_recent(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.service_calls_recent(integer) TO authenticated;
 
+-- "קריאות היום" על האריח בכותרת (15/10/2026 — בעלת המוצר: "שיהיה כתוב כמה פתוחות"). { total, open }:
+--   total — מה שקרה בחלון, **כמו שהיה** מ-14/10: "קריאות היום" ממשיך לספור את היום, ולא את כל מה שעוד פתוח.
+--   open  — כל הפתוחות עכשיו, בכל גיל: "כמה דורשות טיפול". יכול להיות גדול מ-total (בוקר שקט, פתוחות מאתמול).
+-- ⚠️ שתי הספירות על אותן שורות ובאותו תנאי כמו service_calls_recent (in_window / open), כדי שהמספרים על האריח
+-- והרשימה שהוא פותח לא ייפרדו. ⚠️ אינה זורקת (מי שאינו צוות מקבל אפסים), כמו service_calls_recent_count.
+CREATE OR REPLACE FUNCTION app.service_calls_recent_summary_raw(p_hours integer)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT jsonb_build_object(
+           'total', (count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since))::int,
+           'open', (count(*) FILTER (WHERE c.open))::int)
+    FROM app.service_calls_current() c, (SELECT app.service_calls_since(p_hours) AS since) w
+   WHERE (SELECT app.is_staff())
+$$;
+REVOKE ALL ON FUNCTION app.service_calls_recent_summary_raw(integer) FROM PUBLIC;
+
 -- כמה קריאות היו ב-24 השעות — למספר על הכפתור בכותרת. ⚠️ אינה זורקת, כמו service_call_counts:
 -- היא נטענת עם הלוח, וכשל כאן לא יפיל אותו.
+-- ⚠️ 15/10/2026: נשארת בשביל בנייה ישנה של הדשבורד. החדשה קוראת ל-service_calls_recent_summary (גם "כמה פתוחות").
+-- אותו total בדיוק — מה שקרה בחלון — ולכן המספר במסך ישן לא שינה משמעות.
 CREATE OR REPLACE FUNCTION public.service_calls_recent_count(p_hours integer DEFAULT 24)
 RETURNS integer
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT count(*)::int FROM app.service_calls_current() c
-   WHERE (SELECT app.is_staff())
-     AND c.received_at > to_char(now() - make_interval(hours => LEAST(GREATEST(COALESCE(p_hours, 24), 1), 168)),
-                                 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  SELECT (app.service_calls_recent_summary_raw(p_hours) ->> 'total')::int
 $$;
 REVOKE ALL ON FUNCTION public.service_calls_recent_count(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.service_calls_recent_count(integer) TO authenticated;
+
+-- האריח "קריאות היום": { total, open } (ראו service_calls_recent_summary_raw למעלה)
+CREATE OR REPLACE FUNCTION public.service_calls_recent_summary(p_hours integer DEFAULT 24)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT app.service_calls_recent_summary_raw(p_hours)
+$$;
+REVOKE ALL ON FUNCTION public.service_calls_recent_summary(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_recent_summary(integer) TO authenticated;
 
 -- הרשימות — לבוררים בחלון
 CREATE OR REPLACE FUNCTION public.wizenet_lookups_list()

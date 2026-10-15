@@ -12,7 +12,7 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts, fetchRecentServiceCallCount } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts, fetchRecentServiceCallSummary } from "./services/dataSource";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
 import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
@@ -70,7 +70,9 @@ function App() {
   const [taskCounts, setTaskCounts] = useState(null);
   // קריאות ויזנט (13/10/2026) — המספרים לכרטיסים, החלון הפתוח, ומונה לטעינה מחדש באירוע
   const [callCounts, setCallCounts] = useState(null);
-  const [callsToday, setCallsToday] = useState(0);   // כמה קריאות הגיעו ב-24 השעות — למספר שבכותרת
+  // "קריאות היום" בכותרת: כמה בכלל, וכמה מהן פתוחות (15/10/2026: "שיהיה כתוב כמה פתוחות")
+  // ⚠️ open: null עד שנטען — "אין פתוחות" על מספר שעוד לא ידוע הוא קביעה שקרית (סקירה, 15/10/2026)
+  const [callsToday, setCallsToday] = useState({ total: 0, open: null });
   const [callsOpen, setCallsOpen] = useState(null);
   const [callsRev, setCallsRev] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(null);
@@ -209,7 +211,7 @@ function App() {
   const loadCallCounts = useCallback(() => {
     if (!useDirect || !SERVICE_CALLS_ENABLED) return;
     fetchServiceCallCounts().then(setCallCounts).catch(() => {});
-    fetchRecentServiceCallCount(24).then(setCallsToday).catch(() => {});
+    fetchRecentServiceCallSummary(24).then(setCallsToday).catch(() => {});
   }, []);
   useEffect(() => {
     loadCallCounts();

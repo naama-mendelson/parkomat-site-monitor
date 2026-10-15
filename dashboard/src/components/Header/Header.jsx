@@ -42,7 +42,7 @@ function Header({
   onAdmin,
   complianceView,
   onComplianceViewChange,
-  callsToday = null,          // כמה קריאות ויזנט הגיעו ב-24 השעות; null = התכונה כבויה
+  callsToday = null,          // { total, open } — קריאות ויזנט ב-24 השעות וכמה מהן פתוחות; null = התכונה כבויה
   onOpenCalls,
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
@@ -336,9 +336,16 @@ function Header({
                   מראה רק קריאות **פתוחות** של אתר מוכר — 1 מתוך 22 ביום הראשון. כאן הכול. */}
               {callsToday != null && (
                 <button type="button" className="filter-btn sc-head-btn" onClick={onOpenCalls}
-                  aria-label={`קריאות שירות מוויזנט ב-24 השעות האחרונות — ${callsToday}`}>
-                  <span className="filter-count">{callsToday}</span>
+                  aria-label={`קריאות שירות מוויזנט ב-24 השעות האחרונות — ${callsToday.total}`
+                    + (callsToday.open == null ? "" : `; פתוחות עכשיו — ${callsToday.open}`)}>
+                  <span className="filter-count">{callsToday.total}</span>
                   <span className="filter-label">קריאות היום</span>
+                  {/* ⚠️ בעלת המוצר, 15/10/2026: "שיהיה כתוב כמה פתוחות". כל הפתוחות עכשיו, בכל גיל — והרשימה
+                      שנפתחת מכאן מראה אותן (service_calls_recent). המספר הגדול נשאר "היום" בלבד, כמו שהיה.
+                      ⚠️ עד שנטען — בלי השורה: "אין פתוחות" על מספר לא ידוע הוא שקר. */}
+                  {callsToday.open != null && (
+                    <span className="sc-head-open">{callsToday.open ? `${callsToday.open} פתוחות` : "אין פתוחות"}</span>
+                  )}
                 </button>
               )}
             </>

@@ -51,7 +51,6 @@ const BOUNDED = {
   reply_to_field_report: "כתיבה",
   delete_field_report: "כתיבה",
   resolve_field_report: "כתיבה",
-  server_heartbeat: "ערך יחיד",
   broadcast_reload: "כתיבה",
   mark_as_test: "כתיבה",
   unmark_test: "כתיבה",
@@ -81,6 +80,11 @@ const BOUNDED = {
   pm_visit_detail: "jsonb יחיד",
   pm_template: "jsonb יחיד (עד 100 פריטים — תקרה ב-pm_template_save)",
   pm_profiles_list: "jsonb יחיד — כל הפרופילים עם האתרים שלהם, והאתרים בלי פרופיל",
+  // ⚠️ ארבע אלה (רשימות לפי סוג, 07/10/2026) לא הוכרזו עד 15/10 — השער לא רץ מאז
+  pm_templates_list: "jsonb יחיד — כל רשימות התחזוקה",
+  pm_template_create: "כתיבה",
+  pm_template_rename: "כתיבה",
+  pm_site_templates_set: "כתיבה",
   pm_profile_save: "כתיבה",
   pm_profile_delete: "כתיבה",
   pm_profile_sites_set: "כתיבה",
@@ -96,6 +100,20 @@ const BOUNDED = {
   inspection_machine_retire: "כתיבה",
   inspection_close_by_report: "כתיבה",
 
+  // ---- הרמזור (לוח השירות) — לא הוכרז עד 15/10/2026 ----
+  tl_board: "jsonb יחיד — הלוח כולו",
+  tl_add_column: "כתיבה",
+  tl_update_column: "כתיבה",
+  tl_delete_column: "כתיבה",
+  tl_move_column: "כתיבה",
+  tl_add_row: "כתיבה",
+  tl_delete_row: "כתיבה",
+  tl_move_row: "כתיבה",
+  tl_set_cell: "כתיבה",
+  tl_paste_rows: "כתיבה",
+  // שורה לאתר, אבל נקרא עם אתר **אחד** (detailDirect: p_site_ids: [site.id])
+  site_uptime_service: "שורה לאתר — נקרא עם אתר אחד",
+
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
   task_counts: "שורה לאתר×סוג (עד 4: שלושת הסוגים — app.task_kinds() — ו-'none' למשימה בלי סוג) — רק אתרים עם משימה פתוחה",
@@ -108,6 +126,11 @@ const BOUNDED = {
   // ---- קריאות ויזנט (serviceCallsDirect.js) — הטבלאות סגורות, הכול דרך RPC ----
   service_call_counts: "שורה לאתר — רק אתרים עם קריאה פתוחה",
   service_calls_open: "jsonb יחיד — הקריאות הפתוחות של אתר אחד",
+  // ⚠️ 15/10/2026: "להיסטוריה" — הסגורות של אתר, עם תקרה במסד (100, לכל היותר 500) ו-total לצידה
+  service_calls_history: "jsonb יחיד — עד 100 (לכל היותר 500) הסגורות של אתר אחד + total",
+  // ⚠️ "קריאות היום" (14/10) לא הוכרזה עד 15/10 — העטיפה rpc() נסרקת מ-12/10, אבל אף אחד לא הריץ את השער מאז
+  service_calls_recent: "jsonb יחיד — מה שהגיע ב-24 השעות (עד 168) וכל קריאה פתוחה",
+  service_calls_recent_summary: "jsonb יחיד — שני מספרים",
   wizenet_lookups_list: "jsonb יחיד — שתי הרשימות של ויזנט",
   // הממסר לוויזנט (15/10/2026) — תור; הדפדפן מכניס ושואל, מחשב באתר מבצע
   wizenet_request_update: "כתיבה — מחזיר מספר בקשה",
@@ -147,6 +170,8 @@ const MEASURED = [
   { fn: "report_by_site", why: "שורה לאתר", args: (c) => ({ p_site_ids: null, p_from: c.twoYearsAgo, p_to: c.now }) },
   { fn: "report_site_months", why: "שורה לאתר×חודש", args: (c) => ({ p_site_ids: null, p_from: c.twoYearsAgo, p_to: c.now }) },
   { fn: "site_compliance", why: "שורה לאתר", args: () => ({ p_site_ids: null }) },
+  // שורה לכל אתר שחובר ברמזור (sitesDirect, בכל טעינה). לא הוכרזה עד 15/10/2026.
+  { fn: "site_service_links", why: "שורה לאתר", args: () => ({}) },
 ];
 
 // ============================================================
@@ -157,6 +182,12 @@ const MEASURED = [
 // אינו רואה אותן. זו בדיוק הסיבה שהחצי הסטטי כאן סובלני לרווחים.
 const TABLES = {
   sites: "שורה לאתר",
+  // ⚠️ שלוש אלה לא הוכרזו עד 15/10/2026 (השער לא רץ מ-12/10). כולן שורה לאתר **מעצם המבנה**:
+  // alive — upsert, שורה אחת לאתר לנצח (ראו "Heartbeat"); site_card_metrics — pg_cron כותב שורה לאתר;
+  // app_users — שורה למשתמש, והקוראים מסננים ל-role='agent' — אינדקס ייחודי חלקי: סוכן פעיל אחד לאתר.
+  alive: "שורה לאתר — upsert, לעולם אינה גדלה",
+  site_card_metrics: "שורה לאתר — נכתבת ב-pg_cron",
+  app_users: "שורה למשתמש; הקוראים מסננים ל-role='agent' — זהות פעילה אחת לאתר (אינדקס ייחודי חלקי), ולא-פעילות רק מהחלפת בקר",
   operations: "limit או pageAll בכל הקוראים",
   maintenance_windows: "limit או pageAll בכל הקוראים",
   status_history: "pageAll",

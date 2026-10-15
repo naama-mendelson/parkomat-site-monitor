@@ -58,9 +58,39 @@ test("cleanText / callText — בלי תגיות, בלי כפילות הטלפו
     ["ישנה בעייה שחוזרת"]);
   assert.equal(parkingDetail({ parking_code: "3452" }), "", "קוד הפרויקט לבדו — כבר כתוב כקוד האתר");
   assert.equal(parkingDetail({ parking_code: "1226-1-02" }), "1226-1-02");
-  assert.equal(callsSummary([{ open: true }]), "קריאה אחת · פתוחה");
-  assert.equal(callsSummary([{ open: false }, { open: false }]), "2 קריאות · הכול סגור");
-  assert.equal(callsSummary([{ open: true }, { open: false }, { open: false }]), "3 קריאות · אחת פתוחה");
+  assert.equal(callsSummary([{ open: true }]), "קריאה אחת · פתוחה אחת");
+  assert.equal(callsSummary([{ open: false }, { open: false }]), "2 קריאות · אין פתוחות");
+  assert.equal(callsSummary([{ open: true }, { open: false }, { open: false }]), "3 קריאות · פתוחה אחת");
+  // ⚠️ 15/10/2026: פתוחה ישנה (in_window = false) נספרת ב"פתוחות" ולא ב"קריאות" — כמו המספרים על האריח
+  assert.equal(callsSummary([{ open: true, in_window: false }, { open: true }, { open: false }]), "2 קריאות · 2 פתוחות");
+  assert.equal(callsSummary([{ open: true, in_window: false }]), "אין קריאות · פתוחה אחת", "בוקר שקט, פתוחה מאתמול");
+  assert.equal(callsSummary([{ open: false, in_window: true }, { open: true, in_window: true }]), "2 קריאות · פתוחה אחת");
+  assert.equal(callsSummary([]), "אין קריאות · אין פתוחות");
+});
+
+// ⚠️ 15/10/2026: מהכרטיס — פתוחות בלבד, ו"להיסטוריה" — אלה שנסגרו. הכותרת אומרת על איזו רשימה מסתכלים.
+test("siteCallsSummary — פתוחות סופרות את הרשימה; היסטוריה סופרת את הכול (total), לא רק מה שהוצג", async () => {
+  const { siteCallsSummary } = await import(U);
+  assert.equal(siteCallsSummary("open", []), "אין קריאות פתוחות");
+  assert.equal(siteCallsSummary("open", [{}]), "קריאה פתוחה אחת");
+  assert.equal(siteCallsSummary("open", [{}, {}, {}]), "3 קריאות פתוחות");
+  assert.equal(siteCallsSummary("history", [], 0), "אין קריאות שנסגרו");
+  assert.equal(siteCallsSummary("history", [{}], 1), "קריאה אחת שנסגרה");
+  assert.equal(siteCallsSummary("history", new Array(100).fill({}), 240), "240 קריאות שנסגרו",
+    "100 מוצגות מתוך 240 — הכותרת אומרת 240");
+  assert.equal(siteCallsSummary("history", [{}, {}], null), "2 קריאות שנסגרו", "בלי total — לפי הרשימה");
+});
+
+// ⚠️ שורה שנעלמת אחרי שינוי — נאמרת. ובשורה מאוחדת לא נאמר "עברה להיסטוריה": השינוי נשלח על מספר אחד בלבד.
+test("movedNote — לאן הקריאה עברה; בשורה מאוחדת רק 'נסגרה'", async () => {
+  const { movedNote } = await import(U);
+  assert.equal(movedNote({ ticket: "77", dup_n: 1 }, "open"), "קריאה 77 נסגרה ועברה להיסטוריה");
+  assert.equal(movedNote({ ticket: "77" }, "open"), "קריאה 77 נסגרה ועברה להיסטוריה", "מסד ישן בלי dup_n");
+  assert.equal(movedNote({ ticket: "77", dup_n: 3 }, "open"), "קריאה 77 נסגרה");
+  assert.equal(movedNote({ ticket: "77", dup_n: "3" }, "open"), "קריאה 77 נסגרה", "מגיע כמחרוזת מ-jsonb");
+  assert.equal(movedNote({ ticket: "77", dup_n: 3 }, "history"), "קריאה 77 נפתחה מחדש ועברה לקריאות הפתוחות");
+  assert.match(movedNote({ ticket: "77" }, "recent"), /^קריאה 77 נסגרה ויצאה מהרשימה/);
+  assert.equal(movedNote({ ticket: "77", dup_n: 2 }, "recent"), "קריאה 77 נסגרה");
 });
 
 test("callerName / openedLabel — שם מלא או '—'; זמן בשעון ישראל; טקסט שאינו תאריך — כמו שהוא; בלי — שעת ההגעה", async () => {

@@ -453,3 +453,132 @@ test("S7 · הקובץ אידמפוטנטי — החלה שנייה לא נכש�
   const trg = await sup(`SELECT count(*)::int n FROM pg_trigger WHERE tgname = 'service_calls_event'`);
   assert.equal(trg[0].n, 1);
 });
+
+// ============================================================
+// 15/10/2026 — מהכרטיס: רק פתוחות, ו"להיסטוריה"; ובכותרת: כמה פתוחות
+// ============================================================
+// בעלת המוצר: "כשלוחצים על כרטיס כדי לראות את הקריאות — יראו רק קריאות פתוחות, ויהיה כפתור 'להיסטוריה'",
+// ועל האריח "קריאות היום": "שיהיה כתוב כמה פתוחות".
+async function callAt(p, receivedIso) {
+  const raw = JSON.stringify(p);
+  await h.as("authenticated", INT, (tx) => tx.query(`INSERT INTO service_calls (raw, payload, source, received_at) VALUES ($1, $3::jsonb, 'wizenet', $2)`,
+    [raw, receivedIso, raw]));
+  await sleep(5);
+}
+const historyOf = async (uid, code, limit) =>
+  (await one(uid, limit == null ? `SELECT public.service_calls_history($1) AS j` : `SELECT public.service_calls_history($1, $2) AS j`,
+    limit == null ? [code] : [code, limit])).j;
+
+test("S13 · מהכרטיס רק פתוחות; 'להיסטוריה' — רק הסגורות, החדשה למעלה, עם total ותקרה; ואותה צורה בדיוק", { skip }, async () => {
+  const s = await newSite(), other = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  await call({ ticket_number: "S13-o1", parking_code: s.code, status: "1", opened_at: "2026-10-10T08:00:00Z", customer_complaint: "פתוחה ישנה" });
+  await call({ ticket_number: "S13-o2", parking_code: s.code, status: "1", opened_at: "2026-10-12T08:00:00Z", customer_complaint: "פתוחה" });
+  await call({ ticket_number: "S13-c1", parking_code: s.code, status: "9", opened_at: "2026-10-11T08:00:00Z", customer_complaint: "סגורה א" });
+  await call({ ticket_number: "S13-c2", parking_code: s.code, status: "9", opened_at: "2026-10-13T08:00:00Z", customer_complaint: "סגורה ב" });
+  await call({ ticket_number: "S13-c3", parking_code: s.code, status: "9", opened_at: "2026-10-12T09:00:00Z", customer_complaint: "סגורה ג" });
+  await call({ ticket_number: "S13-x", parking_code: other.code, status: "9", opened_at: "2026-10-14T08:00:00Z", customer_complaint: "אתר אחר" });
+  // ⚠️ בלי opened_at: הרגע שלה הוא ההגעה אלינו — 12/10 07:30 UTC. c3 נפתחה 12/10 "09:00Z" בשעון הקיר של ויזנט,
+  // כלומר 06:00 UTC — **לפני** c4. השוואת הטקסטים ("07:30" < "09:00") שמה את c4 אחריה (סקירה, 15/10/2026).
+  await callAt({ ticket_number: "S13-c4", parking_code: s.code, status: "9", customer_complaint: "סגורה בלי מועד פתיחה" },
+    "2026-10-12T07:30:00.000Z");
+
+  // מהכרטיס (בלי שעות): רק פתוחות — גם סגורה שנסגרה היום אינה כאן
+  assert.deepEqual((await openOf(OPR, s.code)).map((c) => c.ticket), ["S13-o1", "S13-o2"]);
+  // בנייה ישנה ששולחת p_hours — מקבלת בדיוק את מה שקיבלה (פתוחות קודם, ואז מה שנסגר בחלון)
+  assert.deepEqual((await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j.map((c) => c.ticket),
+    ["S13-o1", "S13-o2", "S13-c1", "S13-c3", "S13-c2"]);
+
+  // היסטוריה: רק הסגורות, החדשה למעלה לפי **הרגע האמיתי** של הפתיחה; לא של אתר אחר; total = כמה יש בכלל
+  const hist = await historyOf(OPR, s.code);
+  assert.deepEqual(hist.calls.map((c) => c.ticket), ["S13-c2", "S13-c4", "S13-c3", "S13-c1"]);
+  assert.equal(hist.total, 4);
+  assert.ok(hist.calls.every((c) => c.open === false && c.status_name === "סגורה"));
+  // תקרה: 2 — שתי החדשות, ו-total עדיין 4 (החלון אומר "מוצגות 2 מתוך 4")
+  const lim = await historyOf(OPR, s.code, 2);
+  assert.deepEqual([lim.calls.map((c) => c.ticket), lim.total], [["S13-c2", "S13-c4"], 4]);
+  // תקרה לא הגיונית — נחתכת לטווח, לא נכשלת
+  assert.equal((await historyOf(OPR, s.code, 0)).calls.length, 1);
+  assert.equal((await historyOf(OPR, s.code, 100000)).calls.length, 4);
+  // ⚠️ אותה צורה בדיוק בשתי הרשימות — בונה אחד. שדה שנוסף לאחת בלבד היה נראה רק בה.
+  const open = await openOf(OPR, s.code);
+  assert.deepEqual(Object.keys(open[0]).sort(), Object.keys(hist.calls[0]).sort());
+  // קוד עם רווחים (הדבקה) — אותו אתר, בשתי הרשימות
+  assert.deepEqual((await historyOf(OPR, ` ${s.code} `)).calls.map((c) => c.ticket), ["S13-c2", "S13-c4", "S13-c3", "S13-c1"]);
+  assert.deepEqual((await openOf(OPR, ` ${s.code} `)).map((c) => c.ticket), ["S13-o1", "S13-o2"]);
+  // אתר בלי סגורות — רשימה ריקה ו-0, לא null
+  assert.deepEqual(await historyOf(OPR, (await newSite()).code), { calls: [], total: 0 });
+  // רק צוות
+  for (const uid of [AGT, INT]) await fails(historyOf(uid, s.code), "42501");
+});
+
+test("S14 · 'קריאות היום': סופר את היום; 'פתוחות' — כל הפתוחות; הרשימה — שתיהן, והאריח והרשימה מסכימים", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  const old = new Date(Date.now() - 3 * 86400000).toISOString();
+  // פתוחה שלא עודכנה שלושה ימים — ברשימה (כי פתוחה), אבל **לא** "של היום"; סגורה ישנה — בכלל לא
+  await callAt({ ticket_number: "S14-old-open", parking_code: s.code, status: "1", customer_complaint: "פתוחה ישנה" }, old);
+  await callAt({ ticket_number: "S14-old-closed", parking_code: s.code, status: "9", customer_complaint: "סגורה ישנה" }, old);
+  await call({ ticket_number: "S14-new-open", parking_code: s.code, status: "1", customer_complaint: "פתוחה חדשה" });
+  await call({ ticket_number: "S14-new-closed", parking_code: s.code, status: "9", customer_complaint: "סגורה חדשה" });
+
+  const listOf = async () => (await one(OPR, `SELECT public.service_calls_recent(24) AS j`)).j;
+  const sumOf = async () => (await one(OPR, `SELECT public.service_calls_recent_summary(24) AS j`)).j;
+  const mineOf = (list) => Object.fromEntries(list.filter((c) => c.site_code === s.code).map((c) => [c.ticket, c.in_window]));
+  // ⚠️ האריח והרשימה — אותן שורות ואותו תנאי: total = השורות שבחלון, open = השורות הפתוחות
+  const agree = (list, sum, why) => {
+    assert.equal(sum.total, list.filter((c) => c.in_window).length, `${why}: total = שורות "היום" ברשימה`);
+    assert.equal(sum.open, list.filter((c) => c.open).length, `${why}: open = הפתוחות ברשימה`);
+  };
+
+  let list = await listOf();
+  assert.deepEqual(mineOf(list), { "S14-new-closed": true, "S14-new-open": true, "S14-old-open": false });
+  let sum = await sumOf();
+  agree(list, sum, "לפני");
+  // הישנה (בנייה קודמת) — אותו total, כלומר **היום** בלבד, כמו שהיה מ-14/10
+  assert.equal((await one(OPR, `SELECT public.service_calls_recent_count(24) AS n`)).n, sum.total);
+  const before = sum;
+
+  // ⚠️ סגירה **היום** של הקריאה הישנה — דרך הרישום של הממסר. היא נשארת ברשימה (סגורה, ועכשיו "של היום"), ולא נעלמת:
+  // השינוי שלנו הוא הדבר האחרון שקרה לה (סקירה, 15/10/2026)
+  await change(MGR, "S14-old-open", "status", "9");
+  list = await listOf();
+  assert.deepEqual(mineOf(list), { "S14-new-closed": true, "S14-new-open": true, "S14-old-open": true });
+  assert.equal(list.find((c) => c.ticket === "S14-old-open").open, false);
+  sum = await sumOf();
+  agree(list, sum, "אחרי");
+  assert.deepEqual([sum.total - before.total, sum.open - before.open], [1, -1]);
+  // וכך גם הספירה על הכרטיס ("היום" של האתר), והחלון מהכרטיס של בנייה ישנה (p_hours) — אותו חלון
+  const card = (await counts(OPR)).find((r) => r.site_id === s.id);
+  assert.deepEqual([card.open, card.recent], [1, 3]);
+  assert.ok((await one(OPR, `SELECT public.service_calls_open($1, 24) AS j`, [s.code])).j.some((c) => c.ticket === "S14-old-open"),
+    "בנייה ישנה: הקריאה שנסגרה היום נשארת בחלון מהכרטיס, מסומנת סגורה");
+
+  // מי שאינו צוות — אפסים, לא שגיאה (נטען עם הלוח)
+  assert.deepEqual((await one(AGT, `SELECT public.service_calls_recent_summary(24) AS j`)).j, { total: 0, open: 0 });
+  assert.equal((await one(AGT, `SELECT public.service_calls_recent_count(24) AS n`)).n, 0);
+});
+
+// ⚠️ התקרה עצמה — עם יותר קריאות סגורות ממנה. בלי זה, "ברירת מחדל 100" ו"לכל היותר 500" שרדו מוטציה: ב-S13 יש שלוש.
+test("S15 · היסטוריה ארוכה: ברירת המחדל 100 החדשות, לכל היותר 500, ו-total — כולן", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  // 501 סגורות בפקודה אחת, בזהות הקולט (כמו call()); טקסט שונה לכל אחת — אחרת הן מתאחדות ככפילות
+  await h.as("authenticated", INT, (tx) => tx.query(`
+    INSERT INTO service_calls (raw, payload, source, received_at)
+    SELECT x.p::text, x.p, 'wizenet', to_char(now() - make_interval(secs => g), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      FROM generate_series(1, 501) g,
+           LATERAL (SELECT jsonb_build_object('ticket_number', 'S15-' || g, 'parking_code', $1::text, 'status', '9',
+                     'opened_at', to_char(timestamp '2026-01-01' + make_interval(mins => g), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                     'customer_complaint', 'סגורה ' || g) AS p) x`, [s.code]));
+
+  const def = await historyOf(OPR, s.code);
+  assert.equal(def.calls.length, 100, "בלי p_limit — 100");
+  assert.equal(def.total, 501);
+  assert.deepEqual([def.calls[0].ticket, def.calls[99].ticket], ["S15-501", "S15-402"], "החדשות למעלה");
+  // NULL מפורש (לקוח ששולח p_limit: null) — כמו בלי הפרמטר. ⚠️ ה-DEFAULT בחתימה אינו חל על NULL שנשלח
+  assert.equal((await one(OPR, `SELECT public.service_calls_history($1, NULL) AS j`, [s.code])).j.calls.length, 100);
+  const max = await historyOf(OPR, s.code, 1000);
+  assert.equal(max.calls.length, 500, "תקרה גבוהה מדי — נחתכת ל-500");
+  assert.equal(max.total, 501);
+});

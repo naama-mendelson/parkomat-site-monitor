@@ -2555,7 +2555,48 @@ This is the one trap in the feature, and it was visible to the owner before it w
   the row breaks instead. The cost: a card with an open call is 128px (100 with the count, 74 with no call), and the
   grid aligns a whole row to it.
 - **"קריאות היום" in the header** — everything that arrived in the last 24 hours, including calls with no matching
-  site. `service_calls_recent(p_hours)` / `service_calls_recent_count(p_hours)`, capped at 168 hours.
+  site. `service_calls_recent(p_hours)`, capped at 168 hours. ⚠️ **Since 15/10/2026 also every open call, of any age,
+  and the tile says how many are open** (owner: *"שיהיה כתוב כמה פתוחות"*): a third line, "N פתוחות" / "אין פתוחות",
+  from `service_calls_recent_summary` → `{ total, open }`. The list was widened in the same change, because the number
+  on the tile and the list it opens must be the same set — measured that day: 14 open, one of them not updated within
+  the day, which the old list would not have shown. Cost: "קריאות היום" now also counts an old call that is still open.
+  `service_calls_recent_count` stays for an old bundle and reads the same set. On a phone the third line makes that row
+  of tiles ~15px taller (`probe-calls-today` T1c checks it never becomes the tallest tile and that no line wraps).
+
+### The card's dialog: open calls only, and "להיסטוריה" (15/10/2026)
+
+The owner: *"כשלוחצים על כרטיס כדי לראות את הקריאות — יראו רק קריאות פתוחות, ויהיה כפתור שכתוב עליו 'להסטוריה',
+וכשלוחצים עליו רואים את הקריאות הקודמות שכבר נסגרו"*. Until then the dialog from the card showed the open calls and
+whatever closed in the last 24 hours, and a call closed from the dialog stayed in it, marked "סגורה".
+
+- **One builder, two lists.** `app.service_calls_site(code, hours, history, limit)` builds every row (the 18 fields)
+  and returns `{ calls, total }`; `service_calls_open` (open, oldest first) and `service_calls_history` (closed, newest
+  first by opening time) are thin wrappers. A second copy of the 18 fields would drift silently — a field added to
+  one list only.
+- **The history is capped at 100 (500 at most) and says so:** `total` is the full count, the subtitle says "N קריאות
+  שנסגרו" from `total`, and a line under the list says "מוצגות 100 האחרונות מתוך N". Closed calls accumulate with no
+  retention yet (*Still open*), so an uncapped list would be a jsonb that grows forever on every open.
+- **`service_calls_open` keeps `p_hours`** for an old bundle (wall screen, PWA) that still sends it; without it, it is
+  open calls only, which is what the new bundle asks for.
+- **A call that leaves the list after a change says where it went** (`movedNote`, one `role="status"` line):
+  "קריאה X נסגרה ועברה להיסטוריה", or from the history "… נפתחה מחדש ועברה לקריאות הפתוחות". The history rows keep
+  their pickers on purpose: that is the way back from a call closed by mistake.
+- ⚠️ **A merged row (`dup_n > 1`) changes one ticket only.** The picker sends the change for the representative
+  ticket; the other identical tickets stay open at Wizenet, and the row stays on screen under another ticket number.
+  So for a merged row the line says only "קריאה X נסגרה", never "עברה להיסטוריה". Closing all of them is Wizenet's
+  side (they already mark duplicates "מבוטל בשל כפילות" by hand).
+- **"פתוחה"/"סגורה" on each row and the dimming of closed rows are kept for "קריאות היום" only**, where the two are
+  mixed. In the card's dialog every row has the same state, and the same word on every row is noise.
+- ⚠️ **Every load is numbered, and only the latest reaches the screen.** A change goes through the relay and takes
+  seconds; switching to the history meanwhile, or back, would otherwise put the previous list under the new title.
+  The change's reload goes through `loadRef` (the view shown now), and switching invalidates any load in flight.
+- ⚠️ **A site whose calls all closed today** still shows the quiet pill with the day's count, and its dialog now says
+  "✓ אין קריאות פתוחות"; the calls are one click away in "להיסטוריה".
+- Tests: SQL S13 (open only, the old `p_hours` behaviour, history order, `total`, the cap at 1 and at 100,000, same
+  keys in both lists, non-staff refused) and S14 (the widened "today" list and its summary agree);
+  `service-calls-ui.test.js` (`siteCallsSummary`, `movedNote`); browser `probe-calls` 55/55 (42/42 with
+  `VITE_SERVICE_CALLS_WRITE=false`) — including a slow history load that lands after switching back — and
+  `probe-calls-today` 25/25.
 
 ### Still open
 
