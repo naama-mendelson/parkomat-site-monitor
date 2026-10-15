@@ -116,7 +116,7 @@ public sealed class RealtimeDoorbell : IDoorbell
             {
                 if (Stable()) failures = 0;
                 // ⚠️ רק הכשל הראשון ברצף נרשם כאזהרה: אתר בלי אינטרנט היה כותב שורה כל דקה, כל היום
-                _log(failures == 0, $"Wizenet relay: realtime down ({ex.Message}) — the 60s check still runs");
+                _log(failures == 0, $"Wizenet relay: realtime down ({WizenetRelayLoop.Describe(ex)}) — the 60s check still runs");
             }
             _subscribed = false;
             failures++;
@@ -164,7 +164,9 @@ public sealed class RealtimeDoorbell : IDoorbell
         {
             while (true)
             {
-                Task done = await Task.WhenAny(reader, Task.Delay(_heartbeat, ct)).ConfigureAwait(false);
+                // ⚠️ השעון על session ולא על ct (מבחן עומס, 15/10/2026): חיבור שנסגר לפני הפעימה השאיר שעון של 25 שנ׳
+                // רשום על האסימון הראשי — 7.7MB על פני 29,500 חיבורים מחדש. session מבוטל ב-finally, והשעון איתו.
+                Task done = await Task.WhenAny(reader, Task.Delay(_heartbeat, session.Token)).ConfigureAwait(false);
                 if (done == reader) { await reader.ConfigureAwait(false); return; }   // נסגר, או זרק — ושם הסיבה
                 ct.ThrowIfCancellationRequested();
                 if (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastHeardTicks) > _silence.Ticks)
@@ -176,6 +178,8 @@ public sealed class RealtimeDoorbell : IDoorbell
                     await conn.SendAsync(Message(Topic, "access_token", new JsonObject { ["access_token"] = fresh }, true), ct)
                         .ConfigureAwait(false);
                     sentToken = fresh;
+                    // פעם בשעה — כדי שביומן של האתר יהיה אפשר לראות שהחידוש קורה (בלי האסימון עצמו)
+                    _log(false, "Wizenet relay: realtime token renewed");
                 }
                 await conn.SendAsync(Message("phoenix", "heartbeat", new JsonObject(), false), ct).ConfigureAwait(false);
             }

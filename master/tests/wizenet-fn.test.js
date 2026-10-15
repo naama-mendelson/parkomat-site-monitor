@@ -75,6 +75,17 @@ test("מי שאינו ממסר — 403 בלי טוקן; אימות שנכשל �
   }
 });
 
+test("⚠️ שורה חדשה בסוף הסוד — נמסר נקי (נמדד בבדיקה חיה, 15/10/2026: 411 מוויזנט על כל פנייה מהממסר)", async () => {
+  const { makeHandler } = await load();
+  const { f } = fakeFetch();
+  const r = await run(makeHandler({ ...ENV, token: "Bearer WZ-SECRET-TOKEN\n", wizenetBase: " https://wz.test/api\r\n",
+    qryStatus: "Q-STATUS\n", qryType: " Q-TYPE " }, f), req({ action: "relay_config" }));
+  assert.deepEqual(r.body, { token: "Bearer WZ-SECRET-TOKEN", base: "https://wz.test/api", vars: { qry_status: "Q-STATUS", qry_type: "Q-TYPE" } });
+  // טוקן שהוא רק רווחים — אינו טוקן
+  const { f: g } = fakeFetch();
+  assert.equal((await run(makeHandler({ ...ENV, token: " \n" }, g), req({ action: "relay_config" }))).status, 503);
+});
+
 test("בלי טוקן מוגדר — 503; בלי מזהי שאילתות — נמסר בכל זאת (שינוי סטטוס אינו צריך אותם)", async () => {
   const { makeHandler } = await load();
   let { f } = fakeFetch();

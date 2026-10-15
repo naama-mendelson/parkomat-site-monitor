@@ -11,6 +11,9 @@ public sealed record RelayTimings(
 {
     public static RelayTimings Production { get; } = new(
         TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(30), TimeSpan.FromMinutes(30), TimeSpan.FromSeconds(30));
+
+    /// <summary>ממסר שלא הגיע לוויזנט כמה פעמים ברצף — יוצא מהמשחק לזמן הזה, והאחרים לוקחים הכול.</summary>
+    public TimeSpan Pause { get; init; } = TimeSpan.FromMinutes(10);
 }
 
 /// <summary>
@@ -40,6 +43,19 @@ public sealed class WizenetRelayLoop
     private readonly SemaphoreSlim _ring = new(0, 1);
     private RelayConfig? _config;
     private int _failures;
+    // ⚠️ פניות רצופות שלא הגיעו לוויזנט (קצב-זמן / אין חיבור). ראו MissesBeforePause.
+    private int _wizenetMisses;
+    private bool _paused;
+
+    /// <summary>
+    /// ⚠️ שלוש פניות רצופות שלא הגיעו לוויזנט — הממסר יוצא מהמשחק ל-<see cref="RelayTimings.Pause"/> (בדיקה, 15/10/2026).
+    /// חסימה של ויזנט (ספק אינטרנט שכתובתו אינה "ישראלית" בעיניהם) נראית כקצב-זמן, לא כ"אין חיבור" — כך נמדד מחו"ל — ולכן
+    /// ההחזרה לתור של המסד לא חלה עליה (קצב-זמן בעדכון אולי כבר עבר). בלי זה ממסר חסום היה לוקח את חלקו מהבקשות
+    /// ומכשיל כל אחת אחרי 15 שניות. בזמן ההשהיה הוא לא שואל את התור, ולכן גם אינו נספר כ"חי" — והגיבויים לוקחים.
+    /// </summary>
+    public const int MissesBeforePause = 3;
+
+    private sealed class WizenetUnreachableException : Exception;
 
     public WizenetRelayLoop(RelayApi api, WizenetForwarder fwd, Func<Action, Func<string?>, IDoorbell> doorbell,
                             string? version, RelayLog log, RelayTimings? timings = null, Func<DateTimeOffset>? now = null)
@@ -96,7 +112,10 @@ public sealed class WizenetRelayLoop
             _config = null;   // ⚠️ ממסר שהוצא מהרשימה אינו שומר את הטוקן בזיכרון
             // ⚠️ ולא חוזרים מיד לשאול (סקירה, 15/10/2026): 403 בלקיחה בזמן ש-wizenet_relay_me עדיין עונה true (הרשאה
             // שחסרה אחרי החלה שגויה) הייתה לולאה בלי הפסקה — התחברות, פעמון, שורת אזהרה, חזרה — פעמים רבות בשנייה.
-            if (!await DelayAsync(_t.DormantRecheck, ct).ConfigureAwait(false)) return;
+            TimeSpan rest = _paused ? _t.Pause : _t.DormantRecheck;
+            _paused = false;
+            _wizenetMisses = 0;
+            if (!await DelayAsync(rest, ct).ConfigureAwait(false)) return;
         }
     }
 
@@ -124,6 +143,13 @@ public sealed class WizenetRelayLoop
                     _failures = 0;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                catch (WizenetUnreachableException)
+                {
+                    _log(true, $"Wizenet relay: Wizenet did not answer this site {MissesBeforePause} times in a row — "
+                             + $"pausing for {_t.Pause.TotalMinutes:0} minutes so the other relays take the requests");
+                    _paused = true;
+                    return;
+                }
                 catch (RelayException ex) when (ex.Status == 403)
                 {
                     // ⚠️ המסד אומר "אינו ממסר" (42501 → 403): השורה נמחקה או הושבתה. חוזרים לשינה, בלי טוקן.
@@ -192,7 +218,25 @@ public sealed class WizenetRelayLoop
             bool accepted = await CompleteWithRetryAsync(req, results, ct).ConfigureAwait(false);
             _log(false, $"Wizenet relay: request {req.Id} (attempt {req.Attempt}) sent — {Summary(results)}"
                         + (accepted ? "" : " — answer not accepted (another relay took over)"));
+
+            if (Unreached(results)) _wizenetMisses++;
+            else if (Reached(results)) _wizenetMisses = 0;
+            if (_wizenetMisses >= MissesBeforePause) throw new WizenetUnreachableException();
         }
+    }
+
+    // הגיע לוויזנט = לפחות תשובה אחת עם קוד HTTP (גם שגיאה שלהם היא "הגיע"). לא הגיע = קצב-זמן או אין חיבור.
+    public static bool Reached(string results)
+    {
+        using JsonDocument doc = JsonDocument.Parse(results);
+        return doc.RootElement.EnumerateArray().Any(r => r.TryGetProperty("status", out _));
+    }
+
+    public static bool Unreached(string results)
+    {
+        using JsonDocument doc = JsonDocument.Parse(results);
+        return doc.RootElement.EnumerateArray().Any(r =>
+            r.TryGetProperty("error", out var e) && e.GetString() is "timeout" or "network");
     }
 
     // ⚠️ שלושה ניסיונות: התשובה כבר קיימת (ויזנט אולי כבר שינו), ואיבוד שלה פירושו שהבקשה תילקח שוב אחרי
@@ -231,7 +275,20 @@ public sealed class WizenetRelayLoop
     {
         _failures++;
         // ⚠️ הכשל הראשון ברצף — אזהרה; השאר — מידע בלבד: אתר בלי אינטרנט היה ממלא את היומן
-        _log(_failures == 1, $"Wizenet relay: failed {what} ({ex.GetType().Name}: {ex.Message})");
+        _log(_failures == 1, $"Wizenet relay: failed {what} ({Describe(ex)})");
+    }
+
+    /// <summary>
+    /// החריגה, עם הסיבה הפנימית ביותר. ⚠️ נמדד בבדיקה החיה (15/10/2026): "The SSL connection could not be established"
+    /// לבדו אינו אומר אם זו תעודה, בדיקת ביטול שנחסמה, או שעון — וזה בדיוק מה שצריך לדעת כשמאבחנים אתר מרחוק.
+    /// </summary>
+    public static string Describe(Exception ex)
+    {
+        Exception inner = ex;
+        while (inner.InnerException is not null) inner = inner.InnerException;
+        return ReferenceEquals(inner, ex)
+            ? $"{ex.GetType().Name}: {ex.Message}"
+            : $"{ex.GetType().Name}: {ex.Message} → {inner.GetType().Name}: {inner.Message}";
     }
 
     private static async Task<bool> DelayAsync(TimeSpan d, CancellationToken ct)

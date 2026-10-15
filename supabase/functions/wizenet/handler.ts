@@ -74,13 +74,16 @@ export function makeHandler(env: Env, f: typeof fetch = fetch) {
         const me = await rpc(auth, "wizenet_relay_me", {});
         if (!me.ok) return json({ error: "אימות נכשל" }, 401);
         if (me.data !== true) return json({ error: "אין הרשאה — האתר הזה אינו ממסר לוויזנט" }, 403);
-        if (!env.token) return json({ error: "החיבור לוויזנט עוד לא הוגדר (חסר טוקן)" }, 503);
+        // ⚠️ trim — נמדד (בדיקה חיה, 15/10/2026): הסוד WIZENET_TOKEN נשמר עם שורה חדשה בסופו. fetch של Deno ניקה אותה
+        // בשקט כשהפונקציה פנתה לוויזנט בעצמה; ‏.NET בממסר שולח אותה כמות שהיא, והבקשה נשברה (411 מוויזנט).
+        const token = (env.token ?? "").trim();
+        if (!token) return json({ error: "החיבור לוויזנט עוד לא הוגדר (חסר טוקן)" }, 503);
         // ⚠️ מזהי השאילתות נמסרים גם כשהם ריקים: בלעדיהם רק רענון הרשימות נכשל, ושינוי סטטוס — לא. הממסר
         // מסרב לשלוח פנייה שמקום-שמור בה נשאר ריק, ואומר למה (ראו app.wizenet_call_error).
         return json({
-          token: env.token,
-          base: env.wizenetBase,
-          vars: { qry_status: env.qryStatus, qry_type: env.qryType },
+          token,
+          base: (env.wizenetBase ?? "").trim(),
+          vars: { qry_status: (env.qryStatus ?? "").trim(), qry_type: (env.qryType ?? "").trim() },
         });
       }
 

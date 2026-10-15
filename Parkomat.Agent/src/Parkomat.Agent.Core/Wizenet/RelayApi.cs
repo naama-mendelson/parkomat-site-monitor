@@ -73,17 +73,23 @@ public sealed class RelayApi
             .ConfigureAwait(false);
         using JsonDocument doc = JsonDocument.Parse(body);
         JsonElement root = doc.RootElement;
-        string token = root.TryGetProperty("token", out var t) ? t.GetString() ?? "" : "";
-        string @base = root.TryGetProperty("base", out var b) ? b.GetString() ?? "" : "";
+        // ⚠️ Trim — ונמדד, לא נוחות (בדיקה חיה, 15/10/2026): הסוד WIZENET_TOKEN נשמר עם שורה חדשה בסופו. Node ו-Deno
+        // מנקים כותרות כאלה בשקט, ולכן זה עבד מפונקציית ה-Edge. ‏.NET שולח את השורה החדשה כמות שהיא: היא סוגרת את
+        // הכותרות באמצע, Content-Length נופל לגוף, וויזנט ענו 411 Length Required על כל פנייה.
+        string token = (root.TryGetProperty("token", out var t) ? t.GetString() ?? "" : "").Trim();
+        string @base = (root.TryGetProperty("base", out var b) ? b.GetString() ?? "" : "").Trim();
         if (token.Length == 0 || @base.Length == 0)
             throw new RelayException(0, "פונקציית ה-Edge לא מסרה טוקן או כתובת");
+        // תו בקרה שנשאר באמצע — אין דרך לשלוח אותו בכותרת בלי לשבור את הבקשה. אומרים, ולא שולחים.
+        if (token.Any(char.IsControl))
+            throw new RelayException(0, "הטוקן של ויזנט מכיל תו בקרה (שורה חדשה?) — לתקן את הסוד WIZENET_TOKEN");
         // ⚠️ רק https: הטוקן נוסע בכותרת, וכתובת http הייתה שולחת אותו גלוי ברשת של האתר
         if (!Uri.TryCreate(@base, UriKind.Absolute, out Uri? baseUri) || baseUri.Scheme != Uri.UriSchemeHttps)
             throw new RelayException(0, "כתובת ויזנט אינה https");
         var vars = new Dictionary<string, string>(StringComparer.Ordinal);
         if (root.TryGetProperty("vars", out var v) && v.ValueKind == JsonValueKind.Object)
             foreach (JsonProperty p in v.EnumerateObject())
-                if (p.Value.ValueKind == JsonValueKind.String) vars[p.Name] = p.Value.GetString() ?? "";
+                if (p.Value.ValueKind == JsonValueKind.String) vars[p.Name] = (p.Value.GetString() ?? "").Trim();
         return new RelayConfig(token, @base, vars);
     }
 

@@ -1006,14 +1006,27 @@ the agent does.
   again: a 403 on claim while `wizenet_relay_me` still says true (a missing grant after a bad apply) used to be sign-in,
   socket, warning, return, many times a second. A site that cannot ask at all backs off 30 s, 60 s, 120 s… up to 30
   minutes: every 1.0.60 site runs this loop, and a fixed 30 s would be hundreds of thousands of requests a day.
+- ⚠️ **The token is trimmed, and a control character is refused** (live test, 15/10). The `WIZENET_TOKEN` secret ends
+  with a newline; `TryAddWithoutValidation` sent it raw, the header block broke, and Wizenet answered `411 Length
+  Required` to every call. `RelayApi.GetConfigAsync` trims the token, base and vars, and refuses a control character
+  left inside; `WizenetForwarder` refuses one again, whatever the source.
+- **Three unanswered calls in a row pause the relay for 10 minutes** (`MissesBeforePause`, `RelayTimings.Pause`). Being
+  blocked by Wizenet looks like a timeout, and the database does not hand an update timeout back. While paused the relay
+  does not ask the queue, so it is not counted as alive and the backups take everything. A success resets the count.
+- **Failures are logged with the innermost cause** (`WizenetRelayLoop.Describe`): "The SSL connection could not be
+  established" alone does not say whether it is a certificate, a blocked revocation check, or the clock.
 - **The doorbell's backoff resets only after a connection that held for 2 minutes**, not when the join is acknowledged.
   Supabase can acknowledge the join and then send a `system` error; resetting on the acknowledgement was a reconnect
   every 5 seconds, each one also a ring.
+- ⚠️ **The heartbeat timer belongs to the session** (soak test, 15/10). On the outer token, every closed connection left a
+  25 s timer registered: 7.7 MB over 29,500 reconnects. Each token renewal is logged ("realtime token renewed", once
+  an hour), so a site log shows it happening.
 - **One request is answered even when no token came**, with `{"error":"config","detail":"לא התקבל טוקן: …"}`. Otherwise
   it would wait to expire and the person who clicked would read "לא ידוע אם השינוי הגיע" about a change that was
   certainly not sent.
 - **The log** has one line per request (`request N (attempt k) sent — HTTP 200`), status codes only, never the text or
   the token. Network failures are a warning only on the first in a row.
-- Tests: `WizenetRelayTests.cs` (32): a fake HTTP handler counts and inspects every request, and a fake
+- Tests: `WizenetRelayTests.cs`, `WizenetRelaySoakTests.cs` (2, memory over 30,000 cycles), and
+  `WizenetRelayLiveTests.cs` (1, run only by `master/tools/check-relay-live.js` against the real services). `WizenetRelayTests.cs`: a fake HTTP handler counts and inspects every request, and a fake
   `IRealtimeConnection` drives the Phoenix protocol: join contents, rings, heartbeat, token renewal, four kinds of
-  channel end, silence. 33/33 mutations caught (copy under Documents, `--filter WizenetRelayTests`).
+  channel end, silence. 39/39 mutations caught (copy under Documents, `--filter WizenetRelayTests`).

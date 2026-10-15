@@ -98,6 +98,13 @@ public sealed class WizenetForwarder
     {
         var results = new JsonArray();
         if (calls.ValueKind != JsonValueKind.Array) return results.ToJsonString(Json);
+        // ⚠️ TryAddWithoutValidation אינו בודק: שורה חדשה בטוקן שוברת את הבקשה באמצע הכותרות (נמדד: 411 מוויזנט על
+        // כל פנייה, 15/10/2026). RelayApi כבר מנקה; כאן — הגנה שנייה, מכל מקור שהוא.
+        if (cfg.Token.Any(char.IsControl) || cfg.Base.Any(char.IsControl))
+        {
+            results.Add(Error("config", "הטוקן או הכתובת של ויזנט מכילים תו בקרה (שורה חדשה?)"));
+            return results.ToJsonString(Json);
+        }
 
         foreach (JsonElement call in calls.EnumerateArray())
         {

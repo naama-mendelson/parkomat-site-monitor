@@ -485,8 +485,11 @@ BEGIN
   -- "לא הגיע" = network / config: חיבור שנכשל, או הגדרה חסרה בממסר. ⚠️ לא קצב-זמן — שם אולי הגיע, ונאמר "לא ענו".
   -- update — רק כשהפנייה (היחידה) לא הגיעה. lookups — כל כשל כזה: שאילתת קריאה, ושליחה חוזרת אינה מזיקה. ⚠️ וגם
   -- כש"רשת" קרתה אחרי שהבקשה כבר יצאה (חיבור שנסגר לפני התשובה), שליחה חוזרת של אותו ערך לאותה קריאה אינה מזיקה.
+  -- ⚠️ ורענון רשימות — גם בקצב-זמן (בדיקה, 15/10/2026): חסימה של ויזנט נראית כקצב-זמן, ושאילתת קריאה שנשלחת שוב
+  -- אינה מזיקה. בעדכון קצב-זמן נשאר כשל — אולי השינוי כבר עבר.
   SELECT e.v INTO v_res FROM jsonb_array_elements(p_results) WITH ORDINALITY AS e(v, n)
-   WHERE e.v ->> 'error' IN ('network', 'config') AND (q.kind <> 'update' OR e.n = 1)
+   WHERE (e.v ->> 'error' IN ('network', 'config') OR (q.kind = 'lookups' AND e.v ->> 'error' = 'timeout'))
+     AND (q.kind <> 'update' OR e.n = 1)
    ORDER BY e.n LIMIT 1;
   IF v_res IS NOT NULL THEN
     v_err := app.wizenet_call_error(v_res);

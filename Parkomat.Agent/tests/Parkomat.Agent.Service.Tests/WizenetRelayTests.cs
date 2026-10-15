@@ -183,6 +183,22 @@ public class WizenetRelayTests
     }
 
     [Fact]
+    public async Task ATokenWithAControlCharacterIsNeverSent()
+    {
+        // ⚠️ נמדד בבדיקה החיה (15/10/2026): שורה חדשה בסוף הטוקן שברה את הבקשה באמצע הכותרות — Content-Length נפל
+        // לגוף, וויזנט ענו 411 על כל פנייה. TryAddWithoutValidation אינו בודק, ולכן הבדיקה כאן.
+        var h = new Router((_, _) => Res(HttpStatusCode.OK, "update successfully"));
+        var fwd = new WizenetForwarder(new HttpClient(h));
+        foreach (string token in new[] { "Bearer WZ\n", "Bearer W\r\nX-Evil: 1", "WZ\t" })
+        {
+            string r = await fwd.ExecuteAsync(Calls("""[{"func":"wizeApp_updateCallStatus","body":{"callid":"1","callstatusid":"2"}}]"""),
+                new RelayConfig(token, "https://wz.test/api", new Dictionary<string, string>()), CancellationToken.None);
+            Assert.Contains("\"error\":\"config\"", r);
+        }
+        Assert.Empty(h.Requests);
+    }
+
+    [Fact]
     public void RedirectsAreNeverFollowed()
     {
         // ⚠️ ויזנט עונים לטוקן לא תקף ב-302 לדף ההתחברות. מעקב היה מחזיר HTML כ-200, והמסד לא היה יודע שהטוקן נדחה
@@ -269,6 +285,13 @@ public class WizenetRelayTests
         Sent f = h.Requests.Single(s => s.Path == "/functions/v1/wizenet");
         Assert.Equal("""{"action":"relay_config"}""", f.Body);
         Assert.Equal("Bearer jwt-1", f.Auth);
+
+        // ⚠️ שורה חדשה בסוף הסוד (נמדד, 15/10/2026) — נחתכת; באמצע — סירוב, ולא בקשה שבורה
+        config = "{\"token\":\"Bearer WZ\\n\",\"base\":\" https://wz.test/api\\r\\n\",\"vars\":{\"qry_status\":\"Q1\\n\"}}";
+        RelayConfig trimmed = await api.GetConfigAsync(CancellationToken.None);
+        Assert.Equal(("Bearer WZ", "https://wz.test/api", "Q1"), (trimmed.Token, trimmed.Base, trimmed.Vars["qry_status"]));
+        config = "{\"token\":\"Bearer W\\nZ\",\"base\":\"https://wz.test/api\",\"vars\":{}}";
+        await Assert.ThrowsAsync<RelayException>(() => api.GetConfigAsync(CancellationToken.None));
 
         // ⚠️ הטוקן נוסע בכותרת — כתובת http הייתה שולחת אותו גלוי ברשת של האתר
         config = """{"token":"WZ","base":"http://wz.test/api","vars":{}}""";
@@ -479,6 +502,9 @@ public class WizenetRelayTests
         public bool NetworkDown;
         public int ConfigStatus = 200;
         public int WizenetStatus = 200;
+        public bool WizenetHangs;
+        public Func<int, bool>? HangOn;     // לפי מספר הפנייה לוויזנט (מ-1)
+        private int _wizenetCalls;
         public readonly ConcurrentQueue<string> Pending = new();
         public readonly ConcurrentQueue<string> Completed = new();
         public readonly List<FakeBell> Bells = [];
@@ -504,7 +530,9 @@ public class WizenetRelayTests
                     _ => Res(HttpStatusCode.NotFound, "{}"),
                 };
             });
-            Wizenet = new Router((_, _) => Res((HttpStatusCode)WizenetStatus, "update successfully"));
+            Wizenet = new Router((_, _) => WizenetHangs || (HangOn?.Invoke(Interlocked.Increment(ref _wizenetCalls)) ?? false)
+                ? throw new TaskCanceledException("HttpClient.Timeout")
+                : Res((HttpStatusCode)WizenetStatus, "update successfully"));
         }
 
         private HttpResponseMessage Done(string body)
@@ -632,6 +660,48 @@ public class WizenetRelayTests
     }
 
     [Fact]
+    public async Task ARelayThatCannotReachWizenetStepsAsideForAWhile()
+    {
+        // ⚠️ חסימה של ויזנט נראית כקצב-זמן (כך נמדד מחו"ל). אחרי שלוש ברצף — הממסר מפסיק לשאול את התור, ולכן אינו
+        // נספר כ"חי", והגיבויים לוקחים. אחרי ההשהיה הוא חוזר ומנסה שוב.
+        var w = new World { WizenetHangs = true };
+        for (int i = 1; i <= 5; i++) w.Pending.Enqueue(World.Req(i));
+        var t = new RelayTimings(TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), TimeSpan.FromMinutes(10),
+            TimeSpan.FromMilliseconds(40)) { Pause = TimeSpan.FromMilliseconds(600) };
+        using var cts = new CancellationTokenSource();
+        Task run = w.Loop(t).RunAsync(cts.Token);
+        await WaitUntil(() => w.Completed.Count == WizenetRelayLoop.MissesBeforePause, "שלוש תשובות של קצב-זמן");
+        int claims = w.Claims;
+        await Task.Delay(300);
+        Assert.Equal(claims, w.Claims);                       // בהשהיה — לא שואל את התור
+        Assert.Equal(WizenetRelayLoop.MissesBeforePause, w.Completed.Count);
+        Assert.All(w.Completed, c => Assert.Contains("\"error\":\"timeout\"", c));
+
+        w.WizenetHangs = false;
+        await WaitUntil(() => w.Completed.Count == 5, "חזרה אחרי ההשהיה", 5000);
+        cts.Cancel();
+        await run;
+        Assert.Equal(2, w.Bells.Count);                        // פעמון חדש אחרי ההשהיה
+        Assert.Contains("update successfully", w.Completed.Last());
+    }
+
+    [Fact]
+    public async Task OnlyMissesInARowPauseTheRelay()
+    {
+        // ⚠️ "ברצף" — הצלחה באמצע מאפסת. אחרת רשת מגמגמת (קצב-זמן מדי פעם) הייתה מוציאה ממסר תקין מהמשחק
+        var w = new World { HangOn = n => n is 1 or 2 or 4 or 5 };   // לא, לא, כן, לא, לא, כן
+        for (int i = 1; i <= 6; i++) w.Pending.Enqueue(World.Req(i));
+        var t = new RelayTimings(TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), TimeSpan.FromMinutes(10),
+            TimeSpan.FromMilliseconds(40)) { Pause = TimeSpan.FromMinutes(10) };
+        using var cts = new CancellationTokenSource();
+        Task run = w.Loop(t).RunAsync(cts.Token);
+        await WaitUntil(() => w.Completed.Count == 6, "שש תשובות, בלי השהיה", 3000);
+        cts.Cancel();
+        await run;
+        Assert.Single(w.Bells);
+    }
+
+    [Fact]
     public async Task NoNetworkNeverEscapesTheLoop()
     {
         var w = new World { NetworkDown = true };
@@ -679,6 +749,11 @@ public class WizenetRelayTests
         Assert.True(WizenetRelayLoop.TokenRejected("""[{"status":403,"text":""}]"""));
         Assert.False(WizenetRelayLoop.TokenRejected("""[{"status":200,"text":"x"}]"""));
         Assert.False(WizenetRelayLoop.TokenRejected("""[{"status":500,"text":"x"},{"error":"timeout"}]"""));
+        Assert.True(WizenetRelayLoop.Unreached("""[{"status":200,"text":"x"},{"error":"timeout"}]"""));
+        Assert.True(WizenetRelayLoop.Unreached("""[{"error":"network","detail":"x"}]"""));
+        Assert.False(WizenetRelayLoop.Unreached("""[{"error":"config","detail":"x"}]"""));
+        Assert.True(WizenetRelayLoop.Reached("""[{"status":500,"text":"x"}]"""));
+        Assert.False(WizenetRelayLoop.Reached("""[{"error":"timeout"}]"""));
         // ⚠️ ביומן — הקודים בלבד, לא הטקסט (רשימה שלמה של סטטוסים)
         Assert.Equal("HTTP 200, timeout", WizenetRelayLoop.Summary("""[{"status":200,"text":"long list"},{"error":"timeout","detail":"x"}]"""));
     }

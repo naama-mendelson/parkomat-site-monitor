@@ -442,6 +442,14 @@ test("R17 · לא הגיע לוויזנט (רשת/תצורה) — חוזר לת�
   const l = await claim(R1);
   const rl = await complete(R1, l.id, l.attempt, [{ status: 200, text: JSON.stringify([{ id: "1", name: "x" }]) }, { error: "network", detail: "x" }]);
   assert.equal(rl.state, "pending");
+  // ⚠️ ורענון רשימות — גם בקצב-זמן: חסימה של ויזנט נראית כך, ושאילתת קריאה שנשלחת שוב אינה מזיקה
+  await reset();
+  await claim(R1); await claim(R2);
+  await one(OPR, `SELECT public.wizenet_request_lookups() AS id`);
+  const lt = await claim(R1);
+  assert.equal((await complete(R1, lt.id, lt.attempt, [{ error: "timeout" }])).state, "pending");
+  const lt2 = await claim(R2);
+  assert.deepEqual([lt2.id, lt2.attempt], [lt.id, 2]);
   // update: כשל ב"פנייה" שאינה הראשונה אינו קיים — רק הראשונה נבדקת (אחרת "פנייה שנייה" מדומה הייתה מחזירה לתור שינוי שכבר נעשה)
   await reset();
   await wake();

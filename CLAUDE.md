@@ -2639,12 +2639,47 @@ dashboard asks wizenet_request_status every second until done / failed / expired
 - **Daily at 04:07 UTC** `app.wizenet_daily()` prunes requests older than 30 days and, if a relay is alive, refreshes the
   status and type lists. This closes "a new Wizenet status pulses forever": it is in the list within a day (whether it
   counts as closed is still a guess from the name).
-- Mutations: **SQL 44/44** (isolated copies, `scratchpad/sqlmut*`, `mut-relay.cjs`), **agent 33/33** (a copy under
+- Mutations: **SQL 45/45** (isolated copies, `scratchpad/sqlmut*`, `mut-relay.cjs`), **agent 39/39** (a copy under
   Documents). Two SQL mutants survived at first: a redundant "relay alive" check in the daily job (removed, and its
   swallow narrowed from `WHEN others` to PT503/PT429 so a real bug is not hidden), and a disabled relay counted in the
   status (a test added). ⚠️ A mutation script that does `src.replace(from, to)` with a **string** reads `$'` in `to` as
   a JS replace pattern, so two mutants of regexes ending in `$'` produced a broken file and "failed" every test. Use a
   replacement function.
+
+### ⚠️ Tested live before any site PC got it — and it caught a bug nothing else could
+
+`master/tools/check-relay-live.js` (`node --env-file=.env tools/check-relay-live.js`) makes a synthetic site, agent and
+relay row, runs the agent's real relay code (`WizenetRelayLiveTests`) from the dev PC, which is in Israel, and puts three
+real requests in the queue: a list refresh (read only), a status change for a call that does not exist (`999999999`;
+Wizenet answer `call not found`, so nothing changes on their side), and the same again after the realtime token is
+renewed on the open connection. It removes everything afterwards. No `db.init()`: a plain pg client, only its own rows.
+
+- ⚠️ **The first run failed every call with `411 Length Required`.** The `WIZENET_TOKEN` secret ends with a **newline**.
+  Deno's fetch (and Node's) strip it silently, which is why it worked from the Edge Function on 13/10. .NET's
+  `TryAddWithoutValidation` sends it as is: the newline closes the headers early, `Content-Length` falls into the body,
+  and Wizenet see a POST with no length. The fake handlers could never show this. It is fixed in **three places**: the
+  Edge Function trims the token, base and query ids; the agent trims; the forwarder refuses any control character and
+  says why. Found by printing only the token's length and the codepoints of its non-alphanumeric characters (`6:U+0020
+  47:U+000A`), never the token itself.
+- **Measured:** claimed **0.25–0.57 s** after it entered the queue (the doorbell, not the 60 s check), closed in about 1 s.
+  After the token renewal the doorbell still rang in 0.43 s, with no reconnect. The list came back with 20 statuses and
+  11 types, so the SQL port of `parseLookup` reads the real response.
+- A transient `The SSL connection could not be established` appeared once on the first call and recovered by itself 30 s
+  later. Failures are now logged with the innermost cause (`WizenetRelayLoop.Describe`), since the outer message alone
+  says nothing a technician can act on.
+
+**Soak tests** (`WizenetRelaySoakTests`): 30,000 reconnects and 30,000 requests, with the heap measured at cycle 5,000 and
+at the end. ⚠️ They found a real leak: each closed connection left its 25 s heartbeat timer registered on the long-lived
+token, 7.7 MB over 29,500 reconnects. The timer is now tied to the session. ⚠️ And the first version of the soak test was
+blind, which a mutation proved: with fakes that complete synchronously, `RunAsync` ran all 30,000 cycles before returning,
+so "the middle" was measured after the end and a deliberate leak passed. It runs on `Task.Run` now and measures from
+inside the loop, at a fixed cycle. Over 120,000 requests the heap is flat after the warm-up (5,072 → 5,073 KB).
+
+**A relay that Wizenet do not answer steps aside** (`MissesBeforePause` = 3, `RelayTimings.Pause` = 10 min). Being
+blocked by Wizenet looks like a **timeout**, which is how the Supabase calls failed from abroad, and a timeout on an update
+is not handed back (it may have gone through). So three timeouts or network failures in a row, with a success resetting
+the count, take the relay out: it stops asking the queue, drops out of "alive", and the backups take everything. A list
+refresh is read only, so a timeout there **is** handed back.
 
 **Rollout order:** apply the SQL (dry run first), deploy the `wizenet` function, install 1.0.60 at the three sites, insert
 the three `wizenet_relays` rows, live test (refresh the lists, then one real change the owner picks), then flip
