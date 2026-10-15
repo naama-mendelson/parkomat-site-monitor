@@ -109,14 +109,16 @@ function parseCsv(txt) {
     await db.query("ROLLBACK");
   } finally { await db.end(); }
   const byCode = new Map(sites.map((s) => [s.code, s]));
-  const byName = new Map(sites.filter((s) => s.monitored === false).map((s) => [s.name, s]));
+  // ⚠️ בלי פיסוק: לאתרים נוסף פסיק אחרי מספר הבית (rename-multiplier-sites), והלוח נשאר בלעדיו
+  const nameKeyOf = (n) => String(n ?? "").replace(/[^0-9א-תA-Za-z]+/g, " ").replace(/s+/g, " ").trim();
+  const byName = new Map(sites.filter((s) => s.monitored === false).map((s) => [nameKeyOf(s.name), s]));
 
   // ---------------- התוכנית ----------------
   const plan = [];   // { row, name, site, code, source, action, note }
   const taken = new Set();
   for (const r of board) {
     if (!r.name) continue;
-    const site = byName.get(r.name) ?? null;
+    const site = byName.get(nameKeyOf(r.name)) ?? null;
     let code = null, source = null, note = "";
     if (r.code && !/^MX-/i.test(r.code)) { code = r.code; source = "תא"; }
     else {

@@ -33,6 +33,8 @@ const { gateToken } = require("./lib/gate-user");
 const MASTER = path.join(__dirname, "..");
 const APPLY = process.argv.includes("--apply");
 const NAME_LABEL = "אתר";
+/** שם להשוואה: בלי פיסוק ורווחים כפולים — "אביגיל 12, ר"ג" ו-"אביגיל 12 ר"ג" הם אותו אתר */
+const nameKeyOf = (n) => String(n ?? "").replace(/[^0-9א-תA-Za-z]+/g, " ").replace(/s+/g, " ").trim();
 
 (async () => {
   const SB = process.env.SUPABASE_URL;
@@ -58,14 +60,15 @@ const NAME_LABEL = "אתר";
       `SELECT id, position, btrim(cells ->> $1) AS name FROM traffic_light_rows WHERE board = 'multipliers' ORDER BY position, id`,
       [key])).rows;
     const s = (await db.query(`SELECT code, btrim(site_name) AS name FROM sites`)).rows;
-    existingNames = new Set(s.map((x) => x.name));
+    // ⚠️ בלי פיסוק: לאתרים נוסף פסיק אחרי מספר הבית (rename-multiplier-sites, 15/10/2026), והלוח נשאר בלעדיו
+    existingNames = new Set(s.map((x) => nameKeyOf(x.name)));
     existingCodes = new Set(s.map((x) => x.code));
     await db.query("ROLLBACK");
   } finally { await db.end(); }
 
   const plan = rows.map((r, i) => {
     const code = `MX-${String(i + 1).padStart(3, "0")}`;
-    const skip = !r.name ? "שם ריק" : existingNames.has(r.name) ? "השם כבר קיים כאתר" : existingCodes.has(code) ? `הקוד ${code} תפוס` : null;
+    const skip = !r.name ? "שם ריק" : existingNames.has(nameKeyOf(r.name)) ? "השם כבר קיים כאתר" : existingCodes.has(code) ? `הקוד ${code} תפוס` : null;
     return { code, name: r.name, skip };
   });
   const todo = plan.filter((p) => !p.skip);
