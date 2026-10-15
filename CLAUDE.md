@@ -2094,7 +2094,16 @@ editor's native `<select>` list: *"תעצב את זה יפה"*.
   `auto_for` change, validation, idempotency), `pm-profiles.test.js` (the precedence test rewritten), `pm-lists-ui.test.js`
   (6). Browser: `e2e/probe-pm-types.mjs` (28; `?pm=docs&types=floor:xy,lift:electric` — the PM mock now resolves lists like
   SQL and exposes `templates_source`), `probe-lists` 15/15 and `probe-pm-profiles` 133/133 updated to the new rows. Full
-  `npm test` 1158/1158.
+  `npm test` 1158/1158. **Mutations (isolated copy `scratchpad/sqlmut`, `pmauto/mut-pm-auto2.cjs`): 9/9 caught** — no base
+  in the auto set, the second lift ignored, type before manual, "base only" instead of empty when nothing matches (which
+  would override every profile — 19 failures), the default list accepting a classification, any key shape, profile before
+  type in the source, keys not persisted, operators allowed. ⚠️ Write mutation runners with the Write tool and without
+  backslashes (newlines via `String.fromCharCode`): both the Bash heredoc and the Write tool ate `\n` twice here.
+- **Production audit (`pmauto/audit.cjs`, read-only, 18/19):** an independent JS recomputation of keys, auto set, source
+  and resolved lists agrees with SQL for all 214 sites; two-lift site 1102 gets both; no monitored site in the multipliers
+  profile; the only manual rows are 1384 and 1206. The one ⚠️ is a **question, not a bug**: the 88 multipliers on profile
+  12 get list 11 alone, without the base "לובי וחשמל" — the automatic rule always adds the base, a profile does not.
+  Whether a stacker needs the lobby/electrical list is the owner's call.
 
 ## "בודק מוסמך" in the header filter (built and deployed 08/10/2026)
 
