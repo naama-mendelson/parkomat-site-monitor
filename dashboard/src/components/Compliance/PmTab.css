@@ -774,3 +774,24 @@ select.pm-input { padding-block: 8px; }
 .pm-view-value { font-size: 14px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .pm-view-value--over { color: var(--pm-amber-ink); font-weight: 600; }
 .pm-tpl-unit { flex: 0 0 110px; }
+
+/* רשימות לפי סוג האתר (15/10/2026): הבחירה המרובה בלשונית האתר, וסיווג הרשימה בעורך */
+.pm-lists-group { margin: 0; padding: 6px 10px 8px; border: 1px solid var(--border-color); border-radius: 10px; }
+.pm-lists-group legend { padding: 0 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); }
+.pm-lists-item { min-height: 36px; font-weight: 500; }
+.pm-lists-item.is-on .pm-lists-item-name { font-weight: 700; }
+.pm-tpl-meta { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 10px; }
+.pm-tpl-meta-row { align-items: center; }
+.pm-tpl-meta-row .cs-btn { width: auto; min-width: 180px; }
+.pm-tpl-meta-cap { font-weight: 700; color: var(--text-secondary); }
+.pm-tpl-meta-keys { display: flex; flex-direction: column; gap: 6px; }
+.pm-tpl-meta-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pm-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: 999px; cursor: pointer; font-size: 0.85rem; }
+.pm-chip input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.pm-chip.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 700; }
+.pm-tpl-meta-note { margin: 4px 0 0; }
+.pm-tpl-pick { display: flex; align-items: center; gap: 8px; }
+.pm-tpl-pick .cs-btn { width: auto; min-width: 260px; }
+.pm-lists-profile { margin-top: 4px; }
+.pm-lists-profile .cs-btn { width: auto; min-width: 220px; }

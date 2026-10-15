@@ -430,6 +430,24 @@ ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_section;
 -- ⚠️ ה-CHECKs שבתוך CREATE TABLE הם טקסט מת בייצור (הטבלה כבר קיימת) — מוחלפים כאן.
 ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS unit TEXT;
 ALTER TABLE pm_checklist_items ADD COLUMN IF NOT EXISTS warn_above NUMERIC;
+
+-- ------------------------------------------------------------
+-- רשימות לפי סוג האתר (15/10/2026)
+-- ------------------------------------------------------------
+-- בעלת המוצר: "אני רוצה שתסווג לפי מה שמסומן הסוג של האתר. אם יש שתי סוגי מעליות אז שיהיה את התחזוקה גם של זה וגם
+-- של זה… תסדר את זה לפי סוגים — XY, X או Y, מעלית כזו, מעלית כזו — ואפשר יהיה לעשות בחירה מרובה. אבל מלכתחילה תשים
+-- לכל אתר את מה שמתאים לו, ואפשר יהיה להוסיף ולשנות".
+--   category — לסידור בבורר: base (הבסיס, לכולם) / lift (מעליות) / floor (רצפה ומרתף: XY, X או Y, דולי, אקסטרקטור)
+--              / other (סוטפין, מכפילים…).
+--   auto_for — מפתחות הסוג שהרשימה חלה עליהם מעצמה: 'lift:<lift_type>' (shared/lift-types.mjs) ו-'floor:<plc_type>'
+--              (shared/site-types.mjs). אתר מקבל את הרשימה כשאחד ממפתחות הסוג שלו (plc_type, lift_type, lift2_type)
+--              נמצא ב-auto_for — ולכן שתי מעליות מסוגים שונים = שתי רשימות.
+ALTER TABLE pm_templates ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other';
+ALTER TABLE pm_templates ADD COLUMN IF NOT EXISTS auto_for TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE pm_templates DROP CONSTRAINT IF EXISTS pm_templates_category;
+ALTER TABLE pm_templates ADD CONSTRAINT pm_templates_category CHECK (category IN ('base','lift','floor','other')) NOT VALID;
+ALTER TABLE pm_templates VALIDATE CONSTRAINT pm_templates_category;
+UPDATE pm_templates SET category = 'base' WHERE is_default AND category <> 'base';
 ALTER TABLE pm_checklist_items DROP CONSTRAINT IF EXISTS pm_checklist_items_kind;
 ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_kind
   CHECK (kind IN ('check','photo','check_photo','value')) NOT VALID;
@@ -1956,20 +1974,59 @@ REVOKE ALL ON FUNCTION app.pm_may_discard(pm_visits) FROM PUBLIC;
 -- השיוך הישן אתר-אתר) → הרשימות שלו. אחרת (או שכל מה ששויך הושבת) → רשימת ברירת המחדל.
 -- תמיד לפי seq. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן, אחרת הכרטיס יאמר דבר
 -- אחד והביקור יצולם מדבר אחר.
+-- מפתחות הסוג של אתר: floor:<plc_type>, lift:<lift_type>, lift:<lift2_type> (ריקים נזרקים)
+CREATE OR REPLACE FUNCTION app.pm_site_type_keys(p_site_id integer) RETURNS text[]
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(array_remove(ARRAY[
+           CASE WHEN NULLIF(btrim(s.plc_type), '') IS NOT NULL THEN 'floor:' || btrim(s.plc_type) END,
+           CASE WHEN NULLIF(btrim(s.lift_type), '') IS NOT NULL THEN 'lift:' || btrim(s.lift_type) END,
+           CASE WHEN NULLIF(btrim(s.lift2_type), '') IS NOT NULL THEN 'lift:' || btrim(s.lift2_type) END], NULL), '{}')
+    FROM sites s WHERE s.id = p_site_id
+$$;
+REVOKE ALL ON FUNCTION app.pm_site_type_keys(integer) FROM PUBLIC;
+
+-- הרשימות שמגיעות לאתר **מהסוג שלו**: הבסיס + כל רשימה פעילה ש-auto_for שלה חופף למפתחות הסוג.
+-- ⚠️ ריק כשאף רשימה לא חלה (אתר בלי סוג, או סוג בלי רשימה): אז הפותר נופל לפרופיל / לברירת המחדל — ולא "בסיס בלבד",
+-- אחרת המכפילים (בלי סוג) היו מאבדים את הפרופיל שלהם.
+CREATE OR REPLACE FUNCTION app.pm_auto_template_ids(p_site_id integer) RETURNS integer[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM pm_templates t WHERE t.active AND t.auto_for && app.pm_site_type_keys(p_site_id))
+    THEN (SELECT array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id) FROM pm_templates t
+           WHERE t.active AND (t.is_default OR t.auto_for && app.pm_site_type_keys(p_site_id)))
+    ELSE '{}'::integer[] END
+$$;
+REVOKE ALL ON FUNCTION app.pm_auto_template_ids(integer) FROM PUBLIC;
+
+-- הרשימות של אתר, לפי הסדר (15/10/2026): שיוך ידני לאתר (pm_site_templates — "אפשר להוסיף ולשנות") → לפי הסוג
+-- (pm_auto_template_ids — "מלכתחילה מה שמתאים לו") → פרופיל (מכפילים, סוטפין — אתרים בלי שדות סוג) → ברירת המחדל.
+-- ⚠️ עד 15/10 הפרופיל היה ראשון והשיוך הידני אחריו; עכשיו הידני גובר על הכול, כי הוא ההחלטה של אדם על האתר הזה.
 CREATE OR REPLACE FUNCTION app.pm_site_template_ids(p_site_id integer) RETURNS integer[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT COALESCE(
-    (SELECT array_agg(t.id ORDER BY t.seq, t.id)
+    (SELECT array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id)
+       FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
+      WHERE st.site_id = p_site_id AND t.active),
+    NULLIF(app.pm_auto_template_ids(p_site_id), '{}'),
+    (SELECT array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id)
        FROM pm_profile_sites ps JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
        JOIN pm_templates t ON t.id = pt.template_id
       WHERE ps.site_id = p_site_id AND t.active),
-    (SELECT array_agg(t.id ORDER BY t.seq, t.id)
-       FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
-      WHERE st.site_id = p_site_id AND t.active),
     (SELECT array_agg(t.id) FROM pm_templates t WHERE t.is_default AND t.active),
     '{}'::integer[])
 $$;
 REVOKE ALL ON FUNCTION app.pm_site_template_ids(integer) FROM PUBLIC;
+
+-- מאיפה הרשימות של האתר: explicit / auto / profile / default — לשורה בלשונית
+CREATE OR REPLACE FUNCTION app.pm_site_templates_source(p_site_id integer) RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id WHERE st.site_id = p_site_id AND t.active) THEN 'explicit'
+    WHEN cardinality(app.pm_auto_template_ids(p_site_id)) > 0 THEN 'auto'
+    WHEN EXISTS (SELECT 1 FROM pm_profile_sites ps JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
+                   JOIN pm_templates t ON t.id = pt.template_id WHERE ps.site_id = p_site_id AND t.active) THEN 'profile'
+    ELSE 'default' END
+$$;
+REVOKE ALL ON FUNCTION app.pm_site_templates_source(integer) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.pm_site(p_site_code text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
@@ -2007,6 +2064,10 @@ BEGIN
     -- הפרופיל של האתר (13/10/2026), או null — ואז הרשימות למעלה הן השיוך הישן או ברירת המחדל
     'profile', (SELECT jsonb_build_object('id', p.id, 'name', p.name)
                   FROM pm_profile_sites ps JOIN pm_profiles p ON p.id = ps.profile_id WHERE ps.site_id = v_site),
+    -- לפי סוג האתר (15/10/2026): מאיפה הרשימות, מה האוטומטי היה נותן, ואילו מפתחות סוג יש לאתר
+    'templates_source', app.pm_site_templates_source(v_site),
+    'auto_template_ids', to_jsonb(app.pm_auto_template_ids(v_site)),
+    'type_keys', to_jsonb(app.pm_site_type_keys(v_site)),
     -- שם התצוגה של הקורא, כפי שנכתב ב-updated_by / started_by. הדפדפן מכיר רק את
     -- המייל — בלי זה עריכה של המשתמש עצמו הוצגה "עודכן ע״י <השם שלו>".
     'me', v_actor,
@@ -2105,6 +2166,7 @@ DECLARE v_actor text := app.require_staff();
 BEGIN
   RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object(
              'id', t.id, 'name', t.name, 'seq', t.seq, 'is_default', t.is_default,
+             'category', t.category, 'auto_for', to_jsonb(t.auto_for),
              'item_count', (SELECT count(*)::int FROM pm_checklist_items i WHERE i.active AND i.template_id = t.id),
              -- אתרים שמקבלים אותה בפועל: דרך פרופיל, או בשיוך הישן אתר-אתר (13/10/2026)
              'site_count', (SELECT count(DISTINCT x.site_id)::int FROM (
@@ -2142,6 +2204,40 @@ BEGIN
 END $fn$;
 REVOKE ALL ON FUNCTION public.pm_template_create(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_template_create(text) TO authenticated;
+
+-- סיווג רשימה לפי סוג (15/10/2026): הקטגוריה לבורר, והמפתחות שהרשימה חלה עליהם מעצמה. מנהל בלבד.
+-- ⚠️ המפתחות נבדקים בצורה בלבד (lift:/floor: + מזהה): רשימת הסוגים חיה ב-shared/*.mjs ולא במסד, ומפתח לא מוכר
+-- פשוט לא יתאים לאף אתר. רשימת ברירת המחדל היא תמיד base, ואין לה auto_for — היא מגיעה לכולם בכל מקרה.
+CREATE OR REPLACE FUNCTION public.pm_template_meta_set(p_template_id integer, p_category text, p_auto_for text[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_t pm_templates;
+  v_cat text := lower(btrim(COALESCE(p_category, '')));
+  v_keys text[] := COALESCE(p_auto_for, '{}');
+BEGIN
+  SELECT * INTO v_t FROM pm_templates t WHERE t.id = p_template_id AND t.active;
+  IF v_t.id IS NULL THEN RAISE EXCEPTION 'הרשימה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  IF v_cat NOT IN ('base','lift','floor','other') THEN
+    RAISE EXCEPTION 'קטגוריה לא מוכרת: %', p_category USING ERRCODE = 'check_violation'; END IF;
+  IF v_t.is_default AND (v_cat <> 'base' OR cardinality(v_keys) > 0) THEN
+    RAISE EXCEPTION 'רשימת ברירת המחדל היא הבסיס של כולם — בלי סיווג לפי סוג' USING ERRCODE = 'check_violation'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(v_keys) k WHERE k !~ '^(lift|floor):[A-Za-z0-9_-]{1,40}$') THEN
+    RAISE EXCEPTION 'מפתח סוג לא תקין — lift:<סוג מעלית> או floor:<סוג מתקן>' USING ERRCODE = 'check_violation'; END IF;
+  UPDATE pm_templates SET category = v_cat, auto_for = (SELECT COALESCE(array_agg(DISTINCT k ORDER BY k), '{}') FROM unnest(v_keys) k),
+         updated_at = app.compliance_now_iso(), updated_by = v_actor
+   WHERE id = v_t.id;
+  PERFORM app.compliance_log(NULL, '*', 'pm', 'template', v_t.id, 'meta', v_actor,
+    jsonb_build_object('category', v_t.category, 'auto_for', to_jsonb(v_t.auto_for)),
+    jsonb_build_object('category', v_cat, 'auto_for', to_jsonb(v_keys)), NULL);
+  PERFORM app.record_write_audit('pm.template_meta', v_actor, app.current_app_role(), 'template', v_t.id::text,
+    jsonb_build_object('category', v_cat, 'auto_for', to_jsonb(v_keys)));
+  -- ⚠️ אירוע לכל אתר שהרשימות שלו נגזרות מהסוג: הסיווג משנה למי הרשימה מגיעה, והנורה/הלשונית צריכות לדעת
+  PERFORM app.compliance_event(s.code, 'pm', 'template_meta')
+     FROM sites s WHERE app.pm_site_templates_source(s.id) = 'auto';
+END $fn$;
+REVOKE ALL ON FUNCTION public.pm_template_meta_set(integer, text, text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pm_template_meta_set(integer, text, text[]) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.pm_template_rename(p_template_id integer, p_name text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$

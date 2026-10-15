@@ -1,0 +1,69 @@
+// utils/pmLists.js — רשימות תחזוקה לפי סוג האתר: קטגוריות, מפתחות סוג, קיבוץ והסבר המקור (15/10/2026).
+//
+// בעלת המוצר: "אני רוצה שתסווג לפי מה שמסומן הסוג של האתר… תסדר את זה לפי סוגים — XY, X או Y, מעלית כזו, מעלית
+// כזו — ואפשר יהיה לעשות בחירה מרובה. אבל מלכתחילה תשים לכל אתר את מה שמתאים לו, ואפשר יהיה להוסיף ולשנות".
+//
+// ⚠️ ההחלטה מי מקבל מה היא ב-SQL (app.pm_auto_template_ids / app.pm_site_template_ids). כאן רק סידור לתצוגה:
+// הקטגוריות והמפתחות הם אותם ערכים ש-pm_template_meta_set מקבל, והתוויות באות מ-shared/*.mjs — מקום אחד לכל רשימה.
+import { LIFT_TYPES } from "../../../shared/lift-types.mjs";
+import { SITE_TYPE_GROUPS } from "../../../shared/site-types.mjs";
+
+/** הקטגוריות של רשימה, בסדר שבו הן מוצגות. המפתחות — כמו pm_templates.category. */
+export const PM_CATEGORIES = [
+  { key: "base", label: "בסיס" },
+  { key: "lift", label: "מעליות" },
+  { key: "floor", label: "רצפה ומרתף" },
+  { key: "other", label: "אחר" },
+];
+const CAT_INDEX = Object.fromEntries(PM_CATEGORIES.map((c, i) => [c.key, i]));
+export const categoryLabel = (key) => PM_CATEGORIES.find((c) => c.key === key)?.label ?? PM_CATEGORIES[3].label;
+
+/** הקטגוריה של רשימה לתצוגה: ברירת המחדל היא תמיד הבסיס; רשימה ישנה בלי קטגוריה — "אחר" */
+export function templateCategory(t) {
+  if (t?.is_default) return "base";
+  return CAT_INDEX[t?.category] != null ? t.category : "other";
+}
+
+/** הרשימות מקובצות לפי קטגוריה, בסדר הקטגוריות ואז לפי seq — קבוצות ריקות מושמטות */
+export function groupTemplates(templates) {
+  const by = new Map();
+  for (const t of templates ?? []) {
+    const k = templateCategory(t);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(t);
+  }
+  return PM_CATEGORIES.filter((c) => by.has(c.key))
+    .map((c) => ({ ...c, templates: by.get(c.key).slice().sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0) || (a.seq ?? 0) - (b.seq ?? 0) || a.id - b.id) }));
+}
+
+/** כל מפתחות הסוג שאפשר לסווג אליהם: lift:<סוג מעלית> ו-floor:<סוג מתקן>, עם תווית קריאה */
+export function typeKeyOptions() {
+  const lifts = LIFT_TYPES.map((t) => ({ value: `lift:${t.key}`, label: t.label, group: "lift", groupLabel: "מעלית" }));
+  const floors = SITE_TYPE_GROUPS.flatMap((g) => g.types.map((t) => ({ value: `floor:${t.key}`, label: t.label, group: "floor", groupLabel: "מתקן" })));
+  return [...lifts, ...floors];
+}
+const KEY_LABELS = Object.fromEntries(typeKeyOptions().map((o) => [o.value, o]));
+/** "מעלית: הידראולית בוכנה 1" / "מתקן: דולי"; מפתח לא מוכר — כמו שהוא */
+export function typeKeyLabel(key) {
+  const o = KEY_LABELS[key];
+  return o ? `${o.groupLabel}: ${o.label}` : String(key ?? "");
+}
+
+/** מאיפה הרשימות של האתר (pm_site.templates_source) — במילים */
+export function sourceLabel(source) {
+  switch (source) {
+    case "explicit": return "נבחרו ידנית";
+    case "auto": return "אוטומטי לפי סוג האתר";
+    case "profile": return "מפרופיל התחזוקה";
+    default: return "ברירת המחדל";
+  }
+}
+
+/**
+ * מה לסמן כשפותחים את הבחירה: הרשימות שהאתר מקבל עכשיו. ⚠️ לא רק האוטומטי — מי שפותח "שינוי" רוצה להוסיף או
+ * להוריד ממה שיש, לא להתחיל מאפס.
+ */
+export function initialSelection(templates) { return new Set((templates ?? []).map((t) => t.id)); }
+
+/** הבסיס (ברירת המחדל) נבחר תמיד — בלי בסיס אין לובי וחשמל, ואף ביקור לא יהיה שלם */
+export function lockedIds(allTemplates) { return new Set((allTemplates ?? []).filter((t) => t.is_default).map((t) => t.id)); }

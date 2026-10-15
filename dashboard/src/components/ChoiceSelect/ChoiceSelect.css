@@ -97,6 +97,15 @@
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
 }
 .cs-item.is-none { color: var(--text-muted); }
+/* כותרת קבוצה ברשימה (15/10/2026 — רשימות התחזוקה לפי קטגוריה): טקסט קטן, לא לחיץ */
+.cs-group {
+  padding: 8px 12px 4px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.cs-slot + .cs-slot > .cs-group { margin-top: 4px; border-top: 1px solid var(--border-color); padding-top: 8px; }
 .cs-item-label { flex: 1; min-width: 0; line-height: 1.3; }
 .cs-item-check { flex: none; width: 14px; text-align: center; color: var(--accent); }
 

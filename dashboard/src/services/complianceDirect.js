@@ -338,6 +338,11 @@ export async function createPmTemplate(name) {
   return Number(await rpcT("pm_template_create", { p_name: name }, TIMEOUT.normal));
 }
 
+/** סיווג רשימה (15/10/2026): קטגוריה (base/lift/floor/other) והמפתחות שהיא חלה עליהם מעצמה (lift:<סוג>, floor:<סוג>). מנהל בלבד. */
+export async function setPmTemplateMeta(templateId, category, autoFor) {
+  await rpcT("pm_template_meta_set", { p_template_id: templateId, p_category: category, p_auto_for: autoFor ?? [] }, TIMEOUT.normal);
+}
+
 /** שינוי שם של רשימה. מנהל בלבד. */
 export async function renamePmTemplate(templateId, name) {
   await rpcT("pm_template_rename", { p_template_id: templateId, p_name: name }, TIMEOUT.normal);

@@ -22,7 +22,8 @@ const MAX_H = 320;
 /**
  * @param {object} p
  * @param {string} p.value — "" = לא נבחר
- * @param {{value: string, label: string}[]} p.options
+ * @param {{value: string, label: string, group?: string}[]} p.options — `group`: כותרת קבוצה מעל האפשרות הראשונה
+ *   בקבוצה (אפשרויות עוקבות באותה קבוצה — כותרת אחת). הכותרת אינה אפשרות: לא נבחרת, לא במקלדת.
  * @param {(v: string) => void} p.onChange
  * @param {string} p.label — שם השדה, לקורא מסך ("סוג מעלית")
  * @param {string} [p.placeholder] — מה שכתוב כשאין ערך. ⚠️ אינו אפשרות ברשימה; מי שצריך "בלי" מעביר אותה
@@ -163,8 +164,11 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
           onKeyDown={onMenuKey}
         >
           {options.map((o, i) => (
+            <div key={o.value || "__none__"} className="cs-slot">
+            {o.group && o.group !== options[i - 1]?.group && (
+              <div className="cs-group" role="presentation" aria-hidden="true">{o.group}</div>
+            )}
             <div
-              key={o.value || "__none__"}
               role="option"
               tabIndex={-1}
               aria-selected={o.value === value}
@@ -175,6 +179,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
             >
               <span className="cs-item-label">{o.label}</span>
               <span className="cs-item-check" aria-hidden="true">{o.value === value ? "✓" : ""}</span>
+            </div>
             </div>
           ))}
         </div>

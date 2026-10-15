@@ -493,7 +493,8 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
       {/* אילו רשימות תחזוקה האתר מקבל (07/10/2026) — רק כשאין טופס פתוח */}
       {!formOpen && Array.isArray(data?.templates) && (
         <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
-          assigned={!!data.templates_assigned}
+          source={data.templates_source ?? (data.profile ? "profile" : data.templates_assigned ? "explicit" : "default")}
+          typeKeys={Array.isArray(data.type_keys) ? data.type_keys : []}
           isManager={isManager}
           onChanged={() => { setProfRev((r) => r + 1); load({ silent: true }); }} />
       )}

@@ -105,15 +105,21 @@ test("⚠️ שינוי רשימה בפרופיל חל מיד על כל האתר
   assert.equal(n, 2, "הביקור הפתוח נשאר עם מה שצולם בפתיחה");
 });
 
-test("הפרופיל גובר על שיוך ישן אתר-אתר; יציאה מהפרופיל מחזירה את השיוך הישן", { skip }, async () => {
+test("⚠️ שיוך ידני לאתר גובר על הפרופיל (15/10/2026 — עד אז הפרופיל גבר); ניקוי הידני מחזיר את הפרופיל", { skip }, async () => {
+  // בעלת המוצר: "מלכתחילה תשים לכל אתר את מה שמתאים לו, ואפשר יהיה להוסיף ולשנות" — השינוי באתר הוא ההחלטה האחרונה
   const a = await newSite();
   await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [HYD]]);
   assert.deepEqual(await listNames(a), ["מעלית הידראולית"]);
   const id = await saveProfile(null, "גובר על ישן", [BASE]);
   await setSiteProfile(a, id);
-  assert.deepEqual(await listNames(a), ["בסיס פרקומט"]);
+  assert.deepEqual(await listNames(a), ["מעלית הידראולית"], "הידני נשאר גם אחרי שיוך לפרופיל");
+  assert.equal((await site(a)).templates_source, "explicit");
+  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, []]);
+  assert.deepEqual(await listNames(a), ["בסיס פרקומט"], "בלי ידני — הפרופיל");
+  assert.equal((await site(a)).templates_source, "profile");
   await setSiteProfile(a, null);
-  assert.deepEqual(await listNames(a), ["מעלית הידראולית"]);
+  assert.deepEqual(await listNames(a), ["משותף"], "בלי פרופיל — רשימת ברירת המחדל (בקובץ הזה שמה 'משותף')");
+  assert.equal((await site(a)).templates_source, "default");
   assert.equal((await site(a)).profile, null);
 });
 

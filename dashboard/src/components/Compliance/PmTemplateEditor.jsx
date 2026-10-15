@@ -37,6 +37,9 @@
 // האסימון הישן — ונדחית כ"עודכנה בינתיים ע״י" המנהל עצמו.
 import { useEffect, useRef, useState } from "react";
 import { fetchPmTemplate, savePmTemplate, fetchPmTemplates, createPmTemplate, renamePmTemplate } from "../../services/dataSource";
+import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
+import PmTemplateMeta from "./PmTemplateMeta";
+import { groupTemplates } from "../../utils/pmLists";
 import { formatStampIL } from "../../utils/compliance";
 import { newId } from "../../utils/complianceFiles";
 import {
@@ -241,18 +244,18 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
   const listBar = (
     <>
       <div className="pm-row pm-tpl-lists">
-        <label className="pm-tpl-pick">
+        {/* ⚠️ הרשימה המעוצבת ולא <select> (בעלת המוצר, 15/10/2026, על הרשימה הפתוחה: "תעצב את זה יפה") — את הרשימה
+            של <select> מציירת מערכת ההפעלה. מקובץ לפי קטגוריה: בסיס / מעליות / רצפה ומרתף / אחר. */}
+        <div className="pm-tpl-pick" title={dirty ? "יש שינויים שלא נשמרו — לשמור או לבטל לפני מעבר לרשימה אחרת" : undefined}>
           <span>רשימה</span>
-          <select value={String(tplId ?? defaultId ?? "")} disabled={busy || dirty || !lists}
-            onChange={(e) => pick(Number(e.target.value))}
-            title={dirty ? "יש שינויים שלא נשמרו — לשמור או לבטל לפני מעבר לרשימה אחרת" : undefined}>
-            {(lists || []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}{t.is_default ? " (ברירת מחדל)" : ""} · {t.item_count} פריטים
-              </option>
-            ))}
-          </select>
-        </label>
+          <ChoiceSelect name="pm_template" label="רשימת תחזוקה" value={String(tplId ?? defaultId ?? "")}
+            disabled={busy || dirty || !lists} menuMinWidth={380}
+            options={groupTemplates(lists || []).flatMap((g) => g.templates.map((t) => ({
+              value: String(t.id), group: g.label,
+              label: `${t.name}${t.is_default ? " (ברירת מחדל)" : ""} · ${t.item_count} פריטים`,
+            })))}
+            onChange={(v) => pick(Number(v))} />
+        </div>
         <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || dirty}
           onClick={() => { setListError(""); setNameDraft({ mode: "new", value: "" }); }}>+ רשימה חדשה</button>
         <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || dirty || !current}
@@ -270,6 +273,9 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
         </div>
       )}
       {listError && <div className="pm-banner pm-banner--error" role="alert">{listError}</div>}
+      {/* סיווג הרשימה לפי סוג האתר (15/10/2026) — קטגוריה + הסוגים שהיא חלה עליהם מעצמה */}
+      {/* ⚠️ key לפי הרשימה: בלי זה הטופס שומר רגע את הסיווג של הרשימה הקודמת (ה-state נולד פעם אחת) */}
+      {current && !nameDraft && <PmTemplateMeta key={current.id} template={current} onSaved={() => setListsRev((x) => x + 1)} />}
     </>
   );
 

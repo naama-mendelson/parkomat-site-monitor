@@ -2054,6 +2054,48 @@ on the live site only after she reviews it.
   (unmonitored case). The browser probe is `e2e/probe-lists.mjs` (scratchpad harness, 14/14,
   run with `VITE_COMPLIANCE_PM=true`, 10 UI mutations caught).
 
+## Maintenance lists by site type — auto, two lifts = two lists, multi-select per site (built 15/10/2026)
+
+The owner, back on the robotic sites: *"אני רוצה שתסווג לפי מה שמסומן הסוג של האתר. אם יש שתי סוגי מעליות אז שיהיה את
+התחזוקה גם של זה וגם של זה. אני רוצה אופציה לערוך את התחזוקה — תסדר את זה לפי סוגים: XY, X או Y, מעלית כזו, מעלית כזו,
+ואפשר יהיה לעשות בחירה מרובה. אבל מלכתחילה תשים לכל אתר את מה שמתאים לו ואפשר יהיה להוסיף ולשנות"*. And on the
+editor's native `<select>` list: *"תעצב את זה יפה"*.
+
+- **Two columns on `pm_templates`:** `category` (`base` / `lift` / `floor` / `other`, for ordering the pickers) and `auto_for`
+  (`text[]` of `lift:<lift_type>` / `floor:<plc_type>` keys from `shared/lift-types.mjs` and `shared/site-types.mjs`). A list
+  reaches a site **by itself** when one of the site's type keys (`app.pm_site_type_keys`: `plc_type`, `lift_type`, `lift2_type`)
+  is in its `auto_for` — so two lifts of different types give two lift lists, two of the same type give one. `app.pm_auto_template_ids`
+  = the default list + every matching active list; **empty** when nothing matches (a site with no type, or a type with no list),
+  so such a site falls through to its profile — the multipliers and Sotefin keep theirs.
+- ⚠️ **The order changed (`app.pm_site_template_ids`): manual per-site → by type → profile → default.** Until 15/10 the profile
+  came first and the per-site assignment (`pm_site_templates`, empty then) second. Manual is now the owner's last word on
+  one site ("אפשר להוסיף ולשנות"); the profile is for sites without type fields. `pm_site` returns `templates_source`
+  (`explicit` / `auto` / `profile` / `default`), `auto_template_ids` and `type_keys`. `pm_templates_list` carries
+  `category` / `auto_for`. New RPC `pm_template_meta_set(id, category, auto_for)` (manager; the default list may only be
+  `base` with no keys; keys are checked by shape only — the type lists live in `shared/*.mjs`, not in SQL; it publishes a
+  `compliance` event per site whose lists come from its type).
+- **Seeded in production (15/10):** הידראולית ← piston 1/2; חשמלית ← electric, 4 עמודים 18/11 KW; מיטת XY ← xy; מיטת X/Y ← x, y,
+  matzbet-x/y; דולי ← doli; במת XY and אקסטרקטור are `lift` / `floor` with no keys (no site type for them yet); Sotefin and
+  the multipliers are `other`. Simulated first: of 84 monitored sites the automatic result equals the 13/10 profiles for 69,
+  gives lists to **3 sites typed after 13/10 that had none** (1077, 1082, 1227 — exactly the gap she described), and 1384
+  (רופין 20, also במת XY) is written as a manual assignment. 11 monitored sites have no type that maps (serapid, scissors,
+  shuttle, or none) and stay on the default. 1206 holds a manual assignment made by a manager the same day — left as is.
+- **UI — the site's PM tab (`PmSiteLists.jsx`):** one line "רשימות תחזוקה: A · B · C (אוטומטי לפי סוג האתר)", a quiet
+  "פרופיל: X" line, and for a manager "שינוי": every list as a checkbox **grouped by category**, what the site gets now
+  pre-checked, the base locked ("לכולם"), the site's type keys in words, the profile picker underneath. One "שמירה": lists
+  are written as manual **only if the checkbox set changed** (otherwise choosing a profile alone would freeze today's lists
+  as manual); the profile is written only if it changed. "חזרה לאוטומטי" (shown when manual) clears the manual rows.
+- **UI — the list editor (`PmTemplateEditor.jsx`):** the picker is a `ChoiceSelect` grouped by category (`ChoiceSelect` now
+  accepts `group` on an option: a heading row before the first option of each group, not focusable), 380px wide so the
+  long names do not wrap; under the bar `PmTemplateMeta.jsx` — category + chips of lift / machine types the list applies to.
+  ⚠️ `key={current.id}`: without it the form showed the previous list's classification for one render (caught by the probe).
+- Pure rules in `utils/pmLists.js` (`PM_CATEGORIES`, `groupTemplates`, `typeKeyOptions`, `typeKeyLabel`, `sourceLabel`,
+  `initialSelection`, `lockedIds`). Tests: `pm-auto.test.js` (6; precedence, two lifts, no-type sites, type change,
+  `auto_for` change, validation, idempotency), `pm-profiles.test.js` (the precedence test rewritten), `pm-lists-ui.test.js`
+  (6). Browser: `e2e/probe-pm-types.mjs` (28; `?pm=docs&types=floor:xy,lift:electric` — the PM mock now resolves lists like
+  SQL and exposes `templates_source`), `probe-lists` 15/15 and `probe-pm-profiles` 133/133 updated to the new rows. Full
+  `npm test` 1158/1158.
+
 ## "בודק מוסמך" in the header filter (built and deployed 08/10/2026)
 
 Five versions in one day. The owner's words decided each one, so they are recorded:
