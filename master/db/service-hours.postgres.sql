@@ -624,12 +624,17 @@ mx_plan AS (
    WHERE btrim(coalesce(plan_raw, '')) <> ''
    ORDER BY code, position, id
 )
-SELECT s.id, v.served, COALESCE(p.plan, m.plan)
+-- ⚠️ לאתר ללא בקר **לוח המכפילים גובר** (בעלת המוצר, 15/10/2026, על יפת 117 שהראה VIP: "יפת בכלל נמצא במכפילים").
+-- הקוד שלו הופיע גם בתא של שורה רובוטית אחרת ("1347, 1342" בשורת שפר 20-22), והרובוטי נתן לו VIP. מכפיל הוא
+-- של לוח המכפילים; הרובוטי נשאר לו רק כנפילה כשאין לו שורה שם. השירות ("להתייחס כ") מהרובוטי מתבטל באותו
+-- מקרה — אחרת effectiveTier היה מציג אותו לפני המסלול. אתר מנוטר — ללא שינוי: הרובוטי בלבד.
+SELECT s.id,
+       CASE WHEN m.plan IS NOT NULL THEN NULL ELSE v.served END,
+       COALESCE(m.plan, p.plan)
   FROM sites s
   LEFT JOIN tl_plan   p ON p.code = s.code
   LEFT JOIN tl_served v ON v.code = s.code
-  -- ⚠️ המכפילים — רק לאתר ללא בקר **שאין לו שום שורה ברובוטי**: אתר שחובר שם (גם בלי מסלול) נשאר של הרובוטי
-  LEFT JOIN mx_plan   m ON m.code = s.code AND s.monitored = false AND p.code IS NULL AND v.code IS NULL
+  LEFT JOIN mx_plan   m ON m.code = s.code AND s.monitored = false
  WHERE COALESCE(p.plan, v.served, m.plan) IS NOT NULL
  ORDER BY s.id;
 $fn$;
