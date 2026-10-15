@@ -45,7 +45,12 @@ before(async () => {
   await h.pg.query(`INSERT INTO traffic_light_columns (key, label, kind, position) VALUES
     ('c_code','קוד אתר','text',1), ('c_plan','סוג הסכם שירות במקור','text',2), ('c_kind','להתייחס כ','text',3)
     ON CONFLICT (key) DO NOTHING`);
+  // לוח המכפילים: "קוד אתר" נוצרת ב-traffic-light.postgres.sql (c_mx_site_code); "סוג הסכם שירות" כמו בייצור
+  await h.pg.query(`INSERT INTO traffic_light_columns (key, label, kind, position, board) VALUES
+    ('c_mx_plan','סוג הסכם שירות','status',2,'multipliers') ON CONFLICT (key) DO NOTHING`);
   for (const c of ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "U1", "U2"]) await site(c);
+  // אתרים ללא בקר (מכפילים) — M1 בסיסי, M2 לא בשירות, M3 גם ברובוטי (הרובוטי גובר), M4 מכפיל בלי הסכם
+  for (const c of ["M1", "M2", "M3", "M4"]) { await site(c); await h.pg.query(`UPDATE sites SET monitored = false WHERE code = $1`, [c]); }
 
   // רשימת קודים בתא, רווחים וטאב, אותיות גדולות ורווח בסוף
   await row({ c_code: "L1,  L2\t", c_kind: " VIP ", c_plan: "basic" }, 10);
@@ -64,6 +69,13 @@ before(async () => {
   // ⚠️ לא מחובר: שורה בלי סוג, ושורה בלוח המכפילים תחת אותו מפתח
   await row({ c_code: "U1", c_kind: "  ", c_plan: "" }, 15);
   await row({ c_code: "U2", c_kind: "vip" }, 16, "multipliers");
+  // ⚠️ אתר **מנוטר** בלוח המכפילים — עדיין לא חיבור (U3): המכפילים מזינים רק אתרים ללא בקר
+  await site("U3");
+  await row({ c_mx_site_code: "U3, M1", c_mx_plan: "בסיסי" }, 1, "multipliers");
+  await row({ c_mx_site_code: "M2", c_mx_plan: " לא בשירות " }, 2, "multipliers");
+  await row({ c_mx_site_code: "M3", c_mx_plan: "אין" }, 3, "multipliers");
+  await row({ c_code: "M3", c_kind: "vip" }, 40);
+  await row({ c_mx_site_code: "M4", c_mx_plan: "" }, 4, "multipliers");
 });
 after(async () => { if (h) await h.close(); });
 
@@ -75,7 +87,10 @@ test("⚠️ זהה ל-site_uptime_service — אותו אתר, אותו שיר�
        FROM public.site_uptime_service(NULL, '2026-09-06T00:00:00.000Z', '2026-09-07T00:00:00.000Z')
       ORDER BY site_id`)).rows;
   assert.ok(links.length >= 8, `רק ${links.length} שורות — הלוח לא נזרע`);
-  assert.deepEqual(links, svc);
+  // ⚠️ על אתרים מנוטרים — זהות. אתר ללא בקר מקבל גם מלוח המכפילים, ש-site_uptime_service אינה קוראת (בכוונה).
+  const unmon = new Set([ids.M1, ids.M2, ids.M3, ids.M4]);
+  assert.deepEqual(links.filter((r) => !unmon.has(r.site_id)), svc.filter((r) => !unmon.has(r.site_id)));
+  assert.deepEqual(svc.filter((r) => unmon.has(r.site_id)).map((r) => r.site_id), [ids.M3], "site_uptime_service — רק הרובוטי");
 });
 
 test("מה כל אתר מקבל — הערכים עצמם, לא רק השוויון", { skip }, async () => {
@@ -92,6 +107,12 @@ test("מה כל אתר מקבל — הערכים עצמם, לא רק השווי�
   assert.deepEqual(got("L8"), { agreement: "basic", plan: null });
   assert.equal(got("U1"), null, "שורה בלי סוג אינה חיבור");
   assert.equal(got("U2"), null, "שורה בלוח המכפילים אינה חיבור");
+  // לוח המכפילים (15/10/2026) — אתרים ללא בקר בלבד, דרך "קוד אתר" ו"סוג הסכם שירות", מתורגם
+  assert.equal(got("U3"), null, "אתר מנוטר בלוח המכפילים — לא חיבור");
+  assert.deepEqual(got("M1"), { agreement: null, plan: "basic" });
+  assert.deepEqual(got("M2"), { agreement: null, plan: "no_service" });
+  assert.deepEqual(got("M3"), { agreement: "vip", plan: null }, "הרובוטי גובר על המכפילים");
+  assert.equal(got("M4"), null, "מכפיל בלי הסכם — לא חובר");
 });
 
 test("חיבור נראה מיד — בלי cron ובלי טבלת מטמון", { skip }, async () => {

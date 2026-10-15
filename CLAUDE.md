@@ -2625,7 +2625,16 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     "מכפיל" in `site-types`; she classifies), tier `basic` (the only values `sites.tier` takes). Idempotent by name and
     code. The real code is typed in AdminPanel's edit row ("קוד" → `update_site p_new_code`, manager only) — that is what
     attaches the Wizenet calls. ⚠️ The tier badge will read "לא חובר": `site_service_links` reads `board = 'robotic'`
-    only, and the multipliers board has no code column to link by. Open question for the owner.
+    only, and the multipliers board had no code column to link by. **Closed the same evening** (owner: *"שיהיה אופציה
+    לחבר את זה לסוג של זה וכן להוסיף את קוד של האתר"*): `traffic-light.postgres.sql` seeds a "קוד אתר" column on the
+    multipliers board (`c_mx_site_code`, position 1.5; `INSERT … WHERE NOT EXISTS`, not `DO $` — a DO block hung
+    PGlite), and `site_service_links` also reads that board — **for `monitored = false` sites with no robotic row only**,
+    so the availability window of a monitored site cannot be touched (the robotic-only guard in `service_agreement` /
+    `service_plan` / `site_uptime_service` is unchanged). Its Hebrew menu is translated by `app.tl_mx_plan` (בסיסי →
+    basic, לא בשירות / לא פעיל → no_service, אין / לא נמסר → none; granted to `authenticated` because the links
+    function runs as the caller). The board cell must equal `sites.code` — whatever it is, `MX-007` or the real
+    project code. Tests: `service-links.test.js` (M1–M4, U3), `traffic-light-boards.test.js` (counts 12 / 5, the seeded
+    column). Applied 15/10/2026 ("הייצור זהה לקוד").
   - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
   - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
     runs them from `master` on the dev PC.

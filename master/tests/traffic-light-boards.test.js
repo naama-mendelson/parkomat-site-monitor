@@ -43,9 +43,15 @@ test("שורות ועמודות קיימות שייכות ללוח הרובוט�
   // בלעדיה הן היו מקבלות NULL, וכל שאילתה מסוננת הייתה מחזירה לוח ריק —
   // כלומר הלוח שעובד היום נעלם מהמסך ברגע ההחלה.
   await mgr(`SELECT public.tl_add_column('עמודה ותיקה','text')`);
+  // ⚠️ מ-15/10/2026 traffic-light.postgres.sql זורע עמודה אחת בלוח המכפילים — "קוד אתר" (c_mx_site_code) —
+  // ולכן היא מוחרגת כאן; כל השאר עדיין רובוטי. העמודה עצמה נבדקת למטה.
   const rows = await h.pg.query(
-    `SELECT DISTINCT board FROM traffic_light_columns`);
+    `SELECT DISTINCT board FROM traffic_light_columns WHERE key <> 'c_mx_site_code'`);
   assert.deepEqual(rows.rows.map((r) => r.board), ["robotic"]);
+  const seeded = (await h.pg.query(
+    `SELECT label, kind, position FROM traffic_light_columns WHERE board = 'multipliers'`)).rows;
+  assert.deepEqual(seeded.map((c) => [c.label, c.kind, Number(c.position)]), [["קוד אתר", "text", 1.5]],
+    "לוח המכפילים נולד עם עמודת 'קוד אתר' אחת, במיקום 1.5 — אחרי 'אתר' ולפני ההסכם");
 });
 
 test("קריאה בלי ארגומנט מחזירה את הלוח הרובוטי", { skip }, async () => {
@@ -74,9 +80,12 @@ test("כל לוח רואה רק את מה ששלו", { skip }, async () => {
 test("המיקום נספר בתוך הלוח ולא על פני שניהם", { skip }, async () => {
   // ⚠️ בלי הסינון, העמודה הראשונה בלוח חדש הייתה מקבלת את המיקום
   // שאחרי העמודה האחרונה של הלוח השני — לוח ריק שמתחיל במיקום 16.
+  // ⚠️ הזרועה ("קוד אתר", 1.5) ראשונה; 'סוג מתקן' שנוספה למעלה באה אחריה בתוך הלוח — 2.5, ולא אחרי 16+ של הרובוטי.
   const mul = await board("multipliers");
-  assert.equal(Number(mul.columns[0].position), 1,
-    `העמודה הראשונה בלוח המכפילים במיקום ${mul.columns[0].position}`);
+  assert.equal(mul.columns[0].label, "קוד אתר");
+  assert.equal(Number(mul.columns[0].position), 1.5);
+  assert.equal(Number(mul.columns[1].position), 2.5,
+    `העמודה שנוספה ללוח המכפילים במיקום ${mul.columns[1].position}`);
 });
 
 test("⚠️ שורת מכפילים אינה משנה את חלון הזמינות של אתר מנוטר", { skip }, async () => {
@@ -232,14 +241,15 @@ test("⚠️ אין `LIMIT 1` חשוף בחישובי הזמינות", () => {
   // 4 בפונקציות לאתר בודד (service_plan / service_agreement), ו-3 בחישוב לכל
   // האתרים בבת אחת ב-site_uptime_service (05/10/2026 — במקום 4 קריאות לאתר),
   // ועוד 3 ב-site_service_links (11/10/2026 — אותה התאמה, לתג בכרטיס).
-  assert.equal((sql.match(/ORDER BY position, id LIMIT 1\)/g) || []).length, 10,
-    "עשרת מפתחות העמודות חייבים ORDER BY מפורש");
+  // ועוד 2 ב-site_service_links ללוח המכפילים (15/10/2026 — "קוד אתר" ו"סוג הסכם שירות").
+  assert.equal((sql.match(/ORDER BY position, id LIMIT 1\)/g) || []).length, 12,
+    "שנים-עשר מפתחות העמודות חייבים ORDER BY מפורש");
   assert.equal((sql.match(/ORDER BY r\.position, r\.id/g) || []).length, 2,
     "שתי התאמות השורה (לאתר בודד) חייבות ORDER BY מפורש");
   // בחישוב לכל האתרים הבחירה היא DISTINCT ON — ושם ה-ORDER BY הוא שקובע
   // איזו שורה "ראשונה". בלעדיו התשובה היא שוב סדר הערמה.
-  assert.equal((sql.match(/DISTINCT ON \(code\)[\s\S]{0,200}?ORDER BY code, position, id/g) || []).length, 4,
-    "ארבע בחירות השורה לכל האתרים (מסלול ושירות, ב-site_uptime_service וב-site_service_links) חייבות ORDER BY code, position, id");
+  assert.equal((sql.match(/DISTINCT ON \(code\)[\s\S]{0,200}?ORDER BY code, position, id/g) || []).length, 5,
+    "חמש בחירות השורה לכל האתרים (מסלול ושירות ב-site_uptime_service וב-site_service_links, והמכפילים) חייבות ORDER BY code, position, id");
   // והכלל עצמו, לא רק הספירה: אין LIMIT 1 בקוד (בלי הערות) בלי ORDER BY צמוד לפניו
   const code = sql.split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
   for (const m of code.matchAll(/LIMIT 1\b/g)) {

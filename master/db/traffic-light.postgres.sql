@@ -505,3 +505,17 @@ DROP TRIGGER IF EXISTS tl_columns_changed ON traffic_light_columns;
 CREATE TRIGGER tl_columns_changed
   AFTER INSERT OR UPDATE OR DELETE ON traffic_light_columns
   FOR EACH STATEMENT EXECUTE FUNCTION app.tl_board_changed();
+
+-- ============================================================
+-- עמודת "קוד אתר" בלוח המכפילים (15/10/2026)
+-- ============================================================
+-- בעלת המוצר: "אני רוצה שיהיה אופציה לחבר את זה לסוג של זה וכן להוסיף את קוד של האתר. באופן זמני אני
+-- רוצה שתהיה לי אופציה להוסיף קוד האתר". הלוח הרובוטי מתחבר לאתרים דרך עמודה בתווית "קוד אתר"; ללוח
+-- המכפילים (130 שורות) לא הייתה כזו. כאן — אותה תווית בדיוק, כי site_service_links מוצאת את העמודה לפי
+-- התווית (ראו service-hours.postgres.sql). מיקום 1.5 — אחרי "אתר" (1) ולפני ההסכם (2), כמו ברובוטי.
+-- ⚠️ INSERT … WHERE NOT EXISTS ולא DO $$: בלוק DO תקע את PGlite (הבדיקות לא חזרו). המחיר: הטריגר
+-- tl_columns_changed הוא FOR EACH STATEMENT ומפרסם אירוע service_link גם על INSERT של אפס שורות — כלומר כל
+-- החלת SQL מרעננת פעם אחת את הלוח במסכים הפתוחים. החלה היא אירוע נדיר, וזה מקובל.
+INSERT INTO traffic_light_columns (key, label, kind, options, width, position, board)
+SELECT 'c_mx_site_code', 'קוד אתר', 'text', '[]'::jsonb, 120, 1.5, 'multipliers'
+ WHERE NOT EXISTS (SELECT 1 FROM traffic_light_columns WHERE board = 'multipliers' AND label = 'קוד אתר');

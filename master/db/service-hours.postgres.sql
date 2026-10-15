@@ -532,6 +532,35 @@ GRANT EXECUTE ON FUNCTION public.site_uptime_service(integer[], text, text) TO a
 -- ⚠️ **אותה התאמה בדיוק כמו ב-site_uptime_service** (tl_keys / tl_codes / DISTINCT ON לפי
 -- position, id), ו-tests/service-links.test.js משווה בין השתיים על אותו לוח. שינוי באחת
 -- בלי השנייה — אדום: אחרת התג היה אומר הסכם אחד והזמינות נמדדת לפי אחר.
+-- ============================================================
+-- app.tl_mx_plan — ערכי "סוג הסכם שירות" של לוח המכפילים → אוצר המילים של הרובוטי (15/10/2026)
+-- ============================================================
+-- הלוח הרובוטי כותב vip / ext / basic / no_service…; לוח המכפילים נבנה עם תפריט בעברית: בסיסי, לא בשירות,
+-- אין, לא נמסר, לא פעיל. effectiveTier (utils/tier.js) מכיר רק את הראשון, ולכן התרגום כאן — פעם אחת, ולא
+-- בכל קורא. ערך שאינו ברשימה עובר כמו שהוא (vip/ext/basic שהוקלדו באנגלית), והדשבורד מדלג על מה שאינו מכיר.
+CREATE OR REPLACE FUNCTION app.tl_mx_plan(p text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE lower(btrim(p))
+           WHEN 'בסיסי'       THEN 'basic'
+           WHEN 'מורחב'       THEN 'ext'
+           WHEN 'לא בשירות'   THEN 'no_service'
+           WHEN 'לא פעיל'     THEN 'no_service'
+           WHEN 'תחזוקה בלבד' THEN 'maintenance_only'
+           WHEN 'אין'         THEN 'none'
+           WHEN 'לא נמסר'     THEN 'none'
+           ELSE lower(btrim(p))
+         END
+$$;
+REVOKE ALL ON FUNCTION app.tl_mx_plan(text) FROM PUBLIC;
+-- site_service_links רצה בזהות הקורא (לא SECURITY DEFINER), ולכן המשתמש המחובר צריך הרשאה גם כאן. פונקציה טהורה.
+GRANT EXECUTE ON FUNCTION app.tl_mx_plan(text) TO authenticated;
+
+-- ⚠️ **ומ-15/10/2026 גם לוח המכפילים — לאתרים ללא בקר בלבד.** בעלת המוצר: "שיהיה אופציה לחבר את זה לסוג
+-- של זה וכן להוסיף את קוד של האתר". הלוח הרובוטי בלבד היה שומר על **חלון מדידת הזמינות** של אתר מנוטר
+-- (ראו app.service_agreement); אתר ללא בקר אינו נמדד, ולכן אצלו הלוח השני מזין רק את התג. התאמה של שורת
+-- מכפילים לאתר מנוטר — מתעלמים, בדיוק כמו קודם, וההשוואה ל-site_uptime_service נשארת על אתרים מנוטרים.
+-- עמודות: "קוד אתר" (traffic-light.postgres.sql יוצר אותה) ו"סוג הסכם שירות", דרך app.tl_mx_plan.
 CREATE OR REPLACE FUNCTION public.site_service_links()
 RETURNS TABLE (
   site_id   integer,
@@ -572,12 +601,36 @@ tl_served AS (
     FROM tl_codes
    WHERE btrim(coalesce(served_raw, '')) <> ''
    ORDER BY code, position, id
+),
+mx_keys AS (
+  SELECT
+    (SELECT key FROM traffic_light_columns WHERE board = 'multipliers' AND label = 'קוד אתר'
+       ORDER BY position, id LIMIT 1) AS k_code,
+    (SELECT key FROM traffic_light_columns WHERE board = 'multipliers' AND label = 'סוג הסכם שירות'
+       ORDER BY position, id LIMIT 1) AS k_plan
+),
+mx_codes AS (
+  SELECT c.code, r.position, r.id, r.cells ->> k.k_plan AS plan_raw
+    FROM traffic_light_rows r
+    CROSS JOIN mx_keys k
+    CROSS JOIN LATERAL unnest(string_to_array(
+             replace(replace(btrim(coalesce(r.cells ->> k.k_code, '')), chr(32), ''), chr(9), ''),
+             ',')) AS c(code)
+   WHERE r.board = 'multipliers'
+),
+mx_plan AS (
+  SELECT DISTINCT ON (code) code, app.tl_mx_plan(plan_raw) AS plan
+    FROM mx_codes
+   WHERE btrim(coalesce(plan_raw, '')) <> ''
+   ORDER BY code, position, id
 )
-SELECT s.id, v.served, p.plan
+SELECT s.id, v.served, COALESCE(p.plan, m.plan)
   FROM sites s
   LEFT JOIN tl_plan   p ON p.code = s.code
   LEFT JOIN tl_served v ON v.code = s.code
- WHERE COALESCE(p.plan, v.served) IS NOT NULL
+  -- ⚠️ המכפילים — רק לאתר ללא בקר **שאין לו שום שורה ברובוטי**: אתר שחובר שם (גם בלי מסלול) נשאר של הרובוטי
+  LEFT JOIN mx_plan   m ON m.code = s.code AND s.monitored = false AND p.code IS NULL AND v.code IS NULL
+ WHERE COALESCE(p.plan, v.served, m.plan) IS NOT NULL
  ORDER BY s.id;
 $fn$;
 
