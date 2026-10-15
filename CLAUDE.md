@@ -2644,6 +2644,18 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     `fetchSiteCodes` (`sites` — one row per site). Bands view has no per-row button; the toolbar button works there
     too. `tools/create-multiplier-sites.js` is now the fallback. Harness: `e2e/mock-board.js` (the board was never
     mocked before — it hit the network and was blocked), `probe-mx-create.mjs` (26).
+  - **The real project codes came from Wizenet's project list** (owner: *"בהורדות יש מסמך EXCEL בשם רשימת פרויקטים
+    וייזנט — משם תיקח את הקודים לאתרים שאין להם ותוסיף"*; the file is `רשימת פרויקטים וויזנט.csv`, 433 projects, not in
+    the repo). `tools/link-multiplier-codes.js <csv>` (dry run / `--apply`): the board's "קוד אתר" cell wins when it holds a
+    real code (57 rows she typed), otherwise the list is matched by **street + house number + city** after normalising
+    city abbreviations (ר"ג, ת"א, י-ם, כ"ס, רשל"צ…; ⚠️ `` does not work with Hebrew in JS regexes — lookarounds),
+    the city only at the end of the name ("שדרות ירושלים 92, רמת גן"), a leading ה on a street (הפלמח/פלמח), all-short
+    street words ("חד נס", "תל חי"), and "15/16" vs "16/15". Unique best match only. It renames the MX site
+    (`update_site p_new_code`) and writes the cell (`tl_set_cell`). Run 15/10/2026: **128 of 130 written**; left:
+    ברנדיס 10 (MX-021 — the list says 1366, but 1366 is the monitored site "שד' ירושלים 8, רמת גן": a conflict in our
+    data) and תרצה 28 חולון (MX-102, not in the list). After it, `site_service_links` gives 128 multiplier sites a plan
+    (104 basic, 20 no_service, 3 none, 1 ext). The 20 Wizenet project codes with calls and no site are **not** multipliers
+    (מאנה 6, יונה הנביא 36, גרוזנברג 7… all "בהסכם שירות" in the list): robotic sites never registered, the owner's call.
   - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
   - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
     runs them from `master` on the dev PC.
