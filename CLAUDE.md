@@ -2632,7 +2632,7 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     robotic row is only the fallback when the multiplier has no row of its own, and its "להתייחס כ" is nulled when the
     multipliers row wins, or `effectiveTier` would show it first. Monitored sites: robotic only, as before. ⚠️ The board
     cell itself was **not** changed — the owner: *"אל תשנה שום דבר ברמזור"* (a fix I had started was reverted).
-    multipliers board (`c_mx_site_code`, position 1.5; `INSERT … WHERE NOT EXISTS`, not `DO $` — a DO block hung
+    multipliers board (`c_mx_site_code`, position 1.5; `INSERT … WHERE NOT EXISTS`, not `DO $$` — a DO block hung
     PGlite), and `site_service_links` also reads that board — **for `monitored = false` sites with no robotic row only**,
     so the availability window of a monitored site cannot be touched (the robotic-only guard in `service_agreement` /
     `service_plan` / `site_uptime_service` is unchanged). Its Hebrew menu is translated by `app.tl_mx_plan` (בסיסי →
