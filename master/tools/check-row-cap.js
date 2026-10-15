@@ -85,6 +85,7 @@ const BOUNDED = {
   pm_template_create: "כתיבה",
   pm_template_rename: "כתיבה",
   pm_site_templates_set: "כתיבה",
+  pm_template_meta_set: "כתיבה — סיווג רשימה לפי סוג (15/10/2026)",
   pm_profile_save: "כתיבה",
   pm_profile_delete: "כתיבה",
   pm_profile_sites_set: "כתיבה",
