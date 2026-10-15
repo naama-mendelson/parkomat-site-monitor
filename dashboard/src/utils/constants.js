@@ -81,7 +81,9 @@ export const STATUS_COLORS = {
   operating:   { dot: BRAND.blue, bg: "rgba(61,120,216,0.16)", text: "#7fb0f2", border: BRAND.blue },
   error:       { dot: "#ef4444", bg: "rgba(239,68,68,0.16)",   text: "#f87171", border: "#ef4444" },
   maintenance: { dot: "#f59e0b", bg: "rgba(245,158,11,0.14)",  text: "#fbbf24", border: "#f59e0b" },
-  no_comm:     { dot: "#94a3b8", bg: "rgba(148,163,184,0.14)", text: "#cbd5e1", border: "#94a3b8" },
+  // ⚠️ text לפי ערכה (styles/theme.css): #cbd5e1 היה בלתי נראה בערכה הבהירה — "כיתוב אפור על רקע אפור"
+  //    (בעלת המוצר, 15/10/2026). ארבעת האחרים נשארו גוונים של הערכה הכהה; רק זה נתבקש.
+  no_comm:     { dot: "#94a3b8", bg: "rgba(148,163,184,0.14)", text: "var(--status-nocomm-ink)", border: "#94a3b8" },
 };
 
 // ==========================================================
