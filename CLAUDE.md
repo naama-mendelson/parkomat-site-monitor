@@ -2668,6 +2668,16 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     (1366 ≈ 1336 שד' ירושלים 8; 1200 ≈ 1280 אהרונסון 40; 2222 ≈ 1080 גרוזנברג 7, whose 9 calls are orphaned; 3439 ≈
     3493 מסריק 1). ⚠️ Changing a monitored site's code changes its agent user (`site-{code}@`), so each fix needs a new
     identity and a password on the site PC — the owner decides, nothing was changed.
+  - **Preventive maintenance for the multipliers (15/10/2026, evening).** The owner pointed at `הוראות תחזוקה תקופתית
+    מכפילים סמויים ספטמבר 2020` (PDF + PPTX in Downloads; the PDF's Hebrew has no unicode map, read the PPTX with
+    python-pptx). Loaded through the RPCs as a temporary manager, like the 13/10 lists: list **11 "מכפילים סמויים —
+    Max2/Max3"** (23 items in three groups: מבנה 17, הידראוליקה 2, הפעלה ובקרה 4; hints carry the detailed action,
+    tools and the ⚠️ warnings) and profile **12 "מכפילים — Max2/Max3"** with **89** unmonitored sites whose board
+    "סוג מתקן" is in the Max2/Max3 family. Not assigned, for the owner: MaxFree (11), Others (8), empty type (17),
+    "לא פעיל" (1), תרצה 28. ⚠️ The content is Parkomat's manual — it lives in production and in the scratchpad
+    (`pmdoc/load-mx-pm.cjs`), **never in the repo**. ⚠️ The first run moved the monitored site 1366 into this profile,
+    because the board row ברנדיס 10 carries code 1366 — a board code is not proof of an unmonitored site. Reverted
+    with `pm_site_profile_set('1366', 1)`; the loader filters `monitored = false` now.
   - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
   - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
     runs them from `master` on the dev PC.
