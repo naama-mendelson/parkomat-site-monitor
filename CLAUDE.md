@@ -2635,6 +2635,15 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     function runs as the caller). The board cell must equal `sites.code` — whatever it is, `MX-007` or the real
     project code. Tests: `service-links.test.js` (M1–M4, U3), `traffic-light-boards.test.js` (counts 12 / 5, the seeded
     column). Applied 15/10/2026 ("הייצור זהה לקוד").
+  - **And the creation is in the dashboard, not the CLI** (owner, the same evening: *"אני רוצה אופציה לערוך את זה
+    ב-DASHBOARD"*). In the traffic light, multipliers board, **table view**, a last column "אתר בדשבורד": "✓ <code>"
+    when the "קוד אתר" cell is a site, "—" when the row has no name, and in edit mode a "צור אתר" button that
+    registers an unmonitored site named from the "אתר" cell with the code in the cell, or the next free `MX-nnn`
+    written back into the cell. The toolbar has "אתרים לכל השורות (N)" (confirm; sequential; stops at the first
+    error and names the row). Pure rules in `utils/multipliers.js` (`nextMxCode`, `mxRowState`); the light read is
+    `fetchSiteCodes` (`sites` — one row per site). Bands view has no per-row button; the toolbar button works there
+    too. `tools/create-multiplier-sites.js` is now the fallback. Harness: `e2e/mock-board.js` (the board was never
+    mocked before — it hit the network and was blocked), `probe-mx-create.mjs` (26).
   - `tools/register-wizenet-sites.js` stays in the repo as the record of the mistake; do not run it.
   - Both tools run as a temporary manager (`lib/gate-user`); the auto-mode classifier blocks them from Claude, the owner
     runs them from `master` on the dev PC.

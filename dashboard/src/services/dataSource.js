@@ -72,7 +72,7 @@ import {
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
-import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect } from "./sitesWriteDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect, fetchSiteCodesDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
@@ -514,6 +514,11 @@ export async function provisionAgent(code, opts) {
 export async function registerSite(payload) {
   if (!useDirect) return registerSiteViaServer(payload);
   return registerSiteDirect(payload);
+}
+/** קודי האתרים (קוד → שם, בקר) — ללוח המכפילים ברמזור. בלי זרוע שרת: master יצא משימוש. */
+export async function fetchSiteCodes() {
+  if (!useDirect) throw new Error("קודי האתרים זמינים רק במצב הישיר");
+  return fetchSiteCodesDirect();
 }
 
 /** עדכון אתר. שדה חסר = "אל תיגע"; `plc_type: ""` = "מחק". */

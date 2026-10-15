@@ -59,6 +59,18 @@ function assertConfigured() {
  * `site_name`, `tier`, `plc_type` — כדי שהמסך לא ידע מי ענה. וגם ההחזרה
  * זהה: `{ ok, site }`.
  */
+/**
+ * קודי האתרים — קריאה קלה (קוד, שם, בקר) לכל האתרים, בלי מדדים ובלי הרמזור. ללוח המכפילים (15/10/2026):
+ * "✓ קיים" ליד שורה שהקוד שלה כבר אתר, ו"צור אתר" לשאר. ⚠️ `sites` — שורה לאתר (check-row-cap).
+ * @returns {Promise<Map<string, {site_name: string, monitored: boolean}>>}
+ */
+export async function fetchSiteCodesDirect() {
+  assertConfigured();
+  const { data, error } = await supabase.from("sites").select("code, site_name, monitored");
+  if (error) throw new Error(messageFor(error, "קריאת קודי האתרים נכשלה"));
+  return new Map((data ?? []).map((s) => [String(s.code), { site_name: s.site_name, monitored: s.monitored !== false }]));
+}
+
 export async function registerSiteDirect(payload = {}) {
   assertConfigured();
 

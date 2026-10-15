@@ -24,7 +24,9 @@ import CodePrompt from "./CodePrompt";
 import {
   fetchBoard, addColumn, updateColumn, deleteColumn,
   addRow, deleteRow, setCell, pasteRows,
+  registerSite, fetchSiteCodes,
 } from "../../services/dataSource";
+import { nextMxCode, mxRowState, MX_CODE_LABEL, MX_NAME_LABEL } from "../../utils/multipliers";
 import "./TrafficLight.css";
 
 // ============================================================
@@ -880,6 +882,36 @@ function TrafficLight({ onClose }) {
   }, [load]);
 
   const columns = board.columns;
+
+  // ============================================================
+  // ⚠️ אתרים מלוח המכפילים — בדשבורד, לא בכלי שורת פקודה (15/10/2026)
+  // ============================================================
+  // בעלת המוצר: "האתרים שנמצאים במכפילים שברמזור — ליצור אותם ולערוך ידנית את הקוד שלהם… אני רוצה אופציה
+  // לערוך את זה ב-DASHBOARD". הלוח הזה הוא המקום שבו היא מקלידה את "קוד אתר" (העמודה שנזרעה ב-SQL), ולכן
+  // היצירה כאן: עמודת-מצב בסוף הטבלה — "✓ קיים" כשהקוד בתא הוא אתר, ואחרת "צור אתר" שרושם אתר **ללא בקר**
+  // בשם שבתא "אתר" ובקוד שבתא "קוד אתר" (ריק → MX-nnn הפנוי הבא, ונכתב חזרה לתא). וכפתור בסרגל לכל השורות
+  // בלי אתר. ⚠️ רק בלוח המכפילים: ברובוטי כל שורה היא אתר מנוטר שנרשם עם הסוכן שלו.
+  // ⚠️ הקוד שבתא **הוא** החיבור (site_service_links): אתר שנוצר מכאן מקבל את תג ההסכם מהשורה מיד.
+  const mxCol = boardKey === "multipliers" ? columns.find((c) => c.label === MX_CODE_LABEL) ?? null : null;
+  const mxNameCol = boardKey === "multipliers" ? columns.find((c) => c.label === MX_NAME_LABEL) ?? null : null;
+  const mx = !!(mxCol && mxNameCol);
+  const [siteCodes, setSiteCodes] = useState(null);   // Map code → { site_name, monitored }; null = לא נטען
+  const loadCodes = useCallback(async () => {
+    try { setSiteCodes(await fetchSiteCodes()); } catch { setSiteCodes((m) => m ?? new Map()); }
+  }, []);
+  useEffect(() => { if (boardKey === "multipliers") loadCodes(); }, [boardKey, loadCodes]);
+  // ⚠️ יצירה אחת: register_site ואז הקוד לתא (רק כשהתא היה ריק). כל קריאה דרך run — נעילה, רענון, שגיאה.
+  const createSiteFromRow = useCallback(async (r, used) => {
+    const st = mxRowState(r, mxCol?.key, mxNameCol?.key, siteCodes);
+    if (st.state !== "missing") return null;
+    const code = st.code || nextMxCode([...(siteCodes?.keys() ?? []), ...used]);
+    await registerSite({ code, site_name: st.name, monitored: false });
+    if (!st.code) await setCell(r.id, mxCol.key, code);
+    return code;
+  }, [mxCol, mxNameCol, siteCodes]);
+  const mxMissing = mx && siteCodes
+    ? board.rows.filter((r) => mxRowState(r, mxCol.key, mxNameCol.key, siteCodes).state === "missing") : [];
+
   // ============================================================
   // ⚠️ חיפוש — על **כל** התאים, לא רק על השם והקוד
   // ============================================================
@@ -1020,6 +1052,26 @@ function TrafficLight({ onClose }) {
                   // בפסים — השורה החדשה נפתחת מיד, כדי שיהיה איפה למלא אותה.
                   onClick={() => run(async () => { setOpenRow(await addRow(null, boardKey)); })}
                 >+ שורה</button>
+                {mx && mxMissing.length > 0 && (
+                  <button
+                    type="button"
+                    className="tl-btn-ghost tl-mx-all"
+                    disabled={busy}
+                    title="רישום אתר ללא בקר לכל שורה שהקוד שלה אינו אתר עדיין"
+                    onClick={() => {
+                      if (!confirm(`ליצור ${mxMissing.length} אתרים ללא בקר מהשורות שאין להן אתר?`)) return;
+                      run(async () => {
+                        const used = [];
+                        // ⚠️ בזו אחר זו, ועוצרים בשגיאה הראשונה: מה שכבר נוצר נשאר, והשגיאה נאמרת על השורה שלה
+                        for (const r of mxMissing) {
+                          try { const c = await createSiteFromRow(r, used); if (c) used.push(c); }
+                          catch (e) { throw new Error(`${r.cells?.[mxNameCol.key] ?? ""}: ${e.message}`); }
+                        }
+                        await loadCodes();
+                      });
+                    }}
+                  >אתרים לכל השורות ({mxMissing.length})</button>
+                )}
                 <button
                   type="button"
                   className="tl-btn-ghost"
@@ -1139,7 +1191,7 @@ function TrafficLight({ onClose }) {
                       )}
                     </th>
                   ))}
-
+                  {mx && <th className="tl-th-mx"><span className="tl-th-btn tl-th-btn--ro">אתר בדשבורד</span></th>}
                 </tr>
               </thead>
               <tbody>
@@ -1183,11 +1235,26 @@ function TrafficLight({ onClose }) {
                         />
                       </td>
                     ))}
-
+                    {mx && (() => {
+                      const st = mxRowState(r, mxCol.key, mxNameCol.key, siteCodes);
+                      return (
+                        <td className="tl-td-mx" data-mx={st.state}>
+                          {st.state === "exists" && <span className="tl-mx-ok" title={st.title}>✓ {st.code}</span>}
+                          {st.state === "noname" && <span className="tl-mx-muted" title="אין שם אתר בשורה">—</span>}
+                          {st.state === "loading" && <span className="tl-mx-muted">…</span>}
+                          {st.state === "missing" && (canEdit ? (
+                            <button type="button" className="tl-mini tl-mx-create" disabled={busy}
+                              title={st.code ? `רישום אתר ללא בקר בקוד ${st.code}` : "רישום אתר ללא בקר — הקוד ייווצר (MX-…) וייכתב לתא"}
+                              onClick={() => run(async () => { await createSiteFromRow(r, []); await loadCodes(); })}
+                            >צור אתר</button>
+                          ) : <span className="tl-mx-muted" title="אין אתר בקוד הזה — עריכה → צור אתר">אין אתר</span>)}
+                        </td>
+                      );
+                    })()}
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td className="tl-empty" colSpan={columns.length + 1}>אין שורות עדיין.</td></tr>
+                  <tr><td className="tl-empty" colSpan={columns.length + (mx ? 2 : 1)}>אין שורות עדיין.</td></tr>
                 )}
               </tbody>
             </table>

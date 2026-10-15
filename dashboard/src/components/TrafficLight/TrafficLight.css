@@ -1136,3 +1136,9 @@
   .tl-tabs { padding-inline: 10px; }
   .tl-tab  { padding: 8px 10px; font-size: 0.9rem; }
 }
+
+/* אתרים מלוח המכפילים (15/10/2026): עמודת-מצב בסוף הטבלה — ✓ קיים / צור אתר */
+.tl-th-mx, .tl-td-mx { width: 120px; max-width: 120px; white-space: nowrap; }
+.tl-mx-ok { color: var(--status-ready, #22c55e); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tl-mx-muted { color: var(--text-muted, #8a94a8); }
+.tl-mx-create { white-space: nowrap; }
