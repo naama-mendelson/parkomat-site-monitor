@@ -2627,6 +2627,11 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     attaches the Wizenet calls. ⚠️ The tier badge will read "לא חובר": `site_service_links` reads `board = 'robotic'`
     only, and the multipliers board had no code column to link by. **Closed the same evening** (owner: *"שיהיה אופציה
     לחבר את זה לסוג של זה וכן להוסיף את קוד של האתר"*): `traffic-light.postgres.sql` seeds a "קוד אתר" column on the
+    ⚠️ **For an unmonitored site the multipliers board wins** (owner, later that evening, on יפת 117 showing VIP: *"יפת
+    בכלל נמצא במכפילים"*: its code 1347 also sits in the robotic cell "1347, 1342" of שפר 20-22, which is VIP). The
+    robotic row is only the fallback when the multiplier has no row of its own, and its "להתייחס כ" is nulled when the
+    multipliers row wins, or `effectiveTier` would show it first. Monitored sites: robotic only, as before. ⚠️ The board
+    cell itself was **not** changed — the owner: *"אל תשנה שום דבר ברמזור"* (a fix I had started was reverted).
     multipliers board (`c_mx_site_code`, position 1.5; `INSERT … WHERE NOT EXISTS`, not `DO $` — a DO block hung
     PGlite), and `site_service_links` also reads that board — **for `monitored = false` sites with no robotic row only**,
     so the availability window of a monitored site cannot be touched (the robotic-only guard in `service_agreement` /
