@@ -595,18 +595,21 @@ CREATE TRIGGER service_calls_event AFTER INSERT ON service_calls
   FOR EACH ROW EXECUTE FUNCTION app.service_calls_event();
 
 -- ============================================================
--- גריפה: קריאה סגורה נמחקת 30 יום אחרי הדבר האחרון שקרה לה (18/10/2026)
+-- גריפה: קריאה סגורה נמחקת 30 יום אחרי שנסגרה (18/10/2026)
 -- ============================================================
--- בעלת המוצר, כשהוצגה לה הטבלה (15/10): "אין צורך שישמרו". השורות נושאות שם, טלפון ותלונה של דייר, והצטברו
--- בלי שום מדיניות — בניגוד לכל טבלה אחרת (events 7 ימים, ingest_drops 14, הניקוי השנתי 12 חודשים).
--- נמדד 18/10/2026: 1,615 שורות, 596 קריאות, 569 מהן סגורות, 3.3 MB; אף אחת לא ישנה מ-30 יום (הטבלה מ-05/10).
+-- בעלת המוצר, כשהוצגה לה הטבלה (15/10): "אין צורך שישמרו"; ב-18/10: "תשמור אותם רק פתוחות" → "סגורות תשמור לחודש"
+-- → "אחרי שהיא נסגרת". השורות נושאות שם, טלפון ותלונה של דייר, והצטברו בלי שום מדיניות — בניגוד לכל טבלה אחרת
+-- (events 7 ימים, ingest_drops 14, הניקוי השנתי 12 חודשים). נמדד 18/10/2026: 1,615 שורות, 596 קריאות, 569 מהן
+-- סגורות, 3.3 MB; אף אחת לא ישנה מ-30 יום (הטבלה מ-05/10).
 --
 -- הכללים, ולמה כל אחד:
 -- - **קריאה פתוחה נשמרת בכל גיל.** "סגורה" = הסטטוס הנוכחי מסומן closed ב-wizenet_lookups — אותו כלל של
 --   service_calls_current: השורה האחרונה של הכרטיס, ומעליה שינוי סטטוס מהדשבורד אם הוא חדש ממנה. סטטוס שאינו
 --   ברשימה נחשב פתוח, ולכן **לעולם אינו נמחק**: עדיף לשמור קריאה שאולי נסגרה מלמחוק פתוחה.
--- - **הגיל נמדד מהאירוע האחרון** — השורה האחרונה מוויזנט או השינוי האחרון מהדשבורד, המאוחר מביניהם — ולא
---   מהפתיחה. קריאה שנסגרה לפני חודשיים וקיבלה עדכון אתמול נשארת עוד 30 יום.
+-- - ⚠️ **הגיל נמדד מרגע הסגירה** (הבעלת: "אחרי שהיא נסגרת"), לא מהאירוע האחרון ולא מהפתיחה: תחילת הרצף האחרון
+--   של שורות ויזנט בסטטוס סגור (עדכון נוסף מוויזנט על קריאה שכבר סגורה, למשל הערה, אינו מאריך), או שינוי מהדשבורד
+--   שסגר אותה כשהשורה האחרונה של ויזנט עוד פתוחה. קריאה שנפתחה מחדש ונסגרה שוב נמדדת מהסגירה האחרונה.
+--   הגרסה הראשונה (אותו יום, שעות ספורות) מדדה מהאירוע האחרון; הוחלפה לפי בקשתה.
 -- - **כל השורות של הכרטיס נמחקות יחד**, גם האירועים הישנים שלו, וגם service_call_changes שלו. חצי היסטוריה של
 --   כרטיס אינה היסטוריה. עדכון שוויזנט ישלחו עליו אחר כך ייכנס כשורה חדשה — עם הסטטוס שלו, ואם הוא סגור הוא סגור.
 -- - **שורה בלי מספר כרטיס** (גוף שאינו JSON, או בלי ticket_number) הולכת לפי גיל בלבד: אין לה "מצב".
@@ -628,30 +631,48 @@ DECLARE
 BEGIN
   -- ⚠️ הרשימה נקבעת פעם אחת, לפני שתי המחיקות: מחיקת השינויים משנה את "המצב" של כרטיס, ולכן חישוב חוזר
   -- אחריה היה עונה אחרת.
-  WITH last_in AS (
-    SELECT DISTINCT ON (btrim(c.payload ->> 'ticket_number'))
-           btrim(c.payload ->> 'ticket_number') AS ticket, c.payload, c.received_at
+  WITH rows_ AS (
+    SELECT btrim(c.payload ->> 'ticket_number') AS ticket, c.id, c.received_at,
+           COALESCE((SELECT w.closed FROM wizenet_lookups w
+                      WHERE w.kind = 'status' AND w.id = NULLIF(btrim(c.payload ->> 'status'), '')), false) AS closed
       FROM service_calls c
      WHERE c.payload IS NOT NULL AND NULLIF(btrim(c.payload ->> 'ticket_number'), '') IS NOT NULL
-     ORDER BY btrim(c.payload ->> 'ticket_number'), c.id DESC
+  ),
+  last_in AS (
+    SELECT DISTINCT ON (r.ticket) r.ticket, r.id, r.received_at, r.closed
+      FROM rows_ r ORDER BY r.ticket, r.id DESC
+  ),
+  -- השורה הפתוחה האחרונה של כל כרטיס; מה שאחריה הוא הרצף הסגור הנוכחי
+  last_open AS (
+    SELECT r.ticket, max(r.id) AS id FROM rows_ r WHERE NOT r.closed GROUP BY r.ticket
+  ),
+  -- רגע הסגירה אצל ויזנט: תחילת הרצף הסגור שבסוף הכרטיס (ריק כשהשורה האחרונה פתוחה)
+  wz_closed AS (
+    SELECT r.ticket, min(r.received_at) AS closed_at
+      FROM rows_ r LEFT JOIN last_open o ON o.ticket = r.ticket
+     WHERE r.id > COALESCE(o.id, 0)
+     GROUP BY r.ticket
   ),
   last_st AS (
-    SELECT DISTINCT ON (ch.ticket) ch.ticket, ch.value, ch.changed_at
+    SELECT DISTINCT ON (ch.ticket) ch.ticket, ch.value, ch.changed_at,
+           COALESCE((SELECT w.closed FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = ch.value), false) AS closed
       FROM service_call_changes ch
      WHERE ch.field = 'status'
      ORDER BY ch.ticket, ch.id DESC
   ),
   cur AS (
     SELECT l.ticket,
-           CASE WHEN st.changed_at > l.received_at THEN st.value ELSE NULLIF(btrim(l.payload ->> 'status'), '') END AS status_id,
-           GREATEST(l.received_at, COALESCE(st.changed_at, '')) AS last_at
+           -- המצב: שינוי מהדשבורד אם הוא חדש מהשורה האחרונה של ויזנט, אחרת ויזנט
+           CASE WHEN st.changed_at > l.received_at THEN st.closed ELSE l.closed END AS closed,
+           -- רגע הסגירה: ויזנט אם הרצף שלהם כבר סגור; אחרת השינוי מהדשבורד שסגר אותה
+           CASE WHEN st.changed_at > l.received_at AND NOT l.closed THEN st.changed_at ELSE wz.closed_at END AS closed_at
       FROM last_in l
       LEFT JOIN last_st st ON st.ticket = l.ticket
+      LEFT JOIN wz_closed wz ON wz.ticket = l.ticket
   )
   SELECT COALESCE(array_agg(c.ticket), '{}') INTO v_gone
     FROM cur c
-   WHERE c.last_at < v_cut
-     AND COALESCE((SELECT w.closed FROM wizenet_lookups w WHERE w.kind = 'status' AND w.id = c.status_id), false);
+   WHERE c.closed AND c.closed_at < v_cut;
 
   DELETE FROM service_call_changes ch WHERE ch.ticket = ANY (v_gone);
 

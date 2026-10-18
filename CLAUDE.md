@@ -2816,12 +2816,15 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
   שישמרו"*. `app.prune_service_calls(interval '30 days')` (`service-calls-board.postgres.sql`; cron
   `parkomat-prune-service-calls`, 04:17 UTC): **an open call is kept at any age**; "closed" is the ticket's current
   status marked `closed` in `wizenet_lookups`, by the same rule as `service_calls_current` (last Wizenet row, overridden
-  by a newer dashboard change), so an unknown status is never deleted; the age is measured from the ticket's **last
-  event** (Wizenet row or dashboard change), not from its opening; a ticket goes with all its rows and its
+  by a newer dashboard change), so an unknown status is never deleted; ⚠️ the age is measured **from the closing
+  moment** (owner, the same evening: *"אחרי שהיא נסגרת"*): the start of the trailing run of closed Wizenet rows, or
+  the dashboard change that closed it while Wizenet's last row was still open — a later note on an already-closed
+  call does not extend it, and a call reopened and closed again counts from the last closing. (The first version,
+  live for a few hours, measured from the last event; replaced and re-applied the same evening.) A ticket goes with all its rows and its
   `service_call_changes`; a row with no ticket number goes by age alone. Measured before the apply: 1,615 rows, 596
   tickets, 569 closed, **0** old enough, so the first deletions fall around 07/11. ⚠️ A duplicate group is not
   considered: a closed member of a still-open group is deleted after 30 days and `×N` drops by one.
-  `tests/prune-service-calls.test.js` (P1–P4); 7/7 mutations caught in an isolated copy — ⚠️ three of them first
+  `tests/prune-service-calls.test.js` (P1–P4); 7/7, then 11/11 for the closing-moment version, mutations caught in an isolated copy — ⚠️ three of them first
   "survived" because the anchor text also exists in `service_calls_current` and the runner mutated *that* function;
   anchor a mutation inside the function under test.
 - ~~Opening WIZEAPI to foreign access (asked of Wizenet 13/10), or a relay with a fixed IP.~~ Built differently on

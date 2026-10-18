@@ -1,8 +1,8 @@
-// tests/prune-service-calls.test.js — קריאה סגורה נמחקת 30 יום אחרי האירוע האחרון שלה (18/10/2026).
+// tests/prune-service-calls.test.js — קריאה סגורה נמחקת 30 יום אחרי שנסגרה (18/10/2026).
 //
-// בעלת המוצר: "אין צורך שישמרו". app.prune_service_calls: פתוחה נשמרת בכל גיל, סטטוס לא מוכר = פתוח ולא נמחק,
-// הגיל נמדד מהאירוע האחרון (שורה מוויזנט או שינוי מהדשבורד), הכרטיס נמחק על כל שורותיו ושינוייו, שורה בלי
-// מספר כרטיס לפי גיל בלבד. אותו db.init() כמו בייצור (tests/helpers/local-pg.js).
+// בעלת המוצר: "סגורות תשמור לחודש" — "אחרי שהיא נסגרת". app.prune_service_calls: פתוחה נשמרת בכל גיל, סטטוס
+// לא מוכר = פתוח ולא נמחק, הגיל נמדד מרגע הסגירה (תחילת הרצף הסגור האחרון אצל ויזנט, או השינוי מהדשבורד שסגר),
+// הכרטיס נמחק על כל שורותיו ושינוייו, שורה בלי מספר כרטיס לפי גיל בלבד. אותו db.init() כמו בייצור (tests/helpers/local-pg.js).
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const local = require("./helpers/local-pg");
@@ -78,30 +78,40 @@ test("P1 · סגורה ישנה נמחקת על כל שורותיה ושינוי
   assert.equal(await prune(), 0, "ריצה חוזרת — 0");
 });
 
-test("P2 · הגיל נמדד מהאירוע האחרון: עדכון טרי מוויזנט או שינוי טרי מהדשבורד מאריכים; שינוי מהדשבורד קובע את המצב", { skip }, async () => {
+test("P2 · הגיל נמדד מרגע הסגירה: עדכון נוסף על קריאה סגורה אינו מאריך; פתיחה מחדש וסגירה — מהסגירה האחרונה; הדשבורד קובע את המצב", { skip }, async () => {
   await sup(`DELETE FROM service_call_changes`); await sup(`DELETE FROM service_calls`);
-  // נסגרה לפני 60 יום, וויזנט שלחו עליה עוד שורה (סגורה) לפני 5 ימים — נשארת
+  // נסגרה לפני 60 יום, וויזנט שלחו עוד שורה (עדיין סגורה, למשל הערה) לפני 5 ימים — נסגרה לפני 60: נמחקת
   await call({ ticket_number: "P2-a", parking_code: "7901", status: "150" }, ago(60));
   await call({ ticket_number: "P2-a", parking_code: "7901", status: "150" }, ago(5));
-  // נסגרה לפני 60 יום, ומישהו שינה לה סטטוס מהדשבורד לפני 5 ימים (עדיין סגור) — נשארת
+  // נסגרה לפני 60 יום, ומישהו "סגר" אותה שוב מהדשבורד לפני 5 ימים — עדיין סגורה מלפני 60: נמחקת
   await call({ ticket_number: "P2-b", parking_code: "7901", status: "150" }, ago(60));
   await change("P2-b", "150", ago(5));
-  // ויזנט אומרים פתוחה (לפני 60 יום), הדשבורד סגר אותה לפני 45 יום — המצב הוא הדשבורד: סגורה וישנה — נמחקת
+  // ויזנט אומרים פתוחה (לפני 60 יום), הדשבורד סגר אותה לפני 45 יום — נסגרה לפני 45: נמחקת
   await call({ ticket_number: "P2-c", parking_code: "7901", status: "148" }, ago(60));
   await change("P2-c", "150", ago(45));
   // ויזנט סגרו לפני 60 יום, הדשבורד **פתח** מחדש לפני 45 יום — פתוחה, נשארת
   await call({ ticket_number: "P2-d", parking_code: "7901", status: "150" }, ago(60));
   await change("P2-d", "148", ago(45));
-  // שינוי מהדשבורד **ישן** מהשורה האחרונה של ויזנט — השורה של ויזנט קובעת: סגורה לפני 45 יום — נמחקת
+  // שינוי מהדשבורד **ישן** מהשורה האחרונה של ויזנט — השורה של ויזנט קובעת: נסגרה לפני 45 יום — נמחקת
   await call({ ticket_number: "P2-e", parking_code: "7901", status: "148" }, ago(60));
   await change("P2-e", "148", ago(50));
   await call({ ticket_number: "P2-e", parking_code: "7901", status: "150" }, ago(45));
+  // נסגרה לפני 60, נפתחה מחדש אצל ויזנט לפני 50, נסגרה שוב לפני 20 — הסגירה האחרונה לפני 20: נשארת
+  await call({ ticket_number: "P2-f", parking_code: "7901", status: "150" }, ago(60));
+  await call({ ticket_number: "P2-f", parking_code: "7901", status: "148" }, ago(50));
+  await call({ ticket_number: "P2-f", parking_code: "7901", status: "150" }, ago(20));
+  // ויזנט פתוחה לפני 60, הדשבורד סגר לפני 10 — נסגרה לפני 10: נשארת
+  await call({ ticket_number: "P2-g", parking_code: "7901", status: "148" }, ago(60));
+  await change("P2-g", "150", ago(10));
+  // ויזנט סגרו לפני 40, הדשבורד סגר "שוב" לפני 10 — הסגירה היא של ויזנט, לפני 40: נמחקת
+  await call({ ticket_number: "P2-h", parking_code: "7901", status: "150" }, ago(40));
+  await change("P2-h", "150", ago(10));
 
-  assert.equal(await prune(), 3, "P2-c (שורה אחת) + P2-e (שתי שורות)");
-  assert.deepEqual(await tickets(), ["P2-a", "P2-b", "P2-d"]);
-  assert.equal(await changesOf("P2-c"), 0);
-  assert.equal(await changesOf("P2-e"), 0);
-  assert.equal(await changesOf("P2-b"), 1, "השינוי של כרטיס שנשאר — נשאר");
+  assert.equal(await prune(), 7, "P2-a (2) + P2-b (1) + P2-c (1) + P2-e (2) + P2-h (1)");
+  assert.deepEqual(await tickets(), ["P2-d", "P2-f", "P2-g"]);
+  for (const t of ["P2-b", "P2-c", "P2-e", "P2-h"]) assert.equal(await changesOf(t), 0, `השינויים של ${t} נמחקו איתו`);
+  assert.equal(await changesOf("P2-d"), 1, "השינוי של כרטיס שנשאר — נשאר");
+  assert.equal(await changesOf("P2-g"), 1);
 });
 
 test("P3 · בלי מספר כרטיס — לפי גיל בלבד; p_keep אחר — אותו כלל", { skip }, async () => {
