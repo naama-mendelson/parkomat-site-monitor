@@ -1,6 +1,6 @@
 // App.jsx — מעטפת: מחזיקה את ה-state המשותף (אתרים, SSE, תפקיד, אתר נבחר)
 // ומנתבת לתצוגה לפי התפקיד. הפאנל והמודלים משותפים לכל התצוגות.
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSites } from "./hooks/useSites";
 import { useSSE } from "./hooks/useSSE";
 import { useSiteDetail } from "./hooks/useSiteDetail";
@@ -29,6 +29,7 @@ import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
 import Announcement from "./components/Announcement/Announcement";
 import { needsRefetch } from "./utils/sitePatch";
 import { statusesMatch, fullReloadDue, statsDueOnReturn, STATUS_CHECK_EVERY_MS } from "./utils/siteSync";
+import { makeCoalesced, unlessHidden } from "./utils/coalesce";
 import { fetchSiteStatuses } from "./services/dataSource";
 import { useFaultAlerts } from "./hooks/useFaultAlerts";
 // ⚠️ פס ולא חלון חוסם — ראה ההסבר בקובץ עצמו. מסך קיר שמתאתחל בלילה חייב
@@ -198,7 +199,7 @@ function App() {
   }, []);
   useEffect(() => {
     loadTaskCounts();
-    const id = setInterval(loadTaskCounts, 5 * 60_000);
+    const id = setInterval(unlessHidden(loadTaskCounts), 5 * 60_000);
     return () => clearInterval(id);
   }, [loadTaskCounts]);
   const tasksCtx = useDirect && taskCounts
@@ -215,9 +216,14 @@ function App() {
   }, []);
   useEffect(() => {
     loadCallCounts();
-    const id = setInterval(loadCallCounts, 5 * 60_000);
+    const id = setInterval(unlessHidden(loadCallCounts), 5 * 60_000);
     return () => clearInterval(id);
   }, [loadCallCounts]);
+  // ⚠️ רענון מאירוע — מתאחד, ולא בלשונית מוסתרת (utils/coalesce.js; נמדד 18/10: 29 מסכים × 2 RPC על כל אירוע,
+  // 56% מזמן המסד). הטיימרים למעלה והחזרה ללשונית (onRecover) מכסים את מה שלשונית מוסתרת לא טענה.
+  const callsRefresh = useMemo(() => makeCoalesced(loadCallCounts), [loadCallCounts]);
+  const tasksRefresh = useMemo(() => makeCoalesced(loadTaskCounts), [loadTaskCounts]);
+  useEffect(() => () => { callsRefresh.cancel(); tasksRefresh.cancel(); }, [callsRefresh, tasksRefresh]);
   const callsCtx = useDirect && SERVICE_CALLS_ENABLED && callCounts
     ? { bySite: callCounts.bySite, openSite: (site) => setCallsOpen({ site }) }
     : null;
@@ -337,7 +343,7 @@ function App() {
       }
       // 0א. משימות — המספרים בכפתורים, והטבלה אם פתוחה. שום דבר ברשימת האתרים לא השתנה
       if (data?.type === "tasks") {
-        loadTaskCounts();
+        tasksRefresh.request();
         setTasksRev((v) => v + 1);
         return;
       }
@@ -346,7 +352,7 @@ function App() {
         // ⚠️ "relay" הוא הפעמון לממסר (בקשה נכנסה לתור) — עוד לא השתנה כלום. השינוי עצמו מגיע באירוע נפרד
         // (action status / type) אחרי שוויזנט ענו. (דשבורד ישן מרענן כאן את המספרים — שאילתה קלה אחת, ולא יותר.)
         if (data.action === "relay") return;
-        loadCallCounts();
+        callsRefresh.request();
         setCallsRev((v) => v + 1);
         return;
       }
@@ -390,7 +396,7 @@ function App() {
           selectedTouched.current = false;
         }
       }, SSE_DEBOUNCE_MS);
-    }, [patch, reload, selectedCode, refreshDetail, scheduleComplianceRefresh, loadTaskCounts]),
+    }, [patch, reload, selectedCode, refreshDetail, scheduleComplianceRefresh, tasksRefresh, callsRefresh]),
 
     // ==========================================================
     // התאוששות מנתק — שליפה מלאה, לא השלמת הודעות

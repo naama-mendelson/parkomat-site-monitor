@@ -2907,6 +2907,32 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     `makeCompareSites(null)` is unchanged (`sort-sites.test.js`). The unmonitored card now carries `has-open-call`.
     Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
 
+## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
+
+Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only
+snapshots; the cumulative table since July is dominated by the pre-07/10 card loads and says nothing about today).
+
+| 10-minute window | calls | DB time | mean |
+|---|---|---|---|
+| `service_call_counts` | 104 | 43 s | 413 ms |
+| `service_calls_recent_summary` | 104 | 43 s | 413 ms |
+| everything else together | | ~68 s | |
+
+- **The function itself is cheap: ~55 ms** when run alone as a staff user. 413 ms is contention: `realtime.subscription`
+  held **29** open subscriptions (≈ open dashboards, office tabs and wall screens), and every `service_calls` event
+  made every one of them, hidden tabs included, fire both RPCs in the same second — 8 events in those 10 minutes.
+  A real Wizenet burst (8 tickets in 16 s from one tenant, 14/10) is 8 events in a row.
+- **Two rules, in `utils/coalesce.js`, proven in `tests/coalesce.test.js` (6/6 mutations):** a hidden tab does not
+  refresh at all (the return to the tab refreshes through `onRecover`, built the same morning), and a burst collapses
+  into one load 1.5 s after the last event (the measured gap inside a burst is 2–5 s). The 5-minute timers skip hidden
+  tabs too (`unlessHidden`). `request()` never calls the loader directly, not even the first time — otherwise 29 screens
+  would still fire together on the first event of a burst. The same applies to the task counts.
+- **What did not change:** an open dialog still reloads on its own event (`callsRev` / `tasksRev`); that is one screen,
+  not 29. The functions themselves were left alone: with the 30-day retention the table plateaus, and 55 ms is fine.
+- ⚠️ Measure deltas, not the cumulative view: the top of `pg_stat_statements` today is still `site_stats` from before
+  07/10. The script pattern is two snapshots of `(queryid, total_exec_time, calls)` and a subtraction; `queryid` is
+  stable across the window. ⚠️ A regex in a Bash heredoc loses its backslashes here; use `[.]`, `[(]`, `[[:space:]]`.
+
 ## Wizenet relay — status changes go out through site PCs (built 15/10/2026)
 
 WIZEAPI answers only from Israel (Alex, Wizenet, 14/10: *"מוגבלת לפניות מישראל… לחלופין, ניתן לבצע את הפניות דרך שרת
