@@ -1955,8 +1955,10 @@ The owner, shown 45,229 rows in `auth.sessions`: *"למה אתה לא מוחק �
   (`check-alert-gate`, `check-dashboard-truth`) read the last two hours / one day. First run by hand: 50,770 rows gone.
 - **`service_calls.headers` — 1.1 MB of the table's 3.3 MB, the single heaviest column (704 B a row), and nothing
   reads it.** Seventeen Cloudflare/AWS routing headers per webhook (`cf-ray`, `traceparent`, `x-amzn-trace-id`…),
-  kept "in case Wizenet ever add a timestamp header"; measured on 14/10 that they send none. Candidate: stop storing
-  it in the `service-calls` Edge Function (a function deploy, not SQL). `raw` and `payload` are deliberate duplicates
+  kept "in case Wizenet ever add a timestamp header"; measured on 14/10 that they send none. **Not stored since
+  18/10/2026** (the `service-calls` Edge Function no longer sends the field; the column stays, NULL from now on;
+  `remote_ip` is still recorded). ⚠️ The function is deployed with `--no-verify-jwt` — Wizenet send no token, and a
+  deploy without the flag turns verification back on and rejects every call. `raw` and `payload` are deliberate duplicates
   (raw is the source of truth). The approved 30-day retention of closed calls is still **not** applied (0 rows are
   old enough yet; the table started 05/10).
 - **PDFs are base64 text: 47 MB stored for 36 MB of documents.** `data_b64` costs 33% over `bytea`, on the largest
@@ -2786,12 +2788,18 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
 
 ### Still open
 
-- ⚠️ **Retention is approved and not applied.** The owner, shown the table: *"אין צורך שישמרו"*. The rows carry a
-  tenant's name, phone and complaint, and they accumulate with no policy at all — unlike every other table (events 7
-  days, ingest drops 14, the yearly cleanup 12 months). `app.prune_service_calls(30)` is written: **an open call is
-  kept at any age**, only closed ones are deleted and only after 30 days, "closed" is decided by `wizenet_lookups` so
-  an unknown status is never deleted, and a row with no ticket number goes by age alone. It is not in the repo SQL and
-  not applied — the apply deletes production rows and wants saying out loud first.
+- ~~**Retention is approved and not applied.**~~ **Applied 18/10/2026.** The owner, shown the table on 15/10: *"אין צורך
+  שישמרו"*. `app.prune_service_calls(interval '30 days')` (`service-calls-board.postgres.sql`; cron
+  `parkomat-prune-service-calls`, 04:17 UTC): **an open call is kept at any age**; "closed" is the ticket's current
+  status marked `closed` in `wizenet_lookups`, by the same rule as `service_calls_current` (last Wizenet row, overridden
+  by a newer dashboard change), so an unknown status is never deleted; the age is measured from the ticket's **last
+  event** (Wizenet row or dashboard change), not from its opening; a ticket goes with all its rows and its
+  `service_call_changes`; a row with no ticket number goes by age alone. Measured before the apply: 1,615 rows, 596
+  tickets, 569 closed, **0** old enough, so the first deletions fall around 07/11. ⚠️ A duplicate group is not
+  considered: a closed member of a still-open group is deleted after 30 days and `×N` drops by one.
+  `tests/prune-service-calls.test.js` (P1–P4); 7/7 mutations caught in an isolated copy — ⚠️ three of them first
+  "survived" because the anchor text also exists in `service_calls_current` and the runner mutated *that* function;
+  anchor a mutation inside the function under test.
 - ~~Opening WIZEAPI to foreign access (asked of Wizenet 13/10), or a relay with a fixed IP.~~ Built differently on
   15/10/2026: site PCs in Israel (*Wizenet relay* below). The three secrets are set and the function is deployed;
   redeploy it with

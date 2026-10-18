@@ -1160,3 +1160,11 @@ SELECT app.ensure_cron_job('parkomat-card-metrics', '*/10 * * * *',
 -- לשרת של ויזנט, ושניהם עדיפים ערים. בלי ממסר חי באותה דקה — מדלגים עד מחר.
 SELECT app.ensure_cron_job('parkomat-wizenet-daily', '7 4 * * *',
                            'SELECT app.wizenet_daily()');
+
+-- ============================================================
+-- קריאות שירות — קריאה סגורה נמחקת 30 יום אחרי האירוע האחרון שלה (18/10/2026)
+-- ============================================================
+-- ראה app.prune_service_calls ב-service-calls-board.postgres.sql: פתוחה נשמרת בכל גיל, סטטוס לא מוכר = פתוח,
+-- הכרטיס נמחק על כל שורותיו ושינוייו. בעלת המוצר: "אין צורך שישמרו".
+SELECT app.ensure_cron_job('parkomat-prune-service-calls', '17 4 * * *',
+                           'SELECT app.prune_service_calls(interval ''30 days'')');

@@ -126,19 +126,13 @@ Deno.serve(async (req) => {
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed;
   } catch { /* נשמר כ-raw בלבד */ }
 
-  // הכותרות נשמרות כדי ללמוד מה הם שולחים. ⚠️ בלי כותרות רגישות: אם ביום
-  // מן הימים תתווסף אצלם כותרת הרשאה, אין סיבה שהיא תשב אצלנו בטבלה.
-  const headers: Record<string, string> = {};
-  for (const [k, v] of req.headers) {
-    const key = k.toLowerCase();
-    if (key === "authorization" || key === "apikey" || key === "cookie") continue;
-    headers[key] = v;
-  }
-
+  // ⚠️ הכותרות אינן נשמרות עוד (18/10/2026). הן נשמרו "כדי ללמוד מה הם שולחים", ונלמד: ויזנט שולחים
+  // host, content-type ו-content-length ותו לא — בלי חותמת זמן, בלי user-agent (נמדד 14/10 על 110 ערכים).
+  // כל השאר היו 17 כותרות ניתוב של Cloudflare/AWS, 704 בתים לשורה, העמודה הכבדה ביותר בטבלה (1.1 MB מתוך 3.3)
+  // ואיש אינו קורא אותה. העמודה `headers` נשארת בטבלה (NULL מעכשיו); remote_ip נשאר — קטן, ואומר מאיפה הגיע.
   const res = await insertRow({
     raw,
     payload,
-    headers,
     remote_ip: req.headers.get("x-forwarded-for") ?? null,
     source: SOURCE,
   });
