@@ -134,3 +134,20 @@ test("⚠️ update_site נועל את השורה לפני שהוא קורא א�
   const sel = body.slice(body.indexOf("SELECT s.id, s.code, s.site_name"));
   assert.match(sel.slice(0, sel.indexOf(";")), /FOR UPDATE\s*$/);
 });
+
+test("סינון לפי סוג מעלית בלוח (18/10/2026): הכול / בלי מעלית / אחת משתי המעליות", async () => {
+  const { matchesLiftFilter, NO_LIFT } = await import(pathToFileURL(path.join(__dirname, "../../shared/lift-types.mjs")).href);
+  const none = { lift_type: null, lift2_type: null };
+  const one = { lift_type: "serapid" };
+  const two = { lift_type: "hydraulic-piston-1", lift_console: "longitudinal", lift2_type: "electric", lift2_console: "lateral" };
+  assert.equal(matchesLiftFilter(none, ""), true);
+  assert.equal(matchesLiftFilter(two, undefined), true);
+  assert.equal(matchesLiftFilter(none, NO_LIFT), true);
+  assert.equal(matchesLiftFilter(one, NO_LIFT), false);
+  assert.equal(matchesLiftFilter(one, "serapid"), true);
+  assert.equal(matchesLiftFilter(one, "electric"), false);
+  assert.equal(matchesLiftFilter(two, "electric"), true);           // השנייה מספיקה
+  assert.equal(matchesLiftFilter(two, "hydraulic-piston-1"), true);
+  assert.equal(matchesLiftFilter(two, "serapid"), false);
+  assert.equal(NO_LIFT === "", false);                               // "" הוא "הכול"
+});

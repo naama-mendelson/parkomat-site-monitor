@@ -22,6 +22,7 @@ import {
   SITE_TYPE_GROUPS, SITE_TYPES, GROUP_PREFIX, siteTypeGroup, matchesTypeValue,
 } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
+import { LIFT_TYPES, NO_LIFT, matchesLiftFilter, siteLifts } from "../../../../shared/lift-types.mjs";
 import { TIER_OPTIONS, TIER_LABELS, TIER_UNLINKED, TIER_BOARD_STATES } from "../../utils/constants";
 import "./SiteFilterTile.css";
 
@@ -39,8 +40,8 @@ export const NO_TYPE = "__none__";
 export const NO_SYSTEM = "__nosys__";
 
 function SiteFilterTile({
-  sites, typeFilter = "", systemFilter = "", tierFilter = "",
-  onTypeChange, onSystemChange, onTierChange,
+  sites, typeFilter = "", systemFilter = "", tierFilter = "", liftFilter = "",
+  onTypeChange, onSystemChange, onTierChange, onLiftChange,
 }) {
   // סופרים כדי להציג את המספר ליד כל אפשרות. בורר שמראה "מצבט" ומחזיר
   // רשימה ריקה נראה שבור; "מצבט (0)" אומר את האמת מראש.
@@ -52,6 +53,8 @@ function SiteFilterTile({
   for (const t of TIER_FILTER) tierCounts[t] = 0;
   const systemCounts = { [NO_SYSTEM]: 0 };
   for (const s of CONTROL_SYSTEMS) systemCounts[s.key] = 0;
+  const liftCounts = { [NO_LIFT]: 0 };
+  for (const l of LIFT_TYPES) liftCounts[l.key] = 0;
 
   for (const s of sites) {
     const k = s.plc_type || NO_TYPE;
@@ -61,12 +64,16 @@ function SiteFilterTile({
     if (tierCounts[s.tier] !== undefined) tierCounts[s.tier]++;
     const sys = s.control_system || NO_SYSTEM;
     if (systemCounts[sys] !== undefined) systemCounts[sys]++;
+    // ⚠️ אתר אחד נספר פעם אחת לכל סוג, גם כששתי המעליות שלו מאותו סוג — כמו הסינון, שמחזיר אותו פעם אחת
+    const lifts = [...new Set(siteLifts(s).map((l) => l.type))];
+    if (lifts.length === 0) liftCounts[NO_LIFT]++;
+    for (const t of lifts) if (liftCounts[t] !== undefined) liftCounts[t]++;
   }
 
-  const active = Boolean(typeFilter || systemFilter || tierFilter);
+  const active = Boolean(typeFilter || systemFilter || tierFilter || liftFilter);
 
   return (
-    <div className={`filter-btn site-filter-tile ${active ? "active" : ""}`}>
+    <div className={`filter-btn site-filter-tile${onLiftChange ? " site-filter-tile--four" : ""}${active ? " active" : ""}`}>
       <select
         className="sft-select"
         value={typeFilter}
@@ -162,7 +169,26 @@ function SiteFilterTile({
         ))}
       </select>
 
-      <span className="sft-caption">סוג, מערכת ורמה</span>
+      {/* סוג מעלית (18/10/2026: "אני רוצה שיהיה גם סינון לפי סוגי מעליות"). אתר עם שתי מעליות עובר אם אחת מהן מהסוג.
+          "לא הוגדר" — רק כשיש כאלה, או כשהוא הנבחר (אותו כלל כמו ברמות). */}
+      {onLiftChange && (
+        <select
+          className="sft-select"
+          value={liftFilter}
+          onChange={(e) => onLiftChange(e.target.value)}
+          aria-label="סינון לפי סוג מעלית"
+        >
+          <option value="">כל המעליות</option>
+          {LIFT_TYPES.map((l) => (
+            <option key={l.key} value={l.key}>{l.label} ({liftCounts[l.key]})</option>
+          ))}
+          {(liftCounts[NO_LIFT] > 0 || liftFilter === NO_LIFT) && (
+            <option value={NO_LIFT}>לא הוגדר ({liftCounts[NO_LIFT]})</option>
+          )}
+        </select>
+      )}
+
+      <span className="sft-caption">{onLiftChange ? "סוג, מערכת, רמה ומעלית" : "סוג, מערכת ורמה"}</span>
     </div>
   );
 }
@@ -173,7 +199,7 @@ function SiteFilterTile({
  * ⚠️ מיוצא כדי שהריבוע והתצוגה יסכימו על הכלל — ובעיקר על אתר בלי סוג,
  * שהוא כרגע המקרה של כל 13 האתרים.
  */
-export function matchesSiteFilters(site, typeFilter, tierFilter, systemFilter = "") {
+export function matchesSiteFilters(site, typeFilter, tierFilter, systemFilter = "", liftFilter = "") {
   // ⚠️ "לא הוגדר" מטופל כאן ולא ב-matchesTypeValue: הוא אינו סוג אלא
   // **היעדר** סוג, והכנסתו לרשימת הסוגים המשותפת הייתה הופכת אותו לערך
   // שאפשר לשמור במסד.
@@ -190,6 +216,7 @@ export function matchesSiteFilters(site, typeFilter, tierFilter, systemFilter = 
     return false;
   }
   if (tierFilter && site.tier !== tierFilter) return false;
+  if (!matchesLiftFilter(site, liftFilter)) return false;
   return true;
 }
 

@@ -106,3 +106,16 @@ export function liftsProblem(lifts, { required = true } = {}) {
   }
   return null;
 }
+
+// ============================================================
+// סינון לפי סוג מעלית בלוח (בעלת המוצר, 18/10/2026: "אני רוצה שיהיה גם סינון לפי סוגי מעליות")
+// ============================================================
+// ⚠️ המפתח לאתר בלי מעלית רשומה — לא מחרוזת ריקה, שהיא "כל המעליות" (אותו נימוק כמו NO_TYPE בסינון הסוג).
+export const NO_LIFT = "__nolift__";
+
+/** האם האתר עובר את סינון המעלית: "" — הכול; NO_LIFT — אין אף מעלית; סוג — אחת משתי המעליות מהסוג הזה. */
+export function matchesLiftFilter(site, value) {
+  if (!value) return true;
+  const types = siteLifts(site).map((l) => l.type);
+  return value === NO_LIFT ? types.length === 0 : types.includes(value);
+}

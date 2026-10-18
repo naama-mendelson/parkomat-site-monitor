@@ -53,6 +53,7 @@ function App() {
   const [typeFilter, setTypeFilter] = useState("");             // סינון לפי סוג מתקן ("" = הכל)
   const [systemFilter, setSystemFilter] = useState("");         // סינון לפי מערכת הפעלה ("" = הכל)
   const [tierFilter, setTierFilter] = useState("");             // סינון לפי רמת שירות ("" = הכל)
+  const [liftFilter, setLiftFilter] = useState("");             // סינון לפי סוג מעלית ("" = הכל), 18/10/2026
   const [searchQuery, setSearchQuery] = useState("");           // חיפוש (בקר)
   // "בודק מוסמך" בסינון שבכותרת — לכל תחום: האם נבחר בו משהו (הנורה בכרטיסים), ואיזה מצב.
   // ⚠️ נזכר מהפעם הקודמת, לכל משתמש בכל מכשיר (בעלת המוצר, 08/10/2026) — בשונה משאר המסננים
@@ -514,6 +515,7 @@ function App() {
         typeFilter={typeFilter}
         systemFilter={systemFilter}
         tierFilter={tierFilter}
+        liftFilter={liftFilter}
         complianceView={complianceView}
         showMultipliers={showMultipliers}
         tasksView={tasksView}
@@ -539,6 +541,8 @@ function App() {
         onSystemFilterChange={setSystemFilter}
         tierFilter={tierFilter}
         onTierFilterChange={setTierFilter}
+        liftFilter={liftFilter}
+        onLiftFilterChange={setLiftFilter}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         complianceView={complianceView}

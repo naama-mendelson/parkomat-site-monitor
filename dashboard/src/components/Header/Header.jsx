@@ -38,6 +38,8 @@ function Header({
   onSystemFilterChange,
   tierFilter,
   onTierFilterChange,
+  liftFilter = "",
+  onLiftFilterChange,
   onFilterChange,
   searchQuery,
   onSearchChange,
@@ -205,6 +207,7 @@ function Header({
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
+    (liftFilter ? 1 : 0) +
     complianceActiveCount(complianceView) +
     // ⚠️ "מוצגים" הוא מה שנספר — לא "מוסתרים", שהוא ברירת המחדל (בעלת המוצר, 18/10/2026: "מכפילים מוסתרים לא צריך
     // להיות לחוץ כי זה הברירת מחדל"). כמו "בודק מוסמך" ו"משימות": מסומן רק מה ששונה מברירת המחדל.
@@ -344,6 +347,8 @@ function Header({
                 onTypeChange={onTypeFilterChange}
                 onSystemChange={onSystemFilterChange}
                 onTierChange={onTierFilterChange}
+                liftFilter={liftFilter}
+                onLiftChange={onLiftFilterChange}
               />
               {/* "בודק מוסמך" — נפתח לרשימה, בוחרים מה לראות, נסגר; בחירה מדליקה גם את הנורה בכרטיסים
                   (בעלת המוצר, 08/10/2026) */}

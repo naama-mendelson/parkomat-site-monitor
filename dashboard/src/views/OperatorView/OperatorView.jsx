@@ -14,7 +14,7 @@ import { matchesOpenCallsView } from "../../utils/serviceCalls";
 import "./OperatorView.css";
 
 function OperatorView({
-  sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "",
+  sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "", liftFilter = "",
   complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = false, tasksView = DEFAULT_TASKS_VIEW, taskCounts = null,
   searchQuery, onSiteClick,
 }) {
@@ -62,7 +62,7 @@ function OperatorView({
     if (activeFilters.length > 0 && (site.monitored === false || !activeFilters.includes(shown))) return false;
     // ⚠️ הכלל עצמו חי ב-SiteFilterTile ומיוצא — כך הסרגל והתצוגה מסכימים על
     // מה קורה עם אתר בלי סוג, במקום להגדיר את זה פעמיים.
-    if (!matchesSiteFilters(site, typeFilter, tierFilter, systemFilter)) return false;
+    if (!matchesSiteFilters(site, typeFilter, tierFilter, systemFilter, liftFilter)) return false;
     // "בודק מוסמך" בכותרת — מצטלב עם המצב והסוג ("וגם"). ⚠️ אתר בלי בקר **כן** נכלל כאן:
     // בשבילו הוא קיים במערכת (בודק, תחזוקה ומשימות).
     if (!matchesComplianceView(site, complianceView)) return false;

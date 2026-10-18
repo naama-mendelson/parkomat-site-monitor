@@ -3052,6 +3052,24 @@ The owner: *"שיתווסף סינון ליד כל הסינונים של מכפ�
   the tile first. `probe-relay` 24/24 dropped R6 (it used the removed tile). `probe-calls-today` is retired
   (`.obsolete.mjs`). `probe-card-click` and `probe-shell-sort` press the tile where they need the stopwatch.
 
+## Filter by lift type in the "סוג, מערכת, רמה ומעלית" box (18/10/2026)
+
+The owner: *"אני רוצה שיהיה גם סינון לפי סוגי מעליות שיתווסף פה"*, pointing at the type, system and tier box.
+
+- **A fourth selector, "כל המעליות":** the seven `LIFT_TYPES`, each with its site count. "לא הוגדר" is listed only when
+  such sites exist or it is the current choice.
+  - A site with two lifts matches if either lift is of the chosen type, and it is counted once per type.
+  - Not remembered across refreshes, like the other selectors in that box. It counts as one active filter.
+- **The rule** is `matchesLiftFilter` and `NO_LIFT` in `shared/lift-types.mjs`, called from `matchesSiteFilters`.
+  Tested in `lift-types.test.js`.
+- ⚠️ **Height:** a plain fourth row grew the box from 120 to 149px, and every tile in the row stretched with it. A 2×2
+  grid made it wide, and two tiles wrapped to a second line at 1371px. So with a mouse (`pointer: fine`) the column is
+  tighter (`.site-filter-tile--four`), and the row is 125px. On touch the selectors keep their size.
+  ⚠️ `.filter-btn` (StatusFilters.css) loads later at the same specificity, so a `display` set on the tile class alone
+  does not apply.
+- Browser: `e2e/probe-lift-filter.mjs` 19/19, with the mock flag `?lifts=1` (2438 serapid; 1001 piston 1 + electric;
+  1002 electric).
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only
