@@ -57,6 +57,9 @@ async function main() {
        LEFT JOIN app_users u   ON u.site_id = s.id AND u.role = 'agent' AND u.is_active
        LEFT JOIN alive a       ON a.site_id = s.id
        LEFT JOIN auth.users au ON au.id = u.supabase_uid
+      -- ⚠️ 18/10/2026: אתר בלי בקר מחובר (130 המכפילים, סוטפין) אינו אמור לכתוב — אין לו סוכן. נספר כאן כ"בלי זהות"
+      -- עד שהשער הורץ בערב אותו יום.
+      WHERE s.monitored IS NOT FALSE
       ORDER BY s.code`);
   await pool.end();
 

@@ -151,10 +151,15 @@ const iso = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, ".000Z");
   // ⚠️ הטענה החשובה ביותר בקובץ. מקטע `no_comm` פתוח שנשאר בייצור מוצג
   // בדשבורד כאתר מנותק ומזייף את הזמינות — כלומר שער שנכשל בניקוי מייצר
   // בדיוק את התקלה שהוא צד.
+  // ⚠️ 18/10/2026: עד כאן נספר **כל** מקטע no_comm פתוח מ-36 השעות האחרונות — וכך אתר שבאמת שותק (1418, 2438 באותו
+  // ערב) הכשיל את השער כ"שריד". השער מזריע את המקטע שלו כמקטע פתוח **שני** לצד המקטע הפתוח האמיתי של האתר, ולכן
+  // שריד אמיתי נראה כאתר עם שני מקטעים פתוחים; אתר שותק אמיתי — מקטע פתוח אחד.
   const residue = await db.prepare(
-    `SELECT COUNT(*)::int n FROM status_history
-      WHERE status = 'no_comm' AND ended_at IS NULL
-        AND started_at > ?`).get(iso(Date.now() - 36 * 3600 * 1000));
+    `SELECT COUNT(*)::int n FROM status_history h
+      WHERE h.status = 'no_comm' AND h.ended_at IS NULL
+        AND h.started_at > ?
+        AND EXISTS (SELECT 1 FROM status_history o
+                     WHERE o.site_id = h.site_id AND o.ended_at IS NULL AND o.id <> h.id)`).get(iso(Date.now() - 36 * 3600 * 1000));
 
   check("לא נשאר מקטע no_comm פתוח מהשער", residue.n === 0,
     `${residue.n} מקטעים פתוחים ב-36 השעות האחרונות`);

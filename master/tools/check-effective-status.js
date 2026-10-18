@@ -31,8 +31,12 @@ const FILES = [
 // status_history אלא פלט של CTE/פונקציה שכבר החילו את COALESCE:
 //   v — ה-CTE הפנימי של site_uptime, שנבנה מהבסיס המקואלס
 //   c — הפלט של site_segments_collapsed, שאין בו בכלל reclassified_to
+//   d — ה-CTE `dur` של app.site_uptime_buckets (18/10/2026), שנבנה מ-`seg` — ושם כבר
+//       `COALESCE(h.reclassified_to, h.status) AS status`. נמצא בהרצת השערים בערב אותו יום: השער לא רץ כשהפונקציה
+//       נכתבה, ו-check-uptime-buckets (זהות מספרית מול site_uptime, כולל שורות שסווגו מחדש) עבר. הכינוי d אינו בשימוש
+//       עם status בשום מקום אחר בקבצים שנסרקים.
 // הוספת כינוי לכאן היא החלטה שצריך לנמק, וזו בדיוק הכוונה.
-const ALLOWED_ALIASES = new Set(["v", "c"]);
+const ALLOWED_ALIASES = new Set(["v", "c", "d"]);
 
 const PATTERN = /(?:(\w+)\.)?status\s*=\s*'(error|maintenance)'/g;
 

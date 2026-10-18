@@ -57,7 +57,10 @@ async function main() {
           SELECT status FROM status_history
            WHERE site_id = s.id AND ended_at IS NULL
            ORDER BY started_at DESC LIMIT 1) h ON true
-       WHERE h.status IS DISTINCT FROM s.status`);
+       WHERE h.status IS DISTINCT FROM s.status
+         -- ⚠️ 18/10/2026: אתר בלי בקר מחובר (המכפילים, סוטפין) אין לו היסטוריה בכלל, ו-status שלו נשאר 'no_comm'
+         -- כברירת מחדל — הכרטיס אינו מצייר מצב בשבילו. נמצא בהרצת השערים בערב: ~130 "כשלים", כולם אתרים כאלה.
+         AND s.monitored IS NOT FALSE`);
 
     check("הצ'יפ על הכרטיס תואם את המקטע הפתוח בהיסטוריה",
       mismatch.length === 0,

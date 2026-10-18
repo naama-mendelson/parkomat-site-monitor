@@ -3131,6 +3131,34 @@ is `rf_from` in `refresh_site_card_metrics`. Do not apply before she answers.
 shows 4 gaps: the three functions and the body of `refresh_site_card_metrics`. The new column does not appear in the
 dry run, but `--apply` creates it.
 
+## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
+
+The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates
+(read only, chosen by hand: the full `gates.js` is ~80 gates):
+
+- **Outdated gates, fixed:**
+  - `check-effective-status` flagged `d.status` in `app.site_uptime_buckets`. That `d` is the `dur` CTE, already built
+    from `COALESCE(reclassified_to, status)`. The alias was added to the explicit allow list with that reason.
+  - `check-dashboard-truth` ("chip versus open segment") and `check-direct-write` ("no identity") counted the ~130 sites
+    without a controller. Both now skip `monitored = false`.
+  - `check-silent-sites` treated *any* open `no_comm` segment from the last 36 h as its own leftover, so the real silent
+    sites (1418, 2438) failed it. A leftover of that gate is a *second* open segment on a site, so that is what it counts
+    now.
+- **Real gap, fixed:** `check-row-cap` — `service_calls_board` (added that morning) was not declared. It is a single
+  jsonb.
+- **Expected:** `check-dashboard-truth` "pg_cron jobs run". The three prunes added that morning had not reached their
+  first run.
+- ⚠️ **`check-no-residue` stays red, on purpose:** 449 `audit_log` rows by `gate…@parkomat.co.il`, all from 15/10. They are
+  **the real record** of that day's tool runs as a temporary manager: 155 `site.register`, 25 `site.delete` (the
+  Wizenet-codes mistake), 256 `site.update` (linking the project codes), and the PM list and profile loads. Deleting
+  them would erase the attribution of real changes. The gate pattern cannot tell a tool from a test; a tool should run
+  under a name that says so.
+- **Real-world findings, not code:**
+  - 3 silent sites: 1373 since 16/10, 1418 since 17/10 evening, 2438 since 18/10 14:54.
+  - Agent clock drift: 3450 is 3h10m behind (the Israel offset, probably a time zone setting on that PC); 2438, 1326
+    and 1418 are about 30 minutes behind.
+  - Wizenet relay 3513 has its socket down and works on the 60 s poll.
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only
