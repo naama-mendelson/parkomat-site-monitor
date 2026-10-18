@@ -21,11 +21,12 @@ test("מוצגים — הכול עובר; מוסתרים — רק אתרים ע�
   assert.equal(m.matchesMultipliersView(mx, false), false);
   assert.equal(m.matchesMultipliersView(live, false), true);
   assert.equal(m.matchesMultipliersView(legacy, false), true);
-  assert.equal(m.matchesMultipliersView(mx, undefined), true, "בלי בחירה = מוצגים");
+  assert.equal(m.matchesMultipliersView(mx, undefined), false, "בלי בחירה = מוסתרים (ברירת המחדל)");
+  assert.equal(m.DEFAULT_SHOW_MULTIPLIERS, false);
 });
 
-test("מהאחסון: רק false (או 'false') מסתיר; חסר, שבור או true — מוצגים", () => {
-  assert.equal(m.sanitizeShowMultipliers(false), false);
-  assert.equal(m.sanitizeShowMultipliers("false"), false);
-  for (const v of [true, "true", undefined, null, 0, "", "x", {}]) assert.equal(m.sanitizeShowMultipliers(v), true, String(v));
+test("מהאחסון: רק true (או 'true') מציג; חסר, שבור או false — מוסתרים", () => {
+  assert.equal(m.sanitizeShowMultipliers(true), true);
+  assert.equal(m.sanitizeShowMultipliers("true"), true);
+  for (const v of [false, "false", undefined, null, 0, "", "x", {}]) assert.equal(m.sanitizeShowMultipliers(v), false, String(v));
 });

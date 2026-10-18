@@ -2923,7 +2923,9 @@ multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards betw
   status tiles, the type box and "בודק מוסמך", so "הכל" does not read 206 over 78 cards. The multipliers tile itself
   counts the full list, because its number says how many are hidden.
 - **Remembered per device, per user** (`hooks/useShowMultipliers.js`, the `useComplianceView` pattern: localStorage,
-  key with the user id, written only on a choice). **Default: shown**, exactly as before; only a stored `false` hides.
+  key with the user id, written only on a choice). **Default: hidden** (the owner, minutes after the first version:
+  *"הפוך בברירת מחדל הם מוסתרים"*); only a stored `true` shows. So a screen that never chose shows the 78 live sites,
+  and the multipliers are one click away, remembered.
 - Not touched: the supervisor table and the executive page never showed unmonitored sites (`toSupervisorShape`).
 - ⚠️ Verified by build and unit tests only; the browser harness of earlier sessions was not available here.
 

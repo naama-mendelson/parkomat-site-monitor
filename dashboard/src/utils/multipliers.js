@@ -37,10 +37,12 @@ export function mxRowState(row, codeKey, nameKey, siteCodes) {
 // "מכפיל" בלוח = אתר בלי בקר מחובר (sites.monitored = false): כל 128 אתרי לוח המכפילים, וגם מתקני סוטפין
 // שנרשמו כך. הם מופיעים בכרטיסים (בודק, תחזוקה, משימות, קריאות), אבל מי שמנטר בקרים רואה 128 כרטיסים "ללא בקר"
 // בין 78 אתרים חיים. הבחירה נזכרת לכל מכשיר (hooks/useShowMultipliers.js), כמו "בודק מוסמך".
-// ⚠️ ברירת המחדל — מוצגים: מסך שלא בחר דבר מראה את כל האתרים, כמו עד היום.
+// ⚠️ ברירת המחדל — **מוסתרים** (בעלת המוצר, 18/10/2026, אחרי הגרסה הראשונה: "הפוך בברירת מחדל הם מוסתרים"):
+// מסך שלא בחר דבר מראה את האתרים עם הבקר בלבד; מי שרוצה את המכפילים לוחץ פעם אחת, וזה נזכר.
 export const isMultiplierSite = (site) => site?.monitored === false;
 export const countMultipliers = (sites) => (sites ?? []).filter(isMultiplierSite).length;
-/** האם האתר עובר את המסנן: מוצגים → תמיד; מוסתרים → רק אתר עם בקר */
-export const matchesMultipliersView = (site, shown) => shown !== false || !isMultiplierSite(site);
-/** מה שנקרא מהאחסון: רק false מסתיר; כל דבר אחר (חסר, שבור, "true") = מוצגים */
-export const sanitizeShowMultipliers = (raw) => raw !== false && raw !== "false";
+/** האם האתר עובר את המסנן: מוצגים (true) → תמיד; אחרת → רק אתר עם בקר */
+export const matchesMultipliersView = (site, shown) => shown === true || !isMultiplierSite(site);
+/** מה שנקרא מהאחסון: רק true מציג; כל דבר אחר (חסר, שבור, "false") = מוסתרים */
+export const sanitizeShowMultipliers = (raw) => raw === true || raw === "true";
+export const DEFAULT_SHOW_MULTIPLIERS = false;

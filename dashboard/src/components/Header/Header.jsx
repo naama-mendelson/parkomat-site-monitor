@@ -43,7 +43,7 @@ function Header({
   onAdmin,
   complianceView,
   onComplianceViewChange,
-  showMultipliers = true,     // המכפילים (אתרים בלי בקר) מוצגים בלוח? (בעלת המוצר, 18/10/2026)
+  showMultipliers = false,    // המכפילים (אתרים בלי בקר) מוצגים בלוח? ברירת מחדל: מוסתרים (בעלת המוצר, 18/10/2026)
   onShowMultipliersChange,
   callsToday = null,          // { total, open } — קריאות ויזנט ב-24 השעות וכמה מהן פתוחות; null = התכונה כבויה
   onOpenCalls,
@@ -193,13 +193,13 @@ function Header({
   }, [filtersOpen]);
   // ⚠️ כשהמכפילים מוסתרים, אריחי המצב, הסוג ו"בודק מוסמך" סופרים את מה שהלוח מראה — אחרת "הכל · 206" מעל
   // לוח של 78 כרטיסים. אריח "מכפילים" עצמו סופר את כולם, כי הוא אומר כמה מוסתרים.
-  const boardSites = showMultipliers === false ? (sites ?? []).filter((s) => !isMultiplierSite(s)) : sites;
+  const boardSites = showMultipliers === true ? sites : (sites ?? []).filter((s) => !isMultiplierSite(s));
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
     complianceActiveCount(complianceView) +
-    (onShowMultipliersChange && showMultipliers === false ? 1 : 0);
+    (onShowMultipliersChange && showMultipliers !== true ? 1 : 0);
 
   return (
     <header className="app-header">
@@ -343,7 +343,7 @@ function Header({
                   לא"). מכפיל = אתר בלי בקר מחובר. אריח כמו אריחי המצב: המספר הגדול הוא כמה כאלה יש, והשורה
                   מתחת — מה המצב. "מוסתרים" נספר כמסנן פעיל. הבחירה נזכרת לכל מכשיר (useShowMultipliers). */}
               {onShowMultipliersChange && (
-                <button type="button" className={`filter-btn mx-head-btn${showMultipliers ? "" : " active"}`}
+                <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? "" : " active"}`}
                   aria-pressed={!showMultipliers}
                   aria-label={`מכפילים (אתרים בלי בקר): ${showMultipliers ? "מוצגים בלוח" : "מוסתרים מהלוח"} — ${countMultipliers(sites)}`}
                   onClick={() => onShowMultipliersChange(!showMultipliers)}>

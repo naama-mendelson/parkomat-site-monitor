@@ -13,7 +13,7 @@ import "./OperatorView.css";
 
 function OperatorView({
   sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "",
-  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = true, searchQuery, onSiteClick,
+  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = false, searchQuery, onSiteClick,
 }) {
   // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
   // של הלוח היה נותן ערך חדש להקשר ומרנדר מחדש את כל המנורות בכל הכרטיסים.
