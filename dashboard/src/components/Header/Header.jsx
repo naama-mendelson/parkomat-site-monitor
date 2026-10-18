@@ -345,13 +345,14 @@ function Header({
               {onShowMultipliersChange && (
                 <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? "" : " active"}`}
                   aria-pressed={!showMultipliers}
-                  aria-label={`${showMultipliers === true ? "הסתר" : "הצג"} מכפילים (אתרים בלי בקר) — ${countMultipliers(sites)}`}
+                  aria-label={`מכפילים (אתרים בלי בקר) ${showMultipliers === true ? "מוצגים" : "מוסתרים"} — ${countMultipliers(sites)}; לחיצה ${showMultipliers === true ? "מסתירה" : "מציגה"}`}
                   onClick={() => onShowMultipliersChange(!showMultipliers)}>
                   <span className="filter-count">{countMultipliers(sites)}</span>
-                  {/* הכיתוב אומר מה הלחיצה תעשה (בעלת המוצר, 18/10/2026, אחרי "מכפילים / מוסתרים"): "הצג מכפילים" כשהם
-                      מוסתרים, "הסתר מכפילים" כשהם מוצגים — בשתי שורות, כי האריח צר */}
-                  <span className="filter-label">{showMultipliers === true ? "הסתר" : "הצג"}</span>
-                  <span className="filter-sub">מכפילים</span>
+                  {/* ⚠️ הכיתוב מתאר את **המצב**, לא את הפעולה (בעלת המוצר, 18/10/2026, אחרי גרסה שאמרה "הצג מכפילים"
+                      כשהם מוסתרים: "זה אמור להיות הפוך... וודא שהכיתוב תואם"). "מכפילים מוסתרים" כשהם מוסתרים,
+                      "מכפילים מוצגים" כשהם מוצגים — בשתי שורות, כי האריח צר. הפעולה — ב-aria-label. */}
+                  <span className="filter-label">מכפילים</span>
+                  <span className="filter-sub">{showMultipliers === true ? "מוצגים" : "מוסתרים"}</span>
                 </button>
               )}
               {/* ⚠️ "קריאות היום" (בעלת המוצר, 14/10/2026, אחרי "לא רואים כלום"): הסימון על הכרטיס
