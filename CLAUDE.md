@@ -2809,9 +2809,10 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
 
 ### Still open
 
-- ⚠️ **Retention is written and NOT applied.** It is in the repo since 18/10/2026; the apply (three gaps: this function, its
-  cron job, and `idx_status_hist_maint`) was offered three ways and the owner declined (*"לא אני לא רוצה"*). Do not apply
-  it without being asked; `apply-sql --apply` would create all three. The owner, shown the table on 15/10: *"אין צורך
+- ⚠️ **Retention is written, confirmed, and NOT yet applied.** In the repo since 18/10/2026. The owner first declined the
+  apply, then settled the rule the same day: *"תשמור אותם רק פתוחות"* → *"סגורות תשמור לחודש"* — open calls kept at
+  any age, closed ones for 30 days, which is exactly what the function does. The apply (three gaps: this function, its
+  cron job, and `idx_status_hist_maint`) is hers to run: `apply-sql --apply` creates all three. The owner, shown the table on 15/10: *"אין צורך
   שישמרו"*. `app.prune_service_calls(interval '30 days')` (`service-calls-board.postgres.sql`; cron
   `parkomat-prune-service-calls`, 04:17 UTC): **an open call is kept at any age**; "closed" is the ticket's current
   status marked `closed` in `wizenet_lookups`, by the same rule as `service_calls_current` (last Wizenet row, overridden
