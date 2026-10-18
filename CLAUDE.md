@@ -2026,7 +2026,10 @@ looks like the 1,000-row cap and is not. Nobody saw the error in the UI: the yea
   time** in all. Every call pays ~1 s of fixed cost (the fault fold over the whole range, `app.error_segments`), and five
   calls contend for Micro's CPU. So the split was slower for the person, doubled the load, and brought the slowest call
   *closer* to the timeout than the whole call. It is not in the code; the measurement is recorded here so it is not
-  rebuilt without measuring. The dashboard sends one call with all buckets, as before, and `check-row-cap` sends the same.
+  rebuilt without measuring. The dashboard sends one call with all buckets, as before, and `check-row-cap` sends the same — and since the same
+  evening it **times** it and goes red above 5 s (`SLOW_MS`), printing PostgREST's error text instead of `-1` when the
+  answer is not an array. Measured 3.4–4.7 s through PostgREST; it grows with the site count, and the gate is how the
+  approach to the 8 s timeout is heard months before the graph stops loading. Proven red with a 1 ms copy.
 - **A failed load is now visible on screen.** `ExecutiveView` showed an error only with no data at all (`error && !data`).
   Switching from month to year keeps the month's data, so a failed year load left the month on screen with no sign — which
   is why the timeout went unseen for days. A load that fails while data is on screen now shows a line above the header

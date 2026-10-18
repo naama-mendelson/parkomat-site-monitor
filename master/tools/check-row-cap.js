@@ -310,16 +310,28 @@ function scan() {
     const { getBucketRanges } = await import("../../shared/executive.mjs");
     const bs = getBucketRanges({ from: ctx.yearAgo, to: now, granularity: "day" });
     const withTotal = [...bs.map((b) => ({ from: b.from, to: b.to })), { from: ctx.yearAgo, to: now }];
+    // ⚠️ וגם הזמן, לא רק המספר (18/10/2026). PostgREST מנתק אחרי 8 שניות (57014), והקריאה הזו הייתה 13.4 שניות
+    // ב-15/10 — השער הדפיס אז "-1 איברים", שנראה כמו הקאפ ואינו, ואיש לא ראה את הגרף שלא נטען. אחרי התיקון היא
+    // 3.6 שניות, וגדלה עם מספר האתרים. מעל SLOW_MS השער אדום: ככה שומעים על ההתקרבות לתקרה חודשים לפני שהמסך
+    // מפסיק להיטען. ⚠️ אין כאן נתחים: פיצול ל-5 קריאות נמדד איטי יותר (4.6 שניות) וכפול בזמן מסד — ראו CLAUDE.md.
+    const SLOW_MS = 5000;
+    const t0 = Date.now();
     const r = await retry(`${SB}/rest/v1/rpc/executive_series_json`, {
       method: "POST", headers: H,
       body: JSON.stringify({ p_site_ids: null, p_from: ctx.yearAgo, p_to: now, p_buckets: withTotal }),
     });
+    const ms = Date.now() - t0;
     const arr = await r.json();
     const n = Array.isArray(arr) ? arr.length : -1;
-    const ok = n > 0 && n !== LIMIT;
+    const slow = ms > SLOW_MS;
+    const ok = n > 0 && n !== LIMIT && !slow;
     if (!ok) fails++;
-    const tail = n === LIMIT ? "  — בדיוק 1,000, חתימת הקאפ!" : "";
-    console.log(`  ${ok ? "✅" : "❌"} ${"executive_series_json".padEnd(20)} ${String(n).padStart(5)} איברים · ${withTotal.length} דליים${tail}`);
+    let tail = "";
+    if (n === LIMIT) tail = "  — בדיוק 1,000, חתימת הקאפ!";
+    // תשובה שאינה מערך היא שגיאה של PostgREST — להדפיס אותה, ולא "-1" שנראה כמו קאפ
+    else if (n < 0) tail = `  — לא מערך (status ${r.status}): ${JSON.stringify(arr).slice(0, 140)}`;
+    else if (slow) tail = `  — איטי: מעל ${SLOW_MS / 1000} שניות, תקרת PostgREST היא 8`;
+    console.log(`  ${ok ? "✅" : "❌"} ${"executive_series_json".padEnd(20)} ${String(n).padStart(5)} איברים · ${withTotal.length} דליים · ${ms} ms${tail}`);
   } finally {
     await g.cleanup();
   }
