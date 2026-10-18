@@ -3069,6 +3069,11 @@ The owner: *"אני רוצה שיהיה גם סינון לפי סוגי מעלי
   does not apply.
 - Browser: `e2e/probe-lift-filter.mjs` 19/19, with the mock flag `?lifts=1` (2438 serapid; 1001 piston 1 + electric;
   1002 electric).
+- ⚠️ **Header height (measured the same evening):** with that day's tiles the row wrapped at 1280px, and the sticky header
+  grew from 212 to 286px. `StatusFilters.css` now tightens the side padding (10 instead of 16) and the gap (6 instead of
+  8) between 641 and 1400px, which gives one row and 212px at 1280. **At 1024×768 it is still two rows and 338px (44% of
+  the screen).** There it covers the first row of cards as soon as the page scrolls, and `probe-square` fails at 1024 for
+  that reason. A collapsible filter panel below about 1100px (as on phones) would be the fix. Not built, not asked for.
 
 ## Repeated fault: the same fault text more than 3 times in 30 days at one site (18/10/2026)
 
@@ -3104,6 +3109,12 @@ From the field, forwarded by the owner: *"אם ישנה שורת תקלה שחו
 **Tests:** `tests/repeat-faults.test.js` (6, PGlite: the key, more than 3 versus exactly 3, the exclusions, no text, the
 30-day edge, maintenance, order, what the cron stores, re-applying the file) and `card-metrics.test.js` 15/15. Browser:
 `e2e/probe-repeat.mjs` 14/14 (mock `?repeat=1`).
+
+⚠️ **NOT APPLIED — the owner is deciding the window** (18/10/2026, asked whether to apply: *"אני רוצה שפשוט כל יום תשמור
+את כל סוגי התקלה לכל אתר ותמחוק את זה אחרי זה, או אולי את ה-12 שעות האחרונות כל פעם... או 24 שעות אחרונות, צריך
+לחשוב"*). Measured the same day, same rule, sites flagged: **12 h — 0, 24 h — 0, 7 days — 5, 30 days — 19**. Nothing new
+is stored either way: the count reads the existing history, and the table keeps one overwritten row per site. The window
+is `rf_from` in `refresh_site_card_metrics`. Do not apply before she answers.
 
 ⚠️ **Deploy order:** the dashboard is safe before the SQL (it shows nothing until the column is filled). The SQL dry run
 shows 4 gaps: the three functions and the body of `refresh_site_card_metrics`. The new column does not appear in the
