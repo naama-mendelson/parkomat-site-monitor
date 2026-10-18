@@ -979,10 +979,10 @@ The ways it does **not** stop, in order of how much they matter:
 - ⚠️ **A repeated failure of the counts RPC leaves the card pulsing, silently and indefinitely.**
   `fetchServiceCallCounts().catch(() => {})` keeps the previous numbers so the button does not vanish — but
   the price is a pulse that lies, with none of the dashed "not loaded" treatment the compliance lamps have.
-- ⚠️ **A missed Realtime event costs up to 5 minutes.** Realtime does not redeliver, and neither the channel's
-  reconnect nor returning to the tab refreshes the call counts — both paths call `syncNow`, which only checks
-  site statuses. The 5-minute timer is the only other route (and it stops entirely if the browser freezes the
-  tab).
+- ~~**A missed Realtime event costs up to 5 minutes.**~~ **Fixed 18/10/2026:** the channel's recovery and the return
+  to the tab now run `onRecover` in `App.jsx` — `syncNow` plus the call counts and the task counts (two light calls,
+  the same ones the 5-minute timer runs). Realtime still does not redeliver, so an event missed while the tab stays
+  visible and connected waits for the timer; a frozen tab catches up on return.
 - **Three statuses left `closed = false` mean the call is parked, not active:** `156 מתקן מושבת (באישור מנהל)`,
   `157 יש לחזור ללקוח עד התאריך שבהערות`, `155 טכנאי יצא מהאתר לא להשתמש`. A call parked on one of those pulses
   for days and the stopwatch keeps running. By definition, not a bug — but it is the real answer to "when does

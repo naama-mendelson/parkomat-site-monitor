@@ -322,6 +322,7 @@ function App() {
     const id = setInterval(syncNow, STATUS_CHECK_EVERY_MS);
     return () => clearInterval(id);
   }, [syncNow]);
+  const onRecover = useCallback(() => { syncNow(); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
 
   useSSE(
     useCallback((data) => {
@@ -406,7 +407,10 @@ function App() {
     //
     // גם האגרגציות מרועננות: הן נגזרות מחלון של 7 ימים בשרת, וייתכן
     // שהשתנו בזמן שלא הקשבנו.
-    syncNow
+    // ⚠️ וגם מספרי הקריאות והמשימות (18/10/2026). אירוע Realtime שאבד בזמן נתק אינו נמסר שוב, ועד כאן לא
+    // ההתאוששות ולא החזרה ללשונית רעננו אותם — רק הטיימר של 5 דקות. כרטיס המשיך לפעום על קריאה שכבר נסגרה
+    // (CLAUDE.md, "Does the pulse stop"). שתי קריאות קלות, אותן אלה שהטיימר מריץ ממילא.
+    onRecover
   );
 
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
