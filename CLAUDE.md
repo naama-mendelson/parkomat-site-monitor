@@ -2263,6 +2263,24 @@ editor's native `<select>` list: *"תעצב את זה יפה"*.
   12 get list 11 alone, without the base "לובי וחשמל" — the automatic rule always adds the base, a profile does not.
   Whether a stacker needs the lobby/electrical list is the owner's call.
 
+## PM visit form: a photo on every item, and a larger detail line (18/10/2026)
+
+From the field, forwarded by the owner: *"חייבת להיות אפשרות להוסיף תמונה\ות לכל סעיף, כמו שתמיד היה לנו. זה חלק
+מ'ת. הביטוח' שהדבר נעשה + כנגד תלונות או תביעות לאחר מעשה"*, and *"צריך גם להגדיל את הכתב בשורת הפירוט, הוא ממש קטן
+ובמובייל או אפילו על צג של לפטופ"*.
+
+- **Every item shows "צילום" / "מהגלריה"** (`PmVisitForm.jsx`), not only `photo` / `check_photo`. On an item that does
+  not ask for photos they are optional and quiet (`PhotoPicker quiet`: no solid camera button), so they do not read as
+  required. Required photos are still decided only by `min_photos`, a photo never ticks a check item, and the "N
+  תמונות" tag appears on such an item only once it has one.
+- **No SQL change:** `pm_visit_photo_add` never checked `kind`, the reads return photos for every item, and the
+  submitted-visit view already draws them for any item. The caps stay: 6 per item, **40 per visit**, 15 MB per visit.
+  ⚠️ With a photo possible on every item, a long list (two lists of ~20 items) can reach 40 photos in one visit; raising
+  it is a SQL change in `pm_visit_photo_add` (and `MAX_PHOTOS_PER_VISIT` in `PmUtils.js`), not made.
+- **The item's detail line is 15px** (`.pm-item > .pm-hint`; was 13). The other `.pm-hint` texts stay 13.
+- Browser: `pm/harness/probe-photos-all.mjs` 16/16 (phone + desktop): both buttons on all five mock items, quiet only on
+  the check items, the detail line 15px, a photo on a check item reaches the visit and leaves the item still to do.
+
 ## "בודק מוסמך" in the header filter (built and deployed 08/10/2026)
 
 Five versions in one day. The owner's words decided each one, so they are recorded:

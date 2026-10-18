@@ -25,6 +25,7 @@
 //     מצורף: תמונה ממתינה שהשרת מכיר הופכת ל"נשמר", תמונה שהגיעה מהשרת ונעלמה
 //     ממנו יורדת, ותמונה שנמחקה כאן לעולם לא חוזרת מרשימה ישנה.
 //   max = 3, disabled
+//   quiet — שני הכפתורים בגוון שקט: צילום רשות, בפריט שאינו דורש תמונה (תחזוקה מונעת, 18/10/2026)
 //   removeFailed — גם × על תמונה שנכשלה קורא ל-onRemove (ההעלאה אולי נשמרה והתשובה
 //     אבדה). לשימוש כשהעלאה היא RPC ישיר; בתור במכשיר "נכשל" הוא מקומי בלבד.
 //   gone?: Set<clientId> — תמונות שההורה יודע שאינן עוד (למשל "ותר" על תמונה שהשרת
@@ -91,7 +92,7 @@ function reconcile(cur, initial, removed) {
 }
 
 export default function PhotoPicker({
-  upload, onPick, onRemove, onChange, initial, max = 3, disabled = false, removeFailed = false, gone, rejected,
+  upload, onPick, onRemove, onChange, initial, max = 3, disabled = false, removeFailed = false, gone, rejected, quiet = false,
 }) {
   const removedRef = useRef(new Set());
   const [items, setItems] = useState(() => reconcile([], initial, new Set()));
@@ -220,7 +221,7 @@ export default function PhotoPicker({
   return (
     <div className="pp" dir="rtl">
       <div className="pp-actions">
-        <button type="button" className="pp-btn pp-btn--primary" disabled={disabled || full}
+        <button type="button" className={`pp-btn${quiet ? "" : " pp-btn--primary"}`} disabled={disabled || full}
           onClick={() => cameraRef.current?.click()}>
           צילום
         </button>

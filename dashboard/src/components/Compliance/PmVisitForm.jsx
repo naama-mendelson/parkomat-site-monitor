@@ -644,51 +644,54 @@ export default function PmVisitForm({
         {m.it.required
           ? <span className="pm-tag pm-tag--req">חובה</span>
           : <span className="pm-tag">רשות</span>}
-        {kindHasPhotos(m.it.kind) && (
+        {(kindHasPhotos(m.it.kind) || m.photoN > 0) && (
           <span className={`pm-tag${m.it.min_photos > 0 && m.photoN < m.it.min_photos ? " pm-tag--short" : ""}`}>
             {m.it.min_photos > 0 ? `${m.photoN}/${m.it.min_photos} תמונות` : `${m.photoN} תמונות`}
           </span>
         )}
       </div>
 
-      {kindHasPhotos(m.it.kind) && (
-        <div className="pm-photos">
-          <PhotoPicker
-            max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
-            initial={initialByItem.get(m.id)}
-            disabled={lock}
-            gone={gone}
-            rejected={m.rejected}
-            onPick={({ clientId, compressed }) => { localThumbs.current.set(clientId, compressed.thumb); }}
-            upload={async ({ clientId, compressed }) => {
-              localThumbs.current.set(clientId, compressed.thumb);
-              const r = await enqueuePhoto(visitId, m.it.id, clientId, compressed);
-              kick();
-              return r;
-            }}
-            onRemove={(p) => removeServerOrPending(
-              p.clientId && !String(p.clientId).startsWith("id:") ? p.clientId : null, p.id ?? null)}
-            onChange={(s) => onPickerChange(m.id, s)}
-          />
-          {m.orphans.length > 0 && (
-            <ul className="pp-list pm-orphans" aria-label="תמונות שממתינות במכשיר">
-              {m.orphans.map((ph) => {
-                const refused = m.rejected.has(ph.clientId);
-                return (
-                  <li key={ph.clientId} className={`pp-item ${refused ? "pp-item--failed" : "pp-item--queued"}`}>
-                    {ph.thumb
-                      ? <img className="pp-thumb" src={`data:image/jpeg;base64,${ph.thumb}`} alt="" />
-                      : <span className="pp-thumb pp-thumb--empty" aria-hidden="true" />}
-                    <span className="pp-status">{refused ? "השרת דחה את התמונה — ראו למעלה" : "נשמר במכשיר · ממתין לסנכרון"}</span>
-                    <button type="button" className="pp-remove" aria-label="הסרת התמונה" title="הסרה" disabled={lock}
-                      onClick={() => removeServerOrPending(ph.clientId, null).catch(() => {})}>×</button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
+      {/* ⚠️ תמונות בכל סעיף, לא רק בפריט "צילום" (18/10/2026, מהשטח: "חייבת להיות אפשרות להוסיף תמונה/ות לכל
+          סעיף, כמו שתמיד היה לנו — זה חלק מ'תעודת הביטוח' שהדבר נעשה, וכנגד תלונות או תביעות לאחר מעשה"). בפריט
+          שאינו דורש תמונה — רשות, בכפתורים שקטים, בלי שזה ייראה כמו חובה; חובת צילום נשארת רק לפי min_photos.
+          המסד ממילא מקבל תמונה לכל פריט (pm_visit_photo_add אינו בודק kind): עד 6 לפריט ו-40 לביקור. */}
+      <div className="pm-photos">
+        <PhotoPicker
+          quiet={!kindHasPhotos(m.it.kind)}
+          max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
+          initial={initialByItem.get(m.id)}
+          disabled={lock}
+          gone={gone}
+          rejected={m.rejected}
+          onPick={({ clientId, compressed }) => { localThumbs.current.set(clientId, compressed.thumb); }}
+          upload={async ({ clientId, compressed }) => {
+            localThumbs.current.set(clientId, compressed.thumb);
+            const r = await enqueuePhoto(visitId, m.it.id, clientId, compressed);
+            kick();
+            return r;
+          }}
+          onRemove={(p) => removeServerOrPending(
+            p.clientId && !String(p.clientId).startsWith("id:") ? p.clientId : null, p.id ?? null)}
+          onChange={(s) => onPickerChange(m.id, s)}
+        />
+        {m.orphans.length > 0 && (
+          <ul className="pp-list pm-orphans" aria-label="תמונות שממתינות במכשיר">
+            {m.orphans.map((ph) => {
+              const refused = m.rejected.has(ph.clientId);
+              return (
+                <li key={ph.clientId} className={`pp-item ${refused ? "pp-item--failed" : "pp-item--queued"}`}>
+                  {ph.thumb
+                    ? <img className="pp-thumb" src={`data:image/jpeg;base64,${ph.thumb}`} alt="" />
+                    : <span className="pp-thumb pp-thumb--empty" aria-hidden="true" />}
+                  <span className="pp-status">{refused ? "השרת דחה את התמונה — ראו למעלה" : "נשמר במכשיר · ממתין לסנכרון"}</span>
+                  <button type="button" className="pp-remove" aria-label="הסרת התמונה" title="הסרה" disabled={lock}
+                    onClick={() => removeServerOrPending(ph.clientId, null).catch(() => {})}>×</button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
 
       {m.it.kind === "value" ? null : noteOpen.has(m.id) || m.note ? (
         <label className="pm-field pm-note">

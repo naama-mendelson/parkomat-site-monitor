@@ -76,6 +76,10 @@
 .pm-muted { font-size: 14px; color: var(--text-secondary); }
 .pm-hint { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0; }
 .pm-hint--warn { color: var(--pm-amber-ink); font-weight: 600; }
+/* ⚠️ שורת הפירוט שמתחת לפריט בטופס הביקור — 15px ולא 13 (18/10/2026, מהשטח: "צריך להגדיל את הכתב בשורת הפירוט,
+   הוא ממש קטן, במובייל או אפילו על צג של לפטופ"). זה מה שהטכנאי קורא כדי לדעת מה לעשות; ההיררכיה מול הכותרת
+   (16px, 600) נשמרת במשקל ובצבע. שאר ה-.pm-hint (הסברים בטפסים) נשארים 13. */
+.pm-item > .pm-hint { font-size: 15px; }
 .pm-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .pm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
