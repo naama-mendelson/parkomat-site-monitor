@@ -345,11 +345,13 @@ function Header({
               {onShowMultipliersChange && (
                 <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? "" : " active"}`}
                   aria-pressed={!showMultipliers}
-                  aria-label={`מכפילים (אתרים בלי בקר): ${showMultipliers ? "מוצגים בלוח" : "מוסתרים מהלוח"} — ${countMultipliers(sites)}`}
+                  aria-label={`${showMultipliers === true ? "הסתר" : "הצג"} מכפילים (אתרים בלי בקר) — ${countMultipliers(sites)}`}
                   onClick={() => onShowMultipliersChange(!showMultipliers)}>
                   <span className="filter-count">{countMultipliers(sites)}</span>
-                  <span className="filter-label">מכפילים</span>
-                  <span className="filter-sub">{showMultipliers ? "מוצגים" : "מוסתרים"}</span>
+                  {/* הכיתוב אומר מה הלחיצה תעשה (בעלת המוצר, 18/10/2026, אחרי "מכפילים / מוסתרים"): "הצג מכפילים" כשהם
+                      מוסתרים, "הסתר מכפילים" כשהם מוצגים — בשתי שורות, כי האריח צר */}
+                  <span className="filter-label">{showMultipliers === true ? "הסתר" : "הצג"}</span>
+                  <span className="filter-sub">מכפילים</span>
                 </button>
               )}
               {/* ⚠️ "קריאות היום" (בעלת המוצר, 14/10/2026, אחרי "לא רואים כלום"): הסימון על הכרטיס

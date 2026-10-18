@@ -2916,8 +2916,9 @@ multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards betw
   without a controller, Sotefin included; the tile is named in her word. The rules are pure and tested
   (`tests/multipliers-view.test.js`): `matchesMultipliersView(site, shown)`, `countMultipliers`, `sanitizeShowMultipliers`.
 - **The tile** sits in the header filter row after "בודק מוסמך", built like a status tile: the big number is how many
-  such sites exist, the label "מכפילים", and a sub-line "מוצגים" / "מוסתרים". Hidden = `active`, `aria-pressed`, and
-  it counts as one filter in "סינון ותצוגה · N פעילים". One click toggles.
+  such sites exist, and the text says what a click does — "הצג מכפילים" while hidden, "הסתר מכפילים" while shown, on
+  two lines because the tile is narrow (the owner's choice over "מכפילים / מוסתרים", which the first version showed).
+  Hidden = `active`, `aria-pressed`, and it counts as one filter in "סינון ותצוגה · N פעילים". One click toggles.
 - **Hidden means gone from the board under every other filter** — the rule runs first in `OperatorView`'s filter. ⚠️ And
   the other tiles count what the board shows: `Header` passes `boardSites` (without multipliers when hidden) to the
   status tiles, the type box and "בודק מוסמך", so "הכל" does not read 206 over 78 cards. The multipliers tile itself
