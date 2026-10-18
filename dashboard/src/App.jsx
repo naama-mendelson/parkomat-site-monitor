@@ -12,7 +12,7 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallCounts, fetchRecentServiceCallSummary } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallBoard } from "./services/dataSource";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
 import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
@@ -211,8 +211,8 @@ function App() {
   // הראשון זה היה 1 מתוך 22 — "לא רואים כלום". הכפתור בכותרת הוא מה שקרה היום.
   const loadCallCounts = useCallback(() => {
     if (!useDirect || !SERVICE_CALLS_ENABLED) return;
-    fetchServiceCallCounts().then(setCallCounts).catch(() => {});
-    fetchRecentServiceCallSummary(24).then(setCallsToday).catch(() => {});
+    // קריאה אחת לשניהם (18/10/2026, service_calls_board) — חצי מהבקשות, והמסד מחשב פעם אחת. כשל משאיר את הקודם.
+    fetchServiceCallBoard(24).then(({ bySite, today }) => { setCallCounts({ bySite }); setCallsToday(today); }).catch(() => {});
   }, []);
   useEffect(() => {
     loadCallCounts();

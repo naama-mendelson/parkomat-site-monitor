@@ -582,3 +582,27 @@ test("S15 · היסטוריה ארוכה: ברירת המחדל 100 החדשות
   assert.equal(max.calls.length, 500, "תקרה גבוהה מדי — נחתכת ל-500");
   assert.equal(max.total, 501);
 });
+
+test("S16 · service_calls_board — הכרטיסים והכותרת בקריאה אחת, שורה-לשורה כמו שתי הישנות; לא-צוות — לוח ריק בלי לזרוק", { skip }, async () => {
+  const s = await newSite();
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  const old = new Date(Date.now() - 3 * 86400000).toISOString();
+  await callAt({ ticket_number: "S16-old-open", parking_code: s.code, status: "1", customer_complaint: "ישנה פתוחה" }, old);
+  await callAt({ ticket_number: "S16-old-closed", parking_code: s.code, status: "9", customer_complaint: "ישנה סגורה" }, old);
+  await call({ ticket_number: "S16-new-open", parking_code: s.code, status: "1", customer_complaint: "חדשה" });
+  await call({ ticket_number: "S16-new-closed", parking_code: s.code, status: "9", customer_complaint: "חדשה סגורה" });
+  await call({ ticket_number: "S16-nosite", parking_code: "9999-1-01", status: "1" });   // בלי אתר — בכותרת, לא בכרטיסים
+
+  const board = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
+  const counts = await rpc(OPR, `SELECT site_id, open, recent, oldest_open FROM public.service_call_counts(24) ORDER BY site_id`);
+  const sum = (await one(OPR, `SELECT public.service_calls_recent_summary(24) AS j`)).j;
+  assert.deepEqual(board.sites, counts, "אותן שורות, אותו סדר, אותם שדות — כולל oldest_open");
+  assert.deepEqual(board.summary, sum, "אותה כותרת");
+  const mine = board.sites.find((r) => r.site_id === s.id);
+  assert.deepEqual({ open: mine.open, recent: mine.recent }, { open: 2, recent: 2 });
+  assert.ok(mine.oldest_open, "סטופר — מהפתוחה הוותיקה");
+  // לא-צוות: לוח ריק, לא שגיאה (נטען עם הלוח; כשל כאן לא מפיל אותו)
+  assert.deepEqual((await one(AGT, `SELECT public.service_calls_board(24) AS j`)).j, { sites: [], summary: { total: 0, open: 0 } });
+  // ברירת המחדל — 24 שעות
+  assert.deepEqual((await one(OPR, `SELECT public.service_calls_board() AS j`)).j, board);
+});

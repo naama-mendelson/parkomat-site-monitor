@@ -2928,7 +2928,15 @@ snapshots; the cumulative table since July is dominated by the pre-07/10 card lo
   tabs too (`unlessHidden`). `request()` never calls the loader directly, not even the first time — otherwise 29 screens
   would still fire together on the first event of a burst. The same applies to the task counts.
 - **What did not change:** an open dialog still reloads on its own event (`callsRev` / `tasksRev`); that is one screen,
-  not 29. The functions themselves were left alone: with the 30-day retention the table plateaus, and 55 ms is fine.
+  not 29.
+- **And the two RPCs became one (the same evening): `public.service_calls_board(p_hours)`** returns
+  `{ sites: [...service_call_counts rows...], summary: {total, open} }` from one materialized pass over
+  `app.service_calls_current()` — measured in production 55 ms against 55 + 55 for the pair, and S16 compares it
+  row for row with both old functions (they stay for old bundles). `fetchServiceCallBoard` in `serviceCallsDirect.js`
+  is what `App.loadCallCounts` calls now; `REVOKE … FROM PUBLIC, anon` like its siblings (S5 enumerates every public
+  `service_call*` function anon can execute and expects none — it caught the missing revoke). Applied 18/10, evening.
+  Net per event per visible screen: 2 × 55 ms → 1 × 55 ms, 1.5 s after the last event of a burst, and nothing on
+  hidden tabs.
 - ⚠️ Measure deltas, not the cumulative view: the top of `pg_stat_statements` today is still `site_stats` from before
   07/10. The script pattern is two snapshots of `(queryid, total_exec_time, calls)` and a subtraction; `queryid` is
   stable across the window. ⚠️ A regex in a Bash heredoc loses its backslashes here; use `[.]`, `[(]`, `[[:space:]]`.

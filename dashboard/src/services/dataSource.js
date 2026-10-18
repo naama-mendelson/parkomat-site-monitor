@@ -906,5 +906,5 @@ export {
 // קריאות ויזנט (13/10/2026) — בלי זרוע שרת, כמו המשימות
 export {
   fetchServiceCallCounts, fetchServiceCalls, fetchServiceCallLookups, updateServiceCall, refreshServiceCallLookups,
-  fetchRecentServiceCalls, fetchRecentServiceCallSummary, fetchServiceCallHistory, fetchWizenetRelayStatus,
+  fetchRecentServiceCalls, fetchRecentServiceCallSummary, fetchServiceCallBoard, fetchServiceCallHistory, fetchWizenetRelayStatus,
 } from "./serviceCallsDirect";

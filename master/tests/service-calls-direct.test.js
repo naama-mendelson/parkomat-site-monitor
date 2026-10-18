@@ -115,3 +115,18 @@ test("מצב הממסרים — כפי שהוא; תשובה ריקה — 0 חי�
   fake({ wizenet_relays_status: null });
   assert.deepEqual(await m.fetchWizenetRelayStatus(), { alive: 0, enabled: 0 });
 });
+
+test("הלוח בקריאה אחת: service_calls_board עם p_hours; sites → bySite, summary → today; חסרים → אפסים", async () => {
+  const m = await load();
+  const calls = fake({
+    service_calls_board: { sites: [{ site_id: 7, open: 2, recent: 3, oldest_open: "2026-10-18T06:00:00Z" }], summary: { total: "5", open: 2 } },
+  });
+  const r = await m.fetchServiceCallBoard(24);
+  assert.deepEqual(calls.map((c) => [c.fn, c.body]), [["service_calls_board", '{"p_hours":24}']], "קריאה אחת בלבד, ולא שתיים");
+  assert.deepEqual(r.today, { total: 5, open: 2 });
+  assert.equal(r.bySite[7].open, 2);
+  assert.equal(r.bySite[7].recent, 3);
+  assert.equal(r.bySite[7].oldestOpen ?? r.bySite[7].oldest_open, "2026-10-18T06:00:00Z");
+  fake({ service_calls_board: {} });
+  assert.deepEqual(await m.fetchServiceCallBoard(), { bySite: {}, today: { total: 0, open: 0 } }, "תשובה ריקה — אפסים, לא קריסה");
+});

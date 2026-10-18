@@ -45,6 +45,18 @@ export async function fetchRecentServiceCallSummary(hours = 24) {
 }
 
 /**
+ * הכרטיסים והכותרת בקריאה אחת (18/10/2026): { bySite, today }. נמדד: 29 מסכים × 2 RPC על כל אירוע — זה חצי מהן,
+ * והמסד מחשב את מצב הקריאות פעם אחת במקום פעמיים (db: service_calls_board). שתי הקריאות הישנות נשארות לבנייה ישנה.
+ */
+export async function fetchServiceCallBoard(hours = 24) {
+  const r = await rpc("service_calls_board", { p_hours: hours });
+  return {
+    bySite: countsBySite(Array.isArray(r?.sites) ? r.sites : []),
+    today: { total: Number(r?.summary?.total) || 0, open: Number(r?.summary?.open) || 0 },
+  };
+}
+
+/**
  * "להיסטוריה" (15/10/2026): הקריאות של אתר שכבר נסגרו, החדשה למעלה — { calls, total }. total הוא כמה יש בכלל;
  * המסד מחזיר עד 100 (ראו service_calls_history), והחלון אומר כשיש יותר.
  */

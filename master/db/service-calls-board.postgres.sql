@@ -457,6 +457,43 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
 $$;
 REVOKE ALL ON FUNCTION app.service_calls_recent_summary_raw(integer) FROM PUBLIC;
 
+-- ============================================================
+-- service_calls_board — הכרטיסים והכותרת בקריאה אחת (18/10/2026)
+-- ============================================================
+-- נמדד 18/10: 29 מסכים פתוחים, וכל אירוע קריאה הריץ בכל אחד **שתי** קריאות — service_call_counts ו-
+-- service_calls_recent_summary — שכל אחת מהן מחשבת את app.service_calls_current() מחדש (~55 אלפיות). 56% מזמן
+-- המסד בחלון של 10 דקות. כאן: המצב מחושב **פעם אחת** (CTE מוגשם), ושני החלקים נגזרים ממנו; הדשבורד קורא לזה
+-- במקום לשתיים. ⚠️ אותן הגדרות בדיוק כמו בשתי הפונקציות הישנות (S16 משווה שורה-לשורה) — הן נשארות לבנייה ישנה
+-- של הדשבורד (מסך קיר שלא נטען מחדש). ⚠️ אינה זורקת: מי שאינו צוות מקבל לוח ריק, כמו הספירה.
+CREATE OR REPLACE FUNCTION public.service_calls_board(p_hours integer DEFAULT 24)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
+  WITH w AS (SELECT app.service_calls_since(p_hours) AS since),
+  cur AS MATERIALIZED (
+    SELECT c.* FROM app.service_calls_current() c WHERE (SELECT app.is_staff())
+  ),
+  sites AS (
+    SELECT c.site_id,
+           count(*) FILTER (WHERE c.open)::int AS open,
+           count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since)::int AS recent,
+           to_char(min(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz))
+                     FILTER (WHERE c.open) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS oldest_open
+      FROM cur c, w
+     WHERE c.site_id IS NOT NULL
+       AND (c.open OR COALESCE(c.changed_at, c.received_at) > w.since)
+     GROUP BY c.site_id
+  )
+  SELECT jsonb_build_object(
+    'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object('site_id', s.site_id, 'open', s.open, 'recent', s.recent, 'oldest_open', s.oldest_open)
+                                        ORDER BY s.site_id) FROM sites s), '[]'::jsonb),
+    'summary', (SELECT jsonb_build_object(
+                  'total', (count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since))::int,
+                  'open',  (count(*) FILTER (WHERE c.open))::int)
+                  FROM cur c, w))
+$$;
+REVOKE ALL ON FUNCTION public.service_calls_board(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_calls_board(integer) TO authenticated;
+
 -- כמה קריאות היו ב-24 השעות — למספר על הכפתור בכותרת. ⚠️ אינה זורקת, כמו service_call_counts:
 -- היא נטענת עם הלוח, וכשל כאן לא יפיל אותו.
 -- ⚠️ 15/10/2026: נשארת בשביל בנייה ישנה של הדשבורד. החדשה קוראת ל-service_calls_recent_summary (גם "כמה פתוחות").
