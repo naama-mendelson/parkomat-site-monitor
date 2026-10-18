@@ -3072,8 +3072,11 @@ The owner: *"אני רוצה שיהיה גם סינון לפי סוגי מעלי
 - ⚠️ **Header height (measured the same evening):** with that day's tiles the row wrapped at 1280px, and the sticky header
   grew from 212 to 286px. `StatusFilters.css` now tightens the side padding (10 instead of 16) and the gap (6 instead of
   8) between 641 and 1400px, which gives one row and 212px at 1280. **At 1024×768 it is still two rows and 338px (44% of
-  the screen).** There it covers the first row of cards as soon as the page scrolls, and `probe-square` fails at 1024 for
-  that reason. A collapsible filter panel below about 1100px (as on phones) would be the fix. Not built, not asked for.
+  the screen).** There it covered the first row of cards as soon as the page scrolled.
+  ⚠️ **Fixed the same evening at the owner's word ("כן")**: the filters now fold into "סינון ותצוגה" up to **1240px**,
+  not only up to 640px (`Header.css`; the open/close logic never depended on width). Measured with 78 sites, the row
+  wraps below 1220px. 1240 leaves room for three-digit numbers, and a 1280 laptop stays open. At 1024 the header is now
+  185px closed (it was 338). `probe-square` passes 201/201.
 
 ## Repeated fault: the same fault text more than 3 times in 30 days at one site (18/10/2026)
 
