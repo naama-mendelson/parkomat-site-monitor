@@ -2799,8 +2799,11 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
 - ⚠️ **Every load is numbered, and only the latest reaches the screen.** A change goes through the relay and takes
   seconds; switching to the history meanwhile, or back, would otherwise put the previous list under the new title.
   The change's reload goes through `loadRef` (the view shown now), and switching invalidates any load in flight.
-- ⚠️ **A site whose calls all closed today** still shows the quiet pill with the day's count, and its dialog now says
-  "✓ אין קריאות פתוחות"; the calls are one click away in "להיסטוריה".
+- ~~**A site whose calls all closed today** still shows the quiet pill with the day's count~~ — **not since 18/10/2026**
+  (the owner, on a "2 📞" pill: *"להעיף — רק אם יש קריאה פתוחה אני רוצה לראות סטופר, אם אין קריאה פתוחה לא צריך
+  לראות כלום"*): the compact card's pill appears only with an open call, always with the stopwatch. The expanded
+  card's "קריאות שירות" button still appears for the day's closed calls too — it is the card's only way to
+  "להיסטוריה"; its dialog says "✓ אין קריאות פתוחות".
 - Tests: SQL S13 (open only, the old `p_hours` behaviour, history order, `total`, the cap at 1 and at 100,000, same
   keys in both lists, non-staff refused) and S14 (the widened "today" list and its summary agree);
   `service-calls-ui.test.js` (`siteCallsSummary`, `movedNote`); browser `probe-calls` 55/55 (42/42 with
