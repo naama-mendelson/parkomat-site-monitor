@@ -13,6 +13,7 @@ import { isInstalledApp } from "../../services/pushDirect";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
+import { countMultipliers, isMultiplierSite } from "../../utils/multipliers";
 import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
@@ -42,6 +43,8 @@ function Header({
   onAdmin,
   complianceView,
   onComplianceViewChange,
+  showMultipliers = true,     // המכפילים (אתרים בלי בקר) מוצגים בלוח? (בעלת המוצר, 18/10/2026)
+  onShowMultipliersChange,
   callsToday = null,          // { total, open } — קריאות ויזנט ב-24 השעות וכמה מהן פתוחות; null = התכונה כבויה
   onOpenCalls,
 }) {
@@ -188,11 +191,15 @@ function Header({
     window.addEventListener("scroll", close, { passive: true, capture: true });
     return () => window.removeEventListener("scroll", close, { capture: true });
   }, [filtersOpen]);
+  // ⚠️ כשהמכפילים מוסתרים, אריחי המצב, הסוג ו"בודק מוסמך" סופרים את מה שהלוח מראה — אחרת "הכל · 206" מעל
+  // לוח של 78 כרטיסים. אריח "מכפילים" עצמו סופר את כולם, כי הוא אומר כמה מוסתרים.
+  const boardSites = showMultipliers === false ? (sites ?? []).filter((s) => !isMultiplierSite(s)) : sites;
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
-    complianceActiveCount(complianceView);
+    complianceActiveCount(complianceView) +
+    (onShowMultipliersChange && showMultipliers === false ? 1 : 0);
 
   return (
     <header className="app-header">
@@ -313,13 +320,13 @@ function Header({
       {isOperator && (
         <div className={`header-filters${filtersOpen ? " is-open" : ""}`}>
         <StatusFilters
-          sites={sites}
+          sites={boardSites}
           activeFilters={activeFilters}
           onFilterChange={onFilterChange}
           trailing={
             <>
               <SiteFilterTile
-                sites={sites}
+                sites={boardSites}
                 typeFilter={typeFilter}
                 systemFilter={systemFilter}
                 tierFilter={tierFilter}
@@ -330,7 +337,20 @@ function Header({
               {/* "בודק מוסמך" — נפתח לרשימה, בוחרים מה לראות, נסגר; בחירה מדליקה גם את הנורה בכרטיסים
                   (בעלת המוצר, 08/10/2026) */}
               {onComplianceViewChange && (
-                <ComplianceFilters sites={sites} value={complianceView} onChange={onComplianceViewChange} />
+                <ComplianceFilters sites={boardSites} value={complianceView} onChange={onComplianceViewChange} />
+              )}
+              {/* "מכפילים" — מוצגים או מוסתרים (בעלת המוצר, 18/10/2026: "כפתור סינון נוסף האם המכפילים מופיעים או
+                  לא"). מכפיל = אתר בלי בקר מחובר. אריח כמו אריחי המצב: המספר הגדול הוא כמה כאלה יש, והשורה
+                  מתחת — מה המצב. "מוסתרים" נספר כמסנן פעיל. הבחירה נזכרת לכל מכשיר (useShowMultipliers). */}
+              {onShowMultipliersChange && (
+                <button type="button" className={`filter-btn mx-head-btn${showMultipliers ? "" : " active"}`}
+                  aria-pressed={!showMultipliers}
+                  aria-label={`מכפילים (אתרים בלי בקר): ${showMultipliers ? "מוצגים בלוח" : "מוסתרים מהלוח"} — ${countMultipliers(sites)}`}
+                  onClick={() => onShowMultipliersChange(!showMultipliers)}>
+                  <span className="filter-count">{countMultipliers(sites)}</span>
+                  <span className="filter-label">מכפילים</span>
+                  <span className="filter-sub">{showMultipliers ? "מוצגים" : "מוסתרים"}</span>
+                </button>
               )}
               {/* ⚠️ "קריאות היום" (בעלת המוצר, 14/10/2026, אחרי "לא רואים כלום"): הסימון על הכרטיס
                   מראה רק קריאות **פתוחות** של אתר מוכר — 1 מתוך 22 ביום הראשון. כאן הכול. */}

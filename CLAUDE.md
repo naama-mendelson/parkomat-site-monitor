@@ -2907,6 +2907,26 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     `makeCompareSites(null)` is unchanged (`sort-sites.test.js`). The unmonitored card now carries `has-open-call`.
     Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
 
+## "מכפילים" — a header tile that shows or hides the sites without a controller (18/10/2026)
+
+The owner: *"אני רוצה שיהיה כפתור סינון נוסף האם המכפילים מופיעים או לא מופיעים"*. Since 15/10 the board carries 128
+multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards between the 78 live sites.
+
+- **"מכפיל" on the board = `monitored === false`** (`isMultiplierSite` in `utils/multipliers.js`). That is every site
+  without a controller, Sotefin included; the tile is named in her word. The rules are pure and tested
+  (`tests/multipliers-view.test.js`): `matchesMultipliersView(site, shown)`, `countMultipliers`, `sanitizeShowMultipliers`.
+- **The tile** sits in the header filter row after "בודק מוסמך", built like a status tile: the big number is how many
+  such sites exist, the label "מכפילים", and a sub-line "מוצגים" / "מוסתרים". Hidden = `active`, `aria-pressed`, and
+  it counts as one filter in "סינון ותצוגה · N פעילים". One click toggles.
+- **Hidden means gone from the board under every other filter** — the rule runs first in `OperatorView`'s filter. ⚠️ And
+  the other tiles count what the board shows: `Header` passes `boardSites` (without multipliers when hidden) to the
+  status tiles, the type box and "בודק מוסמך", so "הכל" does not read 206 over 78 cards. The multipliers tile itself
+  counts the full list, because its number says how many are hidden.
+- **Remembered per device, per user** (`hooks/useShowMultipliers.js`, the `useComplianceView` pattern: localStorage,
+  key with the user id, written only on a choice). **Default: shown**, exactly as before; only a stored `false` hides.
+- Not touched: the supervisor table and the executive page never showed unmonitored sites (`toSupervisorShape`).
+- ⚠️ Verified by build and unit tests only; the browser harness of earlier sessions was not available here.
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only

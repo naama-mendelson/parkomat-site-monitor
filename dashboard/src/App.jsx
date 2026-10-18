@@ -21,6 +21,7 @@ import { SERVICE_CALLS_ENABLED } from "./utils/serviceCalls";
 import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
+import { useShowMultipliers } from "./hooks/useShowMultipliers";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import "./components/TrafficLight/TrafficLight.css";
 import OperatorView from "./views/OperatorView/OperatorView";
@@ -56,6 +57,8 @@ function App() {
   // בלוח, שמתאפסים ברענון. ראה hooks/useComplianceView.js.
   const { user } = useAuth();
   const [complianceView, setComplianceView] = useComplianceView(user?.id);
+  // "מכפילים" מוצגים/מוסתרים בלוח (18/10/2026) — נזכר לכל מכשיר, כמו "בודק מוסמך"
+  const [showMultipliers, setShowMultipliers] = useShowMultipliers(user?.id);
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   // הלשונית שהחלון **נפתח** עליה (מנורה בכרטיס → "בודק מוסמך"/"תחזוקה מונעת").
   // ⚠️ רק הפתיחה: המעבר בין לשוניות בתוך החלון אינו משנה אותה — אחרת מעבר
@@ -507,6 +510,7 @@ function App() {
         systemFilter={systemFilter}
         tierFilter={tierFilter}
         complianceView={complianceView}
+        showMultipliers={showMultipliers}
         searchQuery={searchQuery}
         onSiteClick={handleSiteClick}
       />
@@ -532,6 +536,8 @@ function App() {
         onSearchChange={setSearchQuery}
         complianceView={complianceView}
         onComplianceViewChange={setComplianceView}
+        showMultipliers={showMultipliers}
+        onShowMultipliersChange={setShowMultipliers}
         callsToday={useDirect && SERVICE_CALLS_ENABLED ? callsToday : null}
         onOpenCalls={() => setCallsOpen({ recent: true })}
         darkMode={darkMode}

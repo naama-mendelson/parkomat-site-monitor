@@ -8,11 +8,12 @@ import { fuzzyMatch } from "../../utils/helpers";
 import { makeCompareSites } from "../../utils/sortSites";
 import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
+import { matchesMultipliersView } from "../../utils/multipliers";
 import "./OperatorView.css";
 
 function OperatorView({
   sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "",
-  complianceView = DEFAULT_COMPLIANCE_VIEW, searchQuery, onSiteClick,
+  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = true, searchQuery, onSiteClick,
 }) {
   // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
   // של הלוח היה נותן ערך חדש להקשר ומרנדר מחדש את כל המנורות בכל הכרטיסים.
@@ -51,6 +52,8 @@ function OperatorView({
     // מסתיר מ"תחזוקה" אתר שכתוב עליו "תחזוקה" — כלומר הסרגל והכרטיס
     // היו סותרים זה את זה על אותו מסך.
     const shown = site.displayStatus ?? site.status;
+    // "מכפילים" בכותרת (18/10/2026): מוסתרים → אתר בלי בקר אינו מופיע כלל, בשום סינון אחר
+    if (!matchesMultipliersView(site, showMultipliers)) return false;
     // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו בשום מצב: מופיע ב"הכל", ולא בסינון לפי מצב —
     // אחרת "אין תקשורת" היה מראה אותו, כי זה מה שנשאר במסד כברירת מחדל.
     if (activeFilters.length > 0 && (site.monitored === false || !activeFilters.includes(shown))) return false;

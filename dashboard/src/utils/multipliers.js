@@ -30,3 +30,17 @@ export function mxRowState(row, codeKey, nameKey, siteCodes) {
   if (!name) return { state: "noname", code, name };
   return { state: "missing", code, name };
 }
+
+// ============================================================
+// "מכפילים" בלוח — מוצגים או מוסתרים (בעלת המוצר, 18/10/2026: "כפתור סינון נוסף האם המכפילים מופיעים או לא")
+// ============================================================
+// "מכפיל" בלוח = אתר בלי בקר מחובר (sites.monitored = false): כל 128 אתרי לוח המכפילים, וגם מתקני סוטפין
+// שנרשמו כך. הם מופיעים בכרטיסים (בודק, תחזוקה, משימות, קריאות), אבל מי שמנטר בקרים רואה 128 כרטיסים "ללא בקר"
+// בין 78 אתרים חיים. הבחירה נזכרת לכל מכשיר (hooks/useShowMultipliers.js), כמו "בודק מוסמך".
+// ⚠️ ברירת המחדל — מוצגים: מסך שלא בחר דבר מראה את כל האתרים, כמו עד היום.
+export const isMultiplierSite = (site) => site?.monitored === false;
+export const countMultipliers = (sites) => (sites ?? []).filter(isMultiplierSite).length;
+/** האם האתר עובר את המסנן: מוצגים → תמיד; מוסתרים → רק אתר עם בקר */
+export const matchesMultipliersView = (site, shown) => shown !== false || !isMultiplierSite(site);
+/** מה שנקרא מהאחסון: רק false מסתיר; כל דבר אחר (חסר, שבור, "true") = מוצגים */
+export const sanitizeShowMultipliers = (raw) => raw !== false && raw !== "false";
