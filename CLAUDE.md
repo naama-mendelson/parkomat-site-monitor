@@ -26,6 +26,14 @@ Agent (on site) ──HTTPS──→ Supabase (Postgres + pg_cron + Edge Functio
   connections, not disk. Growth measured 18/10: ~1 MB/day of operations + status rows, 0.5–4 MB/day of inspector PDFs
   while the backfill runs; `auth.sessions` and `cron.job_run_details` were the two unbounded tables and are pruned since
   18/10 (see the two sections of that date).
+  **Re-measured 18/10 evening: 184 MB.** Operations + status grow ~1.3 MB/day and are capped by the 12-month cleanup
+  (~470 MB steady state). Events (7 days), closed service calls (30 days), sign-ins (1 day) and cron history (14 days) are
+  all on prunes. The three prunes added that morning first run that night. Inspector PDFs: 50 MB for 122 files (~0.4 MB
+  each). Every monitored site already has one; the 130 multipliers would add ~50 MB a year. ⚠️ **The largest future
+  growth is PM photos:** since that day every item can carry photos (≤6 per item, ≤40 per visit, about 0.3 MB each after
+  compression to 1280px, stored as base64). At ~430 visits a year (monitored + multipliers, twice a year), that is
+  roughly 1–2 GB a year if technicians photograph freely, and ~5 GB at the cap. It fits the paid disk; the cost is per GB.
+  Storing the bytes as `bytea` instead of base64 would save a quarter. Measure again once real visits start.
 
 ## ⚠️ Decision, 17/09/2026 — `master` is being retired. Target: Supabase + dashboard only
 
