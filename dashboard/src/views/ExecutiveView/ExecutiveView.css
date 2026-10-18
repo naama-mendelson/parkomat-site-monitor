@@ -7,6 +7,17 @@
   animation: viewIn 0.4s ease-out;
 }
 
+/* שגיאת טעינה כשכבר יש נתונים על המסך: שורה דקה בגוון, לא קופסה — המספרים שמתחתיה הם מהבחירה הקודמת */
+.ex-stale-error {
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--status-error);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--status-error) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 /* ===== כותרת ===== */
 .ex-head {
   display: flex;

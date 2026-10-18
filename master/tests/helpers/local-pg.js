@@ -70,12 +70,20 @@ async function boot(opts = {}) {
     END $$;
     CREATE SCHEMA IF NOT EXISTS auth;
     CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY, email text, raw_app_meta_data jsonb, last_sign_in_at timestamptz);
+    -- ההתחברויות — רק העמודות ש-app.prune_auth_sessions קוראת. refreshed_at ללא אזור זמן, כמו בייצור.
+    CREATE TABLE IF NOT EXISTS auth.sessions (id uuid PRIMARY KEY, user_id uuid, created_at timestamptz DEFAULT now(),
+                                              updated_at timestamptz DEFAULT now(), refreshed_at timestamp);
+    CREATE TABLE IF NOT EXISTS auth.refresh_tokens (id bigserial PRIMARY KEY, session_id uuid, token text);
+    CREATE TABLE IF NOT EXISTS auth.mfa_amr_claims (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), session_id uuid);
     CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
       $f$ SELECT nullif(current_setting('request.jwt.claims', true)::json ->> 'sub', '')::uuid $f$;
 
     CREATE SCHEMA IF NOT EXISTS cron;
     CREATE TABLE IF NOT EXISTS cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text, command text,
                                          active boolean NOT NULL DEFAULT true);
+    -- היסטוריית הריצות — רק מה ש-app.prune_cron_history קוראת
+    CREATE TABLE IF NOT EXISTS cron.job_run_details (runid bigserial PRIMARY KEY, jobid bigint, status text,
+                                                     start_time timestamptz, end_time timestamptz, return_message text);
     -- ⚠️ כמו pg_cron 1.6: schedule על שם קיים **מדליק** את המשימה מחדש — זה בדיוק
     -- מה ש-app.ensure_cron_job עוקף, וזה מה שהבדיקה שלו חייבת לראות כדי להיכשל עליו.
     CREATE OR REPLACE FUNCTION cron.schedule(n text, s text, c text) RETURNS bigint LANGUAGE sql AS

@@ -178,6 +178,88 @@ $$;
 SELECT app.ensure_cron_job('parkomat-prune-ingest-drops', '47 3 * * *', 'SELECT app.prune_ingest_drops(14)');
 
 -- ============================================================
+-- גריפת ההתחברויות של Supabase Auth — רטנציה של יממה (18/10/2026)
+-- ============================================================
+-- בעלת המוצר: "זה לא מעניין אותי בכלל מה התחבר! מצידי תשמור רק את של אותו יום".
+--
+-- כל התחברות (sign-in בסיסמה) יוצרת שורה ב-auth.sessions, ולצידה refresh_tokens ו-mfa_amr_claims — זה מה
+-- שמאפשר לבטל אסימון של התחברות אחת. Supabase לא מנקים אותן בתוכנית החינמית (קציבת זמן ל-session היא
+-- תכונה של Pro), ואצלנו **הסוכנים מתחברים בסיסמה כל שעה** (TokenPolicy) ו-Edge Function של הקליטה
+-- מתחבר בכל בקשה. נמדד 18/10/2026: 45,229 sessions (43,660 של סוכנים, 1,530 של service-intake), 36 MB
+-- בשלוש הטבלאות, כ-1 MB ליום — הגדילה היחידה במסד שאינה פרופורציונלית לשום דבר מועיל, ו-500 MB הם
+-- המכסה שמעבר לה המסד הופך לקריאה-בלבד.
+--
+-- **הכלל: session שלא היה בשימוש יממה — נמחק, עם האסימונים שלו.** "שימוש" = refreshed_at (רענון אסימון),
+-- ובלעדיו updated_at / created_at. סוכן ו-Edge Function אינם מרגישים כלום (הם מתחברים מחדש ממילא).
+-- ⚠️ אדם שלא פתח את הדשבורד יממה יתחבר מחדש בפעם הבאה — זה המחיר, והוא הוזמן במפורש. מי שפתוח כל יום
+-- (רענון כל שעה) נשאר מחובר.
+-- ⚠️ ה-DELETE של refresh_tokens ו-mfa_amr_claims מפורש ולא נסמך על CASCADE: הטבלאות הן של
+-- supabase_auth_admin, וה-FK שלהן אינו שלנו לשמור עליו. SECURITY DEFINER — הבעלים (postgres) מורשה DELETE
+-- על auth.*; pg_cron מריץ כ-postgres ממילא, אבל כך גם קריאה ידנית מהדשבורד של Supabase עובדת.
+-- ⚠️ refreshed_at הוא timestamp **ללא** אזור זמן (UTC) — AT TIME ZONE 'UTC' הופך אותו ל-timestamptz; בלי זה
+-- ההשוואה ל-now() היתה לפי אזור הזמן של השרת.
+-- ⚠️ ישירות על טבלאות auth, לא דרך ה-Admin API: אין Edge Function לניקוי, ו-DELETE של 40 אלף שורות הוא
+-- משפט אחד. Supabase מתעדים את auth.sessions כטבלה שמותר למחוק ממנה כדי לנתק משתמש.
+CREATE OR REPLACE FUNCTION app.prune_auth_sessions(p_keep interval DEFAULT interval '1 day')
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  WITH old AS (
+    SELECT s.id
+      FROM auth.sessions s
+     WHERE COALESCE(s.refreshed_at AT TIME ZONE 'UTC', s.updated_at, s.created_at) < now() - p_keep
+  ),
+  t AS (DELETE FROM auth.refresh_tokens  WHERE session_id IN (SELECT id FROM old)),
+  m AS (DELETE FROM auth.mfa_amr_claims  WHERE session_id IN (SELECT id FROM old)),
+  d AS (DELETE FROM auth.sessions        WHERE id         IN (SELECT id FROM old) RETURNING 1)
+  SELECT count(*)::integer INTO v_n FROM d;
+  RETURN v_n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION app.prune_auth_sessions(interval) FROM PUBLIC;
+
+-- 03:57 UTC, בין שאר הגריפות. בפעם הראשונה זה ימחוק את כל הצבר (כ-41 אלף); אחר כך כ-1,500 ליום.
+SELECT app.ensure_cron_job('parkomat-prune-auth-sessions', '57 3 * * *', 'SELECT app.prune_auth_sessions(interval ''1 day'')');
+
+-- ============================================================
+-- גריפת היסטוריית הריצות של pg_cron — רטנציה של 14 יום (18/10/2026)
+-- ============================================================
+-- pg_cron כותב שורה ב-cron.job_run_details על **כל** ריצה ואינו מוחק אותה לעולם. אצלנו זיהוי השתיקה רץ כל
+-- דקה, כלומר 1,440 שורות ביום ממנו לבדו; נמדד 18/10/2026: 74,266 שורות מ-24/08, 12 MB, 0.27 MB ליום — יותר
+-- מכל טבלת-נתונים שלנו חוץ מהפעולות, ואף מסך אינו קורא אותה. מי שכן קורא: שני שערים (check-alert-gate,
+-- check-dashboard-truth) ובדיקות ידניות של "האם המשימה רצה", וכולם מסתכלים על הימים האחרונים. גם Supabase
+-- ממליצים בתיעוד של pg_cron על משימה כזאת. בעלת המוצר, על ההתחברויות באותו יום: "זה לא מעניין אותי בכלל מה
+-- התחבר" — אותו דין להיסטוריה של משימות שהצליחו.
+-- ⚠️ 14 יום ולא פחות: כשל של משימה לילית מתגלה לפעמים רק בשבוע שאחריו, וזו הטבלה היחידה שאומרת מתי בדיוק
+-- היא נכשלה ומה החזירה.
+-- ⚠️ SECURITY DEFINER: הטבלה היא של pg_cron; הבעלים (postgres) מורשה למחוק ממנה, וכך גם קריאה ידנית עובדת.
+CREATE OR REPLACE FUNCTION app.prune_cron_history(p_keep interval DEFAULT interval '14 days')
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  DELETE FROM cron.job_run_details
+   WHERE COALESCE(end_time, start_time) < now() - p_keep;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION app.prune_cron_history(interval) FROM PUBLIC;
+
+SELECT app.ensure_cron_job('parkomat-prune-cron-history', '27 4 * * *', 'SELECT app.prune_cron_history(interval ''14 days'')');
+
+-- ============================================================
 -- שומר הקליטה — ההתראה שהייתה חוסכת יום שלם
 -- ============================================================
 -- ב-22.08 השרת היה למטה 14.7 שעות. ב-23.08 אתר היה בתקלה שלוש שעות והמסך

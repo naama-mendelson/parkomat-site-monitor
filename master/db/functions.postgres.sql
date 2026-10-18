@@ -1556,6 +1556,184 @@ COMMENT ON FUNCTION public.server_heartbeat() IS
   'החותם האחרון שהשרת כתב על עצמו. NULL = מעולם לא נכתב. משמש את הדשבורד כדי לומר שהוא מציג נתונים ישנים.';
 
 -- ============================================================
+-- site_uptime_buckets — הזמינות של כל הדליים בסריקה אחת (18/10/2026)
+-- ============================================================
+-- executive_series קראה ל-site_uptime פעם לכל דלי: 367 סריקות של status_history ל"שנה, יומי" (18 אלפיות
+-- כל אחת — 3.7 מתוך 4.8 שניות של נתח של 120 דליים, נמדד בייצור), וגם 32 לחודש — 3.9 שניות בכל כניסה למסך
+-- "מנהל כללי", 2,030 פעמים מ-07/10 (2.4 שעות של זמן מסד). האינדקס (site_id, started_at) אינו עוזר: התנאי
+-- הסלקטיבי הוא על ended_at, וכל דלי סורק כ-9,000 שורות ומסנן 8,870 מהן.
+--
+-- כאן המקטעים נסרקים **פעם אחת** על טווח כל הדליים, וכל מקטע מוצמד לדליים שהוא חופף דרך גבולות הדליים
+-- הממוינים (width_bucket על תחילתו ועל סופו, כמו הפעולות ב-executive_series) — ואז, לכל זוג (מקטע × דלי),
+-- **בדיוק** התנאים והקיצוצים של site_uptime: אותו חלון (LEAST(to, now)), אותם תנאי חפיפה על טקסט ISO,
+-- אותו קיצוץ ל-timestamptz, אותו מיזוג חלונות תחזוקה לכל (דלי × אתר), אותם סכומים ואותו עיגול. ההצמדה
+-- דרך הגבולות היא רק סינון מקדים; מה שמחליט הוא התנאי המקורי, ולכן מקטע שרק נוגע בגבול נופל כמו קודם.
+--
+-- ⚠️ רק שלוש העמודות ש-executive_series צורכת. repair/planned/excluded אינן כאן — site_uptime נשארת המקור
+-- להן ולכרטיסים (site_card_metrics), שקוראים לה לטווח אחד.
+-- ⚠️ חייבת להחזיר שורה לכל (דלי × אתר), גם אפסים, כמו site_uptime — executive_series עושה LEFT JOIN ומצפה
+-- ל-0 ולא ל-NULL. דלי לא חוקי (to <= from אחרי הקיצוץ ל-now) מחזיר אפסים, כמו שם.
+-- ⚠️ בלי SECURITY DEFINER ובלי SET, בכוונה — כמו served_operations: רצה כקוראת, תחת אותן מדיניות RLS.
+-- מוכחת זהה ל-site_uptime דלי-דלי: tests/uptime-buckets.test.js (PGlite, מקרי קצה) ו-tools/check-uptime-buckets.js
+-- (הייצור: שנה יומית, שנה חודשית, חודש יומי, עם ובלי סינון אתרים — בטרנזקציה אחת, כדי ש-now() יהיה זהה).
+DROP FUNCTION IF EXISTS app.site_uptime_buckets(integer[], jsonb);
+
+CREATE OR REPLACE FUNCTION app.site_uptime_buckets(
+  p_site_ids integer[],
+  p_buckets  jsonb
+)
+RETURNS TABLE (
+  bucket               integer,
+  site_id              integer,
+  maintenance_hours    double precision,
+  availability_percent double precision,
+  measured_hours       double precision
+)
+LANGUAGE sql
+STABLE
+AS $$
+WITH b AS (
+  SELECT (ord - 1)::integer AS bucket,
+         e ->> 'from'       AS w_from,
+         -- min(to, now) על מחרוזות ISO — בדיוק כמו bounds ב-site_uptime
+         LEAST(e ->> 'to', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) AS w_to
+    FROM jsonb_array_elements(p_buckets) WITH ORDINALITY AS x(e, ord)
+),
+ok AS (SELECT *, (w_to > w_from) AS valid FROM b),
+span AS (SELECT min(w_from) AS f, max(w_to) AS t FROM ok WHERE valid),
+-- כל גבולות הדליים החוקיים, ממוינים; הקטעים היסודיים הם [arr[i], arr[i+1])
+edges AS MATERIALIZED (
+  SELECT array_agg(x ORDER BY x) AS arr
+    FROM (SELECT w_from AS x FROM ok WHERE valid UNION SELECT w_to FROM ok WHERE valid) e
+),
+-- איזה דלי מכיל איזה קטע יסודי. ⚠️ בחיפוש בינארי, לא בהשוואה של כל דלי לכל קטע: w_from ו-w_to הם בעצמם
+-- גבולות, ולכן width_bucket(w_from) הוא הקטע הראשון שמתחיל בדלי ו-width_bucket(w_to) - 1 האחרון שנגמר בו.
+-- הצורה הקודמת (o.w_from <= arr[seg] AND o.w_to >= arr[seg+1] על כל הזוגות) עלתה 0.7 שניות לשנה יומית —
+-- 134,000 השוואות טקסט תחת collation — והיא נמצאת כאן, ב-executive_series ובהצמדת התקלות. נמדד 18/10/2026.
+seg_bucket AS MATERIALIZED (
+  SELECT o.bucket, g.seg
+    FROM ok o, edges e,
+         generate_series(width_bucket(o.w_from, e.arr), width_bucket(o.w_to, e.arr) - 1) AS g(seg)
+   WHERE o.valid
+),
+-- סריקה אחת: המקטעים שחופפים את טווח כל הדליים, עם הקטע היסודי של תחילתם ושל סופם
+rows_ AS MATERIALIZED (
+  SELECT h.id, h.site_id,
+         COALESCE(h.reclassified_to, h.status) AS status,
+         h.started_at, h.ended_at,
+         GREATEST(width_bucket(h.started_at, e.arr), 1) AS s_idx,
+         LEAST(CASE WHEN h.ended_at IS NULL THEN cardinality(e.arr)
+                    ELSE width_bucket(h.ended_at, e.arr) END,
+               cardinality(e.arr) - 1) AS e_idx
+    FROM status_history h, span, edges e
+   WHERE (p_site_ids IS NULL OR h.site_id = ANY(p_site_ids))
+     AND h.excluded_at IS NULL
+     AND h.started_at < span.t
+     AND (h.ended_at IS NULL OR h.ended_at > span.f)
+),
+-- (מקטע × דלי) — הסינון המקדים דרך הגבולות
+hb AS MATERIALIZED (
+  SELECT DISTINCT r.id, sb.bucket
+    FROM rows_ r
+    CROSS JOIN LATERAL generate_series(r.s_idx, r.e_idx) AS g(seg)
+    JOIN seg_bucket sb ON sb.seg = g.seg
+),
+-- ואז התנאי והקיצוץ המקוריים של site_uptime (clipped), לכל דלי
+clipped AS (
+  SELECT x.bucket, r.id, r.site_id, r.status,
+         GREATEST(r.started_at::timestamptz, o.w_from::timestamptz)             AS seg_start,
+         LEAST(COALESCE(r.ended_at, o.w_to)::timestamptz, o.w_to::timestamptz) AS seg_end
+    FROM hb x
+    JOIN rows_ r ON r.id = x.id
+    JOIN ok o    ON o.bucket = x.bucket
+   WHERE r.started_at < o.w_to
+     AND (r.ended_at IS NULL OR r.ended_at > o.w_from)
+),
+-- חלונות תחזוקה — עשרות בסך הכול, ולכן ישירות לכל דלי; בדיוק win / win_grp / win_merged של site_uptime
+win AS (
+  SELECT o.bucket, m.site_id,
+         GREATEST(m.started_at::timestamptz, o.w_from::timestamptz)                        AS s,
+         LEAST(COALESCE(m.cancelled_at, m.expires_at)::timestamptz, o.w_to::timestamptz) AS e
+    FROM maintenance_windows m
+    CROSS JOIN ok o
+   WHERE o.valid
+     AND (p_site_ids IS NULL OR m.site_id = ANY(p_site_ids))
+     AND m.started_at < o.w_to
+     AND COALESCE(m.cancelled_at, m.expires_at) > o.w_from
+     AND m.excluded_at IS NULL
+),
+win_grp AS (
+  SELECT bucket, site_id, s, e,
+         SUM(CASE WHEN prev_max IS NULL OR s > prev_max THEN 1 ELSE 0 END)
+           OVER (PARTITION BY bucket, site_id ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp
+    FROM (
+      SELECT bucket, site_id, s, e,
+             MAX(e) OVER (PARTITION BY bucket, site_id ORDER BY s, e
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_max
+        FROM win
+       WHERE e > s
+    ) w
+),
+win_merged AS (
+  SELECT bucket, site_id, MIN(s) AS s, MAX(e) AS e
+    FROM win_grp
+   GROUP BY bucket, site_id, grp
+),
+-- ⚠️ בלי קיבוץ לכל מקטע (18/10/2026). הצורה הראשונה חישבה covered_s לכל (מקטע × דלי) — 107,000 שורות
+-- ממוינות ומקובצות, 2.3 שניות לשנה יומית. אותו חשבון בדיוק בשני סכומים לפי (דלי, אתר, מצב): סכום המשכים,
+-- פחות סכום החיתוכים עם חלונות התחזוקה הממוזגים. החלונות הממוזגים זרים זה לזה, ולכן אין חיתוך שנספר פעמיים,
+-- וסכום על numeric (EXTRACT(EPOCH) מחזיר numeric) אינו תלוי בסדר — המספרים זהים לאלה של site_uptime.
+dur AS (
+  SELECT c.bucket, c.site_id, c.status,
+         SUM(EXTRACT(EPOCH FROM (c.seg_end - c.seg_start))) AS dur_s
+    FROM clipped c
+   WHERE c.seg_end > c.seg_start
+   GROUP BY c.bucket, c.site_id, c.status
+),
+covd AS (
+  SELECT c.bucket, c.site_id, c.status,
+         SUM(EXTRACT(EPOCH FROM (LEAST(w.e, c.seg_end) - GREATEST(w.s, c.seg_start)))) AS covered_s
+    FROM clipped c
+    JOIN win_merged w
+      ON w.bucket = c.bucket AND w.site_id = c.site_id
+     AND w.e > c.seg_start AND w.s < c.seg_end
+   WHERE c.seg_end > c.seg_start
+   GROUP BY c.bucket, c.site_id, c.status
+),
+secs AS (
+  SELECT d.bucket, d.site_id,
+         COALESCE(SUM(d.dur_s - COALESCE(v.covered_s, 0)) FILTER (WHERE d.status = 'ready'),     0) AS ready_s,
+         COALESCE(SUM(d.dur_s - COALESCE(v.covered_s, 0)) FILTER (WHERE d.status = 'operating'), 0) AS operating_s,
+         COALESCE(SUM(d.dur_s - COALESCE(v.covered_s, 0)) FILTER (WHERE d.status = 'error'),     0) AS error_s,
+         COALESCE(SUM(COALESCE(v.covered_s, 0)), 0)
+           + COALESCE(SUM(d.dur_s - COALESCE(v.covered_s, 0)) FILTER (WHERE d.status = 'maintenance'), 0) AS maintenance_s
+    FROM dur d
+    LEFT JOIN covd v ON v.bucket = d.bucket AND v.site_id = d.site_id AND v.status = d.status
+   GROUP BY d.bucket, d.site_id
+)
+SELECT
+  o.bucket,
+  ids.site_id,
+  ROUND((COALESCE(s.maintenance_s,0) / 3600.0)::numeric, 2)::double precision,
+  CASE
+    WHEN (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0) + COALESCE(s.error_s,0)) > 0
+    THEN ROUND((((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0))
+               / (COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
+                + COALESCE(s.error_s,0))) * 100)::numeric, 2)::double precision
+    ELSE 0::double precision
+  END,
+  ROUND(((COALESCE(s.ready_s,0) + COALESCE(s.operating_s,0)
+        + COALESCE(s.error_s,0)) / 3600.0)::numeric, 2)::double precision
+FROM ok o
+CROSS JOIN (SELECT id AS site_id FROM sites
+             WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)) AS ids
+LEFT JOIN secs s ON s.bucket = o.bucket AND s.site_id = ids.site_id;
+$$;
+
+COMMENT ON FUNCTION app.site_uptime_buckets(integer[], jsonb) IS
+  'maintenance/availability/measured של site_uptime לכל דלי, בסריקה אחת של status_history. זהה ל-site_uptime דלי-דלי (check-uptime-buckets).';
+
+-- ============================================================
 -- executive_series — כל מה שמסך "מנהל כללי" צריך, בקריאה אחת
 -- ============================================================
 -- ⚠️ **מה זה מחליף.** הזרוע הישירה שלפה שורות **גולמיות** והריצה עליהן
@@ -1635,32 +1813,62 @@ ids AS (
   SELECT id AS site_id FROM sites
    WHERE p_site_ids IS NULL OR id = ANY(p_site_ids)
 ),
--- קריאה אחת לכל **דלי**, לא לכל תא. זה ההבדל בין 30 קריאות ל-480.
+-- ⚠️ כל הדליים בסריקה אחת (18/10/2026), לא קריאה לכל דלי. היה: CROSS JOIN LATERAL site_uptime(p_site_ids, b.f, b.t)
+-- לכל דלי, כלומר 367 סריקות של status_history ל"שנה, יומי" — 3.7 מתוך 4.8 שניות של נתח של 120 דליים, והקריאה
+-- כולה נפלה על ה-statement timeout של PostgREST (57014). ראו app.site_uptime_buckets, שהוכחה זהה דלי-דלי.
 up AS (
-  SELECT b.bucket, u.site_id, u.maintenance_hours, u.availability_percent, u.measured_hours
-    FROM b
-    CROSS JOIN LATERAL public.site_uptime(p_site_ids, b.f, b.t) u
+  SELECT u.bucket, u.site_id, u.maintenance_hours, u.availability_percent, u.measured_hours
+    FROM app.site_uptime_buckets(p_site_ids, p_buckets) u
 ),
 -- סריקה מקובצת אחת על operations, במקום תת-שאילתה לכל תא.
-ops AS (
-  SELECT b.bucket,
-         o.site_id,
-         COUNT(*)::integer                                            AS operations,
-         COUNT(*) FILTER (WHERE o.entry_exit = 'entry')::integer      AS entries,
-         COUNT(*) FILTER (WHERE o.entry_exit = 'exit')::integer       AS exits
-    FROM b
-    JOIN app.served_operations() o
-      ON o.occurred_at >= b.f
-     AND o.occurred_at < b.t
-   WHERE (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
-     -- ⚠️ הסינון **חייב** להיות זהה לזה של site_stats — כולל
-     -- app.served_operations — אחרת כניסות+יציאות לא יסתכמו לסך הפעולות **על
-     -- אותו מסך**, וזה נראה כמו טעות עיגול ולא כמו מקור שונה.
+-- ⚠️ הפעולות נסרקות **פעם אחת**, וכל פעולה מוצמדת לדלי בחיפוש בינארי (18/10/2026). הצורה הקודמת — JOIN של הדליים
+-- על served_operations() עם תנאי טווח — הריצה את ה-anti-join על חלונות התחזוקה לכל דלי, ואחר כך השוותה כל פעולה
+-- לכל דלי: 367 × 23,000 השוואות טקסט על שנה יומית, 3.4–5 שניות מתוך 13.4 (נמדד בייצור), וכל קריאה כזו דרך
+-- PostgREST נפלה על statement timeout (57014) — הגרף של "שנה, יומי" לא נטען.
+-- עכשיו: (1) served — סריקה אחת (MATERIALIZED) של הפעולות שבטווח הדליים, לפי הדלי המוקדם והמאוחר ולא לפי
+-- p_from/p_to, כך שהתוצאה זהה גם לדליים שחורגים מהטווח; (2) edges — כל גבולות הדליים (התחלה וסוף) ממוינים;
+-- (3) width_bucket מוצא לכל פעולה את הקטע היסודי שלה ב-O(log n); (4) הקטע מוצמד לכל דלי שמכיל אותו — וכך
+-- גם דלי הסך (כל הטווח), שחופף לכל הדליים היומיים, נספר נכון. ⚠️ ההשוואות הן על **טקסט ISO** בדיוק כמו קודם
+-- (occurred_at ו-f/t באותו פורמט), ולכן הסדר הלקסיקוגרפי הוא סדר הזמן. התוצאה זהה שורה-לשורה: 78,538 שורות
+-- של שנה יומית, 6,848 של חודש, ו-160 עם סינון אתרים הושוו בייצור לפני ההחלה.
+-- ⚠️ הסינון **חייב** להיות זהה לזה של site_stats — כולל app.served_operations — אחרת כניסות+יציאות לא
+-- יסתכמו לסך הפעולות **על אותו מסך**, וזה נראה כמו טעות עיגול ולא כמו מקור שונה.
+span AS (SELECT min(f) AS f, max(t) AS t FROM b),
+served AS MATERIALIZED (
+  SELECT o.site_id, o.occurred_at, o.entry_exit
+    FROM app.served_operations() o, span
+   WHERE o.occurred_at >= span.f
+     AND o.occurred_at <  span.t
+     AND (p_site_ids IS NULL OR o.site_id = ANY(p_site_ids))
      AND o.excluded_at IS NULL
      AND o.is_anomaly = 0
      AND o.start_end = 'end'
      AND o.superseded_by IS NULL
-   GROUP BY b.bucket, o.site_id
+),
+edges AS MATERIALIZED (
+  SELECT array_agg(x ORDER BY x) AS arr FROM (SELECT f AS x FROM b UNION SELECT t FROM b) e
+),
+-- לכל פעולה — מספר הקטע היסודי [edges[i], edges[i+1]) שהיא נופלת בו
+placed AS MATERIALIZED (
+  SELECT s.site_id, s.entry_exit, width_bucket(s.occurred_at, e.arr) AS seg
+    FROM served s, edges e
+),
+-- איזה דלי מכיל איזה קטע יסודי: הדלי מתחיל לפני (או ב-) תחילת הקטע ונגמר אחרי (או ב-) סופו
+-- ⚠️ בחיפוש בינארי (18/10/2026): f ו-t הם בעצמם גבולות, ולכן width_bucket(f) הוא הקטע הראשון בדלי
+-- ו-width_bucket(t) - 1 האחרון. ההשוואה של כל דלי לכל קטע עלתה 0.7 שניות לשנה יומית (ראו site_uptime_buckets).
+seg_bucket AS MATERIALIZED (
+  SELECT b.bucket, g.seg
+    FROM b, edges e, generate_series(width_bucket(b.f, e.arr), width_bucket(b.t, e.arr) - 1) AS g(seg)
+),
+ops AS (
+  SELECT sb.bucket,
+         p.site_id,
+         COUNT(*)::integer                                            AS operations,
+         COUNT(*) FILTER (WHERE p.entry_exit = 'entry')::integer      AS entries,
+         COUNT(*) FILTER (WHERE p.entry_exit = 'exit')::integer       AS exits
+    FROM placed p
+    JOIN seg_bucket sb ON sb.seg = p.seg
+   GROUP BY sb.bucket, p.site_id
 ),
 -- הקיפול, פעם אחת, על כל התקופה.
 errs AS (
@@ -1668,11 +1876,15 @@ errs AS (
     FROM app.error_segments(p_site_ids, p_from, p_to) e
    WHERE NOT e.in_maintenance
 ),
+-- ⚠️ גם התקלות מוצמדות דרך הקטעים היסודיים (18/10/2026) — ה-JOIN על טווח (367 דליים × 1,210 תקלות) עלה
+-- 0.85 שניות לשנה יומית. אותה תוצאה: הקטע של started_at, ואז כל דלי שמכיל אותו. תקלה שהתחילה מחוץ לכל
+-- דלי נופלת בקטע 0 או בקטע האחרון+1, שאינם של שום דלי — כמו שנפלה בתנאי הטווח.
 err_by_bucket AS (
-  SELECT b.bucket, e.site_id, COUNT(*)::integer AS n
-    FROM b JOIN errs e
-      ON e.started_at >= b.f AND e.started_at < b.t
-   GROUP BY b.bucket, e.site_id
+  SELECT sb.bucket, e.site_id, COUNT(*)::integer AS n
+    FROM errs e
+    CROSS JOIN edges ed
+    JOIN seg_bucket sb ON sb.seg = width_bucket(e.started_at, ed.arr)
+   GROUP BY sb.bucket, e.site_id
 )
 -- ⚠️ הנהג הוא (דלי × אתר) ולא הנתונים: הגרף חייב להראות דלי עם אפס
 -- פעולות, לא לדלג עליו.

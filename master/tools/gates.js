@@ -84,6 +84,8 @@ const GATES = [
   { name: "check-service-commands", what: "הכפתור \"הפעל מחדש\" — הרשאה, ריסון, וביצוע" },
   { name: "parity-exec-series", what: "executive_series מול החישוב מהשורות הגולמיות" },
   { name: "check-row-cap",     what: "אף קריאה ישירה אינה מתקרבת לתקרת 1,000 השורות" },
+  // ⚠️ הצד הישן הוא 367 קריאות site_uptime (~12 שניות של זמן מסד); ההשוואה עצמה חוזרת כארבעה מספרים.
+  { name: "check-uptime-buckets", what: "זמינות לכל הדליים בסריקה אחת — זהה ל-site_uptime דלי-דלי" },
   { name: "check-agent-identity", what: "סוכן מתוחם לאתר שלו — ואינו נחסם ב-MFA" },
   // ⚠️ noEnv: שער סטטי — קורא שלושה קבצים ואינו נוגע ברשת. הוא גם היחיד
   // שקושר את שלוש השפות: הסוכן נכנס בכתובת שהכלי או ה-Edge Function יצרו,

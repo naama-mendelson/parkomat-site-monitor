@@ -19,7 +19,13 @@ Agent (on site) ──HTTPS──→ Supabase (Postgres + pg_cron + Edge Functio
 - **Dashboard:** deployed by `git push` to `main` (Cloudflare Pages). DELL008's copy is not what people open.
 - **Edge Functions:** `invite-user`, `provision-agent`, `notify-fault`, `service-calls` (Wizenet → us),
   `wizenet` (since 15/10/2026: only hands the Wizenet token to relay PCs, see *Wizenet relay*).
-- **Database:** 153 MB of 500 MB on the free plan; the largest table is `inspection_files` (45 MB of PDFs).
+- **Database:** 181 MB (18/10/2026); the largest table is `inspection_files` (49 MB of PDFs). ⚠️ **The project is on a paid
+  plan, not the free one** (the owner, 18/10/2026; Micro compute is itself a paid add-on). The 500 MB wall and the
+  "read-only when full" failure quoted below are free-plan facts and no longer apply: the paid disk starts at 8 GB and
+  grows (billed per GB). Storage is a cost question now, not an outage. What still matters on Micro is CPU and
+  connections, not disk. Growth measured 18/10: ~1 MB/day of operations + status rows, 0.5–4 MB/day of inspector PDFs
+  while the backfill runs; `auth.sessions` and `cron.job_run_details` were the two unbounded tables and are pruned since
+  18/10 (see the two sections of that date).
 
 ## ⚠️ Decision, 17/09/2026 — `master` is being retired. Target: Supabase + dashboard only
 
@@ -570,6 +576,10 @@ than the one intended. *A gate that has never been mutated is a gate whose cover
 unknown.*
 
 ## Cost trigger worth knowing
+
+⚠️ **Written for the free tier; the project is on a paid plan since before 18/10/2026, so the 500 MB figures below
+are history.** The *shape* of the reasoning still holds (12-month retention plateaus at the high-water mark; cost is
+predictable): with 82 reporting sites the operations + status steady state is ~380 MB a year, well inside 8 GB.
 
 At the current site count (12) the Supabase free tier is a non-issue: ~1 MB of application data, and a
 12-month-retention steady state around 47–82 MB. At 200 sites the limit is reached in
@@ -1912,6 +1922,128 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
   already `no_comm`). Runs take 12–17 ms, against 52 s when throttled. ⚠️ **Micro is burstable
   too.** Throttling came back at 10:52, after the resize, under the old dashboard load, so the fixes
   above are what keep it healthy, not the size alone.
+
+## Sign-in history is not kept: `auth.sessions` is pruned to one day (18/10/2026)
+
+The owner, shown 45,229 rows in `auth.sessions`: *"למה אתה לא מוחק את ההתחברויות? למה בכלל יש טבלה שנשמרת? זה לא
+מעניין אותי בכלל מה התחבר! מצידי תשמור רק את של אותו יום"*.
+
+- **Where the rows come from.** Every password sign-in creates a session, a refresh token and an `mfa_amr_claims`
+  row; Supabase never deletes them by itself (session time-boxing exists on paid plans and was never turned on here;
+  it would also sign *people* out on a timer, which is not what was asked). The agents sign in with
+  the password every hour (`TokenPolicy`), and the `service-calls` Edge Function signs in on every request:
+  43,660 agent sessions and 1,530 intake sessions since 15/09, 36 MB across the three tables, growing ~1 MB a day. It
+  was the only growth in the database not proportional to anything useful.
+- **`app.prune_auth_sessions(interval '1 day')`** in `db/cron.postgres.sql`, job `parkomat-prune-auth-sessions` at
+  03:57 UTC: a session whose last use (`refreshed_at`, else `updated_at`/`created_at`) is older than a day is deleted
+  with its tokens and claims. The deletes are explicit even though the FKs are `ON DELETE CASCADE` — those tables are
+  `supabase_auth_admin`'s, not ours to rely on. `SECURITY DEFINER`, owner `postgres`, who has DELETE on `auth.*`.
+  ⚠️ `refreshed_at` is `timestamp` **without** time zone (UTC); it is compared through `AT TIME ZONE 'UTC'`.
+- **The cost, ordered explicitly:** a person who has not opened the dashboard for a day signs in again next time.
+  Someone with the dashboard open daily (hourly refresh) stays signed in. Agents and the Edge Function notice
+  nothing; they sign in again anyway.
+- Applied 18/10/2026 and run once by hand the same morning (the backlog); afterwards ~1,500 a day. The structural
+  fix on the agent side (refresh the token instead of a new sign-in every hour) is not built.
+- Tests: `tests/prune-auth-sessions.test.js` (PGlite; the local `auth` stub in `tests/helpers/local-pg.js` now has
+  the three tables with just the columns the function reads).
+
+**The same audit, same day — what else is stored without a reader (181 MB in all, measured column by column):**
+
+- **`cron.job_run_details` — pruned to 14 days** (`app.prune_cron_history`, job `parkomat-prune-cron-history`, 04:27 UTC;
+  `tests/prune-cron-history.test.js`). pg_cron logs every run and never deletes: 74,266 rows since 24/08, 12 MB,
+  0.27 MB a day, 1,440 of them from the minute-by-minute silence scan. No screen reads it; two gates
+  (`check-alert-gate`, `check-dashboard-truth`) read the last two hours / one day. First run by hand: 50,770 rows gone.
+- **`service_calls.headers` — 1.1 MB of the table's 3.3 MB, the single heaviest column (704 B a row), and nothing
+  reads it.** Seventeen Cloudflare/AWS routing headers per webhook (`cf-ray`, `traceparent`, `x-amzn-trace-id`…),
+  kept "in case Wizenet ever add a timestamp header"; measured on 14/10 that they send none. Candidate: stop storing
+  it in the `service-calls` Edge Function (a function deploy, not SQL). `raw` and `payload` are deliberate duplicates
+  (raw is the source of truth). The approved 30-day retention of closed calls is still **not** applied (0 rows are
+  old enough yet; the table started 05/10).
+- **PDFs are base64 text: 47 MB stored for 36 MB of documents.** `data_b64` costs 33% over `bytea`, on the largest
+  table and on every future upload (photos, PM files and signatures use the same scheme; all empty today). The wire
+  format can stay base64 (`encode(bytes, 'base64')` in `compliance_file`); the migration is the work. Also: 6 PDFs are
+  stored twice under two sites each (1226 + 1048 five times, 1232 + 1352 once) — identical `content_md5`. Whether a
+  report may belong to two sites is the owner's call; the dedup check is per machine, so it never saw them.
+- **Dead space, not growth:** the three `auth` tables keep their 36 MB after the delete (Postgres reuses, does not
+  return; `VACUUM FULL` would, with a short exclusive lock on sign-ins), `ingest_drops` holds 4.4 MB of heap for
+  ~0.5 MB of rows (the 8,905 `state_no_change` rows deleted on 12/10). WAL is 128 MB and both Realtime slots retain
+  110 kB — nothing hidden.
+- **Earns its place:** `operations` indexes are 14 MB against 7.7 MB of rows, but every one is used millions of
+  times (`ux_operations_dedup` 8.2M scans, `idx_operations_site_time` 8.3M); `events` is on its 7-day prune (oldest
+  row 11/10); `suppressed_faults` (0.6 MB) feeds the insights window; `audit_log` (1 MB) is attribution; `ff_faults`
+  (4.5 MB, 4.3 KB of handling text a row) is the FixFlow library. The ISO-text timestamps (25 B each, three per
+  operation) cost ~5 MB across the big tables — a legacy of SQLite, not worth a migration.
+
+## "שנה, יומי" on the executive page timed out, and the fix is one scan for all buckets (18/10/2026)
+
+Found by `check-row-cap` on 15/10 and left open then: `executive_series_json` with 367 daily buckets came back from
+PostgREST as `57014 canceling statement due to statement timeout` after 8 s. The gate printed it as `-1 איברים`, which
+looks like the 1,000-row cap and is not. Nobody saw the error in the UI: the year view simply never loaded.
+
+**Measured first, in production (direct and through PostgREST agree):**
+
+| | before | after |
+|---|---|---|
+| year, daily (367 buckets), one call | 13.4 s | 2.9 s |
+| month, daily (32 buckets), the page default | 3.9 s | 1.6 s |
+| `pg_stat_statements` since 07/10 | 2,030 calls, mean 4.2 s, 2.4 h of DB time | |
+
+- **Where the time was:** `site_uptime` once per bucket (`CROSS JOIN LATERAL`), 367 index scans of `status_history` at
+  18 ms each — 3.7 of 4.8 s in a 120-bucket chunk. The index `(site_id, started_at)` does not serve the predicate: the
+  selective condition is on `ended_at`, so every bucket read ~9,000 rows and filtered 8,870. Three more pieces cost
+  ~0.7 s each: matching buckets to elementary segments by comparing every bucket with every segment (134,000 text
+  comparisons under collation), twice, and the fault-to-bucket range join (367 × 1,210).
+- **`app.site_uptime_buckets(p_site_ids, p_buckets)`** (`functions.postgres.sql`, right before `executive_series`) reads
+  `status_history` **once** over the span of all buckets, attaches each segment to the buckets it overlaps through the
+  sorted bucket edges (`width_bucket` on its start and end, like the operations since the morning), and then applies
+  **exactly** `site_uptime`'s predicates and clipping per (segment × bucket): the same `LEAST(to, now)` window, the
+  same ISO-text overlap test, the same `timestamptz` clipping, the same merged maintenance windows per (bucket × site),
+  the same sums and rounding. The edge matching is only a prefilter; the original predicate decides, so a segment that
+  merely touches an edge is excluded exactly as before. It returns only the three columns `executive_series` consumes;
+  `site_uptime` stays the source for the cards and for repair/planned/excluded.
+- ⚠️ **Two things the gate caught before production did.** (1) `LEFT JOIN` to the merged windows, then
+  `LEAST(w.e, seg_end) - GREATEST(w.s, seg_start)`: with no window the join gives NULLs, and `LEAST`/`GREATEST` **ignore
+  NULLs**, so a site with no maintenance window at all got 24 hours of maintenance in every bucket. The original
+  correlated subquery never sees a non-matching window. (2) `FROM errs e, edges ed JOIN seg_bucket sb ON … e.started_at`
+  — with a comma the `ON` cannot see `e`, and PGlite **hung** on the error instead of reporting it (the test run had to
+  be killed after 5 minutes). It is `CROSS JOIN` now.
+- ⚠️ **Per-segment grouping was the second cost, not the scan.** The first correct version computed coverage per
+  (segment × bucket): 107,000 rows sorted and grouped, 2.3 s. The same arithmetic as two sums per (bucket, site, status)
+  — durations, minus intersections with the merged windows, which are disjoint — is exact (`EXTRACT(EPOCH)` is `numeric`)
+  and takes 1.7 s for the whole function. A `plpgsql` fence against inlining was measured and changed nothing.
+- **Proof, both sides:** `tests/uptime-buckets.test.js` (PGlite: segments crossing edges, open segments, a segment
+  ending exactly on an edge, excluded and reclassified rows, overlapping and cancelled windows, a two-day bucket, the
+  total bucket, a future bucket, a bucket clipped to now, an inverted bucket, a site with no history, a site filter,
+  and `executive_series` itself) and `tools/check-uptime-buckets.js` (production, read only: year daily/weekly/monthly,
+  month daily, week daily, a 5-site filter — both sides in one transaction so `now()` is identical; registered in
+  `gates.js`). Before the apply, the new `executive_series` was compared with the HEAD version on all nine columns in
+  six configurations inside a rolled-back transaction: **0 differences** (78,538 rows for year daily).
+- ⚠️ **Splitting the year into several calls was built, measured, and dropped the same day (18/10/2026).** The dashboard
+  sent the 367 buckets in calls of 120 (`chunkBuckets` / `mergeChunkedSeries`, the total bucket alone), written while the
+  SQL still took 10.9 s, as a safety margin under the 8 s timeout. Measured in production after `site_uptime_buckets`,
+  both sides in one transaction (identical numbers: 2,764 rows, 0 differences): one whole call **3.6 s**; five chunks in
+  parallel, as `Promise.all` sends them, **4.6 s** until the last one returns, the slowest chunk 4.6 s, and **7.7 s of DB
+  time** in all. Every call pays ~1 s of fixed cost (the fault fold over the whole range, `app.error_segments`), and five
+  calls contend for Micro's CPU. So the split was slower for the person, doubled the load, and brought the slowest call
+  *closer* to the timeout than the whole call. It is not in the code; the measurement is recorded here so it is not
+  rebuilt without measuring. The dashboard sends one call with all buckets, as before, and `check-row-cap` sends the same.
+- **A failed load is now visible on screen.** `ExecutiveView` showed an error only with no data at all (`error && !data`).
+  Switching from month to year keeps the month's data, so a failed year load left the month on screen with no sign — which
+  is why the timeout went unseen for days. A load that fails while data is on screen now shows a line above the header
+  (`.ex-stale-error`) saying the current selection failed and that the previous numbers are shown; `fetchRunner` clears
+  it at the start of the next load.
+- **Mutations, in an isolated copy (deleted afterwards — it carried a copy of `.env`): 8 of 14 caught.** The six
+  survivors are equivalent by construction, and that is the point of the design: the edge matching is a *prefilter* and
+  the original predicate decides, so dropping the ended_at test in `clipped`, letting a bucket take the segment that
+  starts at its own `w_to`, or removing `seg_end > seg_start` from `dur` changes nothing — the other guard still
+  holds. Likewise `w.e >= seg_start` adds a zero-length intersection, a cancelled window filtered by its expiry is
+  then dropped by `e > s`, and merging windows without the bucket partition cannot bridge two windows of one bucket
+  (any bridging window of the same site exists in that bucket too, clipped). The guards stay because they mirror
+  `site_uptime` line by line; a reader comparing the two should find the same tests in the same places.
+- **Still open, measured, not fixed:** `app.error_segments` itself is ~0.8 s for a year (an index scan per fault for the
+  `in_maintenance` check, 1,219 loops); it is the largest remaining piece.
+- ⚠️ **Deploy order: SQL first** (`apply-sql` dry run shows exactly two gaps: the new function and the body of
+  `executive_series`). The dashboard change (the error line) does not depend on the SQL.
 
 ## Sites without a controller, and maintenance lists per type (built 07/10/2026, deployed 08/10/2026)
 
