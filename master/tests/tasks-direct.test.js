@@ -66,7 +66,8 @@ test("addTask עם סוג — כל אחד משלושת הסוגים עובר כ�
 test("fetchTaskCounts: שורה בלי סוג נספרת בכפתור", async () => {
   const m = await load();
   fake([{ kind: null, site_id: 5, open: 2 }, { kind: "technical", site_id: 5, open: 1 }, { kind: null, site_id: null, open: 9 }]);
-  assert.deepEqual(await m.fetchTaskCounts(), { bySite: { 5: { open: 3 } } });
+  // מאז 18/10/2026 גם לפי סוג (לסינון "משימות" בכותרת); בלי סוג — none
+  assert.deepEqual(await m.fetchTaskCounts(), { bySite: { 5: { open: 3, byKind: { none: 2, technical: 1 } } } });
 });
 
 test("הסוגים — עותק אחד בדשבורד (utils/tasks.js), לא שני בשכבת הנתונים", async () => {

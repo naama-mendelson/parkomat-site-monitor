@@ -9,11 +9,13 @@ import { makeCompareSites } from "../../utils/sortSites";
 import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
 import { matchesMultipliersView } from "../../utils/multipliers";
+import { DEFAULT_TASKS_VIEW, matchesTasksView } from "../../utils/tasks";
 import "./OperatorView.css";
 
 function OperatorView({
   sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "",
-  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = false, searchQuery, onSiteClick,
+  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = false, tasksView = DEFAULT_TASKS_VIEW, taskCounts = null,
+  searchQuery, onSiteClick,
 }) {
   // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
   // של הלוח היה נותן ערך חדש להקשר ומרנדר מחדש את כל המנורות בכל הכרטיסים.
@@ -63,6 +65,9 @@ function OperatorView({
     // "בודק מוסמך" בכותרת — מצטלב עם המצב והסוג ("וגם"). ⚠️ אתר בלי בקר **כן** נכלל כאן:
     // בשבילו הוא קיים במערכת (בודק, תחזוקה ומשימות).
     if (!matchesComplianceView(site, complianceView)) return false;
+    // "משימות" בכותרת (18/10/2026): "כל הפתוחות" או סוג — רק אתרים עם משימה פתוחה כזו. ⚠️ כל עוד המספרים לא נטענו
+    // (taskCounts null) — לא מסננים: אחרת הלוח מתרוקן לרגע בכל טעינה, ונשאר ריק אם השאלה נכשלה.
+    if (taskCounts && !matchesTasksView(taskCounts[site.id], tasksView)) return false;
     if (searchQuery && !fuzzyMatch(`${site.site_name} ${site.code}`, searchQuery)) return false;
     return true;
   });

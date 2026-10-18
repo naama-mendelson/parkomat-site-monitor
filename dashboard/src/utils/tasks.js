@@ -113,11 +113,58 @@ export function countsBySite(rows = []) {
   const bySite = {};
   for (const r of rows || []) {
     if (r?.site_id == null) continue;
-    const s = (bySite[r.site_id] ??= { open: 0 });
-    s.open += Number(r.open) || 0;
+    const s = (bySite[r.site_id] ??= { open: 0, byKind: {} });
+    const n = Number(r.open) || 0;
+    s.open += n;
+    // לפי סוג — לסינון "משימות" שבכותרת (18/10/2026). בלי סוג — 'none' (כך task_counts מחזיר NULL).
+    const k = r.kind || "none";
+    s.byKind[k] = (s.byKind[k] || 0) + n;
   }
   return bySite;
 }
+
+// ============================================================
+// "משימות" בסינון שבכותרת (בעלת המוצר, 18/10/2026)
+// ============================================================
+// "להסתיר כשאין משימות פתוחות, ושיהיה סינון מסוג משימות — מלכתחילה שלא יוצגו", ובחרה "לפי סוג משימה". ערך אחד:
+//   "off"  — ברירת המחדל: בלי סימון משימות על הכרטיסים המכווצים (הכפתור "משימות" בכרטיס הפרוש נשאר תמיד);
+//   "all"  — הסימון מופיע באתרים שיש בהם משימה פתוחה, בלי לסנן;
+//   "open" — רק אתרים עם משימה פתוחה; ומפתח סוג (TASK_KINDS) — רק אתרים עם משימה פתוחה מהסוג הזה.
+export const TASKS_VIEW_OFF = "off";
+export const TASKS_VIEW_ALL = "all";
+export const TASKS_VIEW_OPEN = "open";
+export const DEFAULT_TASKS_VIEW = TASKS_VIEW_OFF;
+
+/** ערך שנקרא מהאחסון: מוכר — כמו שהוא; סוג שהוסר — "all" (לא לסנן את הלוח לאפס בלי הסבר); שבור — ברירת המחדל. */
+export function sanitizeTasksView(v) {
+  if (v === TASKS_VIEW_OFF || v === TASKS_VIEW_ALL || v === TASKS_VIEW_OPEN || TASK_KINDS.includes(v)) return v;
+  return typeof v === "string" && v ? TASKS_VIEW_ALL : DEFAULT_TASKS_VIEW;
+}
+
+/** האם הסינון מראה סימון משימות על הכרטיסים (כל מה שאינו "off"). */
+export const tasksPillsShown = (view) => view !== TASKS_VIEW_OFF;
+
+/** counts — tasks.bySite[site.id] (או undefined). off / all — הכול עובר. */
+export function matchesTasksView(counts, view) {
+  if (view === TASKS_VIEW_OPEN) return (counts?.open ?? 0) > 0;
+  if (TASK_KINDS.includes(view)) return (counts?.byKind?.[view] ?? 0) > 0;
+  return true;
+}
+
+/** כמה אתרים בכל שורה של הרשימה — מתוך האתרים שהלוח מראה. */
+export function tasksFilterCounts(sites = [], bySite = {}) {
+  const out = { [TASKS_VIEW_ALL]: (sites || []).length, [TASKS_VIEW_OPEN]: 0 };
+  for (const k of TASK_KINDS) out[k] = 0;
+  for (const s of sites || []) {
+    const c = bySite?.[s.id];
+    if ((c?.open ?? 0) > 0) out[TASKS_VIEW_OPEN]++;
+    for (const k of TASK_KINDS) if ((c?.byKind?.[k] ?? 0) > 0) out[k]++;
+  }
+  return out;
+}
+
+/** נספר כמסנן פעיל רק כשהוא באמת מסנן את הלוח ("open" או סוג). */
+export const tasksViewActive = (view) => (view === TASKS_VIEW_OPEN || TASK_KINDS.includes(view) ? 1 : 0);
 
 /** שורת המשנה בכותרת החלון: "2 לביצוע · 1 בתהליך", או "אין משימות פתוחות". */
 export function openSummary({ todo = [], inProgress = [] } = {}) {

@@ -2277,7 +2277,9 @@ From the field, forwarded by the owner: *"חייבת להיות אפשרות ל�
   submitted-visit view already draws them for any item. The caps stay: 6 per item, **40 per visit**, 15 MB per visit.
   ⚠️ With a photo possible on every item, a long list (two lists of ~20 items) can reach 40 photos in one visit; raising
   it is a SQL change in `pm_visit_photo_add` (and `MAX_PHOTOS_PER_VISIT` in `PmUtils.js`), not made.
-- **The item's detail line is 15px** (`.pm-item > .pm-hint`; was 13). The other `.pm-hint` texts stay 13.
+- **The item's detail line is 15px** (`.pm-item > .pm-hint`; was 13). Every other `.pm-hint` in the PM tab is **14px**
+  (was 13), the size of `.pm-muted` (the owner, the same day, comparing the start box with "היסטוריית ביקורים": *"התחתון
+  יותר גדול ונוח, ועדיף שיהיה כך"*). The start button was not made smaller; there was room.
 - Browser: `pm/harness/probe-photos-all.mjs` 16/16 (phone + desktop): both buttons on all five mock items, quiet only on
   the check items, the detail line 15px, a photo on a check item reaches the visit and leaves the item still to do.
 
@@ -2941,7 +2943,9 @@ multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards betw
   on two lines because the tile is narrow. ⚠️ An action wording ("הצג מכפילים" while hidden) was tried in between and
   read as the opposite of what the board showed (the owner: *"זה אמור להיות הפוך… וודא שהכיתוב תואם"*); the action
   lives in `aria-label` only.
-  Hidden = `active`, `aria-pressed`, and it counts as one filter in "סינון ותצוגה · N פעילים". One click toggles.
+  ~~Hidden = `active`, `aria-pressed`, and it counts as one filter~~ — **reversed the same day** (the owner: *"מכפילים
+  מוסתרים לא צריך להיות לחוץ כי זה הברירת מחדל"*): only **shown**, the non-default, is highlighted, `aria-pressed` and
+  counted in "סינון ותצוגה · N פעילים", like "בודק מוסמך" and "משימות". One click toggles.
 - **Hidden means gone from the board under every other filter** — the rule runs first in `OperatorView`'s filter. ⚠️ And
   the other tiles count what the board shows: `Header` passes `boardSites` (without multipliers when hidden) to the
   status tiles, the type box and "בודק מוסמך", so "הכל" does not read 206 over 78 cards. The multipliers tile itself
@@ -2979,6 +2983,36 @@ calls pill each carrying a 32px (44px on touch) hit area, a compact card had alm
   it and opens nothing; the expanded card's lamp and both buttons open their windows; the no-controller card's lamp and
   calls pill still open. ⚠️ Older probes that click a collapsed card's lamp or pill to open a window (`probe-calls`,
   `probe-tasks`, `run.mjs`, `probe-overdue`…) now expand the card instead; go through the expanded card.
+
+## "משימות" in the header filter, by kind; the task pill only when asked for (18/10/2026)
+
+The owner: *"להסתיר כשאין משימות פתוחות, ושיהיה סינון מסוג משימות — מלכתחילה שלא יוצגו"*, and asked how, *"לפי סוג
+משימה"*.
+
+- **A "משימות" tile** after "בודק מוסמך" (`components/TasksFilter/TasksFilter.jsx`), the same list:
+  "בלי משימות" (**default**), "כל האתרים · N", "כל הפתוחות · n", "קשרי לקוחות" / "טכני" / "מוקד" · n.
+  - Default: no task pill on any collapsed card.
+  - "כל האתרים": the pill on sites with an open task only, the board unchanged.
+  - "כל הפתוחות" or a kind: only those sites on the board.
+  - Only the filtering choices count in "סינון ותצוגה · N פעילים". Counts are over what the board shows (`boardSites`,
+    so hidden multipliers are not counted).
+  - A task with no kind counts in "כל הפתוחות" and in no kind.
+- **The pill never shows with zero open tasks.** It shows its count of all open tasks, whatever kind is chosen. The
+  expanded card's "משימות" button is always there; that is where tasks are added.
+- ⚠️ **A card without a controller keeps its tasks pill as a button, always.** It has no expanded card, so the pill is
+  its only way to its tasks.
+- ⚠️ **Until the counts load (`taskCounts` null) the board is not filtered.** Otherwise it empties on every load, and
+  stays empty if the query fails.
+- **Remembered per user per device:** `hooks/useTasksView.js`, `parkomat.tasksView:<uid>`, written only on a choice.
+  `sanitizeTasksView` handles what is read back: a removed kind becomes "all", anything broken becomes "off".
+- **Model** (pure, `utils/tasks.js`): `countsBySite` now also returns `byKind` (`none` for no kind), plus
+  `matchesTasksView`, `tasksFilterCounts`, `tasksPillsShown`, `tasksViewActive`. Tests: `tasks-ui.test.js` (+3).
+- **The dropdown is shared now:** `components/ComplianceFilters/FilterPicker.jsx` holds the keyboard, close-outside and
+  phone positioning, and `AreaPicker` is a thin wrapper over it with the same DOM. `probe-cf` passes 30/30 after the
+  move.
+- **Browser:** `e2e/probe-tasks-filter.mjs` 45/45 (1371 light and 390 dark). ⚠️ The harness `openPage` now shows the
+  multipliers by default (`multipliers: true`), because older probes expect them on the board. A probe that tests the
+  default passes `multipliers: false`. A probe that counts "N פעילים" must remember that "מוצגים" now counts.
 
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 

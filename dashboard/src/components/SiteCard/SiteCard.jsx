@@ -16,6 +16,7 @@ import FixFlowSolution from "../FixFlowLink/FixFlowSolution.jsx"; // פיילו�
 import ComplianceLights, { LampAreasContext, MiniMark } from "../Compliance/ComplianceLights";
 import { COMPLIANCE_AREAS } from "../../utils/compliance";
 import { useTasks } from "../Tasks/TasksContext";
+import { DEFAULT_TASKS_VIEW, tasksPillsShown } from "../../utils/tasks";
 import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import "../Tasks/Tasks.css";
 
@@ -642,7 +643,10 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // שנשבר לשבע שורות: "זה לא הגיוני מה קורה פה"). שורת הקצה מחזיקה שלושה פריטים — משימות, קריאות
   // והקוד — ושלושתם במילים לא נכנסים ב-180px, אז הקוד ירד לשורה משלו. אותו שיקול בדיוק שהפך את
   // גלולת הקריאות לאייקון שעות קודם. השם המלא נשאר ב-aria-label וב-title.
-  const taskPill = tasks && !isMini && (
+  // ⚠️ 18/10/2026 (בעלת המוצר: "להסתיר כשאין משימות פתוחות, ושיהיה סינון מסוג משימות — מלכתחילה שלא יוצגו"): בכרטיס
+  // המכווץ הגלולה מופיעה רק כשבסינון "משימות" שבכותרת נבחר משהו (לא "בלי משימות", ברירת המחדל), ורק כשיש משימה פתוחה.
+  // הכפתור "משימות" בכרטיס הפרוש נשאר תמיד — ממנו מוסיפים משימה. ⚠️ באתר בלי בקר — כמו קודם, תמיד: אין לו כרטיס פרוש.
+  const taskPill = tasks && !isMini && (pillsAct || (tasksPillsShown(tasks.view ?? DEFAULT_TASKS_VIEW) && openTasks > 0)) && (
     <Pill {...pillProps(openTasksDialog, tasksLabel)} className={`tk-card-btn${openTasks ? " has-open" : ""}${pillCls}`}
       title={density === "compact" ? tasksLabel : undefined}>
       {density === "compact" ? (

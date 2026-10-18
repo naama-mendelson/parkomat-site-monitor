@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   taskState, splitOpen, historySteps, historyText, openSummary, countsBySite, taskNow, shortName, kindLabel,
+  DEFAULT_TASKS_VIEW, sanitizeTasksView, tasksPillsShown, matchesTasksView, tasksFilterCounts, tasksViewActive,
   TASK_STATES, TASK_STATE_LABEL, TASK_STEP_LABEL, TASK_BADGE, TASK_KINDS, TASK_KIND_LABEL,
 } from "../../dashboard/src/utils/tasks.js";
 
@@ -86,9 +87,58 @@ test("countsBySite: כל הפתוחות של האתר על הכפתור — גם
     { kind: "technical", site_id: null, open: 9 },  // אתר שנמחק
     { kind: null, site_id: 12, open: 3 },
   ];
-  assert.deepEqual(countsBySite(rows), { 7: { open: 8 }, 11: { open: 4 }, 12: { open: 3 } });
+  assert.deepEqual(countsBySite(rows), {
+    7: { open: 8, byKind: { customer: 2, technical: 1, none: 5 } },
+    11: { open: 4, byKind: { technical: 4 } },
+    12: { open: 3, byKind: { none: 3 } },
+  });
   assert.deepEqual(countsBySite(null), {});
-  assert.deepEqual(countsBySite([{ kind: null, site_id: 1, open: "5" }]), { 1: { open: 5 } });
+  // task_counts מחזיר 'none' (מחרוזת) לבלי סוג — אותו מפתח כמו NULL
+  assert.deepEqual(countsBySite([{ kind: "none", site_id: 1, open: "5" }, { kind: null, site_id: 1, open: 1 }]),
+    { 1: { open: 6, byKind: { none: 6 } } });
+});
+
+test("סינון משימות (18/10/2026): off כברירת מחדל, all בלי לסנן, open וסוג מסננים", () => {
+  assert.equal(DEFAULT_TASKS_VIEW, "off");
+  assert.equal(tasksPillsShown("off"), false);
+  for (const v of ["all", "open", "customer", "technical", "call_center"]) assert.equal(tasksPillsShown(v), true, v);
+  const c = { open: 3, byKind: { technical: 2, none: 1 } };
+  assert.equal(matchesTasksView(undefined, "off"), true);
+  assert.equal(matchesTasksView(undefined, "all"), true);
+  assert.equal(matchesTasksView(undefined, "open"), false);
+  assert.equal(matchesTasksView({ open: 0, byKind: {} }, "open"), false);
+  assert.equal(matchesTasksView(c, "open"), true);
+  assert.equal(matchesTasksView(c, "technical"), true);
+  assert.equal(matchesTasksView(c, "customer"), false);
+  assert.equal(matchesTasksView(c, "call_center"), false);
+  // משימה בלי סוג נספרת ב"כל הפתוחות" ולא באף סוג
+  assert.equal(matchesTasksView({ open: 1, byKind: { none: 1 } }, "open"), true);
+  assert.equal(matchesTasksView({ open: 1, byKind: { none: 1 } }, "technical"), false);
+  assert.equal(tasksViewActive("off"), 0);
+  assert.equal(tasksViewActive("all"), 0);
+  assert.equal(tasksViewActive("open"), 1);
+  assert.equal(tasksViewActive("call_center"), 1);
+});
+
+test("סינון משימות: ערך מהאחסון — מוכר נשאר, סוג שהוסר → all, שבור → off", () => {
+  for (const v of ["off", "all", "open", "customer", "technical", "call_center"]) assert.equal(sanitizeTasksView(v), v);
+  assert.equal(sanitizeTasksView("installation"), "all");
+  assert.equal(sanitizeTasksView(""), "off");
+  assert.equal(sanitizeTasksView(null), "off");
+  assert.equal(sanitizeTasksView(7), "off");
+  assert.equal(sanitizeTasksView({ open: true }), "off");
+});
+
+test("סינון משימות: ספירה לכל שורה מתוך האתרים שהלוח מראה", () => {
+  const sites = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+  const bySite = {
+    1: { open: 2, byKind: { technical: 1, call_center: 1 } },
+    2: { open: 1, byKind: { none: 1 } },
+    3: { open: 0, byKind: {} },
+    9: { open: 5, byKind: { customer: 5 } },   // אתר שאינו בלוח (למשל מכפיל מוסתר) — לא נספר
+  };
+  assert.deepEqual(tasksFilterCounts(sites, bySite), { all: 4, open: 2, customer: 0, technical: 1, call_center: 1 });
+  assert.deepEqual(tasksFilterCounts([], null), { all: 0, open: 0, customer: 0, technical: 0, call_center: 0 });
 });
 
 test("shortName: בלי @parkomat.co.il (כל המשתמשים בדומיין), שם מלא — כמו שהוא", () => {

@@ -74,7 +74,9 @@
 .pm-h3 { margin: 0; font-size: 1.02em; color: var(--text-primary); }
 .pm-meta { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
 .pm-muted { font-size: 14px; color: var(--text-secondary); }
-.pm-hint { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0; }
+/* ⚠️ 14px ולא 13 (18/10/2026, מהשטח, מול "התחלת ביקור" מעל "היסטוריית ביקורים": "התחתון יותר גדול ונוח, ועדיף שיהיה
+   כך") — אותו גודל כמו .pm-muted. */
+.pm-hint { font-size: 14px; color: var(--text-secondary); line-height: 1.5; margin: 0; }
 .pm-hint--warn { color: var(--pm-amber-ink); font-weight: 600; }
 /* ⚠️ שורת הפירוט שמתחת לפריט בטופס הביקור — 15px ולא 13 (18/10/2026, מהשטח: "צריך להגדיל את הכתב בשורת הפירוט,
    הוא ממש קטן, במובייל או אפילו על צג של לפטופ"). זה מה שהטכנאי קורא כדי לדעת מה לעשות; ההיררכיה מול הכותרת

@@ -13,6 +13,8 @@ import { isInstalledApp } from "../../services/pushDirect";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
 import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
+import TasksFilter from "../TasksFilter/TasksFilter";
+import { tasksViewActive } from "../../utils/tasks";
 import { countMultipliers, isMultiplierSite } from "../../utils/multipliers";
 import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
@@ -45,6 +47,9 @@ function Header({
   onComplianceViewChange,
   showMultipliers = false,    // המכפילים (אתרים בלי בקר) מוצגים בלוח? ברירת מחדל: מוסתרים (בעלת המוצר, 18/10/2026)
   onShowMultipliersChange,
+  tasksView,
+  onTasksViewChange,
+  taskCounts = null,
   callsToday = null,          // { total, open } — קריאות ויזנט ב-24 השעות וכמה מהן פתוחות; null = התכונה כבויה
   onOpenCalls,
 }) {
@@ -199,7 +204,10 @@ function Header({
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
     complianceActiveCount(complianceView) +
-    (onShowMultipliersChange && showMultipliers !== true ? 1 : 0);
+    // ⚠️ "מוצגים" הוא מה שנספר — לא "מוסתרים", שהוא ברירת המחדל (בעלת המוצר, 18/10/2026: "מכפילים מוסתרים לא צריך
+    // להיות לחוץ כי זה הברירת מחדל"). כמו "בודק מוסמך" ו"משימות": מסומן רק מה ששונה מברירת המחדל.
+    (onShowMultipliersChange && showMultipliers === true ? 1 : 0) +
+    (onTasksViewChange ? tasksViewActive(tasksView) : 0);
 
   return (
     <header className="app-header">
@@ -339,12 +347,16 @@ function Header({
               {onComplianceViewChange && (
                 <ComplianceFilters sites={boardSites} value={complianceView} onChange={onComplianceViewChange} />
               )}
+              {/* "משימות" — אותה רשימה; מלכתחילה "בלי משימות" (בעלת המוצר, 18/10/2026: "מלכתחילה שלא יוצגו", לפי סוג) */}
+              {onTasksViewChange && (
+                <TasksFilter sites={boardSites} bySite={taskCounts} value={tasksView} onChange={onTasksViewChange} />
+              )}
               {/* "מכפילים" — מוצגים או מוסתרים (בעלת המוצר, 18/10/2026: "כפתור סינון נוסף האם המכפילים מופיעים או
                   לא"). מכפיל = אתר בלי בקר מחובר. אריח כמו אריחי המצב: המספר הגדול הוא כמה כאלה יש, והשורה
-                  מתחת — מה המצב. "מוסתרים" נספר כמסנן פעיל. הבחירה נזכרת לכל מכשיר (useShowMultipliers). */}
+                  מתחת — מה המצב. מסומן ונספר כמסנן פעיל רק "מוצגים" (ברירת המחדל היא "מוסתרים"). הבחירה נזכרת לכל מכשיר (useShowMultipliers). */}
               {onShowMultipliersChange && (
-                <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? "" : " active"}`}
-                  aria-pressed={!showMultipliers}
+                <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? " active" : ""}`}
+                  aria-pressed={showMultipliers === true}
                   aria-label={`מכפילים (אתרים בלי בקר) ${showMultipliers === true ? "מוצגים" : "מוסתרים"} — ${countMultipliers(sites)}; לחיצה ${showMultipliers === true ? "מסתירה" : "מציגה"}`}
                   onClick={() => onShowMultipliersChange(!showMultipliers)}>
                   <span className="filter-count">{countMultipliers(sites)}</span>

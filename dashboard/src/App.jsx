@@ -22,6 +22,7 @@ import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
 import { useShowMultipliers } from "./hooks/useShowMultipliers";
+import { useTasksView } from "./hooks/useTasksView";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import "./components/TrafficLight/TrafficLight.css";
 import OperatorView from "./views/OperatorView/OperatorView";
@@ -59,6 +60,8 @@ function App() {
   const [complianceView, setComplianceView] = useComplianceView(user?.id);
   // "מכפילים" מוצגים/מוסתרים בלוח (18/10/2026) — נזכר לכל מכשיר, כמו "בודק מוסמך"
   const [showMultipliers, setShowMultipliers] = useShowMultipliers(user?.id);
+  // "משימות" בכותרת (18/10/2026): ברירת המחדל "בלי משימות" — בלי סימון על הכרטיסים; נזכר לכל מכשיר ולכל משתמש
+  const [tasksView, setTasksView] = useTasksView(user?.id);
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   // הלשונית שהחלון **נפתח** עליה (מנורה בכרטיס → "בודק מוסמך"/"תחזוקה מונעת").
   // ⚠️ רק הפתיחה: המעבר בין לשוניות בתוך החלון אינו משנה אותה — אחרת מעבר
@@ -206,7 +209,7 @@ function App() {
     return () => clearInterval(id);
   }, [loadTaskCounts]);
   const tasksCtx = useDirect && taskCounts
-    ? { bySite: taskCounts.bySite, openSite: (site) => setTasksOpen({ site }) }
+    ? { bySite: taskCounts.bySite, openSite: (site) => setTasksOpen({ site }), view: tasksView }
     : null;
   // ⚠️ קריאות ויזנט — כמו המשימות: בעלייה, כל 5 דקות, ומיד בכל אירוע. כבוי (VITE_SERVICE_CALLS) — לא נטען
   // ולא מסומן. כשל משאיר את המספרים הקודמים.
@@ -511,6 +514,8 @@ function App() {
         tierFilter={tierFilter}
         complianceView={complianceView}
         showMultipliers={showMultipliers}
+        tasksView={tasksView}
+        taskCounts={taskCounts?.bySite ?? null}
         searchQuery={searchQuery}
         onSiteClick={handleSiteClick}
       />
@@ -538,6 +543,9 @@ function App() {
         onComplianceViewChange={setComplianceView}
         showMultipliers={showMultipliers}
         onShowMultipliersChange={setShowMultipliers}
+        tasksView={tasksView}
+        onTasksViewChange={useDirect ? setTasksView : undefined}
+        taskCounts={taskCounts?.bySite ?? null}
         callsToday={useDirect && SERVICE_CALLS_ENABLED ? callsToday : null}
         onOpenCalls={() => setCallsOpen({ recent: true })}
         darkMode={darkMode}
