@@ -15,6 +15,7 @@ import StatusFilters from "../StatusFilters/StatusFilters";
 import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
 import TasksFilter from "../TasksFilter/TasksFilter";
 import { tasksViewActive } from "../../utils/tasks";
+import { countSitesWithOpenCalls } from "../../utils/serviceCalls";
 import { countMultipliers, isMultiplierSite } from "../../utils/multipliers";
 import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
@@ -50,8 +51,9 @@ function Header({
   tasksView,
   onTasksViewChange,
   taskCounts = null,
-  callsToday = null,          // { total, open } — קריאות ויזנט ב-24 השעות וכמה מהן פתוחות; null = התכונה כבויה
-  onOpenCalls,
+  showOpenCalls,
+  onShowOpenCallsChange,
+  callCounts = null,
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
   // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
@@ -207,7 +209,8 @@ function Header({
     // ⚠️ "מוצגים" הוא מה שנספר — לא "מוסתרים", שהוא ברירת המחדל (בעלת המוצר, 18/10/2026: "מכפילים מוסתרים לא צריך
     // להיות לחוץ כי זה הברירת מחדל"). כמו "בודק מוסמך" ו"משימות": מסומן רק מה ששונה מברירת המחדל.
     (onShowMultipliersChange && showMultipliers === true ? 1 : 0) +
-    (onTasksViewChange ? tasksViewActive(tasksView) : 0);
+    (onTasksViewChange ? tasksViewActive(tasksView) : 0) +
+    (onShowOpenCallsChange && showOpenCalls === true ? 1 : 0);
 
   return (
     <header className="app-header">
@@ -357,32 +360,31 @@ function Header({
               {onShowMultipliersChange && (
                 <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? " active" : ""}`}
                   aria-pressed={showMultipliers === true}
-                  aria-label={`מכפילים (אתרים בלי בקר) ${showMultipliers === true ? "מוצגים" : "מוסתרים"} — ${countMultipliers(sites)}; לחיצה ${showMultipliers === true ? "מסתירה" : "מציגה"}`}
+                  aria-label={`מכפילים גלויים (אתרים בלי בקר) — ${countMultipliers(sites)}`}
                   onClick={() => onShowMultipliersChange(!showMultipliers)}>
                   <span className="filter-count">{countMultipliers(sites)}</span>
-                  {/* ⚠️ הכיתוב מתאר את **המצב**, לא את הפעולה (בעלת המוצר, 18/10/2026, אחרי גרסה שאמרה "הצג מכפילים"
-                      כשהם מוסתרים: "זה אמור להיות הפוך... וודא שהכיתוב תואם"). "מכפילים מוסתרים" כשהם מוסתרים,
-                      "מכפילים מוצגים" כשהם מוצגים — בשתי שורות, כי האריח צר. הפעולה — ב-aria-label. */}
-                  <span className="filter-label">מכפילים</span>
-                  <span className="filter-sub">{showMultipliers === true ? "מוצגים" : "מוסתרים"}</span>
+                  {/* ⚠️ מתג עם כיתוב קבוע, "מכפילים גלויים", והמצב — בהדגשה (לחוץ = גלויים). הכיתוב הוחלף ארבע פעמים ב-18/10/2026,
+                      והאחרונה היא ההחלטה: "כתוב מכפילים מוסתרים והם באמת מוסתרים — זה צריך להיות הפוך: כשהמכפילים מוסתרים יהיה
+                      כפתור שכתוב עליו מכפילים גלויים, וכשילחצו עליו יראו אותם". קודם: "הצג/הסתר מכפילים" (פעולה) ו"מכפילים
+                      מוסתרים/מוצגים" (מצב). */}
+                  <span className="filter-label">מכפילים גלויים</span>
                 </button>
               )}
-              {/* ⚠️ "קריאות היום" (בעלת המוצר, 14/10/2026, אחרי "לא רואים כלום"): הסימון על הכרטיס
-                  מראה רק קריאות **פתוחות** של אתר מוכר — 1 מתוך 22 ביום הראשון. כאן הכול. */}
-              {callsToday != null && (
-                <button type="button" className="filter-btn sc-head-btn" onClick={onOpenCalls}
-                  aria-label={`קריאות שירות מוויזנט ב-24 השעות האחרונות — ${callsToday.total}`
-                    + (callsToday.open == null ? "" : `; פתוחות עכשיו — ${callsToday.open}`)}>
-                  <span className="filter-count">{callsToday.total}</span>
-                  <span className="filter-label">קריאות היום</span>
-                  {/* ⚠️ בעלת המוצר, 15/10/2026: "שיהיה כתוב כמה פתוחות". כל הפתוחות עכשיו, בכל גיל — והרשימה
-                      שנפתחת מכאן מראה אותן (service_calls_recent). המספר הגדול נשאר "היום" בלבד, כמו שהיה.
-                      ⚠️ עד שנטען — בלי השורה: "אין פתוחות" על מספר לא ידוע הוא שקר. */}
-                  {callsToday.open != null && (
-                    <span className="sc-head-open">{callsToday.open ? `${callsToday.open} פתוחות` : "אין פתוחות"}</span>
-                  )}
+              {/* "קריאות פתוחות" (בעלת המוצר, 18/10/2026: "כשלוחצים על קריאות פתוחות רואים קריאות פתוחות, וכשלא לחוץ
+                  לא רואים כברירת מחדל"). לחוץ — רק אתרים עם קריאה פתוחה, עם הסטופר וההבהוב; לא לחוץ (ברירת המחדל) — כל
+                  האתרים, בלי סימון קריאות, לא מסומן ולא נספר כמסנן. המספר הגדול — כמה אתרים בלוח יש להם קריאה פתוחה. */}
+              {onShowOpenCallsChange && (
+                <button type="button" className={`filter-btn oc-head-btn${showOpenCalls === true ? " active" : ""}`}
+                  aria-pressed={showOpenCalls === true}
+                  aria-label={`קריאות פתוחות — ${countSitesWithOpenCalls(boardSites, callCounts ?? {})} אתרים`}
+                  onClick={() => onShowOpenCallsChange(!(showOpenCalls === true))}>
+                  <span className="filter-count">{countSitesWithOpenCalls(boardSites, callCounts ?? {})}</span>
+                  {/* כמו "מכפילים גלויים": כיתוב קבוע, והמצב בהדגשה (לחוץ = רק אתרים עם קריאה פתוחה) */}
+                  <span className="filter-label">קריאות פתוחות</span>
                 </button>
               )}
+              {/* ⚠️ כאן ישב "קריאות היום" (14/10/2026) — הוסר לבקשת בעלת המוצר, 18/10/2026 ("תעיף את זה"), כשנוסף
+                  "קריאות פתוחות". לשחזור: git show 76664a6:dashboard/src/components/Header/Header.jsx */}
             </>
           }
         />

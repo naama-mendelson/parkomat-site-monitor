@@ -132,3 +132,21 @@ test("dupInfo — שורה מאוחדת אומרת כמה; קריאה בודדת
   assert.match(d.title, /^8 קריאות זהות/);
   assert.equal(dupInfo({ dup_n: "4" }).mark, "×4", "מגיע כמחרוזת מ-jsonb");
 });
+
+test("קריאות פתוחות בכותרת (18/10/2026): לא לחוץ כברירת מחדל — הכול עובר; לחוץ — רק אתרים עם קריאה פתוחה", async () => {
+  const { DEFAULT_SHOW_OPEN_CALLS, sanitizeShowOpenCalls, matchesOpenCallsView, countSitesWithOpenCalls } = await import(U);
+  assert.equal(DEFAULT_SHOW_OPEN_CALLS, false);
+  assert.equal(matchesOpenCallsView(undefined, false), true);
+  assert.equal(matchesOpenCallsView({ open: 0, recent: 3 }, false), true);
+  assert.equal(matchesOpenCallsView(undefined, true), false);
+  assert.equal(matchesOpenCallsView({ open: 0, recent: 3 }, true), false);   // נסגרו היום — לא "פתוחה"
+  assert.equal(matchesOpenCallsView({ open: 2, recent: 2 }, true), true);
+  // רק true מפורש לוחץ — ערך שבור לא משאיר לוח מסונן
+  assert.equal(sanitizeShowOpenCalls(true), true);
+  assert.equal(sanitizeShowOpenCalls("true"), true);
+  for (const v of [false, null, 1, "yes", {}]) assert.equal(sanitizeShowOpenCalls(v), false, String(v));
+  const sites = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const bySite = { 1: { open: 2 }, 2: { open: 0, recent: 1 }, 9: { open: 4 } };   // 9 — לא בלוח
+  assert.equal(countSitesWithOpenCalls(sites, bySite), 1);
+  assert.equal(countSitesWithOpenCalls([], null), 0);
+});

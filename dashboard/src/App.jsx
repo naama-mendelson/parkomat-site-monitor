@@ -23,6 +23,7 @@ import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
 import { useShowMultipliers } from "./hooks/useShowMultipliers";
 import { useTasksView } from "./hooks/useTasksView";
+import { useShowOpenCalls } from "./hooks/useShowOpenCalls";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
 import "./components/TrafficLight/TrafficLight.css";
 import OperatorView from "./views/OperatorView/OperatorView";
@@ -62,6 +63,8 @@ function App() {
   const [showMultipliers, setShowMultipliers] = useShowMultipliers(user?.id);
   // "משימות" בכותרת (18/10/2026): ברירת המחדל "בלי משימות" — בלי סימון על הכרטיסים; נזכר לכל מכשיר ולכל משתמש
   const [tasksView, setTasksView] = useTasksView(user?.id);
+  // "קריאות פתוחות" בכותרת (18/10/2026): ברירת המחדל לא לחוץ — בלי סטופר והבהוב; לחוץ — רק אתרים עם קריאה פתוחה
+  const [showOpenCalls, setShowOpenCalls] = useShowOpenCalls(user?.id);
   const [selectedCode, setSelectedCode] = useState(null);       // אתר נבחר (לפאנל)
   // הלשונית שהחלון **נפתח** עליה (מנורה בכרטיס → "בודק מוסמך"/"תחזוקה מונעת").
   // ⚠️ רק הפתיחה: המעבר בין לשוניות בתוך החלון אינו משנה אותה — אחרת מעבר
@@ -79,7 +82,6 @@ function App() {
   const [callCounts, setCallCounts] = useState(null);
   // "קריאות היום" בכותרת: כמה בכלל, וכמה מהן פתוחות (15/10/2026: "שיהיה כתוב כמה פתוחות")
   // ⚠️ open: null עד שנטען — "אין פתוחות" על מספר שעוד לא ידוע הוא קביעה שקרית (סקירה, 15/10/2026)
-  const [callsToday, setCallsToday] = useState({ total: 0, open: null });
   const [callsOpen, setCallsOpen] = useState(null);
   const [callsRev, setCallsRev] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(null);
@@ -218,7 +220,7 @@ function App() {
   const loadCallCounts = useCallback(() => {
     if (!useDirect || !SERVICE_CALLS_ENABLED) return;
     // קריאה אחת לשניהם (18/10/2026, service_calls_board) — חצי מהבקשות, והמסד מחשב פעם אחת. כשל משאיר את הקודם.
-    fetchServiceCallBoard(24).then(({ bySite, today }) => { setCallCounts({ bySite }); setCallsToday(today); }).catch(() => {});
+    fetchServiceCallBoard(24).then(({ bySite }) => setCallCounts({ bySite })).catch(() => {});
   }, []);
   useEffect(() => {
     loadCallCounts();
@@ -231,7 +233,7 @@ function App() {
   const tasksRefresh = useMemo(() => makeCoalesced(loadTaskCounts), [loadTaskCounts]);
   useEffect(() => () => { callsRefresh.cancel(); tasksRefresh.cancel(); }, [callsRefresh, tasksRefresh]);
   const callsCtx = useDirect && SERVICE_CALLS_ENABLED && callCounts
-    ? { bySite: callCounts.bySite, openSite: (site) => setCallsOpen({ site }) }
+    ? { bySite: callCounts.bySite, openSite: (site) => setCallsOpen({ site }), show: showOpenCalls }
     : null;
 
   const scheduleComplianceRefresh = useCallback((code) => {
@@ -546,8 +548,9 @@ function App() {
         tasksView={tasksView}
         onTasksViewChange={useDirect ? setTasksView : undefined}
         taskCounts={taskCounts?.bySite ?? null}
-        callsToday={useDirect && SERVICE_CALLS_ENABLED ? callsToday : null}
-        onOpenCalls={() => setCallsOpen({ recent: true })}
+        showOpenCalls={showOpenCalls}
+        onShowOpenCallsChange={useDirect && SERVICE_CALLS_ENABLED ? setShowOpenCalls : undefined}
+        callCounts={callCounts?.bySite ?? null}
         darkMode={darkMode}
         onToggleDarkMode={toggleTheme}
         onAdmin={() => setAdminOpen(true)}

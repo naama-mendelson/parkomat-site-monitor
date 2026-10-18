@@ -10,6 +10,7 @@ import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsConte
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
 import { matchesMultipliersView } from "../../utils/multipliers";
 import { DEFAULT_TASKS_VIEW, matchesTasksView } from "../../utils/tasks";
+import { matchesOpenCallsView } from "../../utils/serviceCalls";
 import "./OperatorView.css";
 
 function OperatorView({
@@ -68,6 +69,8 @@ function OperatorView({
     // "משימות" בכותרת (18/10/2026): "כל הפתוחות" או סוג — רק אתרים עם משימה פתוחה כזו. ⚠️ כל עוד המספרים לא נטענו
     // (taskCounts null) — לא מסננים: אחרת הלוח מתרוקן לרגע בכל טעינה, ונשאר ריק אם השאלה נכשלה.
     if (taskCounts && !matchesTasksView(taskCounts[site.id], tasksView)) return false;
+    // "קריאות פתוחות" בכותרת (18/10/2026): לחוץ — רק אתרים עם קריאה פתוחה. `calls` null (כבוי / עוד לא נטען) — לא מסננים.
+    if (calls && !matchesOpenCallsView(calls.bySite[site.id], calls.show)) return false;
     if (searchQuery && !fuzzyMatch(`${site.site_name} ${site.code}`, searchQuery)) return false;
     return true;
   });
@@ -78,7 +81,9 @@ function OperatorView({
   // ⚠️ **בלי useMemo כאן, בכוונה:** השורה הזו יושבת אחרי ה-return המוקדמים של טעינה/שגיאה (33, 37),
   // והוק שם נקרא בתנאי. וממילא `filtered` הוא מערך חדש בכל רינדור, כך שאין מה לשמר.
   const ordered = [...filtered].sort(
-    makeCompareSites(calls ? (s) => calls.bySite[s.id]?.open ?? 0 : null));
+    // ⚠️ 18/10/2026: רק כש"קריאות פתוחות" לחוץ. לא לחוץ — לא רואים קריאות, אז קריאה גם לא מקדמת אתר: סדר שזז בגלל דבר
+    // שאינו על המסך נראה אקראי.
+    makeCompareSites(calls?.show ? (s) => calls.bySite[s.id]?.open ?? 0 : null));
 
   return (
     <div className="operator-view">

@@ -2946,6 +2946,11 @@ multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards betw
   ~~Hidden = `active`, `aria-pressed`, and it counts as one filter~~ — **reversed the same day** (the owner: *"מכפילים
   מוסתרים לא צריך להיות לחוץ כי זה הברירת מחדל"*): only **shown**, the non-default, is highlighted, `aria-pressed` and
   counted in "סינון ותצוגה · N פעילים", like "בודק מוסמך" and "משימות". One click toggles.
+- ⚠️ **The final wording is a fixed label, "מכפילים גלויים"** (the owner, the same evening: *"כתוב מכפילים מוסתרים והם
+  באמת מוסתרים — זה צריך להיות הפוך: כשהמכפילים מוסתרים יהיה כפתור שכתוב עליו מכפילים גלויים, וכשילחצו עליו יראו
+  אותם"*). The highlight is the state (pressed = visible), and there is no state line under it. It changed four times
+  that day: action ("הצג/הסתר מכפילים"), then state ("מכפילים מוסתרים/מוצגים"), then this. Do not reword it without
+  asking.
 - **Hidden means gone from the board under every other filter** — the rule runs first in `OperatorView`'s filter. ⚠️ And
   the other tiles count what the board shows: `Header` passes `boardSites` (without multipliers when hidden) to the
   status tiles, the type box and "בודק מוסמך", so "הכל" does not read 206 over 78 cards. The multipliers tile itself
@@ -3013,6 +3018,39 @@ The owner: *"להסתיר כשאין משימות פתוחות, ושיהיה ס�
 - **Browser:** `e2e/probe-tasks-filter.mjs` 45/45 (1371 light and 390 dark). ⚠️ The harness `openPage` now shows the
   multipliers by default (`multipliers: true`), because older probes expect them on the board. A probe that tests the
   default passes `multipliers: false`. A probe that counts "N פעילים" must remember that "מוצגים" now counts.
+
+## "קריאות פתוחות" in the header replaces "קריאות היום" (18/10/2026)
+
+The owner: *"שיתווסף סינון ליד כל הסינונים של מכפילים מוסתרים וכו' לראות קריאות פתוחות — כשלוחצים על קריאות פתוחות
+רואים קריאות פתוחות, וכשלא לחוץ לא רואים כברירת מחדל"*. Asked how, she chose *"רק אתרים עם קריאה פתוחה"*. Then, about
+"קריאות היום": *"תעיף את זה"*.
+
+- **A toggle tile "קריאות פתוחות"**, after "מכפילים גלויים", with a fixed label. The big number is how many sites on the
+  board have an open call.
+  - **Not pressed (the default):** every site is on the board. There is no stopwatch pill, no pulse (`has-open-call`), and
+    a call does not lift a site in the sort.
+  - **Pressed:** only sites with an open call are on the board, with the stopwatch and the pulse. It counts as one
+    active filter.
+  - Remembered per user per device (`hooks/useShowOpenCalls.js`, `parkomat.showOpenCalls:<uid>`).
+- ⚠️ **This reverses the 14/10 pulse decision** (*"שישימו לב אליה"*): by default nothing on the board says a site has an
+  open call. That is what was asked.
+- **The expanded card's "קריאות שירות" button stays**, stopwatch included. It is the card's way to its calls and to
+  "להיסטוריה".
+- **Plumbing:** `calls.show` rides on `ServiceCallsContext` and is read by `SiteCard` (`markOpen`) and by `OperatorView`
+  (the filter, and `makeCompareSites(null)` when not pressed). The pure rules are `matchesOpenCallsView`,
+  `countSitesWithOpenCalls` and `sanitizeShowOpenCalls` in `utils/serviceCalls.js`, tested in `service-calls-ui.test.js`.
+- **"קריאות היום" is removed** from the header (`git show 76664a6:dashboard/src/components/Header/Header.jsx` restores
+  it). ⚠️ The consequence: **calls whose project code has no site of ours are now visible nowhere**. That tile was their
+  only screen. `ServiceCallsDialog`'s `recent` mode and `service_calls_recent` stay in the code, unreachable.
+  `fetchServiceCallBoard` still returns the summary; nothing reads it.
+- **The three per-device choices share one hook now:** `hooks/useDeviceChoice.js` (multipliers, tasks and open calls;
+  same keys as before).
+- ⚠️ **A real bug found on the way:** picking a status in the calls dialog collapsed the expanded card behind it. The
+  ChoiceSelect list is a portal outside `.tk-overlay`, so `SiteGrid` read the pick as a click outside the card. It
+  stayed hidden while the dialog opened from a collapsed card. `SiteGrid` now also ignores `.cs-menu` / `.cs-backdrop`.
+- **Browser:** `e2e/probe-open-calls.mjs` 26/26. `probe-calls` 63/63 opens the dialog from the expanded card and presses
+  the tile first. `probe-relay` 24/24 dropped R6 (it used the removed tile). `probe-calls-today` is retired
+  (`.obsolete.mjs`). `probe-card-click` and `probe-shell-sort` press the tile where they need the stopwatch.
 
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 

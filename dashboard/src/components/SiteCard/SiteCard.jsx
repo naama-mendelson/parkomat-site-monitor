@@ -680,6 +680,9 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ויזנט. בעלת המוצר (14/10/2026): "אני רוצה שיהיה כזה סטופר לפני כמה זמן נפתחה הפניה".
   const oldestCall = calls?.bySite[site.id]?.oldestOpen ?? null;
   const anyCalls = openCalls > 0 || todayCalls > 0;
+  // ⚠️ 18/10/2026 (בעלת המוצר: "כשלא לחוץ לא רואים כברירת מחדל"): הסטופר על הכרטיס המכווץ וההבהוב — רק כש"קריאות
+  // פתוחות" בכותרת לחוץ. הכפתור "קריאות שירות" בכרטיס הפרוש נשאר תמיד — ממנו מגיעים להיסטוריה.
+  const markOpen = calls?.show === true && openCalls > 0;
   const callsLabel = openCalls > 0
     ? `קריאות שירות בוויזנט — ${openCalls} פתוחות, ${todayCalls} ב-24 השעות`
     : `קריאות שירות בוויזנט — ${todayCalls} ב-24 השעות, כולן סגורות`;
@@ -689,7 +692,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ובתוכה משימות 67 + קריאות 63 + הקוד 34 — לא נכנס, הגלולה יורדת שורה והכרטיס גדל ל-100px,
   // ועם הרשת גדלה איתו כל השורה. עם האייקון הכרטיס נשאר 74. השם המלא נשאר ב-aria-label,
   // והכרטיס ממילא פועם כשיש קריאה פתוחה — לא צריך מילה כדי שישימו לב.
-  const callsPill = calls && openCalls > 0 && !isMini && (
+  const callsPill = calls && markOpen && !isMini && (
     <Pill {...pillProps(openCallsDialog, callsLabel)} className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}${pillCls}`}
       title={callsLabel}>
       {density === "compact" ? (
@@ -736,7 +739,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       <LampAreasContext.Provider value={COMPLIANCE_AREAS}>
       {/* ⚠️ קריאה פתוחה — הכרטיס פועם כמו כל כרטיס (15/10/2026): עד אז הענף הזה דילג על has-open-call. מאז שאתר
           כזה עולה במיון "מיד אחרי התקלות" כשיש לו קריאה, הפעימה היא מה שאומר למה הוא שם. */}
-      <div className={`site-card density-${density} is-unmonitored${openCalls > 0 ? " has-open-call" : ""}`} data-code={site.code}
+      <div className={`site-card density-${density} is-unmonitored${markOpen ? " has-open-call" : ""}`} data-code={site.code}
            onMouseEnter={() => onHover?.(site.code)}>
         <div className="card-header">
           <span className="card-name">
@@ -769,7 +772,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   if (expanded) {
     return (
       <div
-        className={`site-card is-expanded${stuck ? " is-stuck" : ""}${openCalls > 0 ? " has-open-call" : ""}`}
+        className={`site-card is-expanded${stuck ? " is-stuck" : ""}${markOpen ? " has-open-call" : ""}`}
         data-code={site.code}
         // ============================================================
         // ⚠️ הסגירה — היא פשוט לא הייתה כאן
@@ -899,7 +902,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     <div
       // ⚠️ קריאה פתוחה בוויזנט — הכרטיס כולו מהבהב (בעלת המוצר, 14/10/2026: "אני רוצה שישימו
       // לב אליה"). הסימון לבדו קטן מדי בלוח של 78 כרטיסים.
-      className={`site-card density-${density}${stuck ? " is-stuck" : ""}${openCalls > 0 ? " has-open-call" : ""}`}
+      className={`site-card density-${density}${stuck ? " is-stuck" : ""}${markOpen ? " has-open-call" : ""}`}
       data-code={site.code}
       style={{ borderInlineStartColor: colors.dot }}
       onClick={() => onToggle(site.code)}

@@ -49,6 +49,27 @@ export function countsBySite(rows) {
 // בלי הניקוי הזה המסך הראה "0547721538<br /> &nbsp;" מתחת לטלפון עצמו.
 
 /** טקסט מוויזנט → טקסט רגיל: בלי תגיות, בלי ישויות, שורות מופרדות ב-" · " */
+// ============================================================
+// "קריאות פתוחות" בכותרת (בעלת המוצר, 18/10/2026)
+// ============================================================
+// "לראות קריאות פתוחות — כשלוחצים על קריאות פתוחות רואים קריאות פתוחות, וכשלא לחוץ לא רואים כברירת מחדל", ובחרה "רק
+// אתרים עם קריאה פתוחה". לא לחוץ (ברירת המחדל): כל האתרים, בלי סטופר, בלי הבהוב, ובלי שקריאה מקדמת אתר במיון.
+// לחוץ: רק אתרים עם קריאה פתוחה, עם הסטופר וההבהוב.
+export const DEFAULT_SHOW_OPEN_CALLS = false;
+export const sanitizeShowOpenCalls = (raw) => raw === true || raw === "true";
+
+/** counts — calls.bySite[site.id] (או undefined). לא לחוץ — הכול עובר. */
+export function matchesOpenCallsView(counts, shown) {
+  return shown !== true || (counts?.open ?? 0) > 0;
+}
+
+/** כמה אתרים (מתוך מה שהלוח מראה) יש להם קריאה פתוחה — המספר הגדול על האריח. */
+export function countSitesWithOpenCalls(sites = [], bySite = {}) {
+  let n = 0;
+  for (const s of sites || []) if ((bySite?.[s.id]?.open ?? 0) > 0) n++;
+  return n;
+}
+
 export function cleanText(s) {
   return String(s ?? "")
     .replace(/<br\s*\/?>/gi, "\n")

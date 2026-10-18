@@ -159,7 +159,9 @@ function SiteGrid({ sites, onSiteClick }) {
       if (el instanceof Element && el.closest(".site-card.is-expanded")) return;
       // חלון המשימות של האתר נפתח מהכרטיס — לחיצה בתוכו אינה "מחוץ לכרטיס": כשהוא
       // נסגר חוזרים לכרטיס הפתוח, לא לרשת שבה הכרטיס התכווץ מתחת לחלון.
-      if (el instanceof Element && el.closest(".tk-overlay")) return;
+      // ⚠️ וגם הרשימה של בורר (ChoiceSelect) שנפתח בחלון כזה: היא ברכיב portal מחוץ ל-.tk-overlay, ולכן בחירת סטטוס
+      // בחלון הקריאות קיפלה את הכרטיס שמאחוריו. התגלה 18/10/2026, כשהחלון התחיל להיפתח מהכרטיס הפרוש בלבד.
+      if (el instanceof Element && el.closest(".tk-overlay, .cs-menu, .cs-backdrop")) return;
       setPinned(false);
       setExpanded(null);
     };
