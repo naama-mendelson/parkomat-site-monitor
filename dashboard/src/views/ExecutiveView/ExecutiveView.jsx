@@ -7,6 +7,7 @@ import {
 } from "../../utils/constants";
 import { useExecutiveStats } from "../../hooks/useExecutiveStats";
 import FilterBar from "../../components/FilterBar/FilterBar";
+import { rangeLabel } from "../../components/DateRangePicker/DateRangePicker";
 import ChartTypeSwitcher from "../../components/ChartTypeSwitcher/ChartTypeSwitcher";
 import ReportView from "../../components/ReportView/ReportView";
 import Panel from "../../components/Panel/Panel";
@@ -248,7 +249,7 @@ function ExecutiveView({ dataVersion, onFirstData }) {
     {
       id: "top",
       title: "🏆 האתרים המצטיינים",
-      subtitle: "הזמינות הגבוהה ביותר",
+      subtitle: ["הזמינות הגבוהה ביותר", rangeLabel(filters)].filter(Boolean).join(" · "),
       span: 4,
       render: () => (
         <Leaderboard
@@ -265,7 +266,9 @@ function ExecutiveView({ dataVersion, onFirstData }) {
     {
       id: "worst",
       title: "⚠️ דורשים תשומת לב",
-      subtitle: "אחוז הכשל הגבוה ביותר",
+      // ⚠️ התקופה בכותרת (18/10/2026): המספרים תמיד היו של הטווח שנבחר, אבל החלונית לא אמרה איזה — ונקראה כאילו היא
+      // מתעלמת מהסינון. נמדד: "30 הימים האחרונים" בצילום של בעלת המוצר = site_stats על 30 יום, מספר במספר.
+      subtitle: ["אחוז הכשל הגבוה ביותר", rangeLabel(filters)].filter(Boolean).join(" · "),
       span: 4,
       render: () => (
         <Leaderboard

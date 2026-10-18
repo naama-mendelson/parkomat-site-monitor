@@ -38,6 +38,16 @@ const OPTIONS = [
   { key: "custom", label: "טווח מותאם…" },
 ];
 
+/**
+ * שם התקופה לכותרות (18/10/2026, מסך ההנהלה: "זה צריך להיות לפי הסינון — אם זה 30 יום, שיגיד את התקלות שהיו בשלושים
+ * הימים האחרונים"). המספרים כבר היו של התקופה; מה שחסר הוא שהחלונית תגיד איזו. טווח מותאם — "dd/mm/yyyy–dd/mm/yyyy".
+ */
+export function rangeLabel(value) {
+  if (value?.preset && value.preset !== "custom") return OPTIONS.find((o) => o.key === value.preset)?.label ?? "";
+  const il = (s) => (s ? s.split("-").reverse().join("/") : "");
+  return value?.from && value?.to ? `${il(value.from)}–${il(value.to)}` : "";
+}
+
 function DateRangePicker({ value, onChange, summary, days }) {
   const isCustom = value.preset === "custom";
   const today = iso(new Date());
