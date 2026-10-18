@@ -68,21 +68,27 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
   const awaiting = isAwaiting(insp) && !label.includes("ממתין");
   const open = insp?.openDefects ?? 0;
   const notSubmitted = area === "pm" && draftStale(compliance, nowIso);
+  // ⚠️ בלי onOpen — תצוגה בלבד (span), לא כפתור (בעלת המוצר, 18/10/2026: "אני לא רוצה שזה שלוחצים על האיקונים
+  // בכרטיסים שהם יפתחו… רק בתצוגה יותר מוגדלת, כי אחרת אין איך לפתוח את הכרטיס"). כך הכרטיס המכווץ מעביר כל
+  // לחיצה לכרטיס עצמו, ו-Chrome לא "מצמיד" נגיעה ליעד לחיץ שכן (ראו card-name-btn ב-SiteCard).
+  const Tag = onOpen ? "button" : "span";
+  const act = onOpen
+    ? { type: "button", onClick: (e) => {
+        // ⚠️ הכרטיס כולו לחיץ (פותח את חלון האתר בלשונית הסקירה). בלי עצירה
+        // הלחיצה על המנורה הייתה פותחת את הסקירה ולא את הלשונית שלה.
+        e.stopPropagation();
+        onOpen(area);
+      } }
+    : { role: "img" };
 
   return (
-    <button
-      type="button"
-      className={`cl-lamp cl-lamp--${state}${stale ? " cl-lamp--stale" : ""}`}
+    <Tag
+      {...act}
+      className={`cl-lamp cl-lamp--${state}${stale ? " cl-lamp--stale" : ""}${onOpen ? "" : " cl-static"}`}
       style={colorVars(state, area)}
       aria-label={lightAria(area, compliance, nowIso)}
       title={lightTitle(area, compliance, nowIso)}
       data-tab={area}
-      onClick={(e) => {
-        // ⚠️ הכרטיס כולו לחיץ (פותח את חלון האתר בלשונית הסקירה). בלי עצירה
-        // הלחיצה על המנורה הייתה פותחת את הסקירה ולא את הלשונית שלה.
-        e.stopPropagation();
-        onOpen?.(area);
-      }}
     >
       <span className="cl-pill">
         <AreaIcon area={area} size={12} className="cl-icon" />
@@ -97,7 +103,7 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
       {notSubmitted && <span className="cl-badge cl-badge--draft" aria-hidden="true">לא הוגש</span>}
       {showText && <span className="cl-label" aria-hidden="true">{label}</span>}
       {showText && awaiting && <span className="cl-await" aria-hidden="true">ממתין לנקי</span>}
-    </button>
+    </Tag>
   );
 }
 
@@ -105,7 +111,7 @@ function Lamp({ area, compliance, showText, nowIso, onOpen }) {
  * @param {object} props
  * @param {object|undefined} props.compliance — undefined במצב שרת → לא מצויר כלום
  * @param {"mini"|"compact"|"normal"|"expanded"} [props.density]
- * @param {(tab: "inspection"|"pm") => void} [props.onOpen]
+ * @param {(tab: "inspection"|"pm") => void} [props.onOpen] — בלעדיו המנורות לתצוגה בלבד (הכרטיס המכווץ, 18/10/2026)
  * @param {string} [props.nowIso] — לבדיקות; ברירת המחדל היא עכשיו
  */
 export default function ComplianceLights({ compliance, density = "normal", onOpen, nowIso }) {
@@ -134,20 +140,21 @@ export function MiniMark({ compliance, onOpen, nowIso }) {
   const m = markFor(compliance, useContext(LampAreasContext));
   if (!markVisible(m)) return null;
   const now = nowIso ?? new Date().toISOString();
+  // בלי onOpen — תצוגה בלבד, כמו Lamp
+  const Tag = onOpen ? "button" : "span";
+  const act = onOpen
+    ? { type: "button", onClick: (e) => { e.stopPropagation(); onOpen(m.tab); } }
+    : { role: "img" };
   return (
-    <button
-      type="button"
-      className={`cl-mini cl-mini--${m.state}${m.stale ? " cl-lamp--stale" : ""}`}
+    <Tag
+      {...act}
+      className={`cl-mini cl-mini--${m.state}${m.stale ? " cl-lamp--stale" : ""}${onOpen ? "" : " cl-static"}`}
       style={colorVars(m.state, m.tab)}
       aria-label={lightAria(m.tab, compliance, now)}
       title={lightTitle(m.tab, compliance, now)}
       data-tab={m.tab}
-      onClick={(e) => {
-        e.stopPropagation();
-        onOpen?.(m.tab);
-      }}
     >
       <span className="cl-mini-sq" aria-hidden="true">{GLYPH[m.state]}</span>
-    </button>
+    </Tag>
   );
 }

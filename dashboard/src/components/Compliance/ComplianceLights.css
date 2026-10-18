@@ -151,6 +151,12 @@
 
 .cl-lamp:hover .cl-pill { filter: brightness(1.08); }
 
+/* ⚠️ תצוגה בלבד — בכרטיס המכווץ (18/10/2026: "רק בתצוגה יותר מוגדלת"). בלי סמן יד, בלי הבהרה במעבר עכבר,
+   ובלי שטח הלחיצה המורחב: הלחיצה עוברת לכרטיס ופותחת אותו. הגודל והמרווחים לא משתנים, כדי שהכרטיס לא יזוז. */
+.cl-static { cursor: inherit; }
+.cl-static::before { content: none; }
+.cl-lamp.cl-static:hover .cl-pill { filter: none; }
+
 /* ---- תגים ---- */
 .cl-badge {
   display: inline-flex;

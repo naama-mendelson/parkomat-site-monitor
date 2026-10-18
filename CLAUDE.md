@@ -2933,7 +2933,34 @@ multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards betw
   *"הפוך בברירת מחדל הם מוסתרים"*); only a stored `true` shows. So a screen that never chose shows the 78 live sites,
   and the multipliers are one click away, remembered.
 - Not touched: the supervisor table and the executive page never showed unmonitored sites (`toSupervisorShape`).
-- ⚠️ Verified by build and unit tests only; the browser harness of earlier sessions was not available here.
+- **Browser (harness, 18/10/2026, later):** `e2e/probe-mx-tile.mjs` 38/38 at 1371 light and 390 dark: hidden by default
+  with the state text and one active filter, one click shows, "הכל" equals the cards on the board in both states,
+  remembered after reopening, another user on the same device starts hidden, hidden again stays hidden, both lines on
+  one line each, no horizontal scroll, and hidden wins over "בודק מוסמך: כל האתרים". ⚠️ Every probe that uses
+  `?shell=1` must now show the multipliers first (`.mx-head-btn`); `probe-shell-sort` does. The card pill change
+  (`bcfa96a`) is covered by `probe-calls` 62/62: no pill for closed-only calls, the expanded card's button still opens
+  them. The harness mock had no `fetchServiceCallBoard` and silently fell through to the real Supabase (aborted), so
+  no call counts loaded at all — added.
+
+## On a collapsed card the icons only show; they open things on the expanded card (18/10/2026)
+
+The owner: *"אני לא רוצה שזה שלוחצים על האיקונים בכרטיסים של האתרים שהם יפתחו, אני רוצה שרק בתצוגה יותר מוגדלת,
+כי אחרת אין איך לפתוח את הכרטיס — כל מקום שלוחצים נפתח האייקונים האלו"*. With the lamps, the tasks pill and the
+calls pill each carrying a 32px (44px on touch) hit area, a compact card had almost no spot left that expanded it.
+
+- **Collapsed card:** the lamps (`ComplianceLights` / `MiniMark` rendered **without** `onOpen`) and both pills are
+  `<span role="img">` with the same label and title, class `cl-static` / `is-static`: no `::before` hit area, no hover
+  brightening, the card's own cursor. Any click or tap on them reaches the card and expands it. Size and spacing are
+  unchanged, so no card moves. A span is not a tap target, so Chrome's touch adjustment (the 08/10 name-tap bug) has
+  nothing to snap to.
+- **Expanded card:** unchanged: the lamps, "קריאות שירות", "משימות" and "פירוט מלא" are buttons that open their windows.
+- ⚠️ **A card without a controller keeps its buttons.** It has no expanded card, so its lamps and pills are the only way
+  from it to the inspector, PM, tasks and calls (`pillsAct = site.monitored === false` in `SiteCard.jsx`).
+- The supervisor table still passes `onOpen`, so its lamps still open the site on their tab.
+- Browser: `e2e/probe-card-click.mjs` 36/36 (1371 light mouse, 390 dark touch): every icon on a collapsed card expands
+  it and opens nothing; the expanded card's lamp and both buttons open their windows; the no-controller card's lamp and
+  calls pill still open. ⚠️ Older probes that click a collapsed card's lamp or pill to open a window (`probe-calls`,
+  `probe-tasks`, `run.mjs`, `probe-overdue`…) now expand the card instead; go through the expanded card.
 
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
@@ -2965,6 +2992,10 @@ snapshots; the cumulative table since July is dominated by the pre-07/10 card lo
   `service_call*` function anon can execute and expects none — it caught the missing revoke). Applied 18/10, evening.
   Net per event per visible screen: 2 × 55 ms → 1 × 55 ms, 1.5 s after the last event of a burst, and nothing on
   hidden tabs.
+- **Measured the same day, ~50 minutes after the deploy** (same 10-minute delta): **43 s of DB time in all, against
+  ~154 s in the morning** (7% of one core). The call counts are 13 s (41 + 41 calls of the old pair from screens not
+  yet reloaded, now ~125 ms each instead of 413; 30 calls of `service_calls_board` at 99 ms), against 86 s. The top
+  of the list is now `site_globals` — 22 calls, 485 ms each, 10.7 s: the 5-minute live load of every visible screen.
 - ⚠️ Measure deltas, not the cumulative view: the top of `pg_stat_statements` today is still `site_stats` from before
   07/10. The script pattern is two snapshots of `(queryid, total_exec_time, calls)` and a subtraction; `queryid` is
   stable across the window. ⚠️ A regex in a Bash heredoc loses its backslashes here; use `[.]`, `[(]`, `[[:space:]]`.

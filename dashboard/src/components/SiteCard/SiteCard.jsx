@@ -625,13 +625,25 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const openTasks = tasks?.bySite[site.id]?.open ?? 0;
   const tasksLabel = `משימות${openTasks ? ` — ${openTasks} פתוחות` : ""}`;
   const openTasksDialog = (e) => { e.stopPropagation(); tasks.openSite(site); };
+  // ============================================================
+  // ⚠️ בכרטיס המכווץ האייקונים לתצוגה בלבד (בעלת המוצר, 18/10/2026)
+  // ============================================================
+  // "אני לא רוצה שזה שלוחצים על האיקונים בכרטיסים של האתרים שהם יפתחו, אני רוצה שרק בתצוגה יותר מוגדלת, כי
+  // אחרת אין איך לפתוח את הכרטיס — כל מקום שלוחצים נפתח האייקונים האלו". גלולות המשימות והקריאות והנורות הן
+  // span (לא כפתור), בלי שטח לחיצה מורחב, והלחיצה פותחת את הכרטיס; בכרטיס הפרוש "משימות", "קריאות שירות" והנורות
+  // הם כפתורים. ⚠️ חוץ מאתר בלי בקר: אין לו כרטיס פרוש, והאייקונים הם הדרך היחידה ממנו למשימות, לקריאות ולבודק.
+  const pillsAct = site.monitored === false;
+  const Pill = pillsAct ? "button" : "span";
+  const pillProps = (open, label) => pillsAct
+    ? { type: "button", onClick: open, "aria-label": label }
+    : { role: "img", "aria-label": label };
+  const pillCls = pillsAct ? "" : " is-static";
   // ⚠️ בצפיפות compact — אייקון במקום המילה "משימות" (בעלת המוצר, 14/10/2026, מול כרטיס פלורנטין
   // שנשבר לשבע שורות: "זה לא הגיוני מה קורה פה"). שורת הקצה מחזיקה שלושה פריטים — משימות, קריאות
   // והקוד — ושלושתם במילים לא נכנסים ב-180px, אז הקוד ירד לשורה משלו. אותו שיקול בדיוק שהפך את
   // גלולת הקריאות לאייקון שעות קודם. השם המלא נשאר ב-aria-label וב-title.
   const taskPill = tasks && !isMini && (
-    <button type="button" className={`tk-card-btn${openTasks ? " has-open" : ""}`}
-      onClick={openTasksDialog} aria-label={tasksLabel}
+    <Pill {...pillProps(openTasksDialog, tasksLabel)} className={`tk-card-btn${openTasks ? " has-open" : ""}${pillCls}`}
       title={density === "compact" ? tasksLabel : undefined}>
       {density === "compact" ? (
         <svg className="tk-ico-sm" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
@@ -639,7 +651,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         </svg>
       ) : "משימות"}
       {openTasks > 0 && <span className="tk-card-n" aria-hidden="true">{openTasks}</span>}
-    </button>
+    </Pill>
   );
   const taskButton = tasks && (
     <button type="button" className={`tk-site-btn${openTasks ? " has-open" : ""}`}
@@ -674,8 +686,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ועם הרשת גדלה איתו כל השורה. עם האייקון הכרטיס נשאר 74. השם המלא נשאר ב-aria-label,
   // והכרטיס ממילא פועם כשיש קריאה פתוחה — לא צריך מילה כדי שישימו לב.
   const callsPill = calls && openCalls > 0 && !isMini && (
-    <button type="button" className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}`}
-      onClick={openCallsDialog} aria-label={callsLabel} title={callsLabel}>
+    <Pill {...pillProps(openCallsDialog, callsLabel)} className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}${pillCls}`}
+      title={callsLabel}>
       {density === "compact" ? (
         <svg className="sc-ico" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z" />
@@ -686,7 +698,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       {openCalls > 0 && oldestCall
         ? <FaultTimer since={oldestCall} tone="call" />
         : <span className="tk-card-n" aria-hidden="true">{callsN}</span>}
-    </button>
+    </Pill>
   );
   const callsButton = calls && anyCalls && (
     <button type="button" className={`tk-site-btn sc-site-btn${openCalls > 0 ? " has-open" : ""}`}
@@ -963,7 +975,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               aria-label={stuck ? stuck.text : label}
               role="img"
             />
-            <MiniMark compliance={site.compliance} onOpen={openTab} />
+            <MiniMark compliance={site.compliance} />
           </span>
         </>
       ) : site.compliance === undefined && !codeInRow && !taskPill && !callsPill ? (
@@ -974,7 +986,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         <div className="card-status-row">
           {statusTag}
           {site.compliance !== undefined &&
-            <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
+            <ComplianceLights compliance={site.compliance} density={density} />}
           {rowEnd}
         </div>
       )}

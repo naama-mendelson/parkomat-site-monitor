@@ -458,3 +458,7 @@
 @media (pointer: coarse) {
   .tk-card-btn::before { height: 44px; }
 }
+/* ⚠️ בכרטיס המכווץ הגלולות לתצוגה בלבד (בעלת המוצר, 18/10/2026: "כל מקום שלוחצים נפתח האייקונים האלו") — בלי
+   סמן יד ובלי שטח לחיצה מורחב; הלחיצה פותחת את הכרטיס, ושם "משימות" ו"קריאות שירות" הם כפתורים. */
+.tk-card-btn.is-static { cursor: inherit; }
+.tk-card-btn.is-static::before { content: none; }
