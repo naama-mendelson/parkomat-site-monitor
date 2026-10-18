@@ -141,7 +141,15 @@ function diff(head, prod) {
     if (!p) con.push(`${l.k}: חסר בייצור`);
     else if (norm(p.def) !== norm(l.def)) con.push(`${l.k}: שונה (ייצור: ${norm(p.def) || "∅"} · קוד: ${norm(l.def) || "∅"})`);
   }
-  for (const p of prod.con ?? []) if (!HK.has(p.k)) con.push(`${p.k}: קיים רק בייצור`);
+  // ⚠️ אינדקס "רק בייצור" נספר רק כשהטבלה שלו מוכרת לקוד. טבלאות הדחיפה (push_*) חיות רק ב-
+  // supabase/migrations/20260819_push_notifications.sql, שהכלי הזה אינו מריץ — האינדקסים שלהן היו מופיעים
+  // כשבעה פערים קבועים ומכסים על פער אמיתי. טבלה שחסרה בקוד כולה היא ממצא אחר, שההרצה היבשה אינה בודקת.
+  const headTables = new Set([...HK].filter((k) => k.startsWith("idx:")).map((k) => k.split(":")[1]));
+  for (const p of prod.con ?? []) {
+    if (HK.has(p.k)) continue;
+    if (p.k.startsWith("idx:") && !headTables.has(p.k.split(":")[1])) continue;
+    con.push(`${p.k}: קיים רק בייצור`);
+  }
   return { missing, differ, pols, cron, con };
 }
 

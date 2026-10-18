@@ -2045,8 +2045,29 @@ looks like the 1,000-row cap and is not. Nobody saw the error in the UI: the yea
   then dropped by `e > s`, and merging windows without the bucket partition cannot bridge two windows of one bucket
   (any bridging window of the same site exists in that bucket too, clipped). The guards stay because they mirror
   `site_uptime` line by line; a reader comparing the two should find the same tests in the same places.
-- **Still open, measured, not fixed:** `app.error_segments` itself is ~0.8 s for a year (an index scan per fault for the
-  `in_maintenance` check, 1,219 loops); it is the largest remaining piece.
+- ~~**Still open, measured, not fixed:** `app.error_segments` itself is ~0.8 s for a year~~ **Fixed the same evening with
+  one partial index, no change to the function.** The cost was SubPlan 2: for each of 1,226 faults an index scan on
+  `idx_status_hist_site` that read ~600 rows and filtered them on `COALESCE(reclassified_to, status) = 'maintenance'`
+  (0.415 ms × 1,226, 440k buffer hits). Maintenance segments are 1,553 of 52,795 rows, so
+  `idx_status_hist_maint ON status_history(site_id, started_at) WHERE COALESCE(reclassified_to, status) = 'maintenance'`
+  (`schema.postgres.sql`) reads 18 rows per fault: measured in production inside a rolled-back transaction, 0.017 ms per
+  fault, the function 830 → 315 ms under EXPLAIN. ⚠️ The predicate must stay **word for word** the one in the function,
+  or the planner cannot prove the index covers the query and ignores it; `tests/error-segments.test.js` E4 pins both
+  texts. ⚠️ The index must be created **after** the `DO` block that adds `reclassified_to` (same reason as
+  `reported_at`): placed in the main index block it broke `db.init()` on every fresh database, and every local test with
+  it. A rewrite that pulled the maintenance segments into a CTE was measured first and gained nothing: the planner
+  inlined it back into the same per-fault SubPlan.
+- **`app.error_segments` has its own local test now** (`tests/error-segments.test.js`, E1–E4: which faults count,
+  `ended_at` exposed, both maintenance sources with inclusive boundaries, cancelled and excluded windows, reclassified
+  and open segments, another site's segment, a fault that started before `p_from` and ended inside it). Until then its
+  only coverage was `tools/parity.js` against production. 10/10 mutations caught in an isolated copy; the `>= p_from`
+  one survived until the overlapping-fault case was added, because a fault that *ends* before the window is already
+  dropped by `site_segments_collapsed` itself.
+- **The dry run now compares indexes on every `public` table**, not only `CON_TABLES` (`tools/lib/sql-shape.js`): the
+  new index did not show as a gap at all and `--apply` would have created it unannounced. Indexes that exist only in
+  production on tables the code does not know (the seven `push_*` ones from
+  `supabase/migrations/20260819_push_notifications.sql`, which `apply-sql` never runs) are skipped, so the report stays
+  readable; a table missing from the code entirely is still something the dry run does not see.
 - ⚠️ **Deploy order: SQL first** (`apply-sql` dry run shows exactly two gaps: the new function and the body of
   `executive_series`). The dashboard change (the error line) does not depend on the SQL.
 

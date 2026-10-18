@@ -67,8 +67,13 @@ const CON_SQL = `
   SELECT 'trg:' || t.relname || ':' || tg.tgname, pg_get_triggerdef(tg.oid)
     FROM t JOIN pg_trigger tg ON tg.tgrelid = t.oid AND NOT tg.tgisinternal
   UNION ALL
-  SELECT 'idx:' || t.relname || ':' || i.relname, pg_get_indexdef(i.oid)
-    FROM t JOIN pg_index x ON x.indrelid = t.oid JOIN pg_class i ON i.oid = x.indexrelid
+  -- ⚠️ אינדקסים — על **כל** טבלאות public, לא רק CON_TABLES (18/10/2026). לאינדקס יש שם קבוע גם בטבלאות
+  -- הוותיקות, ו-CREATE INDEX IF NOT EXISTS שנוסף לקובץ לא הופיע כפער: idx_status_hist_maint היה נוצר ב---apply
+  -- בלי שההרצה היבשה אמרה זאת. טבלת pg_cron ו-auth אינן כאן — זה public בלבד.
+  SELECT 'idx:' || c.relname || ':' || i.relname, pg_get_indexdef(i.oid)
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_index x ON x.indrelid = c.oid JOIN pg_class i ON i.oid = x.indexrelid
+   WHERE n.nspname = 'public' AND c.relkind = 'r'
   UNION ALL
   SELECT 'pol:' || t.relname || ':' || p.polname,
          p.polcmd::text || ' ' || coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' '
