@@ -85,7 +85,9 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   const [sitesRes, metricsRes, globalsRes, compRes, linksRes] = await Promise.all([
     supabase.from("sites").select("*"),
     withStats
-      ? supabase.from("site_card_metrics").select("site_id, computed_at, stats, prev, uptime, svc")
+      // ⚠️ "*" ולא רשימת עמודות (18/10/2026, עם repeat_faults): עמודה חדשה ברשימה, לפני שה-SQL הוחל בייצור, הייתה 400
+      // מ-PostgREST — וכל הסטטיסטיקות של הכרטיסים לא היו נטענות. "*" עובד לפני ההחלה ואחריה.
+      ? supabase.from("site_card_metrics").select("*")
       : Promise.resolve(skipped),
     supabase.rpc("site_globals", { p_site_ids: null }),
     // ⚠️ רמזורי בודק מוסמך ותחזוקה מונעת — **אינה קטלנית**, כמו site_uptime_service.
@@ -115,6 +117,8 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   const prevRes   = { data: pick("prev"),   error: null };
   const svcRes    = withStats ? { data: pick("svc"), error: null } : skipped;
   const computedAt = new Map(rows.map((r) => [r.site_id, Date.parse(r.computed_at)]));
+  // תקלה חוזרת (18/10/2026): [{text, n, last_at}] — אותה שורת תקלה מעל 3 פעמים ב-30 יום (card-metrics.postgres.sql)
+  const rfById = new Map(rows.filter((r) => r.repeat_faults).map((r) => [r.site_id, r.repeat_faults]));
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
   if (failed) {
@@ -241,6 +245,8 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // ⚠️ הקריאה לשעות השירות נכשלה — כל השדות שלמעלה הם ברירת מחדל ולא ערך.
       // useSites מחליף אותם בערך האחרון הידוע (utils/serviceMerge.js).
       serviceStale: Boolean(svcRes?.error),
+      // [{text, n, last_at}] או null — מחושב ב-cron יחד עם שאר הסטטיסטיקות, ולכן נשמר מהמסך בטעינה חיה (STATS_FIELDS)
+      repeatFaults: rfById.get(site.id) ?? null,
       // אותו כלל בדיוק כמו בשרת — siteTrend במודול המשותף.
       trend: siteTrend(
         { operations: st?.operations ?? 0, failureRate: st?.failure_rate ?? 0 },

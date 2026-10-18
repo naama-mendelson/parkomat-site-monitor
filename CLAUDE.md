@@ -3070,6 +3070,45 @@ The owner: *"אני רוצה שיהיה גם סינון לפי סוגי מעלי
 - Browser: `e2e/probe-lift-filter.mjs` 19/19, with the mock flag `?lifts=1` (2438 serapid; 1001 piston 1 + electric;
   1002 electric).
 
+## Repeated fault: the same fault text more than 3 times in 30 days at one site (18/10/2026)
+
+From the field, forwarded by the owner: *"אם ישנה שורת תקלה שחוזרת מעל 3 פעמים באותו אתר (בחודש נניח) — שיתריע לנו
+בצורה מסויימת (צבע, מסגרת או הערה, מה שתחליטו). אם אפשר להחריג למשל דלתות פתוחות או חירום — זה יהיה מעולה"*.
+
+**Measured first (production, 30 days):**
+- 32 (site, text) pairs exceed 3. The two exclusions remove 8 of them: open doors at 6 sites, and "חירום נלחץ" twice at
+  2441. That leaves about 24 pairs at about 19 sites, for example 1275 "מעלית - זמן מקסימלי להרמת גג" ×14.
+- **294 of 784 faults had no text from the controller.** They cannot be "the same fault" and are not counted.
+
+**SQL** (`card-metrics.postgres.sql`):
+- `app.fault_text_key` builds the key. All whitespace (newline and tab too) becomes one space, and a trailing ":" or
+  space is dropped, because the controller sends the same fault both with and without the colon. ⚠️ The whitespace is
+  normalised *before* the trim, because `btrim` only trims spaces.
+- `app.repeat_fault_excluded` is the one place for exclusions: `%דלתות%פתוחות%`, `%חירום%`, and an empty key.
+- `app.repeat_faults(from, to, p_min = 4)` counts the same faults as everywhere else: `app.error_segments`, flicker
+  collapsed, excluded segments dropped, and faults during maintenance left out. The text is that of the `status_history`
+  row where the segment starts.
+- The result goes into a new column, `site_card_metrics.repeat_faults` (`[{text, n, last_at}]`, highest first, NULL
+  when there is none). It is filled by the existing 10-minute cron over the last 30 days, so no screen computes it.
+
+**Dashboard:**
+- `sitesDirect` reads `site_card_metrics` with `select("*")`, no longer a column list. A new column in the list would
+  have been a 400 before the SQL was applied, and every card statistic would have failed to load.
+- `repeatFaults` is in `STATS_FIELDS`, so a live load keeps it. `site-sync.test.js` detects `rfById`.
+- **Collapsed card:** a small "↻ N" in the status row's end group (`.rf-badge`), N being the highest count. It is
+  display only, and the hover text lists every repeated fault.
+- **Expanded card:** a "תקלה חוזרת · 30 הימים האחרונים" line under the fault line (`.rf-line`), up to three texts with
+  ×n.
+- Orange tint and frame, ink `--repeat-ink` per theme, weight 700.
+
+**Tests:** `tests/repeat-faults.test.js` (6, PGlite: the key, more than 3 versus exactly 3, the exclusions, no text, the
+30-day edge, maintenance, order, what the cron stores, re-applying the file) and `card-metrics.test.js` 15/15. Browser:
+`e2e/probe-repeat.mjs` 14/14 (mock `?repeat=1`).
+
+⚠️ **Deploy order:** the dashboard is safe before the SQL (it shows nothing until the column is filled). The SQL dry run
+shows 4 gaps: the three functions and the body of `refresh_site_card_metrics`. The new column does not appear in the
+dry run, but `--apply` creates it.
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only

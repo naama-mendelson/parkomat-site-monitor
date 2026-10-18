@@ -69,6 +69,7 @@ export const STATS_FIELDS = [
   "serviceStale",
   "serviceKept",
   "trend",
+  "repeatFaults",
 ];
 
 /**

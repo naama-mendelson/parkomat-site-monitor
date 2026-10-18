@@ -44,6 +44,8 @@
      STATUS_COLORS.no_comm.text היה #cbd5e1 — גוון של הערכה הכהה בלבד — על רקע rgba(148,163,184,.14),
      כלומר ~1.3:1 על לבן. הנקודה והרקע נשארים אפור-פלדה: "לא ידוע", לא אזהרה. כהה: 8.7:1 על הרקע. */
   --status-nocomm-ink: #334155;
+  /* דיו של "תקלה חוזרת" (18/10/2026) — כתום כהה על גוון כתום בהיר; בכהה — ענבר בהיר. */
+  --repeat-ink: #b45309;
 
   --text-primary: #14213d;
   --text-secondary: #4a5670;
@@ -67,6 +69,7 @@
   --status-ready: #22c55e;
   /* הערך שהיה בתוך STATUS_COLORS — נכון לכהה, בלתי נראה בבהיר (ראו למעלה) */
   --status-nocomm-ink: #cbd5e1;
+  --repeat-ink: #fbbf24;
   --text-primary: #eef2f8;
   --text-secondary: #aab4c5;
   --text-muted: #6b7894;

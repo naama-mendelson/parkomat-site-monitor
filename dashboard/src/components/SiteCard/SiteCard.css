@@ -993,3 +993,42 @@
   border: 2px dashed var(--text-secondary);
   box-sizing: border-box;
 }
+
+/* ============================================================
+   תקלה חוזרת (18/10/2026) — אותה שורת תקלה מעל 3 פעמים ב-30 יום
+   ============================================================
+   גוון ולא מילוי, כמו שאר הסימנים בכרטיס: מסגרת כתומה מלאה, רקע כתום חלש, דיו כתום כהה (--repeat-ink, לכל ערכת
+   נושא). בכרטיס המכווץ — תצוגה בלבד (span), הפירוט בריחוף; בכרטיס הפרוש — שורה. ⚠️ לא 800 בעברית (Segoe UI). */
+.rf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 14%, transparent);
+  color: var(--repeat-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+.rf-ico { font-size: 0.85rem; }
+
+.rf-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border-inline-start: 3px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+.rf-line-head { font-weight: 700; color: var(--repeat-ink); }
+.rf-line-n { font-weight: 700; color: var(--repeat-ink); }
+.rf-line-more { color: var(--text-secondary); }

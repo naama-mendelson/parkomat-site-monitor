@@ -716,11 +716,36 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         : <span className="tk-count" aria-hidden="true">{callsN}</span>}
     </button>
   );
+  // ============================================================
+  // תקלה חוזרת (18/10/2026)
+  // ============================================================
+  // מהשטח: "אם ישנה שורת תקלה שחוזרת מעל 3 פעמים באותו אתר (בחודש נניח) — שיתריע לנו (צבע, מסגרת או הערה, מה
+  // שתחליטו)". החישוב ב-SQL (app.repeat_faults, 30 יום, בלי דלתות פתוחות וחירום), כאן רק תצוגה: בכרטיס המכווץ סימן
+  // קטן "↻ N" (N = הפעמים של החוזרת הגבוהה) עם הפירוט בריחוף; בכרטיס הפרוש — שורה עם הטקסטים.
+  const repeats = Array.isArray(site.repeatFaults) ? site.repeatFaults : [];
+  const repeatTitle = repeats.length
+    ? ["תקלה חוזרת ב-30 הימים האחרונים:", ...repeats.map((r) => `${r.text} — ${r.n} פעמים`)].join(String.fromCharCode(10))
+    : "";
+  const repeatBadge = repeats.length > 0 && !isMini && (
+    <span className="rf-badge" role="img" aria-label={repeatTitle} title={repeatTitle}>
+      <span className="rf-ico" aria-hidden="true">↻</span>{repeats[0].n}
+    </span>
+  );
+  const repeatLine = repeats.length > 0 && (
+    <div className="rf-line" role="note">
+      <span className="rf-line-head"><span aria-hidden="true">↻ </span>תקלה חוזרת · 30 הימים האחרונים</span>
+      {repeats.slice(0, 3).map((r) => (
+        <span key={r.text} className="rf-line-item">{r.text} <span className="rf-line-n">×{r.n}</span></span>
+      ))}
+      {repeats.length > 3 && <span className="rf-line-more">ועוד {repeats.length - 3}</span>}
+    </div>
+  );
+
   // ⚠️ משימות, קריאות וקוד האתר — קבוצה אחת בקצה שורת המצב. מאז 14/10/2026 שתי הגלולות הן
   // אייקונים ב-compact, ולכן השלושה נכנסים בשורה אחת; כשאין מקום (נורות הבודק, שעון תקלה ארוך)
   // הם יורדים שורה יחד, ולא הקוד לבדו מתחת לשאר.
-  const rowEnd = (callsPill || taskPill || codeInRow) && (
-    <span className="card-row-end">{callsPill}{taskPill}{codeInRow}</span>
+  const rowEnd = (repeatBadge || callsPill || taskPill || codeInRow) && (
+    <span className="card-row-end">{repeatBadge}{callsPill}{taskPill}{codeInRow}</span>
   );
 
   // ============================================================
@@ -818,6 +843,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <ComplianceLights compliance={site.compliance} density="expanded" onOpen={openTab} />
             {stuckBadge}
             {faultLine}
+            {repeatLine}
             {/* ⚠️ נקודת החיבור **היחידה** של פיילוט FixFlow לכרטיס. כל השאר יושב
                 ב-`components/FixFlowLink/` וב-`services/fixflow.js`. להסרה מלאה:
                 מחיקת שתי אלה ומחיקת שתי השורות האלה. ראה services/fixflow.js. */}
@@ -985,7 +1011,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
             <MiniMark compliance={site.compliance} />
           </span>
         </>
-      ) : site.compliance === undefined && !codeInRow && !taskPill && !callsPill ? (
+      ) : site.compliance === undefined && !codeInRow && !taskPill && !callsPill && !repeatBadge ? (
         statusTag
       ) : (
         // ⚠️ עטיפה רק כשיש רמזורים, משימות או קוד בשורה: במצב שרת (compliance === undefined,

@@ -87,7 +87,7 @@ const withStats = (over = {}) => ({
   avgRepairMinutes: 12, medianRepairMinutes: 3, longRepairCount: 1, longRepairPercent: 20,
   quickRepairCount: 3, mediumRepairCount: 1, repairSeries: [1, 2, 3], uptime: 97.5,
   serviceAgreement: "vip", servicePlan: "vip", serviceHours: 100, serviceStale: false, serviceKept: undefined,
-  trend: { direction: "up" }, ...over,
+  trend: { direction: "up" }, repeatFaults: [{ text: "מעלית - זמן מקסימלי להרמת גג", n: 4 }], ...over,
 });
 const live = (over = {}) => ({
   id: 7, code: "2438", site_name: "מגדל 1", status: "error", statsSkipped: true, statsAt: null,
@@ -95,7 +95,7 @@ const live = (over = {}) => ({
   avgRepairMinutes: null, medianRepairMinutes: null, longRepairCount: null, longRepairPercent: null,
   quickRepairCount: null, mediumRepairCount: null, repairSeries: null, uptime: null,
   serviceAgreement: null, servicePlan: null, serviceHours: null, serviceStale: false,
-  trend: null, ...over,
+  trend: null, repeatFaults: null, ...over,
 });
 
 test("⚠️ טעינה חיה שומרת את כל שדות הסטטיסטיקה מהמסך — והחי מתעדכן", () => {
@@ -138,7 +138,7 @@ test("⚠️ כל שדה ש-sitesDirect גוזר מהסטטיסטיקות נמצ
     if (cur && /^\s{7,}\S/.test(line)) exprs.set(cur, exprs.get(cur) + " " + line);
   }
   const derived = [...exprs].filter(([f, e]) =>
-    f !== "statsSkipped" && /\b(st|up|svc|svcRes|prevById|statsAt)\b/.test(e.replace(/\/\/.*$/gm, ""))
+    f !== "statsSkipped" && /\b(st|up|svc|svcRes|prevById|statsAt|rfById)\b/.test(e.replace(/\/\/.*$/gm, ""))
   ).map(([f]) => f);
   assert.ok(derived.length >= 15, `נמצאו רק ${derived.length} שדות — הסריקה עצמה שבורה`);
   for (const f of derived) assert.ok(STATS_FIELDS.includes(f), `${f} נגזר מהסטטיסטיקות ואינו ב-STATS_FIELDS`);
