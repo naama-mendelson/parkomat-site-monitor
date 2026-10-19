@@ -55,10 +55,20 @@ function fake(over = {}) {
     site_globals: [{ site_id: 1, last_fault_at: null }, { site_id: 2, last_fault_at: null }],
     site_compliance: [],
     site_service_links: [{ site_id: 1, agreement: "vip", plan: "vip" }],
+    maintenance_windows: [],
     ...over,
   };
   globalThis.__fake = {
-    from(t) { return { select(cols) { calls.push(`from:${t}`); return Promise.resolve(data[t] instanceof Error ? { data: null, error: data[t] } : { data: data[t], error: null }); } }; },
+    // ⚠️ 19/10/2026: שאילתה עם מסננים (is / gt — חלונות התחזוקה העתידיים). הפילטרים נרשמים ב-calls ולא מיושמים: הנתונים
+    // המדומים כבר הם מה ש"המסד" מחזיר.
+    from(t) {
+      return { select(cols) {
+        calls.push(`from:${t}`);
+        const res = Promise.resolve(data[t] instanceof Error ? { data: null, error: data[t] } : { data: data[t], error: null });
+        const q = { then: (a, b) => res.then(a, b), is(c, v) { calls.push(`is:${t}.${c}=${v}`); return q; }, gt(c, v) { calls.push(`gt:${t}.${c}`); return q; } };
+        return q;
+      } };
+    },
     rpc(fn) { calls.push(`rpc:${fn}`); return Promise.resolve(data[fn] instanceof Error ? { data: null, error: data[fn] } : { data: data[fn] ?? [], error: null }); },
   };
   return calls;
@@ -68,7 +78,8 @@ test("⚠️ טעינה עם סטטיסטיקות — טבלה אחת, ואף א
   const { fetchSitesDirect } = await load();
   const calls = fake();
   await fetchSitesDirect("x", "y", "z", { withStats: true, withCompliance: true });
-  assert.deepEqual(calls.sort(), ["from:site_card_metrics", "from:sites", "rpc:site_compliance", "rpc:site_globals", "rpc:site_service_links"]);
+  assert.deepEqual(calls.sort(), ["from:maintenance_windows", "from:site_card_metrics", "from:sites", "gt:maintenance_windows.started_at",
+    "is:maintenance_windows.cancelled_at=null", "rpc:site_compliance", "rpc:site_globals", "rpc:site_service_links"]);
   for (const fn of ["site_stats", "site_uptime", "site_uptime_service"]) {
     assert.ok(!calls.includes(`rpc:${fn}`), `${fn} נקראה מהמסך`);
   }
@@ -152,4 +163,24 @@ test("⚠️ כשל בקריאת החיבורים — הרשימה נטענת, �
   const [a] = await fetchSitesDirect("x", "y", "z", { withStats: false });
   assert.equal(a.tierStale, true);
   assert.equal(a.tier, "basic", "בלי ערך ידוע — sites.tier, ו-keepLastTier מחליף בקודם");
+});
+
+// ⚠️ הסקירה של 19/10/2026: אין טעינה חיה מטיימר, ותחילת חלון תחזוקה שתוזמן מראש אינה משנה את sites.status — הכרטיס צריך
+// לדעת מתי הוא מתחיל (statusesMatch מבקש טעינה ברגע הזה). המוקדם מבין העתידיים; כשל בשאילתה — בלי רמז, לא כשל טעינה.
+test("חלון תחזוקה מתוזמן — maintenanceNextStart הוא המוקדם מבין העתידיים שלא בוטלו", async () => {
+  const mod = await load();
+  const calls = fake({ maintenance_windows: [
+    { site_id: 2, started_at: "2030-01-02T08:00:00.000Z" },
+    { site_id: 2, started_at: "2030-01-01T08:00:00.000Z" },
+  ] });
+  const sites = await mod.fetchSitesDirect("x", "y", "z", { withStats: false });
+  const by = Object.fromEntries(sites.map((x) => [x.code, x]));
+  assert.equal(by["1343"].maintenanceNextStart, "2030-01-01T08:00:00.000Z");
+  assert.equal(by["2438"].maintenanceNextStart, null);
+  assert.ok(calls.includes("is:maintenance_windows.cancelled_at=null"), "רק חלונות שלא בוטלו");
+  assert.ok(calls.includes("gt:maintenance_windows.started_at"), "רק חלונות שעוד לא התחילו");
+  fake({ maintenance_windows: new Error("boom") });
+  const again = await mod.fetchSitesDirect("x", "y", "z", { withStats: false });
+  assert.equal(again.length, 2, "כשל בחלונות אינו מפיל את הטעינה");
+  assert.ok(again.every((x) => x.maintenanceNextStart === null));
 });

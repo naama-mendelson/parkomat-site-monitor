@@ -138,6 +138,10 @@ export function statusesMatch(sites, fresh, now = Date.now()) {
       if (Number.isFinite(until) && until <= now) return false;
       continue;
     }
+    // ⚠️ ותחילת חלון שתוזמן מראש (maintenanceNextStart, הסקירה של 19/10/2026): היא אינה משנה את sites.status ואינה שולחת
+    // אירוע ברגע ההתחלה — בלי זה הכרטיס לא היה עובר ל"בתחזוקה" עד טעינה מלאה מסיבה אחרת.
+    const next = s.maintenanceNextStart ? Date.parse(s.maintenanceNextStart) : NaN;
+    if (Number.isFinite(next) && next <= now) return false;
     if (s.status !== f.status) return false;
   }
   return true;

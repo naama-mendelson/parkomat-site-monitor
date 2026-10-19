@@ -2962,7 +2962,9 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
 - `boardSites` in `Header` = the chosen kind, so every other tile counts what the board shows.
 - ⚠️ **Consequences, stated plainly:** the 15/10 sort rule that put an unmonitored site with an open call right after
   the faults (`sortSites` rank 0.5) still exists but can no longer meet a robotic card on one board; `probe-shell-sort`
-  is retired. An unmonitored site's open call shows only on the multipliers board.
+  is retired. An unmonitored site's open call shows only on the multipliers board. ⚠️ **Since the evening of 19/10 both
+  are no longer true:** "קריאות פתוחות" pressed shows both kinds (see *The header in three groups* below), and there the
+  rank-0.5 rule meets robotic cards again.
 - **"תקלות חוזרות"** (`rf-head-btn`, after "קריאות פתוחות"): a toggle like "קריאות פתוחות" — pressed → only sites
   with the ↻ mark (`site.repeatFaults` a non-empty array, the same condition as the card badge); the big number is how
   many sites on the board have it; default off; remembered (`hooks/useShowRepeat.js`, `parkomat.showRepeatFaults:<uid>`);
@@ -3360,6 +3362,100 @@ grid appears. Reproduced and pinned by `e2e/probe-expand-square.mjs` (7: full fr
 remembered filter at load; emptied, refilled and resized; **back to an empty board, then released** — the one that
 failed: no inline placement, 1,552px wide). Not caused by that day's changes; the new filters only make an empty board
 more frequent.
+
+## The header in three groups; "קריאות פתוחות" on its own and across both kinds (19/10/2026, evening)
+
+Four requests from the owner the same evening, in order:
+
+1. *"אני רוצה מלבנים שמכל אחד מהם נובע כמה דברים — מצבים (הכל, מוכן, בפעולה, בתקלה, בתחזוקה, אין תקשורת), מידע (סוג,
+   מעליות, סוג שירות), תוספים (בודק מוסמך, תחזוקה מונעת, קריאות)… ושני ריבועים, מכפילים ורובוטיים, שעליהם מתבצעים בעצם
+   הריבועים"*. Her answers: "משימות" and "תקלות חוזרות" go in "תוספים", and "מערכת" goes in "מידע".
+2. On the native `<select>` list of the type filter: *"תעצב את זה יותר מודרני ויפה"*, and *"כל הסוגים, כל המערכות, כל
+   הרמות, כל המעליות — תעשה כמו שעושים עם המצבים"*.
+3. *"קריאות פתוחות שים אותם בתור סינון נפרד, ושלוחצים על זה זה שם את הקריאות הפתוחות גם של המכפילים וגם של הרובוטיים"*.
+4. *"תקלות חוזרות — מיין לפי המתקן עם המספר תקלות חוזרות הגבוה ביותר"*. In between she flagged the stopwatch: *"זה נראה
+   כאילו כתוב 21 ימים ו-3 שעות, וזה הפוך"*.
+
+**The row** is now: "רובוטיים", "מכפילים", "קריאות פתוחות", then three groups (`components/FilterGroup/`): **מצבים**
+(`StatusFilters`), **מידע** (type, system, service tier, lift), **תוספים** (inspector, PM, tasks, repeat faults). It used to
+be one row of 14 tiles.
+- A closed group shows its name, ▾, and what is active under it: "הכל" / "בתקלה + בתחזוקה" / "N מצבים", "מסנן אחד",
+  "כבויים" / "N פעילים". It is highlighted when something in it differs from the default.
+- Over "מכפילים" the statuses group reads "לא חל על מכפילים" and is not counted.
+- The panel stays open while choosing (several statuses can be picked). It closes on its rectangle, on an outside click,
+  or on Esc. A list that opens inside it is part of it: its Esc closes only the list.
+- ⚠️ The panel content is always rendered and `hidden` when closed, so the filters keep their state. Tab therefore skips
+  the tiles of a closed group.
+- ⚠️ **No height cap and no scrolling on the panel.** The tiles' own lists (`FilterPicker`) float over it, and in a
+  scrolling panel they were clipped inside it.
+- Up to 1240px the header is folded into "סינון ותצוגה", and a group opens in place, full width. The closed header is
+  165px at 1371px (it was 212).
+
+**"מידע" is four tiles like the statuses** (`SiteFilterTile`, rewritten). Each is a `filter-btn` with a big count and
+the current choice ("כל הסוגים" / "כל המערכות" / "כל הרמות" / "כל המעליות", ▾). A chosen tile is highlighted and shows
+the choice, its count, and the dimension underneath.
+- Each opens the same styled list as "בודק מוסמך" and "משימות" (`FilterPicker`: ✓, counts, arrows/Enter/Esc).
+- In the type list a family row is bold and its models are indented under it (`info-family` / `info-sub`).
+- The options, counts and rules are exactly those of the old `<select>`: a family is a selectable row; "לא הוגדר" appears
+  only when such sites exist or it is chosen; a non-tier service state appears only when it has sites or is chosen.
+  `matchesSiteFilters`, `NO_TYPE` and `NO_SYSTEM` are unchanged.
+- The old `.site-filter-tile` / `.sft-select` styles are gone.
+
+**"קריאות פתוחות" is a tile of its own, and pressed it brings both kinds.**
+- `matchesBoardKind(site, kind, openCalls)` in `utils/multipliers.js`: pressed (only `=== true`), any kind passes;
+  otherwise it is exactly `matchesSiteKind`. The board then shows every site with an open call, robotic and multipliers
+  together, with the stopwatch and the aging colour.
+- While it is pressed, neither kind tile is highlighted, and "מכפילים" is not counted in "N פעילים". Pressing a kind
+  tile leaves "קריאות פתוחות" and shows that kind. Its number counts sites with an open call of both kinds. `boardSites`
+  in `Header` is both kinds in this mode, so the other tiles count what the board shows.
+- With statuses selected, the status filter applies to the robotic sites only. A multiplier with an open call passes,
+  because it has no status.
+
+**"תקלות חוזרות" pressed sorts by the number on ↻, highest first.**
+- `repeatTop(site)` is the maximum `n` (not `[0]`), and `compareByRepeat(then)` in `utils/repeatFaults.js`.
+- A tie keeps the board's usual order. Released, the usual order is back. It also applies with "קריאות פתוחות" pressed.
+
+**The stopwatch reads in the right order.** `.fault-timer` is `direction: ltr` (for "12:22"), and that put the days number
+of "3 ימים 21 שע׳" at the far left, so it read as "21 days 3 hours". The text is now an inner span with `dir="auto"`:
+with a Hebrew word it is RTL, and "12:22" still inherits LTR. The pulsing dot does not move. This applies everywhere the
+timer appears (the card pill, the expanded card's button, the calls dialog).
+
+**Fixes from the independent code review of the morning's work** (all in this change):
+- **A recovery is deferred, not dropped.** `pendingRecover` in `App.jsx`. A recovery (tab return, Realtime reconnect)
+  that came less than 5 minutes after the last full load used to be thrown away. A cancelled maintenance window, whose
+  event was lost while disconnected, does not change `sites.status`, so the card stayed "בתחזוקה" until the original end.
+  Now it is remembered, also while hidden or while a check runs, and the minute timer performs it when due. Every full
+  load clears it.
+- **The tab-return listener is registered once** (`enterPageRef`). Depending on `enterPage`, it was re-registered after
+  a role switch, *after* `useSSE`'s, so the recovery ran first and `enterPage` loaded again: two loads per return.
+- **A stuck cheap check no longer blocks all later checks.** A network drop with no timeout left `checking` set
+  forever; after 30 s it is ignored (`checkingSince`).
+- **A maintenance window scheduled ahead now starts on the card.** Its start changes neither `sites.status` nor sends
+  an event, and the timed load that used to catch it is gone. `sitesDirect` reads the uncancelled future windows
+  (`maintenance_windows`, `cancelled_at IS NULL`, `started_at > now`; ISO text with "T", like `toISOString`) and carries
+  the earliest as `maintenanceNextStart`. `statusesMatch` asks for a full load once it has passed. A failed read means
+  no hint, not a failed load.
+- **The dark-red card (level 4) in the dark theme:** the lamp, no-comm and repeat-badge inks are re-set on the card
+  (`.call-age-4` in `SiteCard.css`). The theme's dark-mode values were tuned for a dark navy card and fell under 4.5:1
+  on #7f1d1d.
+- **The status filter does not apply on the multipliers board.** A multiplier has no status, and a leftover "בתקלה"
+  emptied the board.
+- Checked and left: every service kind in production (vip / ext / basic / none) is one the aging recognises.
+
+**Tests:**
+- Unit tests: `multipliers-view.test.js` 7 (`matchesBoardKind`, `repeatTop` / `compareByRepeat`), `site-sync.test.js`
+  (window start, the timer structure with `pendingRecover`, `enterPageRef`), `sites-direct-cache.test.js` 9. The fake
+  client now supports `.is()` / `.gt()`, and the next-start test includes a failed read. Full suite 1221/1221.
+- Browser probes, new: `probe-repeat-sort` 10 (mock `?repeat=sort`), `probe-timer-bidi` 10 (the visual order of the
+  tokens; T4 puts `ltr` back on the text and the same check fails), `probe-open-calls` O5 (47 in all).
+- Browser probes, rewritten for the groups and tiles: `probe-lift-filter` 23, `probe-tile` 12, `probe-unlinked` 19,
+  `probe-cf` 30, `probe-keyboard-tiles` 14 (Tab: two kind tiles, the calls tile and three groups, nothing inside a
+  closed group; Enter opens "תוספים" and Tab enters it), `probe-call-age` 26 (9001 on the same board when pressed).
+- Batch of 24 probes, all green.
+- ⚠️ **Harness:** `lib.mjs` has `infoOptions(page, kind)` (the list in the old `<select>` shape, `{v, t: "label (n)"}`),
+  `pickInfo`, `infoValue` and `infoActive`, with kind = type | system | tier | lift. `openGroup(page, "fg-info")` is
+  built in. `probe-prod`, `probe-stale` and `probe-svc` still read the old `<select>`. They sign in to production and
+  were not ported.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

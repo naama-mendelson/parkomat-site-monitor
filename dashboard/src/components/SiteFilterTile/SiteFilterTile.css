@@ -1,87 +1,26 @@
-/* components/SiteFilterTile/SiteFilterTile.css — ריבוע הסינון בשורת המצבים.
+/* components/SiteFilterTile/SiteFilterTile.css — ארבעת אריחי "מידע": סוג, מערכת, סוג שירות, מעלית.
  *
- * ⚠️ בונה על .filter-btn של StatusFilters במכוון: אותו גובה, אותו רדיוס,
- * אותה מסגרת פעילה. ריבוע שנראה אחרת בשורה אחידה קורא כמו רכיב זר, ולא
- * כמו עוד אפשרות באותו סרגל. */
+ * ⚠️ 19/10/2026: עד אז ריבוע אחד עם ארבעה <select>, שהרשימה שלהם מצוירת בידי מערכת ההפעלה (לבנה-כחולה, בלי עיצוב).
+ * בעלת המוצר: "תעצב את זה יותר מודרני ויפה" ו"תעשה כמו שעושים עם המצבים". עכשיו כל ממד הוא אריח .filter-btn (אותו
+ * גובה, רדיוס ומסגרת פעילה כמו המצבים) שנפתח לרשימה של FilterPicker — זו של "בודק מוסמך" ו"משימות".
+ * כאן רק מה שנוסף לאריח ולרשימה. */
 
-.site-filter-tile {
-  flex-direction: column;
+.cf-picker > .info-tile {
+  flex: 1;
   justify-content: center;
-  gap: 4px;
-  padding: 6px 10px;
-  min-width: 124px;
-  cursor: default;
-}
-
-/* ⚠️ מבטלים את ריחוף .filter-btn: הריבוע אינו נלחץ, והבהוב מסגרת עליו
-   מבטיח פעולה שלא קיימת. */
-.site-filter-tile:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: transparent;
-}
-
-.site-filter-tile.active,
-.site-filter-tile.active:hover {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: #ffffff;
-}
-
-.sft-select {
-  width: 100%;
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 3px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(0, 0, 0, 0.22);
-  color: #ffffff;
+  min-width: 92px;
   cursor: pointer;
 }
 
-.sft-select:focus {
-  outline: 2px solid rgba(255, 255, 255, 0.7);
-  outline-offset: 1px;
+/* ⚠️ כלל "שתי מילים בשתי שורות" של שורת הכותרת (StatusFilters.css, 641–1600px) לא חל כאן: האריחים יושבים בלוח הנפתח
+   של "מידע" ולא בשורה, ו"כל המערכות" בשתי שורות היה נקרא כשני דברים. */
+.info-tile .filter-label {
+  max-width: none;
+  white-space: nowrap;
 }
 
-/* ⚠️ הרשימה הנפתחת מצוירת בידי מערכת ההפעלה ויורשת את צבע הרקע הכהה של
-   ה-select. בלי הצבעים המפורשים כאן, טקסט לבן על רקע לבן במערכות מסוימות. */
-.sft-select option {
-  background: #1e3a8a;
-  color: #ffffff;
-}
-
-/* ==========================================================
-   שורת המשפחה — נראית ככותרת, ומתנהגת כאפשרות
-   ==========================================================
-   ⚠️ היא **חייבת** להיראות אחרת מהדגמים שתחתיה, אחרת "XY" ו-"X" נקראות
-   כשתי אפשרויות שוות ואיש לא מבין שהראשונה מכילה את השנייה.
-
-   ⚠️ ו-<option> אינו ניתן לעיצוב מלא: הרשימה הנפתחת מצוירת בידי מערכת
-   ההפעלה. רקע וצבע טקסט עוברים ב-Chrome/Edge על Windows — וזה מה שיש כאן.
-   מה שלא ניתן להשיג בעיצוב (הזחת הדגמים) נעשה ברווחים בתוך הטקסט. */
-.sft-select option.sft-group-row {
-  background: #dbe3f5;
-  color: #10225c;
-  font-weight: 700; /* ⚠️ לא 800: שמות קבוצה בעברית, ועברית ב-800 נופלת לגופן אחר */
-}
-
-/* ⚠️ ארבעה בוררים (מאז "סוג מעלית", 18/10/2026). בעמודה רגילה הריבוע גבה מ-120 ל-149px וכל אריחי השורה נמתחו איתו; ברשת
-   2×2 הוא התרחב, ושני אריחים ירדו לשורה שנייה ב-1371px. לכן עמודה צפופה יותר — **רק עם עכבר**: במגע הבוררים נשארים
-   בגודלם, כי בורר של 20px הוא מטרה שאצבע מפספסת (ובטלפון הסינון ממילא בתוך "סינון ותצוגה" הנפתח). */
-@media (pointer: fine) {
-  .site-filter-tile--four { gap: 2px; padding-block: 4px; }
-  .site-filter-tile--four .sft-select { padding-block: 1px; }
-}
-
-.sft-caption {
-  font-size: 0.62rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.55);
-  letter-spacing: 0.02em;
-}
-
-@media (max-width: 640px) {
-  .site-filter-tile {
-    min-width: 108px;
-  }
-}
+/* ברשימה: שורת משפחה ("XY", "מצבט") מודגשת, והדגמים שלה מוזחים תחתיה.
+   ⚠️ היא חייבת להיראות אחרת מהדגמים, אחרת "XY" ו-"X" נקראות כשתי אפשרויות שוות ואיש לא מבין שהראשונה מכילה את השנייה.
+   ⚠️ 700 ולא 800: עברית ב-800 נופלת לגופן אחר (hebrew-weight.test.js). */
+.cf-item.info-family .cf-item-label { font-weight: 700; }
+.cf-item.info-sub .cf-item-label { padding-inline-start: 14px; font-weight: 500; }

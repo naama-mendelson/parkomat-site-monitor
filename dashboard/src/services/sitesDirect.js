@@ -82,7 +82,7 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   //
   // ⚠️ **ובלי נפילה לחישוב חי.** טבלה ריקה (ה-cron לא רץ) תציג "0 פעולות", וזה
   // בכוונה: נפילה שקטה לחישוב במסך היא בדיוק מה שהיה מחזיר את העומס בלי שאיש ידע.
-  const [sitesRes, metricsRes, globalsRes, compRes, linksRes] = await Promise.all([
+  const [sitesRes, metricsRes, globalsRes, compRes, linksRes, upcomingRes] = await Promise.all([
     supabase.from("sites").select("*"),
     withStats
       // ⚠️ "*" ולא רשימת עמודות (18/10/2026, עם repeat_faults): עמודה חדשה ברשימה, לפני שה-SQL הוחל בייצור, הייתה 400
@@ -106,6 +106,10 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     // ו-App טוען מחדש על אירוע 'service_link' שהלוח שולח (traffic-light.postgres.sql).
     // ⚠️ אינה קטלנית: כשל משאיר את הדרגה האחרונה הידועה (keepLastTier ב-utils/serviceMerge).
     supabase.rpc("site_service_links"),
+    // ⚠️ חלונות תחזוקה מתוזמנים שעוד לא התחילו (19/10/2026, הסקירה): אין טעינה חיה מטיימר, ותחילת חלון אינה משנה את
+    // sites.status — בלי השעה הזו הכרטיס לא היה עובר ל"בתחזוקה" בתחילת חלון שתוזמן מראש. statusesMatch מבקש טעינה כשהיא
+    // מגיעה. אינה קטלנית: כשל — בלי רמז, כמו קודם.
+    supabase.from("maintenance_windows").select("site_id, started_at").is("cancelled_at", null).gt("started_at", new Date().toISOString()),
   ]);
 
   // השורות השמורות → אותם ארבעה "תשובות RPC" שהמיפוי למטה קרא תמיד. svc קיים רק
@@ -119,6 +123,12 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
   const computedAt = new Map(rows.map((r) => [r.site_id, Date.parse(r.computed_at)]));
   // תקלה חוזרת (18/10/2026): [{text, n, last_at}] — אותה שורת תקלה מעל 3 פעמים ב-30 יום (card-metrics.postgres.sql)
   const rfById = new Map(rows.filter((r) => r.repeat_faults).map((r) => [r.site_id, r.repeat_faults]));
+  // התחלת חלון התחזוקה המתוזמן הקרוב לכל אתר (המוקדם מבין העתידיים)
+  const nextStartById = new Map();
+  for (const w of (upcomingRes && !upcomingRes.error && upcomingRes.data) || []) {
+    const cur = nextStartById.get(w.site_id);
+    if (!cur || String(w.started_at) < String(cur)) nextStartById.set(w.site_id, w.started_at);
+  }
 
   const failed = sitesRes.error || statsRes.error || uptimeRes.error || globalsRes.error;
   if (failed) {
@@ -183,6 +193,7 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       // ⚠️ מתי חלון התחזוקה נגמר (19/10/2026). אין טעינה חיה מטיימר יותר, והבדיקה הזולה של כל דקה (statusesMatch)
       // אינה משווה אתר בחלון תחזוקה — כך היא יודעת שהחלון נגמר מעצמו ומבקשת טעינה מלאה באותה דקה.
       maintenanceUntil: inMaintenance ? (g.maintenance_expires_at ?? null) : null,
+      maintenanceNextStart: nextStartById.get(site.id) ?? null,
       // ============================================================
       // ⚠️ אחוז הכשל בתוך שעות המסלול בלבד
       // ============================================================

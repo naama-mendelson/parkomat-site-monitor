@@ -57,5 +57,9 @@ export const sanitizeSiteKind = (raw) => (raw === SITE_KIND_MULTIPLIERS ? SITE_K
 /** האם האתר בלוח לפי הבחירה */
 export const matchesSiteKind = (site, kind) => (sanitizeSiteKind(kind) === SITE_KIND_MULTIPLIERS) === isMultiplierSite(site);
 /** הבחירה אחרי לחיצה על אריח */
+// ⚠️ "קריאות פתוחות" לחוץ — הסוג אינו חל (בעלת המוצר, 19/10/2026: "קריאות פתוחות שים אותם בתור סינון נפרד, ושלוחצים על זה
+// זה שם את הקריאות הפתוחות גם של המכפילים וגם של הרובוטיים"). הלוח מראה אז כל אתר עם קריאה פתוחה, משני הסוגים.
+export const matchesBoardKind = (site, kind, openCalls) => openCalls === true || matchesSiteKind(site, kind);
+
 export const nextSiteKind = (current, clicked) =>
   (clicked === SITE_KIND_MULTIPLIERS && sanitizeSiteKind(current) === SITE_KIND_MULTIPLIERS ? SITE_KIND_ROBOTIC : sanitizeSiteKind(clicked));

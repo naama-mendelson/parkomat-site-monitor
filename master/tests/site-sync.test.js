@@ -61,10 +61,26 @@ test("⚠️ הטיימר מריץ רק את הבדיקה הזולה — טעי�
   const app = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/App.jsx"), "utf8");
   assert.match(app, /setInterval\(\(\) => \{ syncNow\(\); lamps\(\); \}, STATUS_CHECK_EVERY_MS\)/, "הטיימר אינו קורא ל-syncNow בלי allowFull");
   assert.match(app, /const lamps = unlessHidden\(refreshComplianceIfDue\)/, "הנורות בטיימר אינן דרך refreshComplianceIfDue (ומדלגות על מסך מוסתר)");
-  assert.match(app, /if \(\(allowFull \|\| sitesErrorRef\.current\) && fullReloadDue\(lastFullAt\.current\)\)/,
-    "טעינה לפי גיל אינה מותנית בהתאוששות או בשגיאה");
+  assert.match(app, /if \(\(pendingRecover\.current \|\| sitesErrorRef\.current\) && fullReloadDue\(lastFullAt\.current\)\)/,
+    "טעינה לפי גיל אינה מותנית בהתאוששות (שנדחתה) או בשגיאה");
   assert.match(app, /syncNow\(\{ allowFull: true \}\)/, "ההתאוששות אינה מבקשת טעינה מלאה");
   assert.equal((app.match(/fullReloadDue\(/g) || []).length, 1, "fullReloadDue נקראת ממקום נוסף");
+  // ⚠️ הסקירה של 19/10: התאוששות מוקדמת מדי נדחית ולא נזרקת — נרשמת לפני כל יציאה מוקדמת, ונמחקת בכל טעינה מלאה
+  assert.match(app, /if \(allowFull\) pendingRecover\.current = true;\s*\n\s*if \(typeof document/, "ההתאוששות לא נרשמת לפני היציאות המוקדמות");
+  assert.equal((app.match(/lastFullAt\.current = Date\.now\(\); pendingRecover\.current = false;/g) || []).length, 4, "טעינה מלאה שלא מוחקת התאוששות שנדחתה");
+  // ⚠️ ומאזין החזרה ללשונית נרשם פעם אחת — לפני של useSSE
+  assert.match(app, /enterPageRef\.current\(\);[\s\S]{0,200}\}, \[\]\);/, "מאזין החזרה ללשונית נרשם מחדש (ואז אחרי useSSE)");
+});
+
+test("⚠️ תחילת חלון תחזוקה שתוזמן מראש → טעינה מלאה באותה דקה (הסקירה של 19/10)", () => {
+  const T = Date.parse("2026-10-19T14:00:00Z");
+  const withNext = (iso) => { const s = screen(); s[0].maintenanceNextStart = iso; return s; };
+  assert.equal(statusesMatch(withNext("2026-10-19T14:30:00Z"), db(), T), true, "עוד חצי שעה");
+  assert.equal(statusesMatch(withNext("2026-10-19T14:00:00Z"), db(), T), false, "התחיל עכשיו");
+  assert.equal(statusesMatch(withNext(null), db(), T), true);
+  assert.equal(statusesMatch(withNext("שבור"), db(), T), true, "שעה שבורה — לא נטען בלולאה");
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/services/sitesDirect.js"), "utf8");
+  assert.match(src, /maintenanceNextStart: nextStartById\.get\(site\.id\) \?\? null/, "sitesDirect אינו מעביר את תחילת החלון המתוזמן");
 });
 
 test("sitesDirect מעביר את שעת סיום התחזוקה מ-site_globals לאתר", () => {

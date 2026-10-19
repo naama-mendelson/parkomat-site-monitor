@@ -8,8 +8,8 @@ import { fuzzyMatch } from "../../utils/helpers";
 import { makeCompareSites } from "../../utils/sortSites";
 import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
-import { matchesSiteKind, DEFAULT_SITE_KIND } from "../../utils/multipliers";
-import { matchesRepeatView } from "../../utils/repeatFaults";
+import { matchesBoardKind, DEFAULT_SITE_KIND, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
+import { matchesRepeatView, compareByRepeat } from "../../utils/repeatFaults";
 import { DEFAULT_TASKS_VIEW, matchesTasksView } from "../../utils/tasks";
 import { matchesOpenCallsView } from "../../utils/serviceCalls";
 import "./OperatorView.css";
@@ -48,6 +48,7 @@ function OperatorView({
     );
   }
 
+  const callsMode = calls?.show === true;
   const filtered = sites.filter((site) => {
     // רשימה ריקה = בלי סינון. אחרת: האתר צריך להיות באחד מהמצבים שנבחרו.
     // ⚠️ **`displayStatus` ולא `status`** — אותו ערך שהצ'יפ על הכרטיס
@@ -56,13 +57,19 @@ function OperatorView({
     // מסתיר מ"תחזוקה" אתר שכתוב עליו "תחזוקה" — כלומר הסרגל והכרטיס
     // היו סותרים זה את זה על אותו מסך.
     const shown = site.displayStatus ?? site.status;
-    // "רובוטיים" / "מכפילים" בכותרת (19/10/2026): רק הסוג שנבחר בלוח, בשום סינון אחר — אין מצב של שניהם יחד
-    if (!matchesSiteKind(site, siteKind)) return false;
+    // "רובוטיים" / "מכפילים" בכותרת (19/10/2026): רק הסוג שנבחר בלוח, בשום סינון אחר — אין מצב של שניהם יחד.
+    // ⚠️ חוץ מ"קריאות פתוחות" לחוץ: אז כל אתר עם קריאה פתוחה, משני הסוגים (בעלת המוצר, 19/10/2026).
+    if (!matchesBoardKind(site, siteKind, callsMode)) return false;
     // "תקלות חוזרות" (19/10/2026): לחוץ — רק אתרים עם הסימון ↻
     if (!matchesRepeatView(site, showRepeat)) return false;
     // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו בשום מצב: מופיע ב"הכל", ולא בסינון לפי מצב —
     // אחרת "אין תקשורת" היה מראה אותו, כי זה מה שנשאר במסד כברירת מחדל.
-    if (activeFilters.length > 0 && (site.monitored === false || !activeFilters.includes(shown))) return false;
+    // ⚠️ ובלוח "מכפילים" מסנן המצב אינו חל (הסקירה של 19/10/2026): למכפיל אין מצב, ו"בתקלה" שנשאר מסומן היה מרוקן את הלוח.
+    // ⚠️ וכש"קריאות פתוחות" מביא גם מכפילים — המצב חל רק על הרובוטיים; מכפיל עם קריאה פתוחה עובר.
+    if (siteKind !== SITE_KIND_MULTIPLIERS && activeFilters.length > 0) {
+      if (site.monitored === false) { if (!callsMode) return false; }
+      else if (!activeFilters.includes(shown)) return false;
+    }
     // ⚠️ הכלל עצמו חי ב-SiteFilterTile ומיוצא — כך הסרגל והתצוגה מסכימים על
     // מה קורה עם אתר בלי סוג, במקום להגדיר את זה פעמיים.
     if (!matchesSiteFilters(site, typeFilter, tierFilter, systemFilter, liftFilter)) return false;
@@ -83,10 +90,11 @@ function OperatorView({
   // ולא רשת שמתהפכת ברגע שהספירה מגיעה בלי שאיש הבין למה.
   // ⚠️ **בלי useMemo כאן, בכוונה:** השורה הזו יושבת אחרי ה-return המוקדמים של טעינה/שגיאה (33, 37),
   // והוק שם נקרא בתנאי. וממילא `filtered` הוא מערך חדש בכל רינדור, כך שאין מה לשמר.
-  const ordered = [...filtered].sort(
-    // ⚠️ 18/10/2026: רק כש"קריאות פתוחות" לחוץ. לא לחוץ — לא רואים קריאות, אז קריאה גם לא מקדמת אתר: סדר שזז בגלל דבר
-    // שאינו על המסך נראה אקראי.
-    makeCompareSites(calls?.show ? (s) => calls.bySite[s.id]?.open ?? 0 : null));
+  // ⚠️ 18/10/2026: רק כש"קריאות פתוחות" לחוץ. לא לחוץ — לא רואים קריאות, אז קריאה גם לא מקדמת אתר: סדר שזז בגלל דבר
+  // שאינו על המסך נראה אקראי.
+  const byPriority = makeCompareSites(calls?.show ? (s) => calls.bySite[s.id]?.open ?? 0 : null);
+  // "תקלות חוזרות" לחוץ (19/10/2026) — המספר על ↻ הוא המפתח הראשון, הגבוה ביותר קודם; לא לחוץ — הסדר הרגיל.
+  const ordered = [...filtered].sort(showRepeat === true ? compareByRepeat(byPriority) : byPriority);
 
   return (
     <div className="operator-view">

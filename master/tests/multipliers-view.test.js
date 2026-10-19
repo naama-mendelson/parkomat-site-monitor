@@ -64,3 +64,33 @@ test("⚠️ תקלות חוזרות: לחוץ — רק אתרים עם הסימ
   assert.equal(r.sanitizeShowRepeat("true"), true);
   for (const v of [false, "false", undefined, null, 1, "x"]) assert.equal(r.sanitizeShowRepeat(v), false, String(v));
 });
+
+// בעלת המוצר, 19/10/2026: "קריאות פתוחות שים אותם בתור סינון נפרד, ושלוחצים על זה זה שם את הקריאות הפתוחות גם של
+// המכפילים וגם של הרובוטיים"
+test("⚠️ \"קריאות פתוחות\" לחוץ — הסוג אינו חל: שני הסוגים; לא לחוץ — בדיוק כמו matchesSiteKind", () => {
+  for (const kind of ["robotic", "multipliers", undefined, "junk"]) {
+    for (const s of [live, mx, legacy]) {
+      assert.equal(m.matchesBoardKind(s, kind, true), true, `${s.code} / ${kind} / לחוץ`);
+      assert.equal(m.matchesBoardKind(s, kind, false), m.matchesSiteKind(s, kind), `${s.code} / ${kind} / לא לחוץ`);
+      assert.equal(m.matchesBoardKind(s, kind, undefined), m.matchesSiteKind(s, kind), "רק true מדליק");
+      assert.equal(m.matchesBoardKind(s, kind, "true"), m.matchesSiteKind(s, kind), "מחרוזת אינה true");
+    }
+  }
+});
+
+// בעלת המוצר, 19/10/2026: "תקלות חוזרות — מיין לפי המתקן עם המספר תקלות חוזרות הגבוה ביותר"
+test("⚠️ \"תקלות חוזרות\" לחוץ — הגבוה ביותר קודם; תיקו — הסדר הרגיל", () => {
+  const mk = (code, ns) => ({ code, repeatFaults: ns === null ? null : ns.map((n) => ({ text: "t" + n, n })) });
+  assert.equal(r.repeatTop(mk("a", [4, 14])), 14, "מקסימום, לא האיבר הראשון");
+  assert.equal(r.repeatTop(mk("a", [])), 0);
+  assert.equal(r.repeatTop(mk("a", null)), 0);
+  assert.equal(r.repeatTop({}), 0);
+  assert.equal(r.repeatTop(mk("a", ["7", "x"])), 7, "מחרוזת מספרית נקראת, זבל = 0");
+  // הסדר הרגיל כאן: לפי קוד
+  const byCode = (a, b) => a.code.localeCompare(b.code);
+  const sites = [mk("1001", [6]), mk("1002", [20]), mk("1003", [6, 5]), mk("1004", [14]), mk("1000", [4])];
+  const got = [...sites].sort(r.compareByRepeat(byCode)).map((s) => s.code);
+  assert.deepEqual(got, ["1002", "1004", "1001", "1003", "1000"], "20, 14, ואז שני ה-6 לפי הסדר הרגיל, ואז 4");
+  // אתר בלי סימון (לא אמור להיות בלוח כשלחוץ, אבל לא נשבר) — בסוף
+  assert.deepEqual([mk("x", null), mk("y", [5])].sort(r.compareByRepeat(byCode)).map((s) => s.code), ["y", "x"]);
+});

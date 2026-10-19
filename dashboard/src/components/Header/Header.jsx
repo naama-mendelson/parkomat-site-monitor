@@ -12,11 +12,13 @@ import HelpPanel from "../HelpPanel/HelpPanel";
 import { isInstalledApp } from "../../services/pushDirect";
 import SiteFilterTile from "../SiteFilterTile/SiteFilterTile";
 import StatusFilters from "../StatusFilters/StatusFilters";
+import FilterGroup from "../FilterGroup/FilterGroup";
+import { STATUS_LABELS } from "../../utils/constants";
 import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
 import TasksFilter from "../TasksFilter/TasksFilter";
 import { tasksViewActive } from "../../utils/tasks";
 import { countSitesWithOpenCalls } from "../../utils/serviceCalls";
-import { countMultipliers, countRobotic, matchesSiteKind, nextSiteKind, DEFAULT_SITE_KIND, SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
+import { countMultipliers, countRobotic, matchesBoardKind, nextSiteKind, DEFAULT_SITE_KIND, SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
 import { countRepeatSites } from "../../utils/repeatFaults";
 import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
@@ -205,18 +207,32 @@ function Header({
   }, [filtersOpen]);
   // ⚠️ אריחי המצב, הסוג, "בודק מוסמך", "משימות", "קריאות פתוחות" ו"תקלות חוזרות" סופרים את מה שהלוח מראה — הסוג שנבחר
   // (רובוטיים או מכפילים); אחרת "הכל · 206" מעל לוח של 78 כרטיסים. שני אריחי הסוג עצמם סופרים כל אחד את כל האתרים מסוגו.
-  const boardSites = (sites ?? []).filter((s) => matchesSiteKind(s, siteKind));
-  const activeCount = (activeFilters?.length ?? 0) +
+  // ⚠️ "קריאות פתוחות" לחוץ — הלוח מראה את שני הסוגים (רק אתרים עם קריאה פתוחה), ולכן גם הספירות כאן.
+  const callsMode = onShowOpenCallsChange && showOpenCalls === true;
+  const boardSites = (sites ?? []).filter((s) => matchesBoardKind(s, siteKind, callsMode));
+  const openCallSites = countSitesWithOpenCalls(sites ?? [], callCounts ?? {});
+  // מסנן המצב אינו חל בלוח "מכפילים" (OperatorView) — ולכן גם לא נספר שם
+  const statusApplies = siteKind !== SITE_KIND_MULTIPLIERS;
+  const activeCount = (statusApplies ? (activeFilters?.length ?? 0) : 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
     (liftFilter ? 1 : 0) +
     complianceActiveCount(complianceView) +
     // ⚠️ נספר רק "מכפילים" — "רובוטיים" הוא ברירת המחדל (כמו "בודק מוסמך" ו"משימות": נספר רק מה ששונה ממנה)
-    (onSiteKindChange && siteKind === SITE_KIND_MULTIPLIERS ? 1 : 0) +
+    (onSiteKindChange && siteKind === SITE_KIND_MULTIPLIERS && !callsMode ? 1 : 0) +
     (onShowRepeatChange && showRepeat === true ? 1 : 0) +
     (onTasksViewChange ? tasksViewActive(tasksView) : 0) +
     (onShowOpenCallsChange && showOpenCalls === true ? 1 : 0);
+
+  // שלושת המלבנים (19/10/2026) — מה פעיל בכל אחד, בשורה שמתחת לשם; מסומן כשמשהו שונה מברירת המחדל
+  const statusN = statusApplies ? (activeFilters?.length ?? 0) : 0;
+  const statusSummary = !statusApplies ? "לא חל על מכפילים" : statusN === 0 ? "הכל" : statusN <= 2 ? activeFilters.map((st) => STATUS_LABELS[st] ?? st).join(" + ") : `${statusN} מצבים`;
+  const infoN = [typeFilter && typeFilter !== "all", systemFilter && systemFilter !== "all", tierFilter && tierFilter !== "all", !!liftFilter].filter(Boolean).length;
+  const infoSummary = infoN === 0 ? "הכל" : infoN === 1 ? "מסנן אחד" : `${infoN} מסננים`;
+  const extrasN = complianceActiveCount(complianceView) + (onTasksViewChange ? tasksViewActive(tasksView) : 0) +
+    (onShowRepeatChange && showRepeat === true ? 1 : 0);
+  const extrasSummary = extrasN === 0 ? "כבויים" : extrasN === 1 ? "אחד פעיל" : `${extrasN} פעילים`;
 
   return (
     <header className="app-header">
@@ -336,12 +352,49 @@ function Header({
 
       {isOperator && (
         <div className={`header-filters${filtersOpen ? " is-open" : ""}`}>
-        <StatusFilters
-          sites={boardSites}
-          activeFilters={activeFilters}
-          onFilterChange={onFilterChange}
-          trailing={
-            <>
+          {/* ⚠️ 19/10/2026 — שני אריחי סוג ושלושה מלבנים (בעלת המוצר: "אני רוצה מלבנים שמכל אחד מהם נובע כמה דברים — מצבים
+              (הכל, מוכן, בפעולה, בתקלה, בתחזוקה, אין תקשורת), מידע (סוג, מעליות, סוג שירות), תוספים (בודק מוסמך, תחזוקה
+              מונעת, קריאות); ושני ריבועים, מכפילים ורובוטיים, שעליהם מתבצעים בעצם הריבועים"). בתשובות שלה: גם "מערכת" במידע,
+              ו"משימות" ו"תקלות חוזרות" בתוספים. עד אז — שורה אחת של 14 אריחים. הרכיבים עצמם לא השתנו: הם עברו לחלוניות. */}
+          <div className="status-filters header-groups" role="group" aria-label="סינון הלוח">
+            {/* "רובוטיים" / "מכפילים" (בעלת המוצר, 19/10/2026: "תוסיף סינון רובוטיים וזה נמצא אוטומטית. אם לוחצים על
+                מכפילים — רואים רק מכפילים; אם מסירים מכפילים — הרובוטיים חוזרים; אם לוחצים על רובוטיים ומכפילים קיים —
+                מכפילים נעלמים ורק רובוטיים נשאר"). שני אריחים, תמיד אחד מהם פעיל; המספר הגדול — כמה אתרים מהסוג. עד אז
+                (18/10) מתג אחד, "מכפילים גלויים", שהוסיף את המכפילים לצד הרובוטיים. הבחירה נזכרת לכל מכשיר (useSiteKind). */}
+            {/* ⚠️ כש"קריאות פתוחות" לחוץ הסוג אינו חל, ולכן אף אחד משני האריחים אינו מודגש; לחיצה על אחד מהם יוצאת
+                מ"קריאות פתוחות" ומראה את הסוג הזה (19/10/2026) */}
+            {onSiteKindChange && [SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS].map((k) => {
+              const on = siteKind === k && !callsMode;
+              const n = k === SITE_KIND_ROBOTIC ? countRobotic(sites) : countMultipliers(sites);
+              const label = k === SITE_KIND_ROBOTIC ? "רובוטיים" : "מכפילים";
+              return (
+                <button key={k} type="button" data-kind={k}
+                  className={`filter-btn kind-head-btn ${k === SITE_KIND_ROBOTIC ? "rb-head-btn" : "mx-head-btn"}${on ? " active" : ""}`}
+                  aria-pressed={on}
+                  aria-label={`${label} (${k === SITE_KIND_ROBOTIC ? "אתרים עם בקר" : "אתרים בלי בקר"}) — ${n}`}
+                  onClick={() => { if (callsMode) { onShowOpenCallsChange(false); onSiteKindChange(k); } else onSiteKindChange(nextSiteKind(siteKind, k)); }}>
+                  <span className="filter-count">{n}</span>
+                  <span className="filter-label">{label}</span>
+                </button>
+              );
+            })}
+            {/* "קריאות פתוחות" — סינון נפרד, לא בתוך "תוספים" (בעלת המוצר, 19/10/2026: "קריאות פתוחות שים אותם בתור סינון
+                נפרד, ושלוחצים על זה זה שם את הקריאות הפתוחות גם של המכפילים וגם של הרובוטיים"). לחוץ — כל אתר עם קריאה
+                פתוחה, משני הסוגים, עם הסטופר וצבע ההחמרה; לא לחוץ (ברירת המחדל, 18/10) — בלי סימון קריאות. המספר הגדול —
+                כמה אתרים יש להם קריאה פתוחה, משני הסוגים. */}
+            {onShowOpenCallsChange && (
+              <button type="button" className={`filter-btn oc-head-btn${showOpenCalls === true ? " active" : ""}`}
+                aria-pressed={showOpenCalls === true}
+                aria-label={`קריאות פתוחות, רובוטיים ומכפילים — ${openCallSites} אתרים`}
+                onClick={() => onShowOpenCallsChange(!(showOpenCalls === true))}>
+                <span className="filter-count">{openCallSites}</span>
+                <span className="filter-label">קריאות פתוחות</span>
+              </button>
+            )}
+            <FilterGroup title="מצבים" summary={statusSummary} active={statusN > 0} className="fg-status">
+              <StatusFilters sites={boardSites} activeFilters={activeFilters} onFilterChange={onFilterChange} />
+            </FilterGroup>
+            <FilterGroup title="מידע" summary={infoSummary} active={infoN > 0} className="fg-info">
               <SiteFilterTile
                 sites={boardSites}
                 typeFilter={typeFilter}
@@ -353,6 +406,8 @@ function Header({
                 liftFilter={liftFilter}
                 onLiftChange={onLiftFilterChange}
               />
+            </FilterGroup>
+            <FilterGroup title="תוספים" summary={extrasSummary} active={extrasN > 0} className="fg-extras">
               {/* "בודק מוסמך" — נפתח לרשימה, בוחרים מה לראות, נסגר; בחירה מדליקה גם את הנורה בכרטיסים
                   (בעלת המוצר, 08/10/2026) */}
               {onComplianceViewChange && (
@@ -361,38 +416,6 @@ function Header({
               {/* "משימות" — אותה רשימה; מלכתחילה "בלי משימות" (בעלת המוצר, 18/10/2026: "מלכתחילה שלא יוצגו", לפי סוג) */}
               {onTasksViewChange && (
                 <TasksFilter sites={boardSites} bySite={taskCounts} value={tasksView} onChange={onTasksViewChange} />
-              )}
-              {/* "רובוטיים" / "מכפילים" (בעלת המוצר, 19/10/2026: "תוסיף סינון רובוטיים וזה נמצא אוטומטית. אם לוחצים על
-                  מכפילים — רואים רק מכפילים; אם מסירים מכפילים — הרובוטיים חוזרים; אם לוחצים על רובוטיים ומכפילים קיים —
-                  מכפילים נעלמים ורק רובוטיים נשאר"). שני אריחים, תמיד אחד מהם פעיל; המספר הגדול — כמה אתרים מהסוג. עד אז
-                  (18/10) מתג אחד, "מכפילים גלויים", שהוסיף את המכפילים לצד הרובוטיים. הבחירה נזכרת לכל מכשיר (useSiteKind). */}
-              {onSiteKindChange && [SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS].map((k) => {
-                const on = siteKind === k;
-                const n = k === SITE_KIND_ROBOTIC ? countRobotic(sites) : countMultipliers(sites);
-                const label = k === SITE_KIND_ROBOTIC ? "רובוטיים" : "מכפילים";
-                return (
-                  <button key={k} type="button" data-kind={k}
-                    className={`filter-btn kind-head-btn ${k === SITE_KIND_ROBOTIC ? "rb-head-btn" : "mx-head-btn"}${on ? " active" : ""}`}
-                    aria-pressed={on}
-                    aria-label={`${label} (${k === SITE_KIND_ROBOTIC ? "אתרים עם בקר" : "אתרים בלי בקר"}) — ${n}`}
-                    onClick={() => onSiteKindChange(nextSiteKind(siteKind, k))}>
-                    <span className="filter-count">{n}</span>
-                    <span className="filter-label">{label}</span>
-                  </button>
-                );
-              })}
-              {/* "קריאות פתוחות" (בעלת המוצר, 18/10/2026: "כשלוחצים על קריאות פתוחות רואים קריאות פתוחות, וכשלא לחוץ
-                  לא רואים כברירת מחדל"). לחוץ — רק אתרים עם קריאה פתוחה, עם הסטופר וההבהוב; לא לחוץ (ברירת המחדל) — כל
-                  האתרים, בלי סימון קריאות, לא מסומן ולא נספר כמסנן. המספר הגדול — כמה אתרים בלוח יש להם קריאה פתוחה. */}
-              {onShowOpenCallsChange && (
-                <button type="button" className={`filter-btn oc-head-btn${showOpenCalls === true ? " active" : ""}`}
-                  aria-pressed={showOpenCalls === true}
-                  aria-label={`קריאות פתוחות — ${countSitesWithOpenCalls(boardSites, callCounts ?? {})} אתרים`}
-                  onClick={() => onShowOpenCallsChange(!(showOpenCalls === true))}>
-                  <span className="filter-count">{countSitesWithOpenCalls(boardSites, callCounts ?? {})}</span>
-                  {/* כמו "מכפילים גלויים": כיתוב קבוע, והמצב בהדגשה (לחוץ = רק אתרים עם קריאה פתוחה) */}
-                  <span className="filter-label">קריאות פתוחות</span>
-                </button>
               )}
               {/* "תקלות חוזרות" (בעלת המוצר, 19/10/2026: "סינון של כאלו שהתקלות שיש להם את הסימון הזה של תקלות חוזרות").
                   כמו "קריאות פתוחות": כיתוב קבוע, לחוץ — רק אתרים עם הסימון ↻; המספר הגדול — כמה אתרים בלוח יש להם אותו. */}
@@ -407,9 +430,8 @@ function Header({
               )}
               {/* ⚠️ כאן ישב "קריאות היום" (14/10/2026) — הוסר לבקשת בעלת המוצר, 18/10/2026 ("תעיף את זה"), כשנוסף
                   "קריאות פתוחות". לשחזור: git show 76664a6:dashboard/src/components/Header/Header.jsx */}
-            </>
-          }
-        />
+            </FilterGroup>
+          </div>
         </div>
       )}
     </header>

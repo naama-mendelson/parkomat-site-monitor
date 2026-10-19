@@ -14,3 +14,12 @@ export const sanitizeShowRepeat = (raw) => raw === true || raw === "true";
 export const matchesRepeatView = (site, shown) => shown !== true || hasRepeatFaults(site);
 /** המספר הגדול על האריח — כמה אתרים בלוח יש להם הסימון */
 export const countRepeatSites = (sites) => (sites ?? []).filter(hasRepeatFaults).length;
+
+/** המספר שעל הסימון ↻ — הפעמים של התקלה החוזרת הגבוהה באתר; 0 בלי סימון. ⚠️ מקסימום ולא [0]: לא סומכים על הסדר שהגיע. */
+export const repeatTop = (site) => (hasRepeatFaults(site) ? Math.max(0, ...site.repeatFaults.map((r) => Number(r?.n) || 0)) : 0);
+
+/**
+ * "תקלות חוזרות" לחוץ — הגבוה ביותר קודם (בעלת המוצר, 19/10/2026: "תקלות חוזרות — מיין לפי המתקן עם המספר תקלות חוזרות
+ * הגבוה ביותר"). תיקו — הסדר הרגיל של הלוח (then), כך ששני אתרים עם ↻ 6 נשארים בסדר שהיו בו.
+ */
+export const compareByRepeat = (then) => (a, b) => (repeatTop(b) - repeatTop(a)) || then(a, b);

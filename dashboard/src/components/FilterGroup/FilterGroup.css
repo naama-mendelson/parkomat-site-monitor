@@ -1,0 +1,62 @@
+/* components/FilterGroup/FilterGroup.css — מלבן בכותרת וחלונית המסננים שלו (19/10/2026) */
+
+.fg { position: relative; display: flex; }
+
+.fg-btn { justify-content: center; gap: 4px; min-width: 104px; }
+.fg-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.fg-chevron { font-size: 0.75em; opacity: 0.85; transition: transform 0.15s ease; }
+.fg-btn.is-open .fg-chevron { transform: rotate(180deg); }
+.fg-summary {
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.9;
+  max-width: 12em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fg-btn.is-open { border-color: rgba(255, 255, 255, 0.55); }
+
+/* החלונית — בצבע הכותרת: האריחים שבתוכה מעוצבים לרקע הכחול (טקסט לבן על לבן-שקוף) */
+.fg-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-start: 0;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 24px));
+  background: var(--header-bg);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.fg-panel[hidden] { display: none; }
+.fg-panel--end { inset-inline-start: auto; inset-inline-end: 0; }
+/* הרשימה הפנימית שבתוכה המצבים — אותה שורה של אריחים, בלי רווח נוסף */
+.fg-panel > .status-filters { gap: 8px; }
+
+/* מסך צר / טלפון — הכותרת מקופלת ל"סינון ותצוגה": החלונית נפרשת במקום, מתחת למלבן, לכל הרוחב */
+@media (max-width: 1240px) {
+  .fg { flex-direction: column; width: 100%; }
+  .fg-btn { width: 100%; flex-direction: row; justify-content: space-between; }
+  .fg-panel {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin-top: 6px;
+    box-shadow: none;
+    background: rgba(255, 255, 255, 0.06);
+  }
+}

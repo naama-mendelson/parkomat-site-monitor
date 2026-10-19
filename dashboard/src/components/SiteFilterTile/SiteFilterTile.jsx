@@ -1,29 +1,18 @@
-// components/SiteFilterTile/SiteFilterTile.jsx — ריבוע סינון בשורת המצבים.
+// components/SiteFilterTile/SiteFilterTile.jsx — ארבעת אריחי "מידע" בכותרת: סוג, מערכת, סוג שירות, מעלית.
 //
-// ============================================================
-// למה ריבוע אחד עם שני בוררים, ולא שורה שנייה של צ'יפים
-// ============================================================
-// הניסיון הראשון היה שורת צ'יפים נפרדת מתחת למצבים. היא עבדה, והיא הוסיפה
-// שורה שלמה למסך בשביל שני שדות שברוב הזמן מכוונים ל"הכל".
+// ⚠️ **אריח מרוויח את המקום שלו רק אם הוא גם מראה מתי הוא פעיל.** בורר שמסנן בלי סימן גלוי הוא הדרך הבטוחה לגרום
+// למישהו לחשוב שאתרים נעלמו. לכן אריח שנבחר בו משהו נצבע ומקבל מסגרת, בדיוק כמו כפתור מצב פעיל, ומראה את הבחירה ואת
+// מספר האתרים שלה.
 //
-// ⚠️ **ריבוע אחד בשורה הקיימת מרוויח את המקום שלו רק אם הוא גם מראה מתי
-// הוא פעיל.** בורר שמסנן בלי סימן גלוי הוא הדרך הבטוחה לגרום למישהו לחשוב
-// שאתרים נעלמו. לכן הריבוע נצבע ומקבל מסגרת ברגע שנבחר בו משהו, בדיוק כמו
-// כפתור מצב פעיל.
-//
-// ============================================================
-// בורר יחיד לכל ממד — ולא בחירה מרובה
-// ============================================================
-// כפתורי המצב הם בחירה מרובה ("מוכן"+"מושבת" יחד). כאן זו בחירה יחידה,
-// ובכוונה: שאלת הסוג היא "תראה לי את הדולי", לא "תראה לי דולי או מצבט".
-// שני ממדים × בחירה יחידה נכנסים לרוחב של ריבוע; בחירה מרובה הייתה
-// מחייבת תפריט נפתח, וזה כבר לא ריבוע בשורה.
+// ⚠️ **בחירה יחידה לכל ממד — ולא בחירה מרובה.** כפתורי המצב הם בחירה מרובה ("מוכן"+"מושבת" יחד). כאן ובכוונה לא:
+// שאלת הסוג היא "תראה לי את הדולי", לא "תראה לי דולי או מצבט".
 import {
   SITE_TYPE_GROUPS, SITE_TYPES, GROUP_PREFIX, siteTypeGroup, matchesTypeValue,
 } from "../../../../shared/site-types.mjs";
 import { CONTROL_SYSTEMS } from "../../../../shared/control-systems.mjs";
 import { LIFT_TYPES, NO_LIFT, matchesLiftFilter, siteLifts } from "../../../../shared/lift-types.mjs";
 import { TIER_OPTIONS, TIER_LABELS, TIER_UNLINKED, TIER_BOARD_STATES } from "../../utils/constants";
+import FilterPicker from "../ComplianceFilters/FilterPicker";
 import "./SiteFilterTile.css";
 
 // ⚠️ "לא חובר" ומצבי הרמזור נספרים ונבחרים כאן, אף שאינם דרגה: בלעדיהם אתר
@@ -70,126 +59,60 @@ function SiteFilterTile({
     for (const t of lifts) if (liftCounts[t] !== undefined) liftCounts[t]++;
   }
 
-  const active = Boolean(typeFilter || systemFilter || tierFilter || liftFilter);
+  // ============================================================
+  // ⚠️ ארבעה אריחים כמו המצבים, כל אחד נפתח לרשימה מעוצבת (19/10/2026)
+  // ============================================================
+  // בעלת המוצר, על הרשימה של <select> (מצוירת על ידי מערכת ההפעלה, לבנה-כחולה): "תעצב את זה יותר מודרני ויפה", ו"את כל
+  // הסוגים, כל המערכות, כל הרמות, כל המעליות — תעשה כמו שעושים עם המצבים". עד אז ריבוע אחד עם ארבעה <select>. עכשיו —
+  // ארבעה אריחים (מספר גדול + שם), FilterPicker כמו "בודק מוסמך" ו"משימות": בחירה אחת, ✓, חיצים/Enter/Esc. האפשרויות,
+  // הספירות והכללים (משפחה כשורה נבחרת, "לא הוגדר" רק כשיש או כשנבחר) — אותם כמו ב-<select> שהיה.
+  const total = sites.length;
+  const typeItems = [{ value: "", label: "כל הסוגים", n: total, mark: "" }];
+  for (const g of SITE_TYPE_GROUPS) {
+    const single = g.types.length === 1;
+    typeItems.push({ value: single ? g.types[0].key : `${GROUP_PREFIX}${g.key}`, label: g.label, n: groupCounts[g.key], mark: "", cls: "info-family" });
+    if (!single) for (const t of g.types) typeItems.push({ value: t.key, label: t.label, n: typeCounts[t.key], mark: "", cls: "info-sub" });
+  }
+  if (typeCounts[NO_TYPE] > 0 || typeFilter === NO_TYPE) typeItems.push({ value: NO_TYPE, label: "לא הוגדר", n: typeCounts[NO_TYPE], mark: "" });
+  const systemItems = [{ value: "", label: "כל המערכות", n: total, mark: "" },
+    ...CONTROL_SYSTEMS.map((c) => ({ value: c.key, label: c.key, n: systemCounts[c.key], mark: "" }))];
+  if (systemCounts[NO_SYSTEM] > 0 || systemFilter === NO_SYSTEM) systemItems.push({ value: NO_SYSTEM, label: "לא הוגדר", n: systemCounts[NO_SYSTEM], mark: "" });
+  const tierItems = [{ value: "", label: "כל הרמות", n: total, mark: "" },
+    ...TIER_FILTER.filter((t) => TIER_OPTIONS.includes(t) || tierCounts[t] > 0 || tierFilter === t)
+      .map((t) => ({ value: t, label: TIER_LABELS[t], n: tierCounts[t] || 0, mark: "" }))];
+  const liftItems = [{ value: "", label: "כל המעליות", n: total, mark: "" },
+    ...LIFT_TYPES.map((l) => ({ value: l.key, label: l.label, n: liftCounts[l.key], mark: "" }))];
+  if (liftCounts[NO_LIFT] > 0 || liftFilter === NO_LIFT) liftItems.push({ value: NO_LIFT, label: "לא הוגדר", n: liftCounts[NO_LIFT], mark: "" });
+
+  const tile = (key, cls, dim, aria, value, items, onChange) => {
+    const cur = items.find((it) => it.value === value) ?? items[0];
+    const chosen = value !== "" && cur.value === value;
+    return (
+      <FilterPicker key={key} items={items} current={value} onPick={onChange} menuLabel={aria}
+        btnClass={`info-tile ${cls}${chosen ? " active" : ""}`}
+        ariaLabel={`${aria} — ${chosen ? `${cur.label} (${cur.n})` : items[0].label}`}
+        head={(open) => (
+          <>
+            <span className="filter-count">{chosen ? cur.n : total}</span>
+            <span className="filter-label cf-name">
+              {chosen ? cur.label : items[0].label}
+              <span className={`cf-chevron${open ? " is-open" : ""}`} aria-hidden="true">▾</span>
+            </span>
+            {chosen && <span className="cf-sub">{dim}</span>}
+          </>
+        )}
+      />
+    );
+  };
 
   return (
-    <div className={`filter-btn site-filter-tile${onLiftChange ? " site-filter-tile--four" : ""}${active ? " active" : ""}`}>
-      <select
-        className="sft-select"
-        value={typeFilter}
-        onChange={(e) => onTypeChange(e.target.value)}
-        aria-label="סינון לפי סוג מתקן"
-      >
-        <option value="">כל הסוגים</option>
-
-        {/* ==========================================================
-            שורת המשפחה היא **אפשרות נבחרת**, לא כותרת
-            ==========================================================
-            ⚠️ **וזו אינה בחירת עיצוב אלא מגבלה של HTML:** התווית של
-            `<optgroup>` — הפס האפור — אינה ניתנת ללחיצה בשום דפדפן. היא
-            כותרת ותו לא. לכן הגרסה הקודמת נאלצה להוסיף שורת "כל ה…" בתוך
-            כל קבוצה, וזו בדיוק הכפילות שלא רצויה.
-            כאן אין optgroup כלל: שורת המשפחה היא <option> שנראית ככותרת
-            (רקע אפור, ללא הזחה) ו**נבחרת** — לחיצה עליה מציגה את כל דגמיה.
-
-            ⚠️ משפחה עם דגם יחיד מקבלת **שורה אחת בלבד.** "דולי" ו"דולי"
-            זו מתחת לזו הן אותה תוצאה פעמיים; השורה היחידה נושאת את מפתח
-            הדגם, שהוא ממילא שקול לסינון המשפחה כשיש רק אחד. */}
-        {SITE_TYPE_GROUPS.map((g) => {
-          const single = g.types.length === 1;
-          return [
-            <option
-              // ⚠️ קידומת `grp-` — **מפתח המשפחה ומפתח הדגם זהים.** "XY" הוא
-              // גם שם משפחה וגם שם דגם, וכך גם "דולי", ולכן React קיבל שני
-              // ילדים באותו key. האזהרה בקונסולה אינה קוסמטית: React מזהה
-              // ילדים לפי key, ושני ילדים באותו מפתח עלולים להתמזג או להיעלם
-              // בעדכון — כלומר אפשרות שנעלמת מהבורר בלי סיבה נראית.
-              key={`grp-${g.key}`}
-              value={single ? g.types[0].key : `${GROUP_PREFIX}${g.key}`}
-              className="sft-group-row"
-            >
-              {g.label} ({groupCounts[g.key]})
-            </option>,
-            // ⚠️ ההזחה היא רווחים קשיחים ולא CSS: דפדפנים אינם מכבדים
-            // padding על <option> ברשימה הנפתחת של מערכת ההפעלה.
-            ...(single ? [] : g.types.map((t) => (
-              <option key={t.key} value={t.key}>
-                {"   "}{t.label} ({typeCounts[t.key]})
-              </option>
-            ))),
-          ];
-        })}
-
-        {/* ⚠️ מוצג רק כשיש כאלה — אבל היום זה **כל** האתרים, כי כולם נרשמו
-            לפני שהשדה נוסף. זו רשימת המטלות למילוי הסוג, לא רעש. */}
-        {typeCounts[NO_TYPE] > 0 && (
-          <option value={NO_TYPE}>לא הוגדר ({typeCounts[NO_TYPE]})</option>
-        )}
-      </select>
-
-      {/* ==========================================================
-          ⚠️ המערכת היא בורר נפרד, ולא עוד שורות בתוך "סוגים"
-          ==========================================================
-          אותו סוג אצל שני יצרנים הוא שתי מכונות שונות — זו הסיבה שהשדה
-          נוסף מלכתחילה (17/09/2026). אילו המערכת הייתה עוד אפשרות ברשימת
-          הסוגים, בחירה אחת הייתה מבטלת את השנייה, ו"XY של ביטנקם" —
-          בדיוק השאלה שבגללה השדה קיים — לא הייתה ניתנת לשאילה. */}
-      <select
-        className="sft-select"
-        value={systemFilter}
-        onChange={(e) => onSystemChange(e.target.value)}
-        aria-label="סינון לפי מערכת הפעלה"
-      >
-        <option value="">כל המערכות</option>
-        {CONTROL_SYSTEMS.map((s) => (
-          <option key={s.key} value={s.key}>{s.key} ({systemCounts[s.key]})</option>
-        ))}
-        {/* ⚠️ מוצג רק כשיש כאלה. היום אין — כל 37 האתרים מולאו — ולכן
-            שורה קבועה כאן הייתה רעש שמלמד להתעלם מהרשימה. */}
-        {systemCounts[NO_SYSTEM] > 0 && (
-          <option value={NO_SYSTEM}>לא הוגדר ({systemCounts[NO_SYSTEM]})</option>
-        )}
-      </select>
-
-      <select
-        className="sft-select"
-        value={tierFilter}
-        onChange={(e) => onTierChange(e.target.value)}
-        aria-label="סינון לפי רמת שירות"
-      >
-        <option value="">כל הרמות</option>
-        {TIER_FILTER.map((t) => (
-          // ⚠️ מה שאינו דרגה מוצג רק כשיש כאלה — אותו כלל כמו "לא הוגדר" של
-          // המערכת. **אבל תמיד כשהוא הנבחר:** אחרי שחיברו את האתר האחרון
-          // האפשרות הייתה נעלמת, הבורר היה מציג "כל הרמות", והרשת — שעדיין
-          // מסוננת לפיה — הייתה ריקה בלי שום סיבה גלויה.
-          (TIER_OPTIONS.includes(t) || tierCounts[t] > 0 || tierFilter === t) && (
-            <option key={t} value={t}>{TIER_LABELS[t]} ({tierCounts[t] || 0})</option>
-          )
-        ))}
-      </select>
-
-      {/* סוג מעלית (18/10/2026: "אני רוצה שיהיה גם סינון לפי סוגי מעליות"). אתר עם שתי מעליות עובר אם אחת מהן מהסוג.
-          "לא הוגדר" — רק כשיש כאלה, או כשהוא הנבחר (אותו כלל כמו ברמות). */}
-      {onLiftChange && (
-        <select
-          className="sft-select"
-          value={liftFilter}
-          onChange={(e) => onLiftChange(e.target.value)}
-          aria-label="סינון לפי סוג מעלית"
-        >
-          <option value="">כל המעליות</option>
-          {LIFT_TYPES.map((l) => (
-            <option key={l.key} value={l.key}>{l.label} ({liftCounts[l.key]})</option>
-          ))}
-          {(liftCounts[NO_LIFT] > 0 || liftFilter === NO_LIFT) && (
-            <option value={NO_LIFT}>לא הוגדר ({liftCounts[NO_LIFT]})</option>
-          )}
-        </select>
-      )}
-
-      <span className="sft-caption">{onLiftChange ? "סוג, מערכת, רמה ומעלית" : "סוג, מערכת ורמה"}</span>
-    </div>
+    <>
+      {tile("type", "sft-type", "סוג", "סינון לפי סוג מתקן", typeFilter, typeItems, onTypeChange)}
+      {/* ⚠️ המערכת נפרדת מהסוג: אותו סוג אצל שני יצרנים הוא שתי מכונות שונות — "XY של ביטנקם" חייב להיות שאילה אחת */}
+      {tile("system", "sft-system", "מערכת", "סינון לפי מערכת הפעלה", systemFilter, systemItems, onSystemChange)}
+      {tile("tier", "sft-tier", "סוג שירות", "סינון לפי רמת שירות", tierFilter, tierItems, onTierChange)}
+      {onLiftChange && tile("lift", "sft-lift", "מעלית", "סינון לפי סוג מעלית", liftFilter, liftItems, onLiftChange)}
+    </>
   );
 }
 

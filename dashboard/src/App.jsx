@@ -122,6 +122,7 @@ function App() {
   }, [role, execReady]);
   const { sites, loading, error, reload, reloadStats, patch, patchSite, refreshComplianceIfDue } = useSites({ hold: role === "executive" && !execReady });
   const lastFullAt = useRef(Date.now());   // מתי רצה הטעינה החיה האחרונה — הראשונה היא טעינת הפתיחה (utils/siteSync)
+  const pendingRecover = useRef(false);    // התאוששות שנדחתה — מתבצעת כשמותר (syncNow); כל טעינה מלאה מכסה אותה
 
   // ==========================================================
   // ⚠️ כניסה לדף — הרגע היחיד שבו הסטטיסטיקות מחושבות (07/10/2026)
@@ -139,7 +140,7 @@ function App() {
     lastStatsAt.current = Date.now();
     // טעינה עם סטטיסטיקות מביאה גם את כל המצב החי — כך ההתאוששות שרצה באותה חזרה ללשונית (useSSE → onRecover)
     // רואה טעינה טרייה ולא שולחת שנייה מיד אחריה (19/10/2026, נמדד ברתמה: שתי טעינות בכל חזרה).
-    if (showsCards) lastFullAt.current = Date.now();
+    if (showsCards) { lastFullAt.current = Date.now(); pendingRecover.current = false; }
     if (showsCards) reloadStats();
     setDataVersion((v) => v + 1);
   }, [showsCards, reloadStats]);
@@ -151,19 +152,24 @@ function App() {
     if (prevRole.current === role) return;
     prevRole.current = role;
     lastStatsAt.current = Date.now();
-    if (showsCards) lastFullAt.current = Date.now();
+    if (showsCards) { lastFullAt.current = Date.now(); pendingRecover.current = false; }
     if (showsCards) reloadStats();
   }, [role, showsCards, reloadStats]);
 
   // חזרה ללשונית שהייתה מוסתרת
+  // ⚠️ המאזין נרשם **פעם אחת** (enterPage דרך ref), לפני המאזין של useSSE (onRecover). כשהוא היה תלוי ב-enterPage, מעבר
+  // תפקיד רשם אותו מחדש — אחרי useSSE — ומאז ההתאוששות רצה ראשונה וטענה, ו-enterPage טען שוב עם סטטיסטיקות: שתי
+  // טעינות בכל חזרה ללשונית (הסקירה של 19/10/2026).
+  const enterPageRef = useRef(enterPage);
+  useEffect(() => { enterPageRef.current = enterPage; }, [enterPage]);
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      if (statsDueOnReturn(lastStatsAt.current)) enterPage();
+      if (statsDueOnReturn(lastStatsAt.current)) enterPageRef.current();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [enterPage]);
+  }, []);
   const { detail, maintenance, error: detailError, refresh: refreshDetail } = useSiteDetail(selectedCode);
   // ⚠️ כרטיס שנלחץ ולא נפתח חייב לומר למה. רק כשאין פרטים בכלל: כשל
   // ברענון של פאנל פתוח משאיר את הנתונים האחרונים, כמו קודם.
@@ -293,7 +299,7 @@ function App() {
   // דפי מנהל הבקרה / ההנהלה / "כל האתרים" לא מחושבים מחדש מטיימר. הם מחושבים
   // בכניסה לדף (enterPage למטה). "אין צורך אלא בשעה שעוברים לדף הזה".
   const resync = useCallback(() => {
-    lastFullAt.current = Date.now();
+    { lastFullAt.current = Date.now(); pendingRecover.current = false; }
     reload();
     if (selectedCode) {
       refreshDetail();
@@ -338,12 +344,19 @@ function App() {
   // תקינה כל דקה.
   const sitesErrorRef = useRef(error);
   useEffect(() => { sitesErrorRef.current = error; }, [error]);
+  // ⚠️ התאוששות שהגיעה פחות מ-5 דקות אחרי הטעינה המלאה האחרונה **נדחית, לא נזרקת** (הסקירה של 19/10/2026): אירוע
+  // ביטול תחזוקה שאבד בניתוק אינו משנה את sites.status, והבדיקה הזולה לא תתפוס אותו — בלי הדחייה הכרטיס היה נשאר
+  // "בתחזוקה" עד סוף החלון המקורי. נרשמת גם כשהמסך מוסתר או כשבדיקה רצה, ומתבצעת בטיימר כשמגיע הזמן.
   const checking = useRef(false);
+  const checkingSince = useRef(0);
   const syncNow = useCallback(async ({ allowFull = false } = {}) => {
+    if (allowFull) pendingRecover.current = true;
     if (typeof document !== "undefined" && document.hidden) return;
-    if (checking.current) return;
-    if ((allowFull || sitesErrorRef.current) && fullReloadDue(lastFullAt.current)) { resync(); return; }
+    // ⚠️ בדיקה זולה שנתקעה (רשת שנפלה באמצע, בלי timeout) אינה חוסמת את כל הבדיקות שאחריה לנצח
+    if (checking.current && Date.now() - checkingSince.current < 30_000) return;
+    if ((pendingRecover.current || sitesErrorRef.current) && fullReloadDue(lastFullAt.current)) { resync(); return; }
     checking.current = true;
+    checkingSince.current = Date.now();
     try {
       const fresh = await fetchSiteStatuses();
       if (!statusesMatch(sitesRef.current, fresh)) resync();
@@ -417,7 +430,7 @@ function App() {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => {
         if (aggregatesStale.current) {
-          lastFullAt.current = Date.now();
+          { lastFullAt.current = Date.now(); pendingRecover.current = false; }
           reload();
           setDataVersion((v) => v + 1);
           aggregatesStale.current = false;

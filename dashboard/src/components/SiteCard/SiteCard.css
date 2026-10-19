@@ -59,6 +59,20 @@
   /* צבע המותג הכחול-כהה נבלע על אדום כהה (גלולת הקריאות והסטופר) — גוון בהיר שלו בתוך הכרטיס */
   --accent: #c3d4fa;
   --accent-soft: #dbe5fc;
+  /* ⚠️ והדיו של השבבים והנורות — הערכים של התצוגה הכהה, שנבנתה לרקע כהה (הסקירה של 19/10/2026: בתצוגה הבהירה "אין
+     תקשורת", ↻ ונורות הבודק נמדדו 1.05–1.6:1 על האדום הכהה). אפור "אין נתונים" — בהיר יותר מבכהה, כדי לעבור 4.5:1. */
+  --status-nocomm-ink: #cbd5e1;
+  --repeat-ink: #fbbf24;
+  --cl-ok-fill: transparent;               --cl-ok-border: #e5e7eb;       --cl-ok-ink: #f9fafb;
+  --cl-fixing-fill: rgba(34,197,94,0.18);  --cl-fixing-border: #22c55e;   --cl-fixing-ink: #4ade80;
+  --cl-soon-fill: rgba(250,204,21,0.16);   --cl-soon-border: #eab308;     --cl-soon-ink: #fde047;
+  --cl-awaiting-fill: #facc15;             --cl-awaiting-border: #fde047; --cl-awaiting-ink: #422006;
+  --cl-overdue-fill: rgba(249,115,22,0.20); --cl-overdue-border: #f97316; --cl-overdue-ink: #fdba74;
+  --cl-expired-fill: rgba(239,68,68,0.18); --cl-expired-border: #fca5a5; --cl-expired-ink: #fecaca;
+  --cl-none-fill: transparent;             --cl-none-border: #cbd5e1;     --cl-none-ink: #cbd5e1;
+  --cl-pm-ok-fill: rgba(34,197,94,0.18);   --cl-pm-ok-border: #22c55e;    --cl-pm-ok-ink: #4ade80;
+  --cl-ink-red: #fecaca;
+  --cl-muted: #cbd5e1;
   --call-ring: var(--call-age-4-frame);
   background: var(--bg-card);
   color: var(--text-primary);

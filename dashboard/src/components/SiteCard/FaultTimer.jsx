@@ -70,7 +70,10 @@ export default function FaultTimer({ since, tone = "error" }) {
     <span className={`fault-timer fault-timer--${tone}`}
           title={`בתקלה מאז ${new Date(started).toLocaleString("he-IL")}`}>
       <span className="fault-timer-dot" />
-      {format(now - started)}
+      {/* ⚠️ dir="auto" ולא ה-ltr של האריח (19/10/2026, בעלת המוצר על "3 ימים 21 שע׳": "זה נראה כאילו כתוב 21 ימים ו-3
+          שעות, וזה הפוך"). ה-ltr נועד ל-"12:22" ונשאר לו (אין בו אות, אז הכיוון יורש ltr); טקסט עם מילה בעברית (ימים,
+          שע׳, שנ׳) מקבל rtl, והמספרים נשארים ליד המילה שלהם. הנקודה הפועמת לא זזה — היא מחוץ לטקסט. */}
+      <span className="fault-timer-text" dir="auto">{format(now - started)}</span>
     </span>
   );
 }
