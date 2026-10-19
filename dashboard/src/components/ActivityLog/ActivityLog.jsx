@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // את **אותה** buildActivityLog שהשרת מריץ (shared/timeline.mjs).
 import { fetchActivity, markAsTest, unmarkTest, reclassifyStatus } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import { STATUS_COLORS, STATUS_LABELS, DIRECTION_COLORS } from "../../utils/constants";
 import "./ActivityLog.css";
 
@@ -394,7 +395,8 @@ function ActivityLog({ log, code = null, period = "week", onChanged }) {
   // ⚠️ ההסתרה מבקר היא **נוחות ולא הגנה.** הכלל נאכף ב-app.require_manager()
   // בתוך הפונקציה ב-SQL. מה שההסתרה כן מונעת: שורה שנראית לחיצה ומחזירה 403.
   const { user } = useAuth();
-  const isManager = user?.role === "manager";
+  // 19/10/2026: סימון "בדיקה" וסיווג מחדש לתחזוקה — מנהל או עורך (המסד: require_editor). השם נשאר.
+  const isManager = canEdit(user?.role);
   const [testBusy, setTestBusy] = useState(false);
   // ⚠️ `confirm()` ו-`alert()` הוחלפו בדיאלוג של המסך. שניהם חוסמים את
   // הדפדפן, נראים כמו הודעת מערכת ולא כמו חלק מהמערכת, ואי אפשר לומר בהם

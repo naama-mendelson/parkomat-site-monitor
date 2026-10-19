@@ -19,6 +19,7 @@ import MfaSetup from "./MfaSetup";
 // הגולמית. שורה שנמחקת כאן הופכת דרגה ישנה למילה באנגלית על המסך.
 const ROLE_LABELS = {
   operator: "בקר",
+  editor: "עורך",         // 19/10/2026 — שלושה תפקידים
   manager: "מנהל",
   supervisor: "מנהל",     // בוטלה — ממופה למנהל
   executive: "מנהל",      // בוטלה — ממופה למנהל

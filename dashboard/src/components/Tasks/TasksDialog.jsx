@@ -34,6 +34,8 @@ import {
   hasTaskCode, setTaskCode, verifyAdminCode,
 } from "../../services/dataSource";
 import { newId } from "../../utils/complianceFiles";
+import { useAuth } from "../../hooks/useAuth";
+import { canEdit, READ_ONLY_MSG } from "../../utils/roles";
 import {
   splitOpen, taskState, taskNow, historyText, openSummary, kindLabel, TASK_STATE_LABEL, TASK_KINDS,
 } from "../../utils/tasks";
@@ -46,9 +48,10 @@ const DONE_FIRST = 200;
 // ו-sherut@ — 12/10/2026: "תן אופציה למנהלים למחוק משימה"). אם כלל שם משתנה, גם המשפט שלו.
 // ⚠️ ומאז 12/10/2026 (ערב) — גם כל מי שמזין את קוד המנהל (app.task_code_ok): "מי שיודע את הסיסמה יוכל לסמן
 // במשימות כמו השירות". לחיצה על V/X אפורים פותחת שדה קוד מתחת לשורה, במקום ההסבר.
+// ⚠️ 19/10/2026 (שלושה תפקידים): X — כל עורך ומנהל; V — sherut@, או עורך/מנהל שמזין את הקוד; בקר — כלום (READ_ONLY_MSG).
 const NO_RIGHTS = {
-  done: "רק sherut@parkomat.co.il יכול לסמן בוצע, או מי שמזין את קוד המנהל",
-  delete: "רק מנהל יכול למחוק משימה, או מי שמזין את קוד המנהל",
+  done: "רק sherut@parkomat.co.il יכול לסמן בוצע, או עורך/מנהל שמזין את קוד המנהל",
+  delete: "רק עורך או מנהל יכול למחוק משימה",
 };
 // מי רשאי — מה שה-SQL החזיר לשורה. ⚠️ can_delete חסר (מסד שעוד לא קיבל את 12/10) — לפי can_close, כמו קודם.
 const allowed = (t, what) => (what === "done" ? t.can_close : (t.can_delete ?? t.can_close)) === true;
@@ -104,6 +107,9 @@ function TaskRow({ t, state, note, below, children }) {
  * @param {() => void} [p.onChanged] — אחרי כתיבה (ההורה מרענן את המספר בכפתור)
  */
 export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
+  // 19/10/2026: בקר — צפייה בלבד: בלי טופס הוספה, ו-⏳ / V / X נעולים עם הסבר (המסד דוחה ממילא: app.require_editor)
+  const { user } = useAuth();
+  const editable = canEdit(user?.role);
   const siteName = site.site_name || site.code;
 
   const [data, setData] = useState(null);
@@ -239,6 +245,12 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   // ⚠️ השנייה נחשבת רק אם היא לחיצה בפני עצמה: לא חלק מלחיצה כפולה (e.detail > 1), ולא פחות מ-ARM_MIN_MS
   // אחרי החימוש. (מקש Enter שמוחזק — נחסם ב-onKeyDown, ראו closeBtn.)
   const ask = (t, what, fn, e) => {
+    if (!editable) {
+      setConfirm(null);
+      setCodeFor(null);
+      setRowMsg({ id: t.id, msg: READ_ONLY_MSG });
+      return;
+    }
     if (!may(t, what)) {
       setRowMsg(null);
       setConfirm(null);
@@ -307,9 +319,10 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const doneTotal = data?.doneTotal ?? 0;
 
   const progBtn = (t, on) => (
-    <button type="button" className={`tk-ico tk-ico--prog${on ? " is-on" : ""}`} aria-pressed={on}
-      disabled={busyId === t.id} onClick={() => act(t, on ? unstartTask : startTask)}
-      title={on ? "בתהליך — לחיצה מבטלת את הסימון" : "סימון בתהליך"}
+    <button type="button" className={`tk-ico tk-ico--prog${on ? " is-on" : ""}${editable ? "" : " is-locked"}`} aria-pressed={on}
+      aria-disabled={editable ? undefined : "true"} disabled={busyId === t.id}
+      onClick={() => (editable ? act(t, on ? unstartTask : startTask) : setRowMsg({ id: t.id, msg: READ_ONLY_MSG }))}
+      title={!editable ? READ_ONLY_MSG : on ? "בתהליך — לחיצה מבטלת את הסימון" : "סימון בתהליך"}
       aria-label={on ? `ביטול הסימון "בתהליך" של "${t.body}"` : `סימון "${t.body}" בתהליך`}>
       <span className="tk-ico-g" aria-hidden="true">⏳</span>
     </button>
@@ -317,7 +330,7 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   const closeBtn = (t, what) => {
     const pending = isConfirm(t, what);
     const isDone = what === "done";
-    const ok = may(t, what);
+    const ok = editable && may(t, what);
     return (
       <button type="button"
         className={`tk-ico tk-ico--${isDone ? "done" : "del"}${pending ? " is-confirm" : ""}${ok ? "" : " is-locked"}`}
@@ -325,7 +338,7 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
         onClick={(e) => ask(t, what, isDone ? markTaskDone : deleteTask, e)}
         // ⚠️ Enter מוחזק חוזר על עצמו, וכל חזרה היא לחיצה — הראשונה מחמשת והבאות היו מאשרות
         onKeyDown={(e) => { if (e.repeat && (e.key === "Enter" || e.key === " ")) e.preventDefault(); }}
-        title={!ok ? NO_RIGHTS[what] : pending ? "לחיצה נוספת מאשרת" : isDone ? "בוצע" : "מחיקה"}
+        title={!editable ? READ_ONLY_MSG : !ok ? NO_RIGHTS[what] : pending ? "לחיצה נוספת מאשרת" : isDone ? "בוצע" : "מחיקה"}
         aria-label={pending
           ? (isDone ? `אישור: המשימה "${t.body}" בוצעה` : `אישור: מחיקת המשימה "${t.body}"`)
           : (isDone ? `סימון המשימה "${t.body}" כבוצעה` : `מחיקת המשימה "${t.body}"`)}>
@@ -352,7 +365,8 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
 
         {/* ⚠️ שתי שורות (12/10/2026, ערב: "תעצב את הכל בצורה יותר מסודרת" — על שורה אחת עם השדה, שלוש
             גלולות בגובה אחר ו"הוספה"): מה — ברוחב מלא; מתחת — הסוג ו"הוספה". השגיאה בתוך הטופס, מעל הקו */}
-        <form className="tk-add" onSubmit={submit}>
+        {!editable && <p className="tk-readonly" role="note">{READ_ONLY_MSG}</p>}
+        {editable && <form className="tk-add" onSubmit={submit}>
           {/* ⚠️ כל שינוי בטיוטה (טקסט או סוג) — client_id חדש. בלי זה: שליחה שהתחייבה ותשובתה אבדה, ואז
               החלפת סוג ו"הוספה" שוב — המסד מזהה את אותו client_id ומחזיר את הראשונה, עם הסוג הישן, בשקט
               (נמצא בסקירה). שליחה חוזרת של אותה טיוטה בדיוק — אותו מזהה, משימה אחת. */}
@@ -374,7 +388,7 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
             <button type="submit" className="tk-btn tk-btn--primary" disabled={!canAdd}>{saving ? "מוסיף…" : "הוספה"}</button>
           </div>
           {saveError && <p key={errTick} id={`${kindName}-err`} className="tk-error" role="alert">{saveError}</p>}
-        </form>
+        </form>}
         {actError && <p className="tk-error" role="alert" ref={actErrorRef}>{actError}</p>}
         {loadError && (
           <p className="tk-error" role="alert">

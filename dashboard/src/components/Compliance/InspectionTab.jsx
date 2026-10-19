@@ -27,6 +27,7 @@ import {
   reopenDefect, retireMachine,
 } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import {
   GLYPH, LIGHT_LABEL, formatDateIL, formatDayMonth, machineLampLabel, stateLabel, toCompliance, todayIL,
 } from "../../utils/compliance";
@@ -66,7 +67,7 @@ function Lamp({ state, label, small = false }) {
   );
 }
 
-function DoneList({ items, byId, isManager, onReopen, onOpenPhoto, site, machineLabel }) {
+function DoneList({ items, byId, editable, onReopen, onOpenPhoto, site, machineLabel }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="it-donelist">
@@ -82,7 +83,7 @@ function DoneList({ items, byId, isManager, onReopen, onOpenPhoto, site, machine
         <ul className="it-list it-rows">
           {items.map((d) => (
             <DefectDoneRow key={d.id} defect={d} closingReport={byId.get(d.closed_by_report_id)}
-              isManager={isManager} onReopen={onReopen} onOpenPhoto={onOpenPhoto} />
+              editable={editable} onReopen={onReopen} onOpenPhoto={onOpenPhoto} />
           ))}
         </ul>
       )}
@@ -100,7 +101,8 @@ function DoneList({ items, byId, isManager, onReopen, onOpenPhoto, site, machine
  */
 export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, onChanged, dropAnywhere = false }) {
   const { user } = useAuth();
-  const isManager = user?.role === "manager";
+  // 19/10/2026: כל עריכה כאן (העלאה, עריכה, מחיקה, ליקויים, סימון כבוצע) — מנהל או עורך; בקר צופה. (עד אז "isManager".)
+  const editable = canEdit(user?.role);
   const code = site?.code;
 
   const [data, setData] = useState(null);
@@ -203,7 +205,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
   useEffect(() => {
     // ⚠️ בעמוד המלא גם למי שאינו מנהל: בלי זה קובץ שגרר טכנאי היה נפתח בדפדפן
     // במקום הדשבורד. הוא מקבל הסבר במקום. בלשונית שבחלון — כמו קודם.
-    if (!isManager && !dropAnywhere) return undefined;
+    if (!editable && !dropAnywhere) return undefined;
     // ⚠️ dragover יורה ברצף כל עוד קובץ מעל החלון, ולכן "שקט" של רגע = הגרירה
     // נגמרה. בלי זה, גרירה שבוטלה ב-Esc או שיצאה מהחלון בתנועה מהירה הייתה
     // משאירה את האזור על "שחררו כאן" — dragleave לא תמיד יורה במקרים האלה.
@@ -212,7 +214,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
     const over = (e) => {
       if (!hasDraggedFiles(e)) return;
       e.preventDefault();
-      if (!isManager) return;
+      if (!editable) return;
       setDragActive(true);
       clearTimeout(quiet);
       quiet = setTimeout(reset, 400);
@@ -227,7 +229,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
       if (handled || !dropAnywhere || busyRef.current) return;
       const f = e.dataTransfer?.files?.[0];
       if (!f) return;
-      if (!isManager) { flash("רק מנהל יכול להעלות תסקיר"); return; }
+      if (!editable) { flash("רק עורך או מנהל יכול להעלות תסקיר"); return; }
       setDialog({ type: "upload", preset: null, file: f });
     };
     window.addEventListener("dragover", over);
@@ -237,7 +239,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [isManager, dropAnywhere, flash]);
+  }, [editable, dropAnywhere, flash]);
   const openPhoto = (p) => setViewer({
     key: `ph-${p.id}`, title: "תמונת ביצוע", fetchFile: () => fetchComplianceFile("defect_photo", p.id),
   });
@@ -380,7 +382,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                 לתסקיר נקי — בבאנר עם הפעולה. בעלת המוצר (06/10/2026): "תעיף את זה ותעצב את כל
                 העמוד נורמלי ויותר מסודר". */}
           </div>
-          {isManager && (
+          {editable && (
             <span className="it-status-actions">
               <button type="button" className="it-btn it-btn--primary" onClick={() => openUpload(null)}>העלאת תסקיר</button>
               {single && (
@@ -409,7 +411,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                     {m.overdue > 0 && <span className="it-late"> · {m.overdue === 1 ? "אחד עבר את המועד" : `${m.overdue} עברו את המועד`}</span>}
                   </span>
                 )}
-                {isManager && !m.retired_at && (
+                {editable && !m.retired_at && (
                   <InspectionMenu label={`פעולות על ${machineTitle(m)}`} items={[
                     { label: "הוצאת מתקן משימוש", danger: true, onSelect: () => onRetire(m) },
                   ]} />
@@ -423,7 +425,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
       {/* ===== מקום לגרור אליו תסקיר ===== */}
       {/* ⚠️ אותו מסלול בדיוק כמו "העלאת תסקיר": הקובץ נקרא במכשיר, והתאריכים
           והליקויים מוצעים לאישור לפני שמשהו נשמר. הגרירה רק חוסכת את שלב הבחירה. */}
-      {isManager && (
+      {editable && (
         <>
           <button type="button" className={`it-drop${dragOver ? " is-over" : dragActive ? " is-armed" : ""}`}
             onClick={() => dropInputRef.current?.click()}
@@ -446,8 +448,8 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
       )}
       {/* בעמוד שכל ייעודו הגרירה — מי שאינו רואה את המלבן צריך לדעת למה.
           (כשאין תסקירים בכלל, הכרטיס הריק למטה כבר אומר זאת.) */}
-      {!isManager && dropAnywhere && !empty && (
-        <p className="it-muted it-drop-note">העלאת תסקיר — למנהלים בלבד.</p>
+      {!editable && dropAnywhere && !empty && (
+        <p className="it-muted it-drop-note">העלאת תסקיר — לעורכים ולמנהלים בלבד.</p>
       )}
 
       {/* ===== 2. באנרים — הפעולה הבאה היא של המנהל ===== */}
@@ -460,7 +462,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                 {who}כל הליקויים תוקנו — יש לזמן את הבודק לבדיקה חוזרת ולהעלות תסקיר נקי
                 {cy.machine.awaiting_since ? ` (ממתין מאז ${formatDayMonth(cy.machine.awaiting_since)})` : ""}
               </p>
-              {isManager && (
+              {editable && (
                 <button type="button" className="it-btn"
                   onClick={() => openUpload({ kind: "followup", machineKey: cy.key, followupOf: cy.periodicId })}>
                   העלאת בדיקה חוזרת
@@ -473,7 +475,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
           return (
             <div key={`rv-${cy.key}`} className="it-banner it-banner--warn it-banner--action">
               <p>{who}אין ליקויים פתוחים, אבל התסקיר לא סומן נקי — לבדוק</p>
-              {isManager && cy.latest && (
+              {editable && cy.latest && (
                 <button type="button" className="it-btn"
                   onClick={() => setDialog({ type: "editReport", report: cy.latest, parent: cy.latest.kind === "followup" ? cy.periodic : null })}>
                   עריכת פרטים
@@ -490,7 +492,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
         <section className="insights-card it-card it-empty">
           <p>עדיין לא הועלה תסקיר בודק מוסמך לאתר הזה.</p>
           <p className="it-muted">
-            {isManager
+            {editable
               ? "\"העלאת תסקיר\" קורא את ה-PDF כאן, במכשיר, ומציע את התאריכים והליקויים לאישור."
               : "מנהל יכול להעלות את התסקיר האחרון מתוך קובץ ה-PDF."}
           </p>
@@ -522,21 +524,21 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
                 ) : (
                   <ul className="it-list it-rows">
                     {cy.open.map((d) => (
-                      <DefectRow key={d.id} defect={d} today={today} isManager={isManager} showSource={showSource}
+                      <DefectRow key={d.id} defect={d} today={today} editable={editable} showSource={showSource}
                         onMarkDone={(x) => setDialog({ type: "close", defect: x })}
                         onEdit={(x) => setDialog({ type: "editDefect", defect: x, report: derived.byId.get(x.reportId) })}
                         onDelete={onDeleteDefect} />
                     ))}
                   </ul>
                 )}
-                {isManager && cy.addTarget && (
+                {editable && cy.addTarget && (
                   <button type="button" className="it-btn it-btn--small it-add"
                     onClick={() => setDialog({ type: "addDefect", report: cy.addTarget })}>
                     + הוספת ליקוי
                   </button>
                 )}
                 {cy.done.length > 0 && (
-                  <DoneList items={cy.done} byId={derived.byId} isManager={isManager}
+                  <DoneList items={cy.done} byId={derived.byId} editable={editable}
                     onReopen={onReopen} onOpenPhoto={openPhoto}
                     // במסמך לבודק השורה כבר נקראת "מתקן" — "מתקן 30245" היה חוזר על המילה; שם המתקן נשאר אם יש
                     site={site} machineLabel={!groupHeaders ? null : cy.machine.label ? machineTitle(cy.machine) : String(cy.machine.key)} />
@@ -548,7 +550,7 @@ export default function InspectionTab({ site, complianceRev = 0, onDirtyChange, 
       )}
 
       {/* ===== 4. היסטוריה ===== */}
-      <InspectionHistory derived={derived} siteCode={code} isManager={isManager} rev={loadedRev}
+      <InspectionHistory derived={derived} siteCode={code} editable={editable} rev={loadedRev}
         onViewFile={openReportFile}
         onEdit={(r, parent) => setDialog({ type: "editReport", report: r, parent })}
         onDelete={onDeleteReport}

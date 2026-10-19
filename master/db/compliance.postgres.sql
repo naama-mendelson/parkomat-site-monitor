@@ -59,7 +59,7 @@ CREATE OR REPLACE FUNCTION app.is_staff() RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT EXISTS (SELECT 1 FROM app_users u
                   WHERE u.supabase_uid::text = app.current_actor()
-                    AND u.is_active AND u.role IN ('manager','operator'))
+                    AND u.is_active AND u.role IN ('manager','editor','operator'))
      AND NOT app.is_intake_client();
 $$;
 REVOKE ALL ON FUNCTION app.is_staff() FROM PUBLIC;
@@ -166,6 +166,9 @@ REVOKE ALL ON FUNCTION app.compliance_code(integer, text) FROM PUBLIC;
 -- הענפים ש"רק מנהל" רואה בהם (קובץ של תסקיר שנמחק, ביקור שנמחק, זריקת טיוטה של
 -- אחר) הם כוח של מנהל; is_manager() לבדו היה נותן אותם לסשן aal1 שכל
 -- require_manager() באותו קובץ דוחה.
+-- ⚠️ 19/10/2026 (שלושה תפקידים): נשאר **מנהל בלבד**, בכוונה. אלה עקיפות ולא עריכה — זריקת טיוטה של עמית באמצע ביקור,
+-- קובץ של תסקיר שנמחק, ביקור שנמחק. אילו עורך קיבל אותן, ההגנה על טיוטה של טכנאי מפני עמית הייתה נעלמת לגמרי (כל מי
+-- שכותב הוא עורך או מנהל).
 CREATE OR REPLACE FUNCTION app.compliance_verified_manager() RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT app.is_manager()
@@ -1136,7 +1139,7 @@ RETURNS TABLE (report_id bigint, file_id bigint, valid_until date, defects integ
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_code text := NULLIF(btrim(COALESCE(p_site_code,'')),'');
   v_today date := app.compliance_today();
   v_now text := app.compliance_now_iso();
@@ -1401,7 +1404,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_upload(text, jsonb, jsonb, jsonb) TO
 CREATE OR REPLACE FUNCTION public.inspection_report_update(p_report_id bigint, p_meta jsonb, p_reason text DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_today date := app.compliance_today();
   v_now text := app.compliance_now_iso();
   v_old inspection_reports%ROWTYPE; v_new inspection_reports%ROWTYPE;
@@ -1589,7 +1592,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_report_update(bigint, jsonb, text) T
 CREATE OR REPLACE FUNCTION public.inspection_report_delete(p_report_id bigint, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_reason text := app.compliance_reason(p_reason);
   v_r inspection_reports%ROWTYPE; v_code text; v_reopened integer;
 BEGIN
@@ -1624,7 +1627,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_report_delete(bigint, text) TO authe
 CREATE OR REPLACE FUNCTION public.inspection_machine_retire(p_site_code text, p_machine_key text, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_reason text := app.compliance_reason(p_reason);
   v_site integer; v_code text; v_mk text := btrim(COALESCE(p_machine_key,''));
 BEGIN
@@ -1657,7 +1660,7 @@ CREATE OR REPLACE FUNCTION public.inspection_defect_save(p_report_id bigint, p_d
                                                          p_unclean boolean DEFAULT false)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_body text := NULLIF(btrim(COALESCE(p_body,'')),'');
   v_r inspection_reports%ROWTYPE; v_d inspection_defects%ROWTYPE; v_id bigint; v_code text; v_seq integer;
   v_fields text[] := '{}'; v_prev_report bigint; v_unclean boolean := false;
@@ -1746,7 +1749,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_defect_save(bigint, bigint, text, bo
 CREATE OR REPLACE FUNCTION public.inspection_defect_delete(p_defect_id bigint, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_reason text := app.compliance_reason(p_reason);
   v_d inspection_defects%ROWTYPE; v_r inspection_reports%ROWTYPE; v_code text;
 BEGIN
@@ -1776,7 +1779,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_defect_delete(bigint, text) TO authe
 CREATE OR REPLACE FUNCTION public.inspection_defect_photo_add(p_defect_id bigint, p_photo jsonb, p_client_id uuid)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_row inspection_defects%ROWTYPE; v_pid bigint; v_bytes integer; v_cur integer; v_all integer;
   v_mime text; v_data text; v_thumb text; v_other bigint;
 BEGIN
@@ -1815,7 +1818,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_defect_photo_add(bigint, jsonb, uuid
 CREATE OR REPLACE FUNCTION public.inspection_defect_photo_delete(p_photo_id bigint)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_ph inspection_defect_photos%ROWTYPE; v_d inspection_defects%ROWTYPE;
 BEGIN
   SELECT ph.* INTO v_ph FROM inspection_defect_photos ph WHERE ph.id = p_photo_id;
@@ -1841,7 +1844,7 @@ RETURNS TABLE (defect_id bigint, photos integer, replayed boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_name text := NULLIF(btrim(COALESCE(p_done_by_name,'')),'');
   v_note text := NULLIF(btrim(COALESCE(p_note,'')),'');
   v_row inspection_defects%ROWTYPE; v_first bigint; v_k integer; v_code text;
@@ -1889,7 +1892,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_defect_done(bigint, text, text, uuid
 CREATE OR REPLACE FUNCTION public.inspection_close_by_report(p_report_id bigint, p_reason text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_r inspection_reports%ROWTYPE; v_n integer; v_code text;
 BEGIN
   SELECT r.* INTO v_r FROM inspection_reports r WHERE r.id = p_report_id FOR UPDATE;
@@ -1910,7 +1913,7 @@ GRANT EXECUTE ON FUNCTION public.inspection_close_by_report(bigint, text) TO aut
 CREATE OR REPLACE FUNCTION public.inspection_defect_reopen(p_defect_id bigint, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_reason text := app.compliance_reason(p_reason);
   v_d inspection_defects%ROWTYPE; v_r inspection_reports%ROWTYPE; v_code text;
 BEGIN
@@ -2184,7 +2187,7 @@ GRANT EXECUTE ON FUNCTION public.pm_templates_list() TO authenticated;
 CREATE OR REPLACE FUNCTION public.pm_template_create(p_name text) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_now text := app.compliance_now_iso();
   v_name text := btrim(COALESCE(p_name, ''));
   v_id integer;
@@ -2211,7 +2214,7 @@ GRANT EXECUTE ON FUNCTION public.pm_template_create(text) TO authenticated;
 CREATE OR REPLACE FUNCTION public.pm_template_meta_set(p_template_id integer, p_category text, p_auto_for text[]) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_t pm_templates;
   v_cat text := lower(btrim(COALESCE(p_category, '')));
   v_keys text[] := COALESCE(p_auto_for, '{}');
@@ -2242,7 +2245,7 @@ GRANT EXECUTE ON FUNCTION public.pm_template_meta_set(integer, text, text[]) TO 
 CREATE OR REPLACE FUNCTION public.pm_template_rename(p_template_id integer, p_name text) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_name text := btrim(COALESCE(p_name, ''));
   v_t pm_templates;
 BEGIN
@@ -2276,7 +2279,7 @@ CREATE OR REPLACE FUNCTION public.pm_template_save(p_items jsonb, p_expected_at 
                                                    p_template_id integer DEFAULT NULL) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_now text := app.compliance_now_iso();
   v_t pm_templates;
   v_before jsonb; v_after jsonb; v_keep integer[] := '{}';
@@ -2404,7 +2407,7 @@ GRANT EXECUTE ON FUNCTION public.pm_template_save(jsonb, text, integer) TO authe
 CREATE OR REPLACE FUNCTION public.pm_site_templates_set(p_site_code text, p_template_ids integer[]) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_site integer; v_code text; v_before integer[]; v_ids integer[] := COALESCE(p_template_ids, '{}');
   v_photos integer;
 BEGIN
@@ -2542,7 +2545,7 @@ CREATE OR REPLACE FUNCTION public.pm_profile_save(p_id integer, p_name text, p_t
 RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_now text := app.compliance_now_iso();
   v_name text := btrim(COALESCE(p_name, ''));
   v_ids integer[] := COALESCE((SELECT array_agg(DISTINCT x) FROM unnest(p_template_ids) x WHERE x IS NOT NULL), '{}');
@@ -2604,7 +2607,7 @@ DROP FUNCTION IF EXISTS public.pm_profile_delete(integer);
 CREATE OR REPLACE FUNCTION public.pm_profile_delete(p_id integer, p_expected_at text DEFAULT NULL) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_p pm_profiles%ROWTYPE; v_codes text[]; v_c text;
 BEGIN
   PERFORM app.pm_profiles_lock();
@@ -2632,7 +2635,7 @@ CREATE OR REPLACE FUNCTION public.pm_profile_sites_set(p_profile_id integer, p_s
                                                        p_expected_at text DEFAULT NULL) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_p pm_profiles%ROWTYPE;
 BEGIN
   PERFORM app.pm_profiles_lock();
@@ -2649,7 +2652,7 @@ GRANT EXECUTE ON FUNCTION public.pm_profile_sites_set(integer, text[], text) TO 
 CREATE OR REPLACE FUNCTION public.pm_site_profile_set(p_site_code text, p_profile_id integer) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_site integer; v_code text; v_before integer;
 BEGIN
   SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
@@ -2694,7 +2697,7 @@ RETURNS TABLE (visit_id bigint, created boolean, started_at text, last_activity_
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_now text := app.compliance_now_iso();
   v_site integer; v_code text; v_old pm_visits%ROWTYPE; v_id bigint; v_items integer; v_photos integer;
   v_tpls integer[];
@@ -2774,7 +2777,7 @@ GRANT EXECUTE ON FUNCTION public.pm_visit_start(text, boolean, bigint, text) TO 
 -- ⚠️ ואין אירוע: שמירת טיוטה אינה שינוי מצב (D20); הטופס סוקר את pm_site.
 CREATE OR REPLACE FUNCTION public.pm_visit_item_check(p_item_id bigint, p_checked boolean)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
-DECLARE v_actor text := app.require_staff(); v_vid bigint; v pm_visits%ROWTYPE;
+DECLARE v_actor text := app.require_editor(); v_vid bigint; v pm_visits%ROWTYPE;
 BEGIN
   -- ⚠️ בפריט "ערך" אין וי — יש מדידה (pm_visit_item_note). הדלת נסגרת כאן, במקום היחיד שכותב
   -- checked, כדי שלא ייווצר פריט שנראה מסומן ואי אפשר להגיש את הביקור (סקירה, 14/10/2026).
@@ -2794,7 +2797,7 @@ GRANT EXECUTE ON FUNCTION public.pm_visit_item_check(bigint, boolean) TO authent
 
 CREATE OR REPLACE FUNCTION public.pm_visit_item_note(p_item_id bigint, p_note text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
-DECLARE v_actor text := app.require_staff(); v_vid bigint; v pm_visits%ROWTYPE;
+DECLARE v_actor text := app.require_editor(); v_vid bigint; v pm_visits%ROWTYPE;
         v_note text := NULLIF(btrim(COALESCE(p_note,'')),'');
 BEGIN
   IF v_note IS NOT NULL AND length(v_note) > 1000 THEN
@@ -2811,7 +2814,7 @@ GRANT EXECUTE ON FUNCTION public.pm_visit_item_note(bigint, text) TO authenticat
 CREATE OR REPLACE FUNCTION public.pm_visit_photo_add(p_item_id bigint, p_photo jsonb, p_client_id uuid)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_vid bigint; v pm_visits%ROWTYPE; v_fid bigint; v_item integer; v_all integer; v_sum bigint; v_bytes integer;
   v_mime text; v_data text; v_thumb text; v_other bigint;
 BEGIN
@@ -2852,7 +2855,7 @@ GRANT EXECUTE ON FUNCTION public.pm_visit_photo_add(bigint, jsonb, uuid) TO auth
 
 CREATE OR REPLACE FUNCTION public.pm_visit_photo_delete(p_file_id bigint)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
-DECLARE v_actor text := app.require_staff(); v_vid bigint; v pm_visits%ROWTYPE;
+DECLARE v_actor text := app.require_editor(); v_vid bigint; v pm_visits%ROWTYPE;
 BEGIN
   SELECT f.visit_id INTO v_vid FROM pm_files f WHERE f.id = p_file_id AND f.kind = 'photo';
   IF v_vid IS NULL THEN RAISE EXCEPTION 'התמונה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
@@ -2872,7 +2875,7 @@ RETURNS TABLE (visit_id bigint, performed_on date, next_due_on date, replayed bo
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_today date := app.compliance_today();
   v_name text := NULLIF(btrim(COALESCE(p_performer_name,'')),'');
   v_note text := NULLIF(btrim(COALESCE(p_note,'')),'');
@@ -2939,7 +2942,7 @@ GRANT EXECUTE ON FUNCTION public.pm_visit_submit(bigint, text, jsonb, date, text
 CREATE OR REPLACE FUNCTION public.pm_visit_discard(p_visit_id bigint, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_reason text := COALESCE(app.compliance_reason(p_reason, false), 'בוטל');
   v pm_visits%ROWTYPE; v_items integer; v_photos integer; v_code text;
 BEGIN
@@ -2970,7 +2973,7 @@ RETURNS TABLE (visit_id bigint, replayed boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_now text := app.compliance_now_iso();
   v_client uuid; v_on date; v_site integer; v_code text; v_id bigint; v_bytes integer; v_md5 text; v_dup bigint;
   v_data text; v_note text;
@@ -3019,7 +3022,7 @@ GRANT EXECUTE ON FUNCTION public.pm_historical_upload(text, jsonb, jsonb) TO aut
 CREATE OR REPLACE FUNCTION public.pm_visit_delete(p_visit_id bigint, p_reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_reason text := app.compliance_reason(p_reason);
   v pm_visits%ROWTYPE; v_code text;
 BEGIN

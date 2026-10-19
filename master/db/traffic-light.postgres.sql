@@ -199,7 +199,7 @@ DECLARE
   -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
   v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   IF COALESCE(btrim(p_label), '') = '' THEN
     RAISE EXCEPTION 'שם העמודה חסר';
@@ -238,7 +238,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   -- ⚠️ COALESCE על כל שדה: הקורא שולח רק את מה שהשתנה. עדכון שדורש
   -- את כל השדות הופך "שינוי רוחב" לסיכון של דריסת האפשרויות.
@@ -266,7 +266,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
   DELETE FROM traffic_light_columns WHERE id = p_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'עמודה % אינה קיימת', p_id;
@@ -281,7 +281,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
   UPDATE traffic_light_columns SET position = p_position WHERE id = p_id;
 END;
 $fn$;
@@ -307,7 +307,7 @@ DECLARE
   -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
   v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   IF p_after IS NULL THEN
     SELECT COALESCE(MAX(position), 0) + 1 INTO v_pos
@@ -332,7 +332,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
   DELETE FROM traffic_light_rows WHERE id = p_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'שורה % אינה קיימת', p_id;
@@ -347,7 +347,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
   UPDATE traffic_light_rows SET position = p_position, updated_at = now() WHERE id = p_id;
 END;
 $fn$;
@@ -372,7 +372,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   IF p_value IS NULL OR p_value = 'null'::jsonb OR p_value = '""'::jsonb THEN
     UPDATE traffic_light_rows
@@ -416,7 +416,7 @@ DECLARE
   -- כדי שקורא ישן שאינו מעביר דבר ימשיך לעבוד בדיוק כמו קודם.
   v_board text := COALESCE(NULLIF(btrim(p_board), ''), 'robotic');
 BEGIN
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   IF jsonb_typeof(p_rows) <> 'array' THEN
     RAISE EXCEPTION 'מצופה מערך שורות';

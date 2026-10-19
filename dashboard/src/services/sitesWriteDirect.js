@@ -43,7 +43,10 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 function messageFor(error, fallback) {
   if (!error) return fallback;
   if (error.code === "42501") {
-    return "הפעולה מותרת למנהלים בלבד";
+    // ⚠️ 19/10/2026 (שלושה תפקידים): 42501 שמגיע מהפונקציה שלנו נושא הודעה בעברית — "בקר יכול רק לצפות…" או "הפעולה
+    // מותרת למנהלים בלבד" — ומוצג כמו שהוא. רק "permission denied" של Postgres עצמו מתורגם.
+    if (/[א-ת]/.test(error.message || "")) return error.message;
+    return "אין לך הרשאה לפעולה הזו";
   }
   return error.message || fallback;
 }

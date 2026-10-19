@@ -155,7 +155,8 @@ export default function ServiceAgreement({ site, onLinked = null }) {
   // ⚠️ **אותו שער בדיוק כמו בלוח עצמו**, ולא שני מנגנונים שנראים זהים.
   // ‏`useAdmin` מאמת מול התפקיד, ו-`app.require_manager()` במסד הוא מה
   // שבאמת דוחה כתיבה — הקוד כאן הוא נוחות.
-  const { unlocked, unlock, checking, error: unlockError } = useAdmin();
+  // 19/10/2026: חיבור לשורה ועריכתה — מנהל או עורך (tl_* ב-require_editor); בקר רואה את החיבור בלי כפתורים
+  const { unlocked, unlock, checking, error: unlockError, roleGated } = useAdmin();
   const [asking, setAsking] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -385,7 +386,7 @@ export default function ServiceAgreement({ site, onLinked = null }) {
             })()}
           </span>
 
-          {editing ? (
+          {roleGated ? null : editing ? (
             <button type="button" className="sa-btn sa-btn--ghost"
                     onClick={() => setEditing(false)} disabled={busy}>
               סיום עריכה
@@ -516,7 +517,7 @@ export default function ServiceAgreement({ site, onLinked = null }) {
         )}
       </div>
 
-      {!picking ? (
+      {roleGated ? null : !picking ? (
         <>
           {/* ⚠️ **שורה בשם זהה מוצעת מיד, בלי לפתוח רשימה.** היא אינה
               "אפשרות אחת מני רבות" — היא האתר הזה. רשימה שצריך לפתוח

@@ -21,6 +21,8 @@ const INT = "b1000000-0000-0000-0000-000000000006";
 const SRV = "b1000000-0000-0000-0000-000000000007";
 const IMP = "b1000000-0000-0000-0000-000000000008";
 const XSR = "b1000000-0000-0000-0000-000000000009";
+// 19/10/2026: OPR, OPR2 ו-sherut הם עורכים; RO — בקר אמיתי, צפייה בלבד
+const RO = "b1000000-0000-0000-0000-00000000000a";
 
 let h;
 let seq = 0;
@@ -58,13 +60,14 @@ before(async () => {
   const now = new Date().toISOString();
   await sup(`INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at) VALUES
       ('tk-mgr@parkomat.co.il','מנהלת משימות','manager',true,$1,$6),
-      ('tk-op@parkomat.co.il','בקר משימות','operator',true,$2,$6),
-      ('tk-op2@parkomat.co.il','בקר שני','operator',true,$3,$6),
+      ('tk-op@parkomat.co.il','בקר משימות','editor',true,$2,$6),
+      ('tk-op2@parkomat.co.il','בקר שני','editor',true,$3,$6),
       ('tk-off@parkomat.co.il','מושבת','operator',false,$4,$6),
       ('tk-intake@parkomat.co.il',NULL,'operator',true,$5,$6),
-      ('sherut@parkomat.co.il','שירות','operator',true,$7,$6),
+      ('sherut@parkomat.co.il','שירות','editor',true,$7,$6),
       ('tk-imp@parkomat.co.il','sherut@parkomat.co.il','manager',true,$8,$6),
-      ('xsherut@parkomat.co.il','שירות','manager',true,$9,$6)`, [MGR, OPR, OPR2, OFF, INT, now, SRV, IMP, XSR]);
+      ('xsherut@parkomat.co.il','שירות','manager',true,$9,$6),
+      ('tk-ro@parkomat.co.il','בקר צפייה','operator',true,$10,$6)`, [MGR, OPR, OPR2, OFF, INT, now, SRV, IMP, XSR, RO]);
   const s = await newSite();
   await sup(`INSERT INTO app_users (email, role, is_active, supabase_uid, site_id, created_at)
              VALUES ('site-tk@parkomat.co.il','agent',true,$1,$2,$3)`, [AGT, s.id, now]);
@@ -436,7 +439,7 @@ test("T16 · בלי סוג (12/10/2026): NULL נשמר, נספר בכפתור, �
   assert.equal(nn[0].is_nullable, "YES");
 });
 
-test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסטוריה; רק sherut; משימה שבוצעה — לא; פעמיים — false", { skip }, async () => {
+test("T17 · X: מחיקה לגמרי — המשימה וההיסטוריה; בקר לא (19/10: עורך ומנהל כן — T18); משימה שבוצעה — לא; פעמיים — false", { skip }, async () => {
   const s = await newSite();
   const id = await add(OPR, null, "למחוק אותי", s.code);
   await start(OPR2, id);
@@ -444,8 +447,8 @@ test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסט
   const keep = await add(OPR, null, "להשאיר", s.code);
   const hist = async (tid) => (await sup(`SELECT count(*)::int n FROM task_history WHERE task_id = $1`, [tid]))[0].n;
   assert.equal(await hist(id), 3);
-  // בקר — לא מוחק, ושום דבר לא זז (מנהלים כן, מ-12/10 — T18)
-  for (const uid of [OPR, OPR2]) await fails(del(uid, id), "42501", /אין הרשאה למחוק/);
+  // בקר — לא מוחק, ושום דבר לא זז (19/10/2026: בקר צפייה בלבד; עורכים ומנהלים כן — T18)
+  await fails(del(RO, id), "42501", /בקר יכול רק לצפות/);
   assert.equal(await hist(id), 3);
   assert.ok(findIn(await list(MGR, null, s.code), id), "עדיין קיימת");
   const ev0 = Number((await sup(`SELECT COALESCE(max(id), 0) m FROM events`))[0].m);
@@ -482,7 +485,7 @@ test("T17 · X (12/10/2026): מחיקה לגמרי — המשימה וההיסט
   assert.equal(anon[0].a, false);
 });
 
-test("T18 · X למנהלים (12/10/2026): כל מנהל מוחק, בקר לא; V נשאר רק sherut; can_delete לכל שורה", { skip }, async () => {
+test("T18 · X לעורכים ולמנהלים (19/10/2026): כל עורך ומנהל מוחק, בקר לא; V נשאר רק sherut; can_delete לכל שורה", { skip }, async () => {
   const s = await newSite();
   const a = await add(OPR, null, "למחוק כמנהל", s.code);
   const b = await add(OPR, null, "להשאיר לבדיקה", s.code);
@@ -491,20 +494,23 @@ test("T18 · X למנהלים (12/10/2026): כל מנהל מוחק, בקר לא;
   // לכל שורה — מה מותר למי שקורא: המסך צובע ומסביר לפי זה
   assert.deepEqual(await perms(MGR, a), [true, false], "מנהל: מוחק, לא מסמן בוצעה");
   assert.deepEqual(await perms(IMP, a), [true, false], "מנהל ששמו המוצג הוא המייל — מוחק כמנהל, לא מסמן");
-  assert.deepEqual(await perms(OPR, a), [false, false], "בקר: לא זה ולא זה");
-  assert.deepEqual(await perms(SRV, a), [true, true], "sherut (בקר בבדיקה) — שניהם, גם בלי דרגת מנהל");
+  assert.deepEqual(await perms(OPR, a), [true, false], "עורך (19/10/2026, \"כן, גם עורך\"): מוחק, לא מסמן בוצעה");
+  assert.deepEqual(await perms(RO, a), [false, false], "בקר: לא זה ולא זה — צפייה בלבד");
+  assert.deepEqual(await perms(SRV, a), [true, true], "sherut (עורך בבדיקה) — שניהם, גם בלי דרגת מנהל");
   // בקר — נדחה; V של מנהל — עדיין נדחה; X של מנהל — נמחקת, וביומן שמו
-  await fails(del(OPR, a), "42501", /אין הרשאה למחוק/);
+  await fails(del(RO, a), "42501", /בקר יכול רק לצפות/);
   await fails(done(MGR, b), "42501", /אין הרשאה לסמן/);
   assert.equal(await del(MGR, a), true);
   assert.equal(await row(MGR, a), undefined);
   const au = await sup(`SELECT actor_name FROM audit_log WHERE action = 'task.delete' AND target_id = $1`, [String(a)]);
   assert.deepEqual(au.map((r) => r.actor_name), ["מנהלת משימות"]);
-  // ⚠️ מנהל שהורד לבקר מאבד את המחיקה מיד — הדרגה מהטבלה, לא מהאסימון
+  // ⚠️ מנהל שהורד לבקר מאבד את המחיקה מיד — הדרגה מהטבלה, לא מהאסימון; שהורד לעורך — שומר עליה
   await sup(`UPDATE app_users SET role = 'operator' WHERE supabase_uid = $1`, [MGR]);
   try {
     assert.deepEqual(await perms(MGR, b), [false, false]);
-    await fails(del(MGR, b), "42501", /אין הרשאה למחוק/);
+    await fails(del(MGR, b), "42501", /בקר יכול רק לצפות/);
+    await sup(`UPDATE app_users SET role = 'editor' WHERE supabase_uid = $1`, [MGR]);
+    assert.deepEqual(await perms(MGR, b), [true, false], "הורד לעורך — מוחק, לא מסמן");
   } finally {
     await sup(`UPDATE app_users SET role = 'manager' WHERE supabase_uid = $1`, [MGR]);
   }
@@ -544,7 +550,8 @@ test("T19 · שלושה סוגים (12/10/2026, ערב): מוקד נוסף; או
   // שורה — גם לזו בלי סוג (החיבור IS NOT DISTINCT FROM; "=" היה משאיר לה NULL)
   const perms = async (uid) => (await list(uid, null, s.code)).open.map((t) => [t.kind, t.can_close, t.can_delete]);
   const expect = (c, d) => [...TASK_KINDS, null].map((k) => [k, c, d]);
-  assert.deepEqual(await perms(OPR), expect(false, false), "בקר: לא V ולא X");
+  assert.deepEqual(await perms(OPR), expect(false, true), "עורך: X בלבד (19/10/2026)");
+  assert.deepEqual(await perms(RO), expect(false, false), "בקר: לא V ולא X");
   assert.deepEqual(await perms(MGR), expect(false, true), "מנהל: X בלבד");
   assert.deepEqual(await perms(SRV), expect(true, true), "sherut: שניהם");
 
@@ -587,15 +594,16 @@ test("T20 · הרשאות השורות (can_close / can_delete) — קריאה �
       const after = (await tx.query(q, [oid.c, oid.d])).rows[0];
       return { c: after.c - before.c, d: after.d - before.d };
     });
-    // בקר: can_delete_task קורא גם ל-can_close_task (לא מנהל), ולכן פעמיים לכל סוג — ולא 24 ומעלה
+    // 19/10/2026: can_delete_task כבר לא קורא ל-can_close_task (מחיקה = עורך או מנהל), ולכן פעם אחת לכל סוג לכל
+    // אחת מהן — ולא 24 ומעלה
     assert.equal(r.d, 4, `can_delete_task: ${r.d} קריאות ל-24 משימות בארבעה סוגים`);
-    assert.equal(r.c, 8, `can_close_task: ${r.c} קריאות ל-24 משימות בארבעה סוגים`);
+    assert.equal(r.c, 4, `can_close_task: ${r.c} קריאות ל-24 משימות בארבעה סוגים`);
   } finally {
     await h.pg.exec(`RESET track_functions`);
   }
 });
 
-test("T21 · קוד המנהל (12/10/2026): פותח V ו-X לכל איש צוות; בלי קוד / קוד שגוי — לא; sherut@ ומנהל — בלי קוד", { skip }, async () => {
+test("T21 · קוד המנהל: פותח V לעורך ולמנהל (X — בלי קוד מ-19/10); בקר — לא גם עם הקוד; בלי קוד / קוד שגוי — לא", { skip }, async () => {
   // ⚠️ קוד בדוי — לא הקוד האמיתי (המאגר ציבורי). אותו גיבוב כמו set_admin_code.
   const CODE = "kod-bdika-21";
   const hash = crypto.createHash("sha256").update(CODE, "utf8").digest("hex");
@@ -608,7 +616,7 @@ test("T21 · קוד המנהל (12/10/2026): פותח V ו-X לכל איש צו�
     `SELECT details FROM audit_log WHERE action = $1 AND target_id = $2 ORDER BY id DESC LIMIT 1`, [action, String(id)]))[0]?.details;
   try {
     const s = await newSite();
-    // בקר: בלי קוד, קוד ריק, קוד שגוי — נדחה; הקוד הנכון — עובר, ונרשם בשמו המאומת
+    // עורך: בלי קוד, קוד ריק, קוד שגוי — נדחה; הקוד הנכון — עובר, ונרשם בשמו המאומת
     const a = await add(OPR, "customer", "בדיקת קוד — בוצע", s.code);
     await fails(done(OPR, a), "42501");
     await fails(doneC(OPR, a, ""), "42501");
@@ -618,13 +626,16 @@ test("T21 · קוד המנהל (12/10/2026): פותח V ו-X לכל איש צו�
     assert.equal(ra.state, "done");
     assert.equal(ra.done_by, "בקר משימות");
     assert.equal((await auditOf(a, "task.done")).by_code, true);
-    // מחיקה — אותו כלל
+    // מחיקה — מ-19/10/2026 כל עורך מוחק בלי קוד ("כן, גם עורך"), והיומן אומר שלא דרך קוד
     const b = await add(OPR, "technical", "בדיקת קוד — מחיקה", s.code);
-    await fails(del(OPR, b), "42501");
-    await fails(delC(OPR, b, "kod-shagui"), "42501");
-    assert.equal(await delC(OPR, b, CODE), true);
+    assert.equal(await del(OPR, b), true);
     assert.equal(findIn(await list(MGR, null, s.code), b), undefined);
-    assert.equal((await auditOf(b, "task.delete")).by_code, true);
+    assert.equal((await auditOf(b, "task.delete")).by_code, false);
+    // ⚠️ בקר — "אין לו שום יכולת לשנות כלום": גם הקוד הנכון אינו פותח לו V או X
+    const ro = await add(OPR, "customer", "בקר עם קוד", s.code);
+    await fails(doneC(RO, ro, CODE), "42501", /בקר יכול רק לצפות/);
+    await fails(delC(RO, ro, CODE), "42501", /בקר יכול רק לצפות/);
+    assert.equal(findIn(await list(MGR, null, s.code), ro).state, "todo");
     // sherut@ ומנהל (מחיקה) — בלי קוד, כמו קודם; והיומן אומר שלא דרך קוד
     const c = await add(OPR, "call_center", "שירות בלי קוד", s.code);
     assert.ok(await done(SRV, c));
@@ -695,4 +706,20 @@ test("T22 · החלפת קוד המנהל (13/10/2026): כל קוד לא ריק,
     await sup(`DELETE FROM settings WHERE key = 'admin_code_hash'`);
     if (prev[0]) await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('admin_code_hash', $1, 'x')`, [prev[0].value]);
   }
+});
+
+test("T23 · sherut@ שהורד לבקר (19/10/2026): ברשימה אין לו V ולא X, ו-V נדחה — בקר אינו משנה כלום, גם החשבון הזה", { skip }, async () => {
+  const s = await newSite();
+  const id = await add(OPR, "customer", "sherut כבקר", s.code);
+  await sup(`UPDATE app_users SET role = 'operator' WHERE supabase_uid = $1`, [SRV]);
+  try {
+    const r = findIn(await list(SRV, null, s.code), id);
+    assert.deepEqual([r.can_close, r.can_delete], [false, false], "המסך לא יציע לו V או X");
+    await fails(done(SRV, id), "42501", /בקר יכול רק לצפות/);
+    await fails(del(SRV, id), "42501", /בקר יכול רק לצפות/);
+  } finally {
+    await sup(`UPDATE app_users SET role = 'editor' WHERE supabase_uid = $1`, [SRV]);
+  }
+  const back = findIn(await list(SRV, null, s.code), id);
+  assert.deepEqual([back.can_close, back.can_delete], [true, true], "חזר לעורך — שניהם");
 });

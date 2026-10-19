@@ -20,6 +20,8 @@ import { formatDate } from "../../utils/helpers";
 // ⚠️ מ-dataSource ולא מ-api: הכתיבה עוברת במתג — ישירות ל-Supabase
 // כברירת מחדל, ודרך השרת כשהמתג כבוי.
 import { startMaintenance, cancelMaintenance, scheduleMaintenance } from "../../services/dataSource";
+import { useAuth } from "../../hooks/useAuth";
+import { canEdit, READ_ONLY_MSG } from "../../utils/roles";
 import "./SiteFacts.css";
 
 // תאריך + "לפני כמה זמן". ⚠️ **שניהם ולא אחד:** תאריך לבדו מחייב לחשב
@@ -34,6 +36,9 @@ function fmtDateTime(iso) {
 }
 
 function SiteFacts({ site, maintenance, onRefresh }) {
+  // 19/10/2026: תחזוקה — מנהל או עורך; בקר רואה את המצב בלבד (המסד דוחה ממילא: app.require_editor)
+  const { user } = useAuth();
+  const editable = canEdit(user?.role);
   const [maintName, setMaintName] = useState("");
   const [maintHours, setMaintHours] = useState(2);
   const [busy, setBusy] = useState(false);
@@ -155,8 +160,8 @@ function SiteFacts({ site, maintenance, onRefresh }) {
         )}
       </div>
 
-      {/* ⚠️ **פעולה חופשית, לא מאחורי קוד מנהל.** ההחלטה היא "ייחוס במקום
-          מנע": אנשי שירות פותחים חלונות בשטח, והשם נדרש כדי לדעת מי. */}
+      {/* ⚠️ **לא מאחורי קוד מנהל.** ההחלטה היא "ייחוס במקום מנע": אנשי שירות פותחים חלונות בשטח, והשם נדרש כדי
+          לדעת מי. ⚠️ מ-19/10/2026 — עורך או מנהל (בקר: צפייה בלבד), והמסד אוכף (app.require_editor). */}
       <div className="facts-block">
         <h3>תחזוקה</h3>
         {isInMaintenance ? (
@@ -166,10 +171,14 @@ function SiteFacts({ site, maintenance, onRefresh }) {
               <br />
               פג: {formatDate(maintenance.maintenance.expires_at)}
             </p>
-            <button className="btn btn-danger" onClick={cancel} disabled={busy}>
-              בטל תחזוקה
-            </button>
+            {editable ? (
+              <button className="btn btn-danger" onClick={cancel} disabled={busy}>
+                בטל תחזוקה
+              </button>
+            ) : <p className="facts-note facts-readonly">{READ_ONLY_MSG}</p>}
           </div>
+        ) : !editable ? (
+          <p className="facts-note facts-readonly">אין תחזוקה פעילה. {READ_ONLY_MSG}</p>
         ) : (
           <div className="facts-maint-form">
             <input

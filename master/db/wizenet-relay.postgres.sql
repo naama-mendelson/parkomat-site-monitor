@@ -230,7 +230,7 @@ CREATE OR REPLACE FUNCTION public.wizenet_request_update(p_ticket text, p_field 
 RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_ticket text := btrim(COALESCE(p_ticket, ''));
   v_value text := btrim(COALESCE(p_value, ''));
   v_id bigint;
@@ -271,7 +271,7 @@ CREATE OR REPLACE FUNCTION public.wizenet_request_lookups()
 RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_id bigint;
 BEGIN
   v_id := app.wizenet_enqueue('lookups', NULL, NULL, NULL, app.wizenet_lookup_calls(), v_actor, app.current_app_user());

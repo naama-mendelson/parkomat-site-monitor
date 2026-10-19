@@ -2,6 +2,7 @@
 // זמין רק למנהל בקרה ומנהל כללי, ומאחורי קוד מנהל שהשרת אוכף.
 import { useState, useEffect } from "react";
 import SiteIdentities from "../SiteIdentities/SiteIdentities";
+import { roleLabel } from "../../utils/roles";
 import { STATUS_COLORS, STATUS_LABELS, TIER_LABELS } from "../../utils/constants";
 // ⚠️ הכתיבות דרך dataSource, ו-`changeAdminCode`/`storeAdminCode` נשארים
 // מ-api: הקוד המשותף הוא מנגנון של השרת בלבד ואינו קיים ב-Supabase.
@@ -36,7 +37,8 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
   const [secretShown, setSecretShown] = useState(false);
   const mayLeave = () => !secretShown || window.confirm("הסיסמה שמוצגת תאבד ואי אפשר לשחזר אותה. לסגור בכל זאת?");
   const onClose = () => { if (mayLeave()) closePanel(); };
-  const { unlocked, unlock, checking, error: unlockError, roleGated, role } = useAdmin();
+  // 19/10/2026 (שלושה תפקידים): עורך נכנס — רושם ועורך אתרים; מחיקת אתר וקוד הניהול — למנהל בלבד (isManager)
+  const { unlocked, unlock, checking, error: unlockError, roleGated, role, isManager } = useAdmin();
   // ⚠️ במצב ישיר אין קוד מנהל — פותחים בסיסמת החשבון. הטקסט חייב לומר
   // את זה: מסך שמבקש "קוד מנהל" ממי שאין לו קוד הוא מסך שאי אפשר לעבור.
   // ⚠️ שתי הזרועות מבקשות עכשיו את **קוד המנהל**, ולכן אין יותר טקסט מותנה.
@@ -315,11 +317,11 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
             <p>בודק הרשאות…</p>
           ) : (
             <>
-              <p>הוספה, עריכה ומחיקה של אתרים מותרות למנהלים בלבד.</p>
+              <p>הוספה ועריכה של אתרים — לעורכים ולמנהלים. מחיקה — למנהלים בלבד.</p>
               {/* ⚠️ מוצג במפורש: בלי זה המסך אומר "אין לך הרשאה" ומשתמשת
                   שיודעת שהיא מנהלת אינה יכולה לדעת שהתפקיד שלה במסד שונה
                   ממה שהיא חושבת — וזה בדיוק המצב שקרה בפועל. */}
-              <p className="adm-lock-role">התפקיד שלך: {role === "manager" ? "מנהל" : "בקר"}</p>
+              <p className="adm-lock-role">התפקיד שלך: {roleLabel(role)}</p>
               <p className="adm-lock-hint">לשינוי התפקיד — יש לפנות למנהל אחר.</p>
             </>
           )}
@@ -386,7 +388,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                 שולחת יותר. כפתור שנראה כמו "שנה סיסמת ניהול" ובפועל
                 משנה מנגנון רדום הוא הטעיה — למי שילחץ עליו ייראה שהוא
                 החמיר אבטחה, ולא שינה כלום. */}
-            {!roleGated && (
+            {isManager && (
               <button className="adm-btn-ghost" onClick={() => setPwOpen((o) => !o)}>
                 שנה קוד מנהל
               </button>
@@ -653,10 +655,13 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
                           הוחלף בקר
                         </button>
                         </>)}
-                        <button className="adm-btn-ghost adm-danger-text"
-                          onClick={() => { setConfirmDelete(s.code); setErr(null); }}>
-                          מחק
-                        </button>
+                        {/* מחיקת אתר — מנהל בלבד (19/10/2026: "עורך — הכל חוץ ממחיקת אתר") */}
+                        {isManager && (
+                          <button className="adm-btn-ghost adm-danger-text"
+                            onClick={() => { setConfirmDelete(s.code); setErr(null); }}>
+                            מחק
+                          </button>
+                        )}
                       </>
                     )}
                   </div>

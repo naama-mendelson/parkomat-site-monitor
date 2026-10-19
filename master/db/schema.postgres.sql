@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   -- ורואה אתר אחד בלבד, בעוד ששני האחרים רואים הכול. אל תעניקו לו
   -- הרשאות אדם ואל תכניסו אותו ל-`list_users` כשורה רגילה.
   role         TEXT NOT NULL DEFAULT 'operator'
-                 CHECK (role IN ('operator', 'manager', 'agent')),
+                 CHECK (role IN ('operator', 'editor', 'manager', 'agent')),
   is_active    BOOLEAN NOT NULL DEFAULT TRUE,
   supabase_uid UUID,                                -- ⚠️ בלי FK — ראה למעלה
   -- ============================================================
@@ -430,12 +430,13 @@ BEGIN
      AND NOT EXISTS (
        SELECT 1 FROM pg_constraint
         WHERE conname = 'app_users_role_check'
-          AND pg_get_constraintdef(oid) LIKE '%agent%'
+          AND pg_get_constraintdef(oid) LIKE '%editor%'
      ) THEN
     ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
     UPDATE app_users SET role = 'manager' WHERE role IN ('executive', 'supervisor');
     ALTER TABLE app_users ADD CONSTRAINT app_users_role_check
-      CHECK (role IN ('operator', 'manager', 'agent'));
+      -- ⚠️ 19/10/2026: נוסף 'editor' (עורך). התנאי למעלה בודק אותו, כך שההחלה הבאה מחליפה את האילוץ הישן פעם אחת.
+      CHECK (role IN ('operator', 'editor', 'manager', 'agent'));
   END IF;
 
   -- שיוך הסוכן לאתר. NULL = אדם.

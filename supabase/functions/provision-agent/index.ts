@@ -76,7 +76,9 @@ Deno.serve(async (req) => {
 
   const { data: role, error: roleErr } = await asCaller.rpc("my_role");
   if (roleErr) return json({ error: "אימות נכשל" }, 401);
-  if (role !== "manager") return json({ error: "הפעולה מותרת למנהלים בלבד" }, 403);
+  // ⚠️ 19/10/2026: גם עורך — הוא רושם אתרים (register_site), וזהות הסוכן נוצרת באותה פעולה. בלעדיה אתר שעורך רשם
+  // נראה מותקן ואינו מדווח לעולם. זו זהות של מכונה לאתר, לא "הוספת משתמש" — ההזמנה של אנשים נשארה למנהל.
+  if (role !== "manager" && role !== "editor") return json({ error: "הפעולה מותרת לעורכים ולמנהלים" }, 403);
 
   const body = await req.json().catch(() => null);
   const code = String(body?.code ?? "").trim();

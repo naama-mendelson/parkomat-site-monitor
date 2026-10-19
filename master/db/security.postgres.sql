@@ -462,6 +462,32 @@ STABLE
 AS $$ SELECT app.current_app_role() = 'manager' $$;
 
 -- ============================================================
+-- שלושה תפקידים: מנהל, עורך, בקר (19/10/2026)
+-- ============================================================
+-- בעלת המוצר: "אני רוצה שיהיה עורך, בקר ומנהל. בקר אין לו שום יכולת לשנות כלום רק לראות. עורך יש לו יכולות עריכה של
+-- הכל חוץ ממחיקת אתר, הוספת משתמשים ומחיקת משתמשים". can_edit = מנהל או עורך — מה ש-app.require_editor() דורש בכל
+-- פעולה שכותבת. מנהל בלבד (app.require_manager): מחיקת אתר, ניהול משתמשים (הזמנה ב-invite-user, השבתה, תפקיד, הרשימה),
+-- קוד הניהול המשותף, הכלים לשאריות של אתר שנמחק (compliance_storage/orphans/reattach/purge), ותיבת הדיווחים מהשטח.
+-- בקר — קריאה בלבד: require_staff (קריאה) מכניס אותו, require_editor (כתיבה) לא.
+CREATE OR REPLACE FUNCTION app.can_edit()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$ SELECT app.current_app_role() IN ('manager', 'editor') $$;
+
+-- ⚠️ חד-פעמי: שלושת הבקרים של 19/10/2026 (ביניהם חשבון המוקד) נעשו עורכים — בעלת המוצר בחרה "עורכים", כדי שהמוקד
+-- ימשיך לעבוד כמו היום. הסימן ב-settings מבטיח שזה רץ פעם אחת בלבד: בלעדיו כל החלה הייתה הופכת כל בקר חדש לעורך, בשקט.
+-- (במסד חדש זה רץ כשאין עדיין משתמשים, ומסמן — בקר שייווצר אחר כך נשאר בקר.)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM settings WHERE key = 'roles_editor_migrated') THEN
+    UPDATE app_users SET role = 'editor' WHERE role = 'operator';
+    INSERT INTO settings (key, value, updated_at)
+    VALUES ('roles_editor_migrated', 'true', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  END IF;
+END $$;
+
+-- ============================================================
 -- can_see_site — **בוטלה**
 -- ============================================================
 -- כאן ישבה הפונקציה שהגבילה בקר לאתרים שהוקצו לו. הוכרע ההפך: **בקר
@@ -813,6 +839,7 @@ $$;
 GRANT EXECUTE ON FUNCTION app.current_app_user()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.current_app_role()      TO authenticated;
 GRANT EXECUTE ON FUNCTION app.is_manager()          TO authenticated;
+GRANT EXECUTE ON FUNCTION app.can_edit()            TO authenticated;
 
 -- ============================================================
 -- public.my_role() — התפקיד שלי, מהמסד ולא מהאסימון

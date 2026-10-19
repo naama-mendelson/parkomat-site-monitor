@@ -29,7 +29,9 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-const ROLES = ["manager", "operator"];
+// ⚠️ 19/10/2026: שלושה תפקידים — מנהל, עורך, בקר (צפייה בלבד). ההזמנה עצמה נשארת למנהל בלבד (בדיקת my_role למטה):
+// "הוספת משתמשים ומחיקת משתמשים" הן בדיוק מה שעורך אינו רשאי.
+const ROLES = ["manager", "editor", "operator"];
 
 // ⚠️ אותו כלל שהמסד אוכף בטריגר. הבדיקה כאן אינה מחליפה אותו — היא רק
 // נותנת הודעה מובנת במקום שגיאת מסד גולמית.

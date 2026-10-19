@@ -24,6 +24,8 @@ const OPR2 = "a1000000-0000-0000-0000-000000000003";
 const AGT = "a1000000-0000-0000-0000-000000000004";
 const OFF = "a1000000-0000-0000-0000-000000000005";
 const INT = "a1000000-0000-0000-0000-000000000006";
+// 19/10/2026: OPR/OPR2 הם עורכים (מי שכותב); RO — בקר אמיתי, צפייה בלבד
+const RO = "a1000000-0000-0000-0000-000000000007";
 
 const TABLES = ["inspection_machines", "inspection_files", "inspection_reports", "inspection_defects",
   "inspection_defect_photos", "pm_checklist_items", "pm_visits", "pm_visit_items", "pm_files", "compliance_history"];
@@ -136,11 +138,12 @@ before(async () => {
   await sup(
     `INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at) VALUES
        ('cm-mgr@parkomat.co.il','מנהלת בדיקה','manager',true,$1,$6),
-       ('cm-op@parkomat.co.il','בקר בדיקה','operator',true,$2,$6),
-       ('cm-op2@parkomat.co.il','בקר שני','operator',true,$3,$6),
+       ('cm-op@parkomat.co.il','בקר בדיקה','editor',true,$2,$6),
+       ('cm-op2@parkomat.co.il','בקר שני','editor',true,$3,$6),
        ('cm-off@parkomat.co.il','מושבת','operator',false,$4,$6),
-       ('cm-intake@parkomat.co.il',NULL,'operator',true,$5,$6)`,
-    [MGR, OPR, OPR2, OFF, INT, now]);
+       ('cm-intake@parkomat.co.il',NULL,'operator',true,$5,$6),
+       ('cm-ro@parkomat.co.il','בקר צפייה','operator',true,$7,$6)`,
+    [MGR, OPR, OPR2, OFF, INT, now, RO]);
   const s = await newSite();
   await sup(`INSERT INTO app_users (email, role, is_active, supabase_uid, site_id, created_at)
              VALUES ('site-cm@parkomat.co.il','agent',true,$1,$2,$3)`, [AGT, s.id, now]);
@@ -240,9 +243,9 @@ test("4 · סוכן, מושבת וזהות הקליטה: site_compliance ריק,
   }
 });
 
-test("5 · בקר: כל RPC של מנהל נדחה ב-42501", { skip }, async () => {
+test("5 · שלושה תפקידים (19/10/2026): בקר — כל כתיבה 42501 וקריאה מותרת; עורך — רק כלי המנהל נדחים", { skip }, async () => {
   const s = await newSite();
-  const calls = [
+  const writes = [
     [`SELECT * FROM public.inspection_upload($1, '{}'::jsonb)`, [s.code]],
     [`SELECT public.inspection_report_update(1, '{}'::jsonb, NULL)`],
     [`SELECT public.inspection_report_delete(1, 'סיבה')`],
@@ -251,15 +254,31 @@ test("5 · בקר: כל RPC של מנהל נדחה ב-42501", { skip }, async ()
     [`SELECT public.inspection_defect_delete(1, 'סיבה')`],
     [`SELECT public.inspection_close_by_report(1, 'סיבה')`],
     [`SELECT public.inspection_defect_reopen(1, 'סיבה')`],
+    [`SELECT * FROM public.inspection_defect_done(1, 'שם', NULL, $1::uuid)`, [uuid()]],
     [`SELECT public.pm_template_save('[]'::jsonb)`],
     [`SELECT * FROM public.pm_historical_upload($1, '{}'::jsonb, '{}'::jsonb)`, [s.code]],
     [`SELECT public.pm_visit_delete(1, 'סיבה')`],
+    [`SELECT * FROM public.pm_visit_start($1)`, [s.code]],
+    [`SELECT public.pm_visit_item_check(1, true)`],
+    [`SELECT public.pm_visit_item_note(1, 'הערה')`],
+    [`SELECT public.pm_visit_discard(1, 'סיבה')`],
+  ];
+  // בקר: "אין לו שום יכולת לשנות כלום, רק לראות"
+  for (const [sql, params] of writes) await fails(rpc(RO, sql, params ?? []), "42501", /בקר יכול רק לצפות/);
+  // ...אבל קורא
+  await rpc(RO, `SELECT public.inspection_site($1)`, [s.code]);
+  await rpc(RO, `SELECT public.pm_site($1)`, [s.code]);
+  // עורך: כלי השאריות של אתר שנמחק — מנהל בלבד, כמו מחיקת האתר עצמה
+  const managerOnly = [
     [`SELECT * FROM public.compliance_storage()`],
     [`SELECT * FROM public.compliance_orphans()`],
     [`SELECT public.compliance_reattach('x', $1)`, [s.code]],
     [`SELECT public.compliance_purge('pm_visit', 1, 'סיבה')`],
   ];
-  for (const [sql, params] of calls) await fails(rpc(OPR, sql, params ?? []), "42501");
+  for (const [sql, params] of managerOnly) {
+    await fails(rpc(OPR, sql, params ?? []), "42501", /למנהלים בלבד/);
+    await fails(rpc(RO, sql, params ?? []), "42501");
+  }
 });
 
 // ================================================================

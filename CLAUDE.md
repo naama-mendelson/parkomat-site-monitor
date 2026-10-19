@@ -352,7 +352,8 @@ recorded here because they are cheap to hold and expensive to re-derive:
 1. **Every user sees every site.** No subsets, no user↔site association table. RLS is
    therefore `USING (true)` for `authenticated` — that is the exact expression of the rule,
    not a shortcut standing in for something finer.
-2. **Everyone may put a site into maintenance.** No credential required. This is also the
+2. ~~**Everyone may put a site into maintenance.**~~ **Not since 19/10/2026: an editor or a manager** (see *Three
+   roles* below; a בקר is read-only). Until then: no credential required. This was the
    original design: the dashboard button was never role-gated, and the form has always
    required the user to type their name.
 
@@ -3519,6 +3520,107 @@ evening: *"תמיין לפי מי שמחכה הכי הרבה זמן ושלחצו
   `pickInfo`, `infoValue` and `infoActive`, with kind = type | system | tier | lift. `openGroup(page, "fg-info")` is
   built in. `probe-prod`, `probe-stale` and `probe-svc` still read the old `<select>`. They sign in to production and
   were not ported.
+
+## Three roles: manager, editor, operator (built 19/10/2026)
+
+The owner: *"אני רוצה שיהיה עורך, בקר ומנהל. בקר אין לו שום יכולת לשנות כלום רק לראות. עורך יש לו יכולות עריכה של הכל
+חוץ ממחיקת אתר, הוספת משתמשים ומחיקת משתמשים"*.
+
+**Her answers:**
+- The three operators of that day (the call centre's account among them) **became editors**, so the call centre
+  keeps working.
+- V on a task stays as it was: sherut@, or an editor/manager who types the admin code. A בקר cannot, even with the code.
+- X on a task: every editor and manager.
+- The 13 managers stay managers. She reassigns people herself from the users screen, which now has a three-way picker.
+
+**In the database (the authority):**
+
+| | Who | Where |
+|---|---|---|
+| Read | all three (`require_staff` / RLS) | `app.is_staff` now includes `'editor'` |
+| Every write | manager or editor | `app.require_editor()` (`writes.postgres.sql`), `app.can_edit()` (`security.postgres.sql`) |
+| Manager only | delete a site; users (invite, deactivate, role, the list); the admin code; the deleted-site leftovers tools (`compliance_storage/orphans/reattach/purge`); the field-reports inbox | `app.require_manager()` / `is_manager()` |
+
+- `require_editor` has the same shape as `require_manager`: identity first, then the role read from `app_users` (a
+  demoted role takes effect at once), then the second factor. The refusal reads "בקר יכול רק לצפות — הפעולה מותרת
+  לעורכים ולמנהלים". ⚠️ The `mfa_required_for_manager` flag (off) would now cover all editing, not only manager actions.
+  Otherwise turning it on would protect site deletion and leave the editing that moved here from `require_manager`
+  without a second factor.
+- ⚠️ **The Wizenet intake identity holds the manager role in production.** `is_staff` already excluded it, and
+  `require_editor` excludes it explicitly too (`is_intake_client`). Without that, a manager-role intake could edit.
+- **What moved, beyond the obvious:**
+  - Maintenance (start / schedule / cancel) used to be open to "any active user" ("attribution, not prevention"). It
+    now requires an editor.
+  - Tasks (add / ⏳ / V / X), the Wizenet relay requests, all inspector and PM writes, the traffic light (`tl_*`),
+    `register_site` / `update_site`, reclassify, test marks, controller replaced, announcements and the reload
+    broadcast.
+  - `can_delete_task` = staff and an editor; `can_close_task` = staff, an editor, and sherut@.
+- ⚠️ **Three manager overrides stay manager-only on purpose** (`compliance_verified_manager`): discarding a colleague's
+  draft visit mid-work, the files of a deleted report, and a deleted visit. These are overrides, not editing. If editors
+  had them, the protection of a technician's draft from colleagues would disappear entirely, since everyone who writes
+  is now an editor or a manager.
+- `submit_field_report` stays open to every active user (a letter to the manager, not site data), as does marking an
+  announcement as seen. Say so if a בקר should not report either.
+- `set_user_role` accepts three roles. Demoting a manager, to editor or to operator, keeps both guards: not yourself,
+  and not the last active manager.
+- **The role constraint** (`app_users_role_check`) includes `'editor'`. The `DO` block in `schema.postgres.sql`
+  replaces it once (its condition now looks for `editor`).
+- **The one-time move** (`security.postgres.sql`): `UPDATE app_users SET role = 'editor' WHERE role = 'operator'`,
+  guarded by `settings.roles_editor_migrated`. Without the flag every apply would silently turn every new operator into
+  an editor. On a fresh database it runs when there are no users and sets the flag. ⚠️ It writes no `audit_log` rows:
+  the three changes are recorded here and in the owner's answer.
+- **Edge Functions:** `invite-user` accepts `editor` (inviting stays manager-only); `provision-agent` also accepts an
+  editor, because an editor registers sites and the agent identity is created in the same action. ⚠️ **Both must be
+  redeployed** (`npx supabase functions deploy <name> --project-ref xvfsikwaaaohnmldjbtv --use-api`; neither uses
+  `--no-verify-jwt`). Until then an editor's new site gets no agent identity, and the modal says so (`agentError`).
+
+**On screen** (`utils/roles.js`: `canEdit`, `isManagerRole`, `roleLabel`, `READ_ONLY_MSG`, the same sentence as the
+database):
+- **A בקר sees no write controls:**
+  - Tasks: no add form; ⏳ / V / X are locked, and a click explains under the row with no code field.
+  - Calls: status and type are plain text, not pickers.
+  - Maintenance in the site window: the state only, plus the sentence. The supervisor table has no "בטל".
+  - Inspector: no upload, no actions, no "סימון כבוצע".
+  - PM: no start, continue or restart, and no tools.
+  - Site management: the lock screen with "התפקיד שלך: בקר".
+  - Traffic light: no edit mode. Service-agreement link: no buttons.
+- **An editor gets the manager's screens except:** "מחק" in site management, "שנה קוד מנהל", the users button (👥, now
+  manager-only in the header), the field-reports inbox, and discarding someone else's draft.
+- 42501 messages: the data layer used to translate every 42501 to "מנהלים בלבד". It now shows the function's own Hebrew
+  message and translates only Postgres's own "permission denied".
+
+**Tests:**
+- `tests/roles.test.js` (9):
+  - ⚠️ **a census:** every public function must be classified as editor, manager or read. A new unclassified function
+    fails, so a write cannot be added behind `require_staff` (which lets a בקר in) without a decision.
+  - a בקר refused on every kind of write, and reads work;
+  - an editor edits, and is refused delete / users / admin code;
+  - `set_user_role` with three roles; the one-time move runs once; the intake identity is not an editor; the screen
+    helpers and the sentence match the database.
+- Existing tests: the users who write became editors, and a real read-only operator was added to the permission tests
+  (compliance 5/20/22/27/38, tasks T17–T21, PM lists and profiles). New: tasks T23 (sherut@ demoted to operator: no V
+  or X in the list, and V refused). `admin-gate.test.js` pins `editable` in the direct arm, and `isManager` on "שנה
+  קוד מנהל". Full suite 1232/1232.
+- **Mutations (isolated copy, `mut1910/run-mut4.cjs`): 14 of 14 caught.** Among them: require_editor letting a בקר
+  through, can_edit including operator, delete_site opened to editors, the one-time move on every apply, the intake
+  identity not excluded, the demotion guard only for 'operator', and the compliance overrides opened to editors.
+  ⚠️ `can_close_task` without `can_edit` survived at first. Writes were still refused (`task_done` checks the editor
+  first), but the list told a בקר sherut@ that V was allowed. T23 was added for it.
+- Browser: `e2e/probe-roles.mjs` 12 (three roles: users button, call pickers, site management), `probe-tasks` K13 (a
+  real בקר) 241/241, `insp/run` E (a בקר cannot mark done), `pm/run` (the technician is an editor; a בקר gets no start
+  or tools) 141/142 (the remaining one fails by the calendar since 10/10).
+- ⚠️ **Harness:** `mock-useAuth` in e2e and insp accepts `role=editor`. In pm (`main.jsx`) the default is now `editor`,
+  the technician, keeping the same `uid-op`. Every probe that runs a technician's flow uses `role=editor`: `fx.mjs`,
+  `fx2.mjs`, `probe-photos-all`, `probe-tap`, `pm/run`.
+- The maintenance form lives in the site window's overview, which the harness does not render ("תובנות אינן מדומות"),
+  so its read-only state is checked by code reading only.
+
+**Deploy order:**
+1. SQL. The three operators become editors in the same apply.
+2. The two Edge Functions.
+3. The dashboard.
+
+An old bundle before step 3 shows an editor as "בקר" in labels, but can do everything the database allows.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

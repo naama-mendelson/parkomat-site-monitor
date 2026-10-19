@@ -18,6 +18,7 @@ import {
   MAX_FILES, MAX_BODY, MIN_NAME,
 } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import {
   publishAnnouncement, fetchAnnouncements, MAX_TITLE, MAX_ANN_BODY,
 } from "../../services/dataSource";
@@ -63,7 +64,8 @@ const fmt = (iso) => {
 
 export default function FieldReports({ sites = [], openReportId = null, onClose }) {
   const { user } = useAuth();
-  const isManager = user?.role === "manager";
+  const isManager = user?.role === "manager";   // תיבת הדיווחים — מנהל בלבד (גם אחרי 19/10)
+  const editable = canEdit(user?.role);          // הודעת מערכת ורענון המסכים — מנהל או עורך (19/10/2026)
 
   // ⚠️ נפתח **בתיבה** כשהגיעו מהחלון הקופץ. הגרסה הקודמת נפתחה תמיד
   // על לשונית הכתיבה, כלומר הכפתור שכתוב עליו "פתח והשב" הראה טופס
@@ -209,7 +211,7 @@ export default function FieldReports({ sites = [], openReportId = null, onClose 
           {/* ⚠️ רק למנהלת, ובכוונה גם בתצוגה: ה-RPC ידחה כל אחד אחר,
               אבל לשונית שמובילה ל-403 היא הדרך האמינה לגרום למישהו
               להסיק שהמערכת שבורה. ההגנה ב-SQL; זו רק כנות. */}
-          {isManager && (
+          {editable && (
             <button className={tab === "system" ? "on" : ""} onClick={() => setTab("system")}>
               הודעת מערכת
             </button>

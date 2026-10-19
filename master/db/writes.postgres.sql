@@ -179,10 +179,8 @@ DECLARE
 BEGIN
   -- ⚠️ ראשית הזהות, ולפני כל דבר אחר: SECURITY DEFINER עוקף RLS, ולכן
   -- זו ההגנה היחידה שיש כאן.
-  v_name := app.actor_display_name();
-  IF v_name IS NULL THEN
-    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
-  END IF;
+  -- ⚠️ 19/10/2026: מנהל או עורך. עד אז כל משתמש פעיל ("ייחוס במקום מנע") — ובקר הוא עכשיו צפייה בלבד.
+  v_name := app.require_editor();
   v_role := app.current_app_role();
 
   -- ⚠️ **חובה, ולא רשות.** בלי אכיפה השדה היה נשאר ריק ברוב הפעמים,
@@ -273,10 +271,8 @@ DECLARE
   v_count   integer;
   v_by      text;
 BEGIN
-  v_name := app.actor_display_name();
-  IF v_name IS NULL THEN
-    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
-  END IF;
+  -- ⚠️ 19/10/2026: מנהל או עורך. עד אז כל משתמש פעיל ("ייחוס במקום מנע") — ובקר הוא עכשיו צפייה בלבד.
+  v_name := app.require_editor();
   v_role := app.current_app_role();
 
   -- אותה אכיפה בדיוק כמו בפתיחה: ריק, רווח או תו בודד נדחים.
@@ -385,6 +381,37 @@ BEGIN
   RETURN v_name;
 END;
 $fn$;
+
+-- ============================================================
+-- app.require_editor() — כל פעולה שכותבת (19/10/2026)
+-- ============================================================
+-- מנהל או עורך (app.can_edit). בקר — "אין לו שום יכולת לשנות כלום, רק לראות" (בעלת המוצר). אותו מבנה בדיוק כמו
+-- require_manager: זהות, תפקיד מ-app_users (תפקיד שהורד נכנס לתוקף מיד), ואז הגורם השני. ⚠️ הדגל
+-- mfa_required_for_manager (כבוי היום) חל מעכשיו על כל עריכה, לא רק על פעולות מנהל — אחרת הדלקתו הייתה מגינה על מחיקת
+-- אתר ומשאירה את העריכה שעברה מ-require_manager לכאן בלי גורם שני. ⚠️ וזהות הקליטה מוויזנט (תפקיד מנהל טכני) אינה
+-- עורכת: is_staff מוציא אותה, וכאן אותו דבר.
+CREATE OR REPLACE FUNCTION app.require_editor()
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_name text;
+BEGIN
+  v_name := app.actor_display_name();
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NOT app.can_edit() OR app.is_intake_client() THEN
+    RAISE EXCEPTION 'בקר יכול רק לצפות — הפעולה מותרת לעורכים ולמנהלים' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  PERFORM app.require_mfa();
+  RETURN v_name;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION app.require_editor() FROM PUBLIC;
 
 -- ============================================================
 -- app.check_control_system — מערכת ההפעלה של האתר
@@ -561,7 +588,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_name  text := NULLIF(TRIM(COALESCE(p_site_name, '')), '');
   v_tier  text := COALESCE(NULLIF(TRIM(COALESCE(p_tier, '')), ''), 'basic');
   v_plc   text := NULLIF(TRIM(COALESCE(p_plc_type, '')), '');
@@ -686,7 +713,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_id    integer;
   v_code  text;
   v_name  text;
@@ -1039,7 +1066,7 @@ DECLARE
   v_role       text;
   v_managers   integer;
 BEGIN
-  IF p_role NOT IN ('operator', 'manager') THEN
+  IF p_role NOT IN ('operator', 'editor', 'manager') THEN
     RAISE EXCEPTION 'תפקיד לא תקין' USING ERRCODE = 'check_violation';
   END IF;
 
@@ -1055,7 +1082,8 @@ BEGIN
   -- ⚠️ **הורדה ממנהל לבקר היא אותה סכנה בדיוק כמו השבתה** — שתיהן מסירות
   -- את יכולת הניהול. כלל שמגן רק על ההשבתה משאיר דלת פתוחה: מורידים את
   -- המנהל האחרון לבקר, ואין מי שיחזיר. העלאה תמיד מותרת.
-  IF p_role = 'operator' THEN
+  -- ⚠️ 19/10/2026: "הורדה ממנהל" היא לכל תפקיד אחר — לעורך או לבקר. השמירות חלות על שתיהן.
+  IF v_role = 'manager' AND p_role <> 'manager' THEN
     IF p_user_id = v_actor_id THEN
       RAISE EXCEPTION 'אי אפשר להוריד את עצמך מתפקיד מנהל'
         USING ERRCODE = 'check_violation';
@@ -1220,7 +1248,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor  text := app.require_manager();
+  v_actor  text := app.require_editor();
   v_table  text := app.test_target_table(p_kind);
   v_now    text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_reason text := NULLIF(TRIM(COALESCE(p_reason, '')), '');
@@ -1272,7 +1300,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor text := app.require_manager();
+  v_actor text := app.require_editor();
   v_table text := app.test_target_table(p_kind);
   v_code  text;
   v_prev  text;
@@ -1343,7 +1371,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_name    text := app.actor_display_name();
+  v_name    text := app.require_editor();   -- 19/10/2026: מנהל או עורך; בקר — צפייה בלבד
   v_role    text;
   v_site_id integer;
   v_hours   numeric;
@@ -1438,9 +1466,8 @@ DECLARE
 BEGIN
   -- ⚠️ **מנהל בלבד.** בשונה מפתיחת תחזוקה, שהיא ייחוס-במקום-מנע, כאן
   -- משנים אירוע שכבר נרשם — והשינוי מוריד תקלה מאחוז הכשל.
-  IF NOT app.is_manager() THEN
-    RAISE EXCEPTION 'הפעולה מותרת למנהלים בלבד' USING ERRCODE = 'insufficient_privilege';
-  END IF;
+  -- ⚠️ 19/10/2026: מנהל או עורך ("עריכה של הכל"); בקר — לא.
+  PERFORM app.require_editor();
 
   SELECT * INTO v_row FROM status_history WHERE status_history.id = p_id;
   IF NOT FOUND THEN
@@ -1744,7 +1771,7 @@ BEGIN
   IF v_actor IS NULL THEN
     RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   v_title := NULLIF(TRIM(COALESCE(p_title, '')), '');
   v_body  := NULLIF(TRIM(COALESCE(p_body, '')), '');
@@ -1830,7 +1857,7 @@ BEGIN
   IF v_actor IS NULL THEN
     RAISE EXCEPTION 'נדרשת הזדהות' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  PERFORM app.require_manager();
+  PERFORM app.require_editor();
 
   -- ⚠️ site_code הוא NOT NULL, ולכן אירוע כלל-מערכתי מקבל סמן ולא NULL.
   -- 'system' ולא קוד אתר אמיתי: applySiteUpdate בדשבורד מתאים אירועים
@@ -2286,7 +2313,7 @@ SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_actor    text := app.require_manager();
+  v_actor    text := app.require_editor();
   v_id       integer;
   v_name     text;
   v_total    integer;

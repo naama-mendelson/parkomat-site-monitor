@@ -40,7 +40,7 @@ function groupHistory(reports) {
   return { years: [...years.entries()], children };
 }
 
-function ReportCard({ report, parent, followups, allReports, isManager, onViewFile, onEdit, onDelete, onCloseByReport, onOpenPhoto, nested }) {
+function ReportCard({ report, parent, followups, allReports, editable, onViewFile, onEdit, onDelete, onCloseByReport, onOpenPhoto, nested }) {
   const r = report;
   const [open, setOpen] = useState(false);
   const [deleteBlocked, setDeleteBlocked] = useState(false);
@@ -68,7 +68,7 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
         </button>
         {/* ⚠️ כפתורים גלויים ולא תפריט ⋯ (בעלת המוצר, 11/10/2026: "אופציה למחוק דוח שעלה כבר או
             לערוך את התאריכים שלו"). שתי הפעולות היו כאן — מאחורי ⋯ בלי מילה, בתחתית העמוד. */}
-        {isManager && (
+        {editable && (
           <>
             <button type="button" className="it-btn it-btn--small" onClick={() => onEdit(r, parent)}>עריכה</button>
             {/* ⚠️ השרת מסרב למחוק תקופתי שיש לו בדיקות חוזרות חיות — אומרים זאת לפני שהמנהל
@@ -139,7 +139,7 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
         <ul className="it-list it-rows it-report-defects">
           {defects.map((d) => (d.status === "done" ? (
             <DefectDoneRow key={d.id} defect={d} closingReport={byId.get(d.closed_by_report_id)}
-              isManager={false} onOpenPhoto={onOpenPhoto} />
+              editable={false} onOpenPhoto={onOpenPhoto} />
           ) : (
             <li key={d.id} className="it-done it-done--open">
               <p className="it-defect-body">{d.body}</p>
@@ -158,7 +158,7 @@ function ReportCard({ report, parent, followups, allReports, isManager, onViewFi
         <ul className="it-list it-rows it-followups">
           {followups.map((f) => (
             <ReportCard key={f.id} report={f} parent={r} allReports={allReports} nested
-              isManager={isManager} onViewFile={onViewFile} onEdit={onEdit} onDelete={onDelete}
+              editable={editable} onViewFile={onViewFile} onEdit={onEdit} onDelete={onDelete}
               onCloseByReport={onCloseByReport} onOpenPhoto={onOpenPhoto} />
           ))}
         </ul>
@@ -260,7 +260,7 @@ function ChangeRow({ h }) {
  * @param {ReturnType<import('./InspectionUtils').deriveInspection>} p.derived
  */
 export default function InspectionHistory({
-  derived, siteCode, isManager, rev, onViewFile, onEdit, onDelete, onCloseByReport, onOpenPhoto,
+  derived, siteCode, editable, rev, onViewFile, onEdit, onDelete, onCloseByReport, onOpenPhoto,
 }) {
   const { reports, machines } = derived;
   const grouped = useMemo(() => groupHistory(reports), [reports]);
@@ -286,7 +286,7 @@ export default function InspectionHistory({
                   <ul className="it-list it-rows">
                     {list.map((r) => (
                       <ReportCard key={r.id} report={r} parent={null} followups={grouped.children.get(r.id)}
-                        allReports={reports} isManager={isManager}
+                        allReports={reports} editable={editable}
                         onViewFile={onViewFile} onEdit={onEdit} onDelete={onDelete}
                         onCloseByReport={onCloseByReport} onOpenPhoto={onOpenPhoto} />
                     ))}

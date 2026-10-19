@@ -12,6 +12,7 @@ const skip = !local.available() && "PGlite אינו מותקן (npm ci --omit=de
 const MGR = "c1000000-0000-0000-0000-000000000001";
 const OPR = "c1000000-0000-0000-0000-000000000002";
 const OFF = "c1000000-0000-0000-0000-000000000003";
+const RO = "c1000000-0000-0000-0000-000000000004";    // 19/10/2026: בקר — צפייה בלבד (OPR הוא עורך)
 
 let h;
 let seq = 0;
@@ -53,8 +54,9 @@ before(async () => {
   const now = new Date().toISOString();
   await sup(`INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at) VALUES
       ('pmt-mgr@parkomat.co.il','מנהלת רשימות','manager',true,$1,$4),
-      ('pmt-op@parkomat.co.il','טכנאי','operator',true,$2,$4),
-      ('pmt-off@parkomat.co.il','מושבת','operator',false,$3,$4)`, [MGR, OPR, OFF, now]);
+      ('pmt-op@parkomat.co.il','טכנאי','editor',true,$2,$4),
+      ('pmt-off@parkomat.co.il','מושבת','operator',false,$3,$4),
+      ('pmt-ro@parkomat.co.il','בקר','operator',true,$5,$4)`, [MGR, OPR, OFF, now, RO]);
 });
 after(async () => { if (h) await h.close(); });
 
@@ -171,15 +173,18 @@ test("תקרת 40 תמונות — על כל הרשימות של האתר יחד
   await fails(assign(await newSite(), [big, extra]), "23514", /40/);
 });
 
-test("הרשאות: בקר קורא ואינו משנה; משתמש מושבת — לא כלום", { skip }, async () => {
+test("הרשאות (19/10/2026): בקר קורא ואינו משנה; עורך משנה; משתמש מושבת — לא כלום", { skip }, async () => {
   const code = await newSite();
   const anyId = (await list())[0].id;
-  assert.ok(Array.isArray((await one(OPR, `SELECT public.pm_templates_list() j`)).j));
-  assert.ok(Array.isArray((await one(OPR, `SELECT public.pm_template($1) j`, [anyId])).j));
-  await fails(create("ניסיון", OPR), "42501");
-  await fails(one(OPR, `SELECT public.pm_template_rename($1, 'שם אחר')`, [anyId]), "42501");
-  await fails(one(OPR, `SELECT public.pm_template_save('[]'::jsonb, NULL, $1)`, [anyId]), "42501");
-  await fails(assign(code, [anyId], OPR), "42501");
+  assert.ok(Array.isArray((await one(RO, `SELECT public.pm_templates_list() j`)).j));
+  assert.ok(Array.isArray((await one(RO, `SELECT public.pm_template($1) j`, [anyId])).j));
+  await fails(create("ניסיון", RO), "42501");
+  await fails(one(RO, `SELECT public.pm_template_rename($1, 'שם אחר')`, [anyId]), "42501");
+  await fails(one(RO, `SELECT public.pm_template_save('[]'::jsonb, NULL, $1)`, [anyId]), "42501");
+  await fails(assign(code, [anyId], RO), "42501");
+  // עורך — "עריכה של הכל"
+  const mine = await create("רשימה של עורך", OPR);
+  assert.ok(Number(mine) > 0 || (mine && mine.id), JSON.stringify(mine));
   await fails(one(OFF, `SELECT public.pm_templates_list() j`), "42501");
 });
 

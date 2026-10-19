@@ -71,7 +71,7 @@ before(async () => {
   site1 = await newSite(); site2 = await newSite(); site3 = await newSite();
   await sup(`INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at) VALUES
       ('wr-mgr@parkomat.co.il','מנהלת ממסר','manager',true,$1,$4),
-      ('wr-op@parkomat.co.il','בקר ממסר','operator',true,$2,$4),
+      ('wr-op@parkomat.co.il','בקר ממסר','editor',true,$2,$4),
       ('wr-intake@parkomat.co.il',NULL,'operator',true,$3,$4)`, [MGR, OPR, INT, now]);
   await sup(`INSERT INTO app_users (email, role, is_active, supabase_uid, site_id, created_at) VALUES
       ('site-${site1.code}@parkomat.co.il','agent',true,$1,$4,$7),
@@ -191,7 +191,7 @@ test("R6 · הצלחה: 'update successfully' — נרשם השינוי בשם �
   assert.deepEqual(ev.map((e) => e.payload.action), ["status"]);
   // ⚠️ שורת הביקורת — מי שלחץ ובאיזה תפקיד, לא "סוכן"
   const au = await sup(`SELECT actor_name, actor_role, details FROM audit_log WHERE action = 'service_call.status' AND target_id = '880001' ORDER BY id DESC LIMIT 1`);
-  assert.deepEqual([au[0].actor_name, au[0].actor_role, au[0].details.via], ["בקר ממסר", "operator", "relay"]);
+  assert.deepEqual([au[0].actor_name, au[0].actor_role, au[0].details.via], ["בקר ממסר", "editor", "relay"]);
   // תשובה שנייה לאותה בקשה — נדחית, ולא נרשם שוב
   assert.deepEqual(await complete(R1, c.id, c.attempt, [{ status: 200, text: "update successfully" }]), { accepted: false });
   assert.equal((await sup(`SELECT count(*)::int n FROM service_call_changes WHERE ticket = '880001'`))[0].n, 1);

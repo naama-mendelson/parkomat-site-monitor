@@ -28,6 +28,7 @@ import UsersPanel from "../UsersPanel/UsersPanel";
 import FieldReports from "../FieldReports/FieldReports";
 import { useDirect } from "../../services/dataSource";
 import AccountMenu from "../AccountMenu/AccountMenu";
+import { useAuth } from "../../hooks/useAuth";
 import "./Header.css";
 
 function Header({
@@ -64,7 +65,10 @@ function Header({
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
   // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
-  const isOperator = role === "operator";
+  const isOperator = role === "operator";   // ⚠️ role כאן הוא התצוגה (בקר / מנהל בקרה / מנהל כללי), לא תפקיד המשתמש
+  // מסך המשתמשים — מנהל בלבד (19/10/2026: "הוספת משתמשים ומחיקת משתמשים" אינן של עורך; list_users דוחה ממילא)
+  const { user: me } = useAuth();
+  const isUserManager = me?.role === "manager";
 
   // ניהול האתרים (הוספה/עריכה/מחיקה) פתוח רק למנהל בקרה ומנהל כללי.
   // הבקר מנטר בלבד. השרת אוכף את זה גם הוא — הסתרה ב-UI אינה אבטחה.
@@ -302,14 +306,16 @@ function Header({
             </button>
           )}
 
-          <button
-            className="theme-toggle"
-            onClick={() => setUsersOpen(true)}
-            title="משתמשים — צירוף וצפייה"
-            aria-label="משתמשים"
-          >
-            👥
-          </button>
+          {isUserManager && (
+            <button
+              className="theme-toggle"
+              onClick={() => setUsersOpen(true)}
+              title="משתמשים — צירוף וצפייה"
+              aria-label="משתמשים"
+            >
+              👥
+            </button>
+          )}
 
           {/* מי מחובר, שינוי סיסמה, ויציאה. החליף כפתור ⎋ בודד שלא אמר בשם
               מי המסך פועל — וזה מה שנרשם על כל פעולת תחזוקה. */}

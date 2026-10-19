@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { STATUS_COLORS, STATUS_LABELS, STATUSES, METRIC_COLORS } from "../../utils/constants";
 // ⚠️ מ-dataSource ולא מ-api — ראה ההסבר שם.
 import { cancelMaintenance } from "../../services/dataSource";
+import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import { useSupervisorStats } from "../../hooks/useSupervisorStats";
 import PeriodTabs from "../../components/PeriodTabs/PeriodTabs";
 import AnimatedNumber from "../../components/AnimatedNumber/AnimatedNumber";
@@ -36,6 +38,8 @@ const COMPLIANCE_COLUMN = { key: "complianceSeverity", label: PM_ENABLED ? "בו
 const complianceSeverity = (c) => worstSeverity(c);
 
 function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
+  const { user } = useAuth();
+  const editable = canEdit(user?.role);   // 19/10/2026: ביטול תחזוקה — מנהל או עורך; בקר רואה בלבד
   const [period, setPeriod] = useState("week");
   // ⚠️ ברירת המחדל: אחוז כשל, מהגבוה לנמוך (בעלת המוצר, 11/10/2026: "שהאתרים ימוינו לפי אחוז
   // כשל"). עד אז — דחיפות (מצב → דרגה → אחוז כשל), כמו תצוגת הכרטיסים; היא נשארה כשובר שוויון.
@@ -337,13 +341,15 @@ function SupervisorView({ onSiteClick, dataVersion, sites = [] }) {
                     </span>
                     {m.reason && <span className="sv-maint-reason">{m.reason}</span>}
                   </div>
-                  <button
-                    className="sv-maint-cancel"
-                    disabled={busy === m.siteCode}
-                    onClick={() => handleCancelMaintenance(m.siteCode)}
-                  >
-                    {busy === m.siteCode ? "מבטל…" : "בטל"}
-                  </button>
+                  {editable && (
+                    <button
+                      className="sv-maint-cancel"
+                      disabled={busy === m.siteCode}
+                      onClick={() => handleCancelMaintenance(m.siteCode)}
+                    >
+                      {busy === m.siteCode ? "מבטל…" : "בטל"}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

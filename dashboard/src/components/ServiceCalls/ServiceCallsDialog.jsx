@@ -21,6 +21,8 @@ import {
 import "../Tasks/Tasks.css";
 import FaultTimer from "../SiteCard/FaultTimer";
 import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
+import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import "./ServiceCalls.css";
 
 /**
@@ -31,6 +33,10 @@ import "./ServiceCalls.css";
  * @param {() => void} [p.onChanged] — אחרי שינוי (ההורה מרענן את הסימון בכרטיס)
  */
 export default function ServiceCallsDialog({ site = null, recent = false, rev = 0, onClose, onChanged }) {
+  // 19/10/2026: שינוי סטטוס/סוג ורענון הרשימות — מנהל או עורך; בקר רואה את הערכים בלבד (המסד דוחה ממילא:
+  // wizenet_request_update / wizenet_request_lookups עוברות דרך app.require_editor)
+  const { user } = useAuth();
+  const canWrite = SERVICE_CALLS_WRITE && canEdit(user?.role);
   // ⚠️ שלוש רשימות. מהכרטיס — הקריאות **הפתוחות** של האתר, ו"להיסטוריה" מחליף לאלה שנסגרו (15/10/2026, בעלת המוצר:
   // "יראו רק קריאות פתוחות ויהיה כפתור שכתוב עליו להסטוריה"). עד אז החלון מהכרטיס הראה גם את מה שנסגר היום.
   // "קריאות היום" (recent, 14/10) — כל מה שהגיע ב-24 השעות וכל פתוחה בכל גיל, כולל קודים שאין להם אתר אצלנו.
@@ -102,7 +108,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
   };
   useEffect(() => { fetchServiceCallLookups().then(setLookups).catch(() => {}); }, []);
   const loadRelay = useCallback(() => {
-    if (SERVICE_CALLS_WRITE) fetchWizenetRelayStatus().then(setRelay).catch(() => setRelay(null));
+    if (canWrite) fetchWizenetRelayStatus().then(setRelay).catch(() => setRelay(null));
   }, []);
   useEffect(() => { loadRelay(); }, [loadRelay]);
   const noRelay = relay?.alive === 0;
@@ -178,8 +184,8 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
     const cur = field === "status" ? c.status_id : c.type_id;
     const curName = field === "status" ? c.status_name : c.type_name;
     const label = field === "status" ? "סטטוס" : "סוג";
-    // ⚠️ בלי ממסר אי אפשר לעדכן את ויזנט (ראו SERVICE_CALLS_WRITE) — מציגים את הערך ולא בורר שנתקע
-    if (!SERVICE_CALLS_WRITE) {
+    // ⚠️ בלי ממסר אי אפשר לעדכן את ויזנט (ראו canWrite) — מציגים את הערך ולא בורר שנתקע
+    if (!canWrite) {
       const val = curName || cur;
       return val ? <span className="sc-field-val" title={label}>{val}</span> : null;
     }
@@ -240,7 +246,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
         {noLists && calls?.length > 0 && (
           <p className="tk-muted sc-note">
             רשימות הסטטוסים והסוגים של ויזנט עוד לא נטענו — אי אפשר לשנות כרגע.{" "}
-            {SERVICE_CALLS_WRITE && (
+            {canWrite && (
               <button type="button" className="tk-link" disabled={listsBusy || noRelay} onClick={reloadLists}>
                 {listsBusy ? "טוען מוויזנט…" : "טעינת הרשימות מוויזנט"}
               </button>
@@ -249,7 +255,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
         )}
         {listsMsg && <p className={listsMsg.ok ? "tk-muted sc-note" : "tk-error"} role="status">{listsMsg.text}</p>}
         {/* ⚠️ שורה אחת, ורק כשיש מה לשנות: בלי קריאות אין בורר, ואין מה להסביר */}
-        {SERVICE_CALLS_WRITE && noRelay && calls?.length > 0 && (
+        {canWrite && noRelay && calls?.length > 0 && (
           <p className="tk-muted sc-note" role="status">אין כרגע ממסר פעיל לוויזנט — אי אפשר לשנות סטטוס או סוג</p>
         )}
         {/* ⚠️ תמיד במסך, ורק הטקסט משתנה: אזור הודעות שנוסף **יחד** עם הטקסט שלו לא תמיד מוקרא (VoiceOver בעיקר).
@@ -326,7 +332,7 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
             <p className="tk-muted sc-more">מוצגות {calls.length} האחרונות מתוך {total}</p>
           )}
           {/* ⚠️ גם הרענון עובר דרך WIZEAPI — חסום מחוץ לישראל, ולכן דרך הממסר */}
-          {!noLists && SERVICE_CALLS_WRITE && (
+          {!noLists && canWrite && (
             <p className="sc-foot">
               <button type="button" className="tk-link" disabled={listsBusy || noRelay} onClick={reloadLists}>
                 {listsBusy ? "טוען מוויזנט…" : "רענון רשימות הסטטוסים והסוגים מוויזנט"}

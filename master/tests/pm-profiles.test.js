@@ -10,7 +10,8 @@ const local = require("./helpers/local-pg");
 const skip = !local.available() && "PGlite אינו מותקן (npm ci --omit=dev)";
 
 const MGR = "c2000000-0000-0000-0000-000000000001";
-const OPR = "c2000000-0000-0000-0000-000000000002";
+const OPR = "c2000000-0000-0000-0000-000000000002";   // 19/10/2026: עורך
+const RO = "c2000000-0000-0000-0000-000000000003";    // בקר — צפייה בלבד
 
 let h;
 let seq = 0;
@@ -53,7 +54,8 @@ before(async () => {
   const now = new Date().toISOString();
   await sup(`INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, created_at) VALUES
       ('ppf-mgr@parkomat.co.il','מנהלת פרופילים','manager',true,$1,$3),
-      ('ppf-op@parkomat.co.il','טכנאי','operator',true,$2,$3)`, [MGR, OPR, now]);
+      ('ppf-op@parkomat.co.il','טכנאי','editor',true,$2,$3),
+      ('ppf-ro@parkomat.co.il','בקר','operator',true,$4,$3)`, [MGR, OPR, now, RO]);
   DEF = (await sup(`SELECT id FROM pm_templates WHERE is_default`))[0].id;
   await saveList([check("ברירת מחדל 1")], DEF);
   BASE = await createList("בסיס פרקומט");
@@ -190,14 +192,19 @@ test("תקרת 40 התמונות — לכל הרשימות של הפרופיל �
   assert.ok(id);
 });
 
-test("הרשאות: מפעיל קורא את הלוח אבל אינו כותב; אנונימי — כלום", { skip }, async () => {
+test("הרשאות (19/10/2026): בקר קורא את הלוח ואינו כותב; עורך כותב; אנונימי — כלום", { skip }, async () => {
   const a = await newSite();
   const id = await saveProfile(null, "הרשאות", [BASE]);
-  assert.ok((await listing(OPR)).profiles.length > 0);
-  await fails(saveProfile(null, "של מפעיל", [BASE], null, OPR), "42501");
-  await fails(setSites(id, [a], OPR), "42501");
-  await fails(setSiteProfile(a, id, OPR), "42501");
-  await fails(delProfile(id, OPR), "42501");
+  assert.ok((await listing(RO)).profiles.length > 0);
+  await fails(saveProfile(null, "של בקר", [BASE], null, RO), "42501");
+  await fails(setSites(id, [a], RO), "42501");
+  await fails(setSiteProfile(a, id, RO), "42501");
+  await fails(delProfile(id, RO), "42501");
+  // עורך — "עריכה של הכל"
+  const mine = await saveProfile(null, "של עורך", [BASE], null, OPR);
+  await setSiteProfile(a, mine, OPR);
+  await setSiteProfile(a, null, OPR);
+  await delProfile(mine, OPR);
   await fails(h.as("anon", null, (tx) => tx.query(`SELECT public.pm_profiles_list()`)), "42501");
 });
 

@@ -27,7 +27,8 @@ function messageFor(error) {
   if (!error) return "שגיאה לא ידועה";
   // ⚠️ 42501 היא ההודעה של Postgres ("permission denied for function"), לא
   // שלנו — ומי שיראה אותה לא יבין שהמשמעות היא "אין לך הרשאה".
-  if (error.code === "42501") return "הפעולה מותרת למנהלים בלבד";
+  // ⚠️ 19/10/2026: הודעה בעברית מהפונקציה ("בקר יכול רק לצפות…") מוצגת כמו שהיא; רק ה-"permission denied" של Postgres מתורגם
+  if (error.code === "42501") return /[א-ת]/.test(error.message || "") ? error.message : "אין לך הרשאה לפעולה הזו";
   return error.message || "הפעולה נכשלה";
 }
 

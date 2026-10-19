@@ -462,3 +462,13 @@
    סמן יד ובלי שטח לחיצה מורחב; הלחיצה פותחת את הכרטיס, ושם "משימות" ו"קריאות שירות" הם כפתורים. */
 .tk-card-btn.is-static { cursor: inherit; }
 .tk-card-btn.is-static::before { content: none; }
+
+/* 19/10/2026 — בקר (צפייה בלבד): משפט אחד במקום טופס ההוספה */
+.tk-readonly {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}

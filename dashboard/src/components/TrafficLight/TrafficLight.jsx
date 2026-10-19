@@ -20,6 +20,7 @@
 // בידיו. הקוד הוא צעד אישור לפני עריכה, בדיוק כמו בניהול האתרים.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAdmin } from "../../hooks/useAdmin";
+import { roleLabel } from "../../utils/roles";
 import CodePrompt from "./CodePrompt";
 import {
   fetchBoard, addColumn, updateColumn, deleteColumn,
@@ -1084,7 +1085,7 @@ function TrafficLight({ onClose }) {
                 type="button"
                 className="tl-btn"
                 onClick={() => setAskCode(true)}
-                title={roleGated ? "עריכה מותרת למנהלים בלבד" : "פתיחת מצב עריכה"}
+                title={roleGated ? "עריכה מותרת לעורכים ולמנהלים" : "פתיחת מצב עריכה"}
               >עריכה</button>
             )}
             <button type="button" className="tl-close" onClick={onClose} aria-label="סגור">✕</button>
@@ -1099,7 +1100,7 @@ function TrafficLight({ onClose }) {
             עם הקוד הנכון, ובלי המשפט הזה זה נראה כמו "הקוד לא עובד". */}
         {roleGated && askCode === false && (
           <div className="tl-note">
-            התפקיד שלך: {role === "manager" ? "מנהל" : "בקר"} — עריכה מותרת למנהלים בלבד.
+            התפקיד שלך: {roleLabel(role)} — עריכה מותרת לעורכים ולמנהלים.
           </div>
         )}
 

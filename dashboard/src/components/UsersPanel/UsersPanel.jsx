@@ -16,6 +16,7 @@ import { fetchUsers, setUserActive, setUserRole } from "../../services/dataSourc
 // עבר ל-Cloudflare ה-master אינו נגיש ממנו (מאחורי NAT, בלי כתובת ציבורית).
 import { inviteUser, deleteUser } from "../../services/dataSource";
 import { copyText } from "../../utils/clipboard";
+import { ROLES, ROLE_LABELS as ROLE_NAMES, ROLE_HINTS } from "../../utils/roles";
 import "./UsersPanel.css";
 
 function UsersPanel({ onClose }) {
@@ -102,11 +103,13 @@ function UsersPanel({ onClose }) {
 
   // ⚠️ השרת מסרב להוריד את המנהל הפעיל האחרון ואת המבצע עצמו, ומחזיר
   // סיבה. הכפתור אינו מנסה לחזות זאת — הסתרה מלמדת שהכלל אינו קיים.
-  async function handleRole(user) {
+  // ⚠️ 19/10/2026: שלושה תפקידים — בורר במקום כפתור ↑/↓ (מנהל / עורך / בקר)
+  async function handleRole(user, role) {
+    if (!role || role === user.role) return;
     setUpdatingId(user.id);
     setError(null);
     try {
-      await setUserRole(user.id, user.role === "manager" ? "operator" : "manager");
+      await setUserRole(user.id, role);
       await load();
     } catch (err) {
       setError(err.message);
@@ -214,7 +217,8 @@ function UsersPanel({ onClose }) {
             disabled={busy}
             aria-label="תפקיד המשתמש החדש"
           >
-            <option value="operator">בקר</option>
+            <option value="operator">בקר — צפייה בלבד</option>
+            <option value="editor">עורך</option>
             <option value="manager">מנהל</option>
           </select>
         </form>
@@ -278,16 +282,18 @@ function UsersPanel({ onClose }) {
                     ? `נכנס ${new Date(u.lastSignInAt).toLocaleDateString("he-IL")}`
                     : "טרם נכנס"}
               </span>
-              <button
-                className="users-toggle"
-                onClick={() => handleRole(u)}
+              <select
+                className="users-role-select users-role-pick"
+                value={ROLES.includes(u.role) ? u.role : "manager"}
+                onChange={(e) => handleRole(u, e.target.value)}
                 disabled={updatingId === u.id || u.is_active === false}
+                aria-label={`התפקיד של ${u.email}`}
                 title={u.is_active === false
                   ? "משתמש מושבת — יש להחזיר אותו לפעילות תחילה"
-                  : u.role === "manager" ? "הורד לבקר" : "העלה למנהל"}
+                  : ROLE_HINTS[u.role] ?? ""}
               >
-                {u.role === "manager" ? "↓ בקר" : "↑ מנהל"}
-              </button>
+                {ROLES.map((r) => <option key={r} value={r}>{ROLE_NAMES[r]}</option>)}
+              </select>
               <button
                 className="users-toggle"
                 onClick={() => handleToggle(u)}
@@ -319,6 +325,7 @@ function UsersPanel({ onClose }) {
 // למנהל כדי שאסימון ישן לא יציג מחרוזת גולמית.
 const ROLE_LABELS = {
   operator: "בקר",
+  editor: "עורך",          // 19/10/2026 — שלושה תפקידים
   manager: "מנהל",
   supervisor: "מנהל",
   executive: "מנהל",

@@ -71,7 +71,7 @@ export function DefectThumbs({ kind, ownerId, expected = 1, onOpen, eager = fals
  * ולכן הצבע כאן והנורה מסכימים, בלי עותק של הסף (30 יום) בדפדפן. SQL ישן שאינו שולח אותו —
  * "עבר המועד" לפי due_on < היום, כמו קודם, ובלי "בתוך החודש".
  */
-export function DefectRow({ defect, today, isManager, showSource, onMarkDone, onEdit, onDelete }) {
+export function DefectRow({ defect, today, editable, showSource, onMarkDone, onEdit, onDelete }) {
   const d = defect;
   const due = d.due_state !== undefined ? d.due_state : (d.due_on && d.due_on < today ? "overdue" : null);
   const overdue = due === "overdue";
@@ -100,8 +100,9 @@ export function DefectRow({ defect, today, isManager, showSource, onMarkDone, on
       </div>
       <div className="it-defect-actions">
         {/* מסגרת ולא מילוי: כפתור כחול מלא בכל שורה הפך את הרשימה לטור של כפתורים */}
-        <button type="button" className="it-btn it-btn--small it-btn--done" onClick={() => onMarkDone(d)}>סימון כבוצע</button>
-        {isManager && (
+        {/* 19/10/2026: סימון כבוצע — מנהל או עורך; בקר צופה */}
+        {editable && <button type="button" className="it-btn it-btn--small it-btn--done" onClick={() => onMarkDone(d)}>סימון כבוצע</button>}
+        {editable && (
           <InspectionMenu label="פעולות על הליקוי" items={[
             { label: "עריכה", onSelect: () => onEdit(d) },
             {
@@ -188,7 +189,7 @@ export function PartsText({ parts }) {
   ));
 }
 
-export function DefectDoneRow({ defect, closingReport, isManager, onReopen, onOpenPhoto }) {
+export function DefectDoneRow({ defect, closingReport, editable, onReopen, onOpenPhoto }) {
   const d = defect;
   const [showPast, setShowPast] = useState(false);
   const doneDay = ilDateOf(d.done_at);
@@ -209,14 +210,14 @@ export function DefectDoneRow({ defect, closingReport, isManager, onReopen, onOp
       {d.current_photos > 0 && (
         <DefectThumbs kind="defect" ownerId={d.id} expected={d.current_photos} onOpen={onOpenPhoto} />
       )}
-      {(d.past_photos > 0 || isManager) && (
+      {(d.past_photos > 0 || editable) && (
         <div className="it-done-actions">
           {d.past_photos > 0 && (
             <button type="button" className="it-link" onClick={() => setShowPast((v) => !v)} aria-expanded={showPast}>
               תמונות מסגירות קודמות ({d.past_photos})
             </button>
           )}
-          {isManager && onReopen && (
+          {editable && onReopen && (
             <button type="button" className="it-btn it-btn--small" onClick={() => onReopen(d)}>פתיחה מחדש</button>
           )}
         </div>

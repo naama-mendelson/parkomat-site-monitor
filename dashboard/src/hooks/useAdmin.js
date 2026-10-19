@@ -36,6 +36,7 @@ import {
 } from "../services/adminCodeDirect";
 import { useDirect } from "../services/dataSource";
 import { useAuth } from "./useAuth";
+import { canEdit } from "../utils/roles";
 
 export function useAdmin() {
   const { user, loading } = useAuth();
@@ -45,6 +46,9 @@ export function useAdmin() {
   const [error, setError] = useState(null);
 
   const isManager = user?.role === "manager";
+  // ⚠️ 19/10/2026 (שלושה תפקידים): ניהול האתרים והעריכה ברמזור נפתחים גם לעורך — הוא רושם ועורך אתרים ועורך את הרמזור.
+  // מה שנשאר למנהל (מחיקת אתר, משתמשים, קוד הניהול) — AdminPanel מסתיר לפי isManager, והמסד דוחה ממילא.
+  const editable = canEdit(user?.role);
 
   const unlockByCode = useCallback(async (code) => {
     setChecking(true);
@@ -102,10 +106,10 @@ export function useAdmin() {
   // ובתוך פתיחה אחת הפאנל לא ננעל באמצע (codeOkThisOpen), גם אם עברה חצי שעה בעריכה.
   const remembered = Boolean(user?.id) && adminCodeStillValid(user.id);
   useEffect(() => {
-    if (!isManager || !user?.id) return;
+    if (!editable || !user?.id) return;
     if (remembered && !codeOkThisOpen) setCodeOkThisOpen(true);
     if (remembered || codeOkThisOpen) rememberAdminCode(user.id);
-  }, [isManager, user?.id, remembered, codeOkThisOpen]);
+  }, [editable, user?.id, remembered, codeOkThisOpen]);
 
   const unlockDirectByCode = useCallback(async (code) => {
     setChecking(true);
@@ -126,7 +130,7 @@ export function useAdmin() {
 
   if (useDirect) {
     return {
-      unlocked: isManager && (codeOkThisOpen || remembered),
+      unlocked: editable && (codeOkThisOpen || remembered),
       unlock: unlockDirectByCode,
       // ⚠️ פונקציה ריקה ולא הסרה: AdminPanel עדיין מקבל `lock` מה-hook,
       // והמסך פשוט אינו מציג עוד כפתור. אין מה לנעול — סגירה נועלת.
@@ -142,8 +146,9 @@ export function useAdmin() {
       // מנהל חסום משום שהמסך נעול, לא בגלל תפקידו, ולכן הוא מקבל את הטופס.
       // בקר — שאין לו הרשאה בשום מצב — נשאר עם מסך התפקיד, שהוא התשובה
       // הנכונה עבורו: טופס שייתן לו להיכנס ואז 403 על כל לחיצה גרוע יותר.
-      roleGated: !isManager,
+      roleGated: !editable,
       role: user?.role ?? null,
+      isManager,
     };
   }
 
@@ -155,5 +160,6 @@ export function useAdmin() {
     error,
     roleGated: false,
     role: user?.role ?? null,
+    isManager,
   };
 }

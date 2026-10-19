@@ -45,6 +45,7 @@
 // כשהיה בסקירה פשוט נעלמו בלי מילה.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { canEdit, READ_ONLY_MSG } from "../../utils/roles";
 import { fetchPmSite, startPmVisit, pmOutboxSenders } from "../../services/dataSource";
 import {
   clearVisit, droppedCount, isPersistent, pendingCount, setOwner, startAutoDrain, subscribe,
@@ -114,7 +115,10 @@ function statusLine(pm) {
  */
 export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChanged }) {
   const { user, loading: authLoading } = useAuth();
+  // 19/10/2026 (שלושה תפקידים): editable — כל עריכה כאן (ביקור, רשימות, פרופילים, מחיקת ביקור) — מנהל או עורך; בקר צופה.
+  // isManager נשאר למה שנשאר מנהל בלבד במסד: זריקת טיוטה של עמית (compliance_verified_manager).
   const isManager = user?.role === "manager";
+  const editable = canEdit(user?.role);
   const code = site?.code;
   const online = useOnline();
 
@@ -495,7 +499,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
         <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
           source={data.templates_source ?? (data.profile ? "profile" : data.templates_assigned ? "explicit" : "default")}
           typeKeys={Array.isArray(data.type_keys) ? data.type_keys : []}
-          isManager={isManager}
+          isManager={editable}
           onChanged={() => { setProfRev((r) => r + 1); load({ silent: true }); }} />
       )}
 
@@ -550,7 +554,8 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
                   {countText(ob.n, "שינוי אחד במכשיר הזה ממתין", "שינויים במכשיר הזה ממתינים")} לסנכרון.
                 </p>
               )}
-              <div className="pm-row">
+              {!editable && <p className="pm-hint">{READ_ONLY_MSG}</p>}
+              {editable && <div className="pm-row">
                 <button type="button" className="pm-btn pm-btn--primary" onClick={() => openForm(draft.id)}
                   disabled={!!busy}>
                   המשך
@@ -560,10 +565,14 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
                     {busy === "restart" ? "פותח…" : "התחלה מחדש"}
                   </button>
                 )}
-              </div>
-              {restartable && (
+              </div>}
+              {editable && restartable && (
                 <p className="pm-hint">לא היתה פעילות ביותר מ-48 שעות — כל אחד רשאי להתחיל מחדש.</p>
               )}
+            </section>
+          ) : !editable ? (
+            <section className="pm-card pm-start">
+              <p className="pm-hint">אין ביקור פתוח. {READ_ONLY_MSG}</p>
             </section>
           ) : (
             <section className="pm-card pm-start">
@@ -573,8 +582,8 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
               </button>
               {templateCount === 0 ? (
                 <p className="pm-hint">
-                  רשימת הבדיקה ריקה — מנהל צריך להגדיר אותה לפני שאפשר לפתוח ביקור.
-                  {isManager && (
+                  רשימת הבדיקה ריקה — מנהל או עורך צריך להגדיר אותה לפני שאפשר לפתוח ביקור.
+                  {editable && (
                     <>
                       {" "}
                       <button type="button" className="pm-link" onClick={() => openTool("template", true)}>
@@ -625,7 +634,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
                       {isOpen && (
                         <PmVisitView
                           visit={v}
-                          isManager={isManager}
+                          isManager={editable}
                           onDeleted={({ already = false } = {}) => {
                             setOpenVisit(null);
                             setNotice({
@@ -656,7 +665,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
       {/* ===== כלי מנהל ===== */}
       {/* ⚠️ מוסתרים בזמן מילוי (hidden) ולא מפורקים: העלאה היסטורית שבדרך או
           רשימה שבעריכה לא נזרקות כי מישהו לחץ "המשך" על הטיוטה. */}
-      {isManager && (
+      {editable && (
         <section className="pm-card pm-tools" ref={toolsRef} hidden={formOpen}>
           <h3 className="pm-h3">כלי מנהל</h3>
           <div className="pm-row">

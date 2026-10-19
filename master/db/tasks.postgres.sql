@@ -148,7 +148,8 @@ SELECT t.id, v.action, v.actor, v.uid, v.at
 -- full_name הוא טקסט חופשי, ומשתמש שהשם שלו "sherut@parkomat.co.il" אינו החשבון.
 CREATE OR REPLACE FUNCTION app.can_close_task(p_kind text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT app.is_staff()
+  -- ⚠️ 19/10/2026: גם עורך/מנהל (can_edit) — בקר אינו משנה כלום, גם אם זה החשבון הזה
+  SELECT app.is_staff() AND app.can_edit()
      AND EXISTS (SELECT 1 FROM app_users u
                   WHERE u.supabase_uid::text = app.current_actor()
                     AND u.is_active
@@ -165,7 +166,8 @@ REVOKE ALL ON FUNCTION app.can_close_task(text) FROM PUBLIC;
 -- המחיקה מיד, לא כשהאסימון שלו פג. V ("בוצעה") לא השתנה — רק sherut@.
 CREATE OR REPLACE FUNCTION app.can_delete_task(p_kind text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT app.is_staff() AND (app.is_manager() OR app.can_close_task(p_kind))
+  -- ⚠️ 19/10/2026: X — כל עורך ומנהל (בעלת המוצר: "כן, גם עורך"). מי שרשאי לסמן בוצעה הוא ממילא עורך או מנהל.
+  SELECT app.is_staff() AND app.can_edit()
 $$;
 REVOKE ALL ON FUNCTION app.can_delete_task(text) FROM PUBLIC;
 
@@ -313,7 +315,7 @@ CREATE OR REPLACE FUNCTION public.task_add(p_kind text, p_body text, p_site_code
 RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_body text := btrim(COALESCE(p_body, ''));
   v_code text := NULLIF(btrim(COALESCE(p_site_code, '')), '');
   v_client uuid := COALESCE(p_client_id, gen_random_uuid());
@@ -352,7 +354,7 @@ CREATE OR REPLACE FUNCTION public.task_start(p_id bigint)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_t tasks%ROWTYPE;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 BEGIN
@@ -377,7 +379,7 @@ CREATE OR REPLACE FUNCTION public.task_unstart(p_id bigint)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_t tasks%ROWTYPE;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 BEGIN
@@ -403,7 +405,7 @@ CREATE OR REPLACE FUNCTION public.task_done(p_id bigint, p_code text DEFAULT NUL
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_t tasks%ROWTYPE;
   v_now text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_by_code boolean := false;
@@ -442,7 +444,7 @@ CREATE OR REPLACE FUNCTION public.task_delete(p_id bigint, p_code text DEFAULT N
 RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
-  v_actor text := app.require_staff();
+  v_actor text := app.require_editor();
   v_t tasks%ROWTYPE;
   v_by_code boolean := false;
 BEGIN
