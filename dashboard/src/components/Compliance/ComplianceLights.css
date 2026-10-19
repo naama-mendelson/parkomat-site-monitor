@@ -155,6 +155,8 @@
    ובלי שטח הלחיצה המורחב: הלחיצה עוברת לכרטיס ופותחת אותו. הגודל והמרווחים לא משתנים, כדי שהכרטיס לא יזוז. */
 .cl-static { cursor: inherit; }
 .cl-static::before { content: none; }
+/* ⚠️ .cl-mini::before (למטה) באותה ספציפיות ומאוחר יותר — בלי זה הסימן הקטן הסטטי נשאר עם שטח לחיצה (סקירה, 18/10/2026) */
+.cl-mini.cl-static::before { content: none; }
 .cl-lamp.cl-static:hover .cl-pill { filter: none; }
 
 /* ---- תגים ---- */

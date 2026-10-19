@@ -2285,6 +2285,11 @@ From the field, forwarded by the owner: *"חייבת להיות אפשרות ל�
   submitted-visit view already draws them for any item. The caps stay: 6 per item, **40 per visit**, 15 MB per visit.
   ⚠️ With a photo possible on every item, a long list (two lists of ~20 items) can reach 40 photos in one visit; raising
   it is a SQL change in `pm_visit_photo_add` (and `MAX_PHOTOS_PER_VISIT` in `PmUtils.js`), not made.
+- ⚠️ **A photo budget, from the code review the same evening.** Optional photos could use up the 40 per visit before
+  the required ones were taken; then `pm_visit_photo_add` refuses the required photo, and submit is blocked.
+  `PmVisitForm` computes `requiredPhotosLeft` (required items still short of `min_photos`) and `optionalPhotoRoom`
+  (40 − taken − that). An item whose photos are optional gets a picker `max` of what it holds plus that room. When the
+  room is 0 and required photos are missing, one line says so under the progress bar.
 - **The item's detail line is 15px** (`.pm-item > .pm-hint`; was 13). Every other `.pm-hint` in the PM tab is **14px**
   (was 13), the size of `.pm-muted` (the owner, the same day, comparing the start box with "היסטוריית ביקורים": *"התחתון
   יותר גדול ונוח, ועדיף שיהיה כך"*). The start button was not made smaller; there was room.
@@ -2992,6 +2997,13 @@ calls pill each carrying a 32px (44px on touch) hit area, a compact card had alm
 - ⚠️ **A card without a controller keeps its buttons.** It has no expanded card, so its lamps and pills are the only way
   from it to the inspector, PM, tasks and calls (`pillsAct = site.monitored === false` in `SiteCard.jsx`).
 - The supervisor table still passes `onOpen`, so its lamps still open the site on their tab.
+- From the code review the same evening: the help panel now says a lamp opens the details **on an open card**, and
+  `.cl-mini.cl-static::before` removes the mini mark's hit area (a later `.cl-mini::before` won at the same
+  specificity). "כל האתרים" under "משימות" now counts in "N פעילים", like "כל האתרים" under "בודק מוסמך"
+  (`tasksViewActive` = anything but the default).
+- ⚠️ **A card without a controller shows its calls pill only while "קריאות פתוחות" is pressed**, unlike its tasks pill.
+  The review flagged it as unreachable by default. That is the owner's rule for calls (*"כשלא לחוץ לא רואים"*), and
+  pressing the tile reaches it. Left as is on purpose.
 - Browser: `e2e/probe-card-click.mjs` 36/36 (1371 light mouse, 390 dark touch): every icon on a collapsed card expands
   it and opens nothing; the expanded card's lamp and both buttons open their windows; the no-controller card's lamp and
   calls pill still open. ⚠️ Older probes that click a collapsed card's lamp or pill to open a window (`probe-calls`,

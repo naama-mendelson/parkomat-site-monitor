@@ -115,7 +115,7 @@ test("סינון משימות (18/10/2026): off כברירת מחדל, all בל�
   assert.equal(matchesTasksView({ open: 1, byKind: { none: 1 } }, "open"), true);
   assert.equal(matchesTasksView({ open: 1, byKind: { none: 1 } }, "technical"), false);
   assert.equal(tasksViewActive("off"), 0);
-  assert.equal(tasksViewActive("all"), 0);
+  assert.equal(tasksViewActive("all"), 1);   // שונה מברירת המחדל — כמו "כל האתרים" ב"בודק מוסמך"
   assert.equal(tasksViewActive("open"), 1);
   assert.equal(tasksViewActive("call_center"), 1);
 });

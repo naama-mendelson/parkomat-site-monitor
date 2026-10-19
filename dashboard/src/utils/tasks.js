@@ -163,8 +163,9 @@ export function tasksFilterCounts(sites = [], bySite = {}) {
   return out;
 }
 
-/** נספר כמסנן פעיל רק כשהוא באמת מסנן את הלוח ("open" או סוג). */
-export const tasksViewActive = (view) => (view === TASKS_VIEW_OPEN || TASK_KINDS.includes(view) ? 1 : 0);
+/** נספר כמסנן פעיל כשהוא שונה מברירת המחדל — כמו "בודק מוסמך", שסופר גם את "כל האתרים" (סקירה, 18/10/2026: "כל האתרים"
+ *  סימן את האריח כפעיל ולא נספר ב"N פעילים"). */
+export const tasksViewActive = (view) => (tasksPillsShown(sanitizeTasksView(view)) ? 1 : 0);
 
 /** שורת המשנה בכותרת החלון: "2 לביצוע · 1 בתהליך", או "אין משימות פתוחות". */
 export function openSummary({ todo = [], inProgress = [] } = {}) {

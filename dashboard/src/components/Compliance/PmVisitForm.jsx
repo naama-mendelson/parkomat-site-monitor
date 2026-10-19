@@ -38,7 +38,7 @@ import PhotoPicker from "./PhotoPicker";
 import SignaturePad from "./SignaturePad";
 import { CameraIcon, ReasonForm } from "./PmCommon";
 import {
-  DISCARD_IDLE_MS, ITEM_NOTE_MAX, MAX_PHOTOS_PER_ITEM, NAME_KEY, NAME_MAX, VISIT_NOTE_MAX,
+  DISCARD_IDLE_MS, ITEM_NOTE_MAX, MAX_PHOTOS_PER_ITEM, MAX_PHOTOS_PER_VISIT, NAME_KEY, NAME_MAX, VISIT_NOTE_MAX,
   agoText, countText, idleMs, readStore, sameName, submitDateRange, submitReqKey, writeStore,
   kindHasCheck, kindHasPhotos, valueNum, valueOver,
 } from "./PmUtils";
@@ -361,6 +361,15 @@ export default function PmVisitForm({
   });
 
   const missing = merged.filter((m) => m.missing);
+  // ============================================================
+  // ⚠️ תקציב התמונות של הביקור (18/10/2026, סקירת הקוד)
+  // ============================================================
+  // pm_visit_photo_add מגביל ל-40 תמונות לביקור. עד היום זה הספיק תמיד: רק פריטי צילום קיבלו בורר, וסכום ה-min_photos
+  // של החובה נבדק מראש (≤40). מאז שבכל פריט יש בורר, תמונות רשות היו יכולות לגמור את ה-40 לפני שצולמו תמונות החובה —
+  // ואז תמונת החובה נדחית והשליחה נחסמת. לכן לתמונות רשות נשאר רק מה שלא שמור לחובה.
+  const photosTaken = merged.reduce((n, m) => n + m.photoN, 0);
+  const requiredPhotosLeft = merged.reduce((n, m) => n + (m.it.required ? Math.max(0, (m.it.min_photos || 0) - m.photoN) : 0), 0);
+  const optionalPhotoRoom = Math.max(0, MAX_PHOTOS_PER_VISIT - photosTaken - requiredPhotosLeft);
   const requiredN = merged.filter((m) => m.it.required).length;
   const doneN = merged.filter((m) => m.it.required && !m.missing).length;
   const pickerBusy = Object.values(pickers).some((p) => p.busy);
@@ -658,7 +667,10 @@ export default function PmVisitForm({
       <div className="pm-photos">
         <PhotoPicker
           quiet={!kindHasPhotos(m.it.kind)}
-          max={Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)}
+          // פריט שהתמונות בו רשות — רק מה שנשאר בתקציב אחרי מה ששמור לחובה (ראו optionalPhotoRoom)
+          max={m.it.required && (m.it.min_photos || 0) > 0
+            ? Math.max(0, MAX_PHOTOS_PER_ITEM - m.orphans.length)
+            : Math.max(0, Math.min(MAX_PHOTOS_PER_ITEM - m.orphans.length, m.photoN - m.orphans.length + optionalPhotoRoom))}
           initial={initialByItem.get(m.id)}
           disabled={lock}
           gone={gone}
@@ -747,6 +759,11 @@ export default function PmVisitForm({
             <span className="pm-progress-bar" style={{ width: `${Math.round((doneN / requiredN) * 100)}%` }} />
             <span className="pm-progress-text">{doneN}/{requiredN} פריטי חובה</span>
           </div>
+        )}
+        {optionalPhotoRoom === 0 && requiredPhotosLeft > 0 && (
+          <p className="pm-hint pm-hint--warn" role="status">
+            נשארו {requiredPhotosLeft} תמונות לביקור, והן שמורות לפריטי החובה שחסרה בהם תמונה. אפשר להסיר תמונה מפריט אחר.
+          </p>
         )}
       </div>
 
