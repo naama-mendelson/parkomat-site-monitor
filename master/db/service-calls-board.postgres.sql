@@ -471,7 +471,9 @@ REVOKE ALL ON FUNCTION app.service_calls_recent_summary_raw(integer) FROM PUBLIC
 -- בעלת המוצר: "כשיש קריאה ככל שעובר זמן והיא לא טופלה המצב מחמיר… אתרים מכפילים כל 24 שעות… צבע הכרטיס מתחיל מלבן
 -- ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור. כך גם לגבי רובוטיים אבל כל שעה… זמן שלא בשעות השירות לא
 -- מחושב… בהתאם לסוג השירות של כל אתר". ההחלטות שלה: 0 לבן · 1 צהוב · 2 כתום · 3 אדום · 4 אדום כהה ("שלא יגיע לשחור אלא הכי גרוע זה אדום כהה"); מכפיל = שלב לכל
--- **24 שעות שירות** (לא לכל יום שירות — בבסיסי זה שלב כל ~2.7 ימי עבודה); אתר בלי שעות שירות ("לא בשירות", "אין",
+-- **יום שירות** — אורך יום עבודה רגיל של ההסכם (בסיסי 9 שעות שירות, מורחב ו-VIP 15). עד הערב של 19/10 זה היה 24 שעות
+-- שירות; בעלת המוצר, על שני מכפילים בסיסיים לבנים אחרי 3 ימים ו-19 שעות (13 ו-16 שעות שירות): "לפי יום שירות".
+-- אתר בלי שעות שירות ("לא בשירות", "אין",
 -- "תחזוקה בלבד", לא חובר לרמזור) — לא מחמיר, נשאר לבן; הצבע מוצג רק כש"קריאות פתוחות" לחוץ (הדשבורד).
 --   • "לא טופלה" = עדיין פתוחה (הסטטוס שלה אינו מסומן סגור — אותה הגדרה כמו בכל מקום), והוותיקה באתר קובעת.
 --   • סוג השירות — מה שהכרטיס מציג: COALESCE(agreement, plan) מ-site_service_links, שבו למכפיל גובר לוח המכפילים.
@@ -487,14 +489,29 @@ LANGUAGE sql STABLE AS $$
 $$;
 REVOKE ALL ON FUNCTION app.service_seconds(text, timestamptz, timestamptz) FROM PUBLIC;
 
--- השלב: 0..4. רובוטי — שלב לכל שעת שירות; מכפיל — לכל 24 שעות שירות. טהורה.
-CREATE OR REPLACE FUNCTION app.call_age_level(p_service_secs numeric, p_monitored boolean)
-RETURNS integer
-LANGUAGE sql IMMUTABLE AS $$
-  SELECT LEAST(4, floor(GREATEST(COALESCE(p_service_secs, 0), 0)
-                        / CASE WHEN p_monitored IS FALSE THEN 86400 ELSE 3600 END))::int
+-- אורך "יום שירות" של סוג: היום הרגיל (א'–ה') של ההסכם, מחושב מ-app.service_windows עצמה ולא כמספר קבוע — כך הוא
+-- לא יכול לסטות מהחלונות. בסיסי 08–17 = 9 שעות; מורחב ו-VIP 07–22 = 15. סוג בלי שעות — NULL.
+-- ⚠️ 18/10/2026 הוא יום ראשון; החלונות בשעון ישראל, כך שמעבר שעון אינו משנה את האורך.
+CREATE OR REPLACE FUNCTION app.service_day_seconds(p_kind text)
+RETURNS numeric
+LANGUAGE sql STABLE AS $$
+  SELECT NULLIF(app.service_seconds(p_kind, timestamptz '2026-10-18 00:00 Asia/Jerusalem',
+                                            timestamptz '2026-10-19 00:00 Asia/Jerusalem'), 0)
 $$;
-REVOKE ALL ON FUNCTION app.call_age_level(numeric, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.service_day_seconds(text) FROM PUBLIC;
+
+-- השלב: 0..4. רובוטי — שלב לכל שעת שירות; מכפיל — לכל יום שירות של ההסכם שלו (app.service_day_seconds).
+-- מכפיל בלי סוג מוכר — 0 (וממילא אין לו שעות שירות). ⚠️ החתימה הישנה (בלי סוג) נמחקת: שתי חתימות היו מאפשרות לקריאה
+-- שנשכחה להמשיך לחשב לפי 24 שעות, בשקט.
+DROP FUNCTION IF EXISTS app.call_age_level(numeric, boolean);
+CREATE OR REPLACE FUNCTION app.call_age_level(p_service_secs numeric, p_monitored boolean, p_kind text)
+RETURNS integer
+LANGUAGE sql STABLE AS $$
+  -- ⚠️ ה-COALESCE בתוך ה-LEAST, לא סביבו: LEAST מתעלם מ-NULL, ומכפיל בלי יום שירות (חלוקה ב-NULL) היה מקבל 4
+  SELECT LEAST(4, COALESCE(floor(GREATEST(COALESCE(p_service_secs, 0), 0)
+                        / CASE WHEN p_monitored IS FALSE THEN app.service_day_seconds(p_kind) ELSE 3600 END), 0))::int
+$$;
+REVOKE ALL ON FUNCTION app.call_age_level(numeric, boolean, text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.service_calls_board(p_hours integer DEFAULT 24)
 RETURNS jsonb
@@ -525,7 +542,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
            to_char(s.oldest_ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS oldest_open,
            CASE WHEN s.oldest_ts IS NULL THEN 0
                 ELSE app.service_seconds(k.kind, s.oldest_ts, now()) END AS secs,
-           st.monitored
+           st.monitored, k.kind
       FROM sites s
       JOIN public.sites st ON st.id = s.site_id
       LEFT JOIN kinds k ON k.site_id = s.site_id
@@ -533,7 +550,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
   SELECT jsonb_build_object(
     -- ⚠️ age / age_hours נוספו (19/10/2026); site_id/open/recent/oldest_open — בדיוק כמו service_call_counts (S16)
     'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object('site_id', a.site_id, 'open', a.open, 'recent', a.recent, 'oldest_open', a.oldest_open,
-                                                           'age', app.call_age_level(a.secs, a.monitored),
+                                                           'age', app.call_age_level(a.secs, a.monitored, a.kind),
                                                            'age_hours', round(a.secs / 3600, 1))
                                         ORDER BY a.site_id) FROM aged a), '[]'::jsonb),
     'summary', (SELECT jsonb_build_object(

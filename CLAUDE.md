@@ -3305,9 +3305,31 @@ app-side cost (20–27 calls per 10 minutes, and 2.8 MB of temp spill each).
 The owner: *"כשיש קריאה ככל שעובר זמן והיא לא טופלה המצב מחמיר… אתרים מכפילים כל 24 שעות שעוברות והפניה לא טופלה
 המצב מחמיר כלומר צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור. כך גם לגבי רובוטיים אבל
 כל שעה… זמן שלא בשעות השירות לא מחושב… בהתאם לסוג השירות של כל אתר. את סוג השירות של המכפילים תיקח מהרמזור"*.
-Her answers to the four questions: **white → yellow → orange → red → ~~black~~ dark red** (levels 0–4; the same day: *"שלא יגיע לשחור אלא הכי גרוע זה אדום כהה"* — level 4 is a solid dark red card, , with light text); a multiplier steps every
-**24 service hours** (literal — not every service day; on basic that is a step every ~2.7 working days); a site with
-no service hours stays white; the colour shows **only while "קריאות פתוחות" is pressed**.
+Her answers to the four questions: **white → yellow → orange → red → ~~black~~ dark red** (levels 0–4; the same day: *"שלא יגיע לשחור אלא הכי גרוע זה אדום כהה"* — level 4 is a solid dark red card, with light text); a multiplier steps every
+~~**24 service hours** (literal — not every service day; on basic that is a step every ~2.7 working days)~~ **service
+day** (see the evening change below); a site with no service hours stays white; the colour shows **only while "קריאות
+פתוחות" is pressed**.
+
+⚠️ **The evening of 19/10: a multiplier steps once per service day, not per 24 service hours.** The owner, on two basic
+multipliers that were still white after 3 days and 19 hours: *"למה זה בצבע לבן"*. Measured: their calls opened Thursday
+afternoon, so only 13 and 16 service hours had passed (basic is Sunday–Thursday 08:00–17:00; Friday, Saturday and
+nights do not count). Asked, she first chose to keep 24 hours, then interrupted with *"לפי יום שירות"*.
+- `app.service_day_seconds(kind)` is the length of the plan's ordinary weekday: basic 9 hours, ext and VIP 15. It is
+  computed from `app.service_windows` on a fixed Sunday (18/10/2026), not written as a number, so it cannot drift from
+  the windows. Any other kind gives NULL.
+- `app.call_age_level(secs, monitored, kind)`: a robotic site still steps every service hour, whatever its plan. A
+  multiplier steps every service day of its plan. A multiplier with no service day stays at 0.
+- The two-argument signature is dropped, so a forgotten caller cannot keep counting 24 hours silently.
+  `service_calls_board` passes the kind.
+- ⚠️ **The `LEAST` trap again:** `COALESCE(LEAST(4, x / NULL), 0)` is 4, because `LEAST` ignores NULL. The `COALESCE`
+  sits inside the `LEAST`. The test caught it before any mutation did.
+- Preview in production (read only, before the apply): 1153 and 1206 go from white to yellow, and 1191 (open since
+  13/10, 37.8 service hours) goes from yellow to dark red. Robotic sites are unchanged.
+- Tests: S17 (the service day per plan, the steps at 9 and 15 hours, the robotic rate unchanged for any plan, no service
+  day = 0, one signature only; on the board, a basic multiplier open a week is 45 service hours = level 4, where the old
+  rule gave 1). Mutations in the isolated copy: 9 of 9 caught (`mut1910/run-mut3.cjs`).
+- The dry run shows exactly three gaps: the two functions and the body of `service_calls_board`. The dashboard needs no
+  change (it only translates `age`). ⚠️ **Not applied yet** at the time of the commit: it waits for the owner's word.
 
 - **The level is decided in SQL** (`service-calls-board.postgres.sql`): `app.service_seconds(kind, from, to)` sums
   `app.service_windows` (basic/ext/vip, Israel time; any other kind — 0), and `app.call_age_level(secs, monitored)` =

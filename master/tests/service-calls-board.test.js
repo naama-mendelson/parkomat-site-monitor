@@ -613,7 +613,7 @@ test("S16 · service_calls_board — הכרטיסים והכותרת בקריא�
 // ============================================================
 // S17 — החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
 // ============================================================
-// בעלת המוצר: מכפיל מחמיר כל 24 שעות שירות, רובוטי כל שעת שירות; זמן מחוץ לשעות השירות לא נספר; לבן → צהוב →
+// בעלת המוצר: מכפיל מחמיר כל יום שירות (עד 19/10 בערב: כל 24 שעות שירות), רובוטי כל שעת שירות; זמן מחוץ לשעות השירות לא נספר; לבן → צהוב →
 // כתום → אדום → אדום כהה (0..4); אתר בלי שעות שירות — נשאר לבן.
 test("S17 · שעות שירות בין שני רגעים — שעון ישראל, רק בתוך החלונות; סוג בלי שעות — אפס", { skip }, async () => {
   const secs = async (kind, from, to) => Number((await sup(`SELECT app.service_seconds($1, $2::timestamptz, $3::timestamptz) AS s`, [kind, from, to]))[0].s);
@@ -631,16 +631,36 @@ test("S17 · שעות שירות בין שני רגעים — שעון ישרא�
   assert.equal(await secs("basic", "2026-10-20T10:00:00+03:00", "2026-10-19T10:00:00+03:00"), 0, "טווח הפוך — אפס, לא שלילי");
 });
 
-test("S17 · השלב: רובוטי — כל שעת שירות, מכפיל — כל 24 שעות שירות, עד 4 (אדום כהה)", { skip }, async () => {
-  const lvl = async (s, m) => (await sup(`SELECT app.call_age_level($1, $2) AS l`, [s, m]))[0].l;
+// בעלת המוצר, 19/10/2026 בערב, על שני מכפילים בסיסיים לבנים אחרי 3 ימים ו-19 שעות: "לפי יום שירות"
+test("S17 · יום שירות: בסיסי 9 שעות, מורחב ו-VIP 15; סוג בלי שעות — NULL", { skip }, async () => {
+  const day = async (k) => { const v = (await sup(`SELECT app.service_day_seconds($1) AS d`, [k]))[0].d; return v == null ? null : Number(v); };
+  assert.equal(await day("basic"), 9 * 3600);
+  assert.equal(await day("ext"), 15 * 3600);
+  assert.equal(await day("vip"), 15 * 3600);
+  assert.equal(await day(" BASIC"), 9 * 3600, "מנורמל כמו החלונות");
+  for (const k of ["no_service", "none", "maintenance_only", null, ""]) assert.equal(await day(k), null, `בלי שעות: ${k}`);
+});
+
+test("S17 · השלב: רובוטי — כל שעת שירות, מכפיל — כל יום שירות של ההסכם, עד 4 (אדום כהה)", { skip }, async () => {
+  const lvl = async (s, m, k) => (await sup(`SELECT app.call_age_level($1, $2, $3) AS l`, [s, m, k]))[0].l;
   const H = 3600;
-  assert.deepEqual([await lvl(0, true), await lvl(H - 1, true), await lvl(H, true), await lvl(2 * H, true), await lvl(3 * H, true), await lvl(4 * H, true), await lvl(30 * H, true)],
-    [0, 0, 1, 2, 3, 4, 4], "רובוטי");
-  assert.deepEqual([await lvl(23 * H, false), await lvl(24 * H, false), await lvl(48 * H, false), await lvl(72 * H, false), await lvl(96 * H, false), await lvl(500 * H, false)],
-    [0, 1, 2, 3, 4, 4], "מכפיל");
-  assert.equal(await lvl(null, true), 0);
-  assert.equal(await lvl(-50, true), 0, "שלילי — 0");
-  assert.equal(await lvl(5 * H, null), 4, "בלי ערך monitored — כמו אתר עם בקר");
+  for (const k of ["basic", "vip", null]) {
+    assert.deepEqual([await lvl(0, true, k), await lvl(H - 1, true, k), await lvl(H, true, k), await lvl(2 * H, true, k), await lvl(3 * H, true, k), await lvl(4 * H, true, k), await lvl(30 * H, true, k)],
+      [0, 0, 1, 2, 3, 4, 4], `רובוטי (${k}) — הסוג לא משנה`);
+  }
+  assert.deepEqual([await lvl(9 * H - 1, false, "basic"), await lvl(9 * H, false, "basic"), await lvl(18 * H, false, "basic"), await lvl(27 * H, false, "basic"), await lvl(36 * H, false, "basic"), await lvl(500 * H, false, "basic")],
+    [0, 1, 2, 3, 4, 4], "מכפיל בסיסי — כל 9 שעות שירות");
+  for (const k of ["ext", "vip"]) {
+    assert.deepEqual([await lvl(15 * H - 1, false, k), await lvl(15 * H, false, k), await lvl(30 * H, false, k), await lvl(45 * H, false, k), await lvl(60 * H, false, k)],
+      [0, 1, 2, 3, 4], `מכפיל ${k} — כל 15 שעות שירות`);
+  }
+  assert.equal(await lvl(13.1 * H, false, "basic"), 1, "1153 ב-19/10: 13.1 שעות שירות בבסיסי — צהוב (בכלל הישן לבן)");
+  assert.equal(await lvl(500 * H, false, "no_service"), 0, "מכפיל בלי שעות שירות — לבן");
+  assert.equal(await lvl(500 * H, false, null), 0, "מכפיל בלי סוג — לבן");
+  assert.equal(await lvl(null, true, "basic"), 0);
+  assert.equal(await lvl(-50, true, "basic"), 0, "שלילי — 0");
+  assert.equal(await lvl(5 * H, null, "basic"), 4, "בלי ערך monitored — כמו אתר עם בקר");
+  assert.equal((await sup(`SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'call_age_level'`))[0].n, 1, "חתימה אחת בלבד");
 });
 
 test("S17 · בלוח: הקריאה הוותיקה, סוג השירות מהרמזור (למכפיל — לוח המכפילים), בלי שעות שירות — 0", { skip }, async () => {
@@ -690,17 +710,25 @@ test("S17 · בלוח: הקריאה הוותיקה, סוג השירות מהרמ
   await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 6, 'robotic')`, [JSON.stringify({ c_code: mixed.code, c_kind: "vip" })]);
   await callAt({ ticket_number: "S17-m-closed", parking_code: mixed.code, status: "9", customer_complaint: "סגורה ישנה" }, ago(30));
   await callAt({ ticket_number: "S17-m-open", parking_code: mixed.code, status: "1", customer_complaint: "פתוחה טרייה" }, ago(0.0005));
-  // ⚠️ הקצב לפי סוג האתר: מכפיל VIP שפתוח יממה — 14–15 שעות שירות (כל יממה ב-VIP), כלומר מכפיל עדיין 0 ורובוטי היה 4
+  // ⚠️ הקצב לפי סוג האתר: מכפיל VIP שפתוח חצי יממה — לכל היותר 12 שעות שירות, פחות מיום שירות (15): עדיין 0, ורובוטי היה 4
   const mxVip = await newSite();
   await sup(`UPDATE sites SET monitored = false WHERE id = $1`, [mxVip.id]);
   await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 7, 'multipliers')`, [JSON.stringify({ c_mx_site_code: mxVip.code, c_mx_plan: "VIP" })]);
-  await callAt({ ticket_number: "S17-mxvip", parking_code: mxVip.code, status: "1", customer_complaint: "יממה" }, ago(1));
+  await callAt({ ticket_number: "S17-mxvip", parking_code: mxVip.code, status: "1", customer_complaint: "חצי יממה" }, ago(0.5));
+  // ⚠️ והסוג באמת מגיע לשלב: מכפיל בסיסי שפתוח שבוע — כל חלון של 7 ימים מכיל 5 ימי עבודה, 45 שעות שירות (±1 במעבר שעון),
+  // כלומר 5 ימי שירות → אדום כהה. בכלל הישן (24 שעות) זה היה צהוב (1).
+  const mxWeek = await newSite();
+  await sup(`UPDATE sites SET monitored = false WHERE id = $1`, [mxWeek.id]);
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 8, 'multipliers')`, [JSON.stringify({ c_mx_site_code: mxWeek.code, c_mx_plan: "בסיסי" })]);
+  await callAt({ ticket_number: "S17-mxweek", parking_code: mxWeek.code, status: "1", customer_complaint: "שבוע" }, ago(7));
   const b4 = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
   const r4 = (s) => b4.sites.find((r) => r.site_id === s.id);
   assert.equal(r4(served).age, 0, "להתייחס כ 'לא בשירות' — לבן, גם כשבמקור VIP");
   assert.equal(r4(mixed).age, 0, "הסגורה הישנה לא נספרת");
-  assert.ok(r4(mxVip).age_hours >= 13.9 && r4(mxVip).age_hours <= 15.1, `יממה ב-VIP: ${r4(mxVip).age_hours} שעות שירות`);
-  assert.equal(r4(mxVip).age, 0, "מכפיל: פחות מ-24 שעות שירות — עדיין לבן");
+  assert.ok(r4(mxVip).age_hours <= 12.1, `חצי יממה ב-VIP: ${r4(mxVip).age_hours} שעות שירות`);
+  assert.equal(r4(mxVip).age, 0, "מכפיל: פחות מיום שירות — עדיין לבן");
+  assert.ok(r4(mxWeek).age_hours >= 43.9 && r4(mxWeek).age_hours <= 46.1, `שבוע בבסיסי: ${r4(mxWeek).age_hours} שעות שירות`);
+  assert.equal(r4(mxWeek).age, 4, "מכפיל בסיסי שבוע — 5 ימי שירות, אדום כהה (הסוג הגיע לשלב)");
   // אתר בלי קריאה פתוחה (רק סגורה ב-24 השעות) — 0
   const closedOnly = await newSite();
   await call({ ticket_number: "S17-c-only", parking_code: closedOnly.code, status: "9", customer_complaint: "נסגרה" });
