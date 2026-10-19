@@ -2128,6 +2128,12 @@ specific to the type of facility"*.
   - A visit with one group, or one from before groups existed, renders flat as before, with no
     header.
   - In the editor, every item has a "קבוצה" field with suggestions from the list's existing groups.
+    ⚠️ **Since 19/10/2026 it is a `ChoiceSelect`, not a text field with a `<datalist>`.** From the field: *"אם אני רוצה
+    להוסיף, קיים לי רק חשמל"* — a new item inherits the last item's group ("חשמל" in the base list), and a datalist
+    offers only what matches the text already in the field, so "לובי" appeared only after clearing it. The picker always
+    lists every group of the list, then "בלי קבוצה — שם הרשימה", then "+ קבוצה חדשה…", which swaps in a focused text
+    field for that row (Enter, Esc or leaving it returns to the picker). `probe-groups` E1b–E1e (the reported case) and
+    E3–E3d, 24/24.
     A heading appears where a group starts. A new item inherits the last item's group.
   - Tests:
     - `pm-templates.test.js`: 2 tests, 10/10 SQL mutations caught.

@@ -21,6 +21,9 @@
 // קבוצה (07/10/2026): שדה של הפריט ("יחידת כוח", "מעלית אנכית"). פריטים רצופים עם אותה
 // קבוצה הם שורה אחת בביקור, שנפתחת בלחיצה ונהיית ירוקה כשהושלמה. ריק = קבוצה בשם הרשימה.
 // פריט חדש מקבל את הקבוצה של הפריט האחרון — כך מוסיפים לקבוצה בלי להקליד אותה שוב.
+// ⚠️ 19/10/2026: הקבוצה נבחרת מרשימה, לא מ-<datalist>. מהשטח: "אם אני רוצה להוסיף, קיים לי רק חשמל" — הפריט החדש ירש
+// "חשמל" מהאחרון, ו-datalist מציע רק מה שמתאים למה שכבר כתוב בשדה, כלומר "חשמל" לבדו; "לובי" הופיעה רק אחרי מחיקה.
+// עכשיו: כל הקבוצות של הרשימה תמיד, "בלי קבוצה", ו"+ קבוצה חדשה…" שפותח שדה טקסט לשורה הזו.
 //
 // ⚠️ סך התמונות הנדרשות בביקור (סכום min_photos של פריטי החובה) מוגבל ל-40 —
 // התקרה של pm_visit_photo_add. רשימה שדורשת יותר נשמרה בעבר בלי מילה, וכל
@@ -38,6 +41,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchPmTemplate, savePmTemplate, fetchPmTemplates, createPmTemplate, renamePmTemplate } from "../../services/dataSource";
 import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
+
+const NEW_GROUP = "\u0000new-group";   // אפשרות "קבוצה חדשה" — לא שם של קבוצה (תו NUL לא נכנס לשם)
 import PmTemplateMeta from "./PmTemplateMeta";
 import { groupTemplates } from "../../utils/pmLists";
 import { formatStampIL } from "../../utils/compliance";
@@ -93,6 +98,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
   const [saveError, setSaveError] = useState("");
   const [savedMsg, setSavedMsg] = useState("");
   const [focusKey, setFocusKey] = useState(null);
+  const [newGroupKey, setNewGroupKey] = useState(null);   // השורה שבה מקלידים עכשיו שם של קבוצה חדשה
   const [touched, setTouched] = useState(false);
   // הרשימות (07/10/2026). tplId == null = רשימת ברירת המחדל — כמו לפני שהיו רשימות,
   // וכך הטעינה הראשונה אינה מחכה לרשימת הרשימות.
@@ -177,7 +183,6 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
 
   const errors = (rows || []).map(rowError);
   const sections = [...new Set((rows || []).map((r) => r.section.trim()).filter(Boolean))];
-  const sectionsId = `pm-tpl-sections-${tplId ?? "default"}`;
   const photoTotal = templatePhotoTotal(rows);
   const tooManyPhotos = photoTotal > MAX_PHOTOS_PER_VISIT;
   const invalid = errors.some(Boolean) || (rows || []).length > TEMPLATE_MAX_ITEMS || tooManyPhotos;
@@ -298,7 +303,6 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
       {meta?.at && <p className="pm-meta">עודכנה לאחרונה ע״י {meta.by || "—"} ב-{formatStampIL(meta.at)}</p>}
       {reloading && <p className="pm-muted" role="status">טוען את הרשימה העדכנית מהשרת…</p>}
 
-      <datalist id={sectionsId}>{sections.map((x) => <option key={x} value={x} />)}</datalist>
       {rows.length === 0 ? (
         <p className="pm-muted">הרשימה ריקה. בלי פריטים אי אפשר לפתוח ביקור תחזוקה.</p>
       ) : (
@@ -325,11 +329,31 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
 
               <div className="pm-tpl-bar">
                 <div className="pm-tpl-opts">
-                  <label className="pm-field pm-tpl-sec">
-                    <span>קבוצה</span>
-                    <input className="pm-input" type="text" list={sectionsId} value={r.section} maxLength={SECTION_MAX}
-                      placeholder="ריק = שם הרשימה" disabled={busy} onChange={(e) => edit(r.key, { section: e.target.value })} />
-                  </label>
+                  {newGroupKey === r.key ? (
+                    <label className="pm-field pm-tpl-sec">
+                      <span>קבוצה חדשה</span>
+                      <input className="pm-input" type="text" value={r.section} maxLength={SECTION_MAX} autoFocus
+                        placeholder="שם הקבוצה, למשל: מרתף" disabled={busy}
+                        onChange={(e) => edit(r.key, { section: e.target.value })}
+                        onBlur={() => setNewGroupKey(null)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); setNewGroupKey(null); } }} />
+                    </label>
+                  ) : (
+                    <div className="pm-field pm-tpl-sec">
+                      <span aria-hidden="true">קבוצה</span>
+                      <ChoiceSelect value={r.section.trim()} label={`קבוצה של פריט ${i + 1}`} name="pm-tpl-sec" disabled={busy}
+                        placeholder="בלי קבוצה — שם הרשימה" menuMinWidth={220}
+                        options={[
+                          ...sections.map((x) => ({ value: x, label: x })),
+                          { value: "", label: "בלי קבוצה — שם הרשימה" },
+                          { value: NEW_GROUP, label: "+ קבוצה חדשה…" },
+                        ]}
+                        onChange={(v) => {
+                          if (v === NEW_GROUP) { edit(r.key, { section: "" }); setNewGroupKey(r.key); }
+                          else edit(r.key, { section: v });
+                        }} />
+                    </div>
+                  )}
                   <label className="pm-field pm-tpl-kind">
                     <span>סוג</span>
                     <select className="pm-input" value={r.kind} disabled={busy} onChange={(e) => edit(r.key, { kind: e.target.value })}>
