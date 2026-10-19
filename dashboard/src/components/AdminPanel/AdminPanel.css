@@ -115,7 +115,10 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 22px 24px;
+  /* ⚠️ בלי ריפוד עליון — הוא בתוך .adm-top. דפדפנים חלוקים בשאלה אם sticky מתחשב בריפוד של מיכל הגלילה (Chrome כן),
+     ובלי ריפוד אין על מה לחלוק: הכותרת נצמדת לקצה העליון בכל דפדפן (19/10/2026, בעלת המוצר: "היא לא ממוקמת בטופ
+     ויש לה שורה שנגללת כאילו מעליה"). */
+  padding: 0 24px 22px;
   border-radius: 16px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -128,17 +131,17 @@
    גוללות ברווח שמעל הכותרת ובשני צידיה. הרקע — של המודל, כדי שהשורות ייעלמו מתחתיה. */
 .adm-top {
   position: sticky;
-  /* ⚠️ מינוס הריפוד ולא 0: Chrome מצמיד sticky לקצה הפנימי של הריפוד של המודל, ו-top: 0 השאיר 22px שבהם השורות
-     נראו גוללות מעל הכותרת (נמדד ב-probe-admin-sticky) */
-  top: -22px;
+  /* ⚠️ top: 0 על מודל בלי ריפוד עליון (ראו .adm-modal). הגרסה הראשונה הייתה top: -22px על מודל עם ריפוד — מדויק ב-Chrome,
+     ותלוי בדיוק בפרט שדפדפנים חלוקים בו. */
+  top: 0;
   z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin: -22px -24px 0;
+  margin: 0 -24px;
   padding: 22px 24px 10px;
   background: var(--bg-secondary);
-  border-radius: 16px 16px 0 0;
+  /* בלי border-radius משלו: המודל (overflow + radius) כבר מעגל את הפינות, ורדיוס כפול השאיר פינות שהשורות נראו דרכן */
   box-shadow: 0 8px 10px -10px var(--shadow);
 }
 .adm-top .adm-search { margin: 0; }

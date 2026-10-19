@@ -3689,8 +3689,13 @@ The owner: *"שהכותרת תישאר קבועה כשאני גולל מטה —
   scrolling. The search moved up from the list into this block (it is still shown only with more than 6 sites, and
   not on the identities screen).
 - `position: sticky` inside the modal, which is what scrolls.
-  - ⚠️ `top: -22px`, not 0. Chrome pins a sticky element at the inner edge of the scroll container's padding, and
-    with 0 the rows showed through the 22px above the header.
+  - ⚠️ **The modal has no top padding; the 22px are inside `.adm-top`, and it is `top: 0`.** The first version (the
+    same evening) was `top: -22px` on a padded modal: exact in Chrome, which pins sticky at the inner edge of the
+    scroll container's padding, but dependent on a detail browsers do not agree on. The owner then saw it on her
+    screen: *"היא לא ממוקמת בטופ ויש לה שורה שנגללת כאילו מעליה"*. It could not be reproduced in Chromium (DPR 1 to
+    1.75, 78 sites, any scroll position), so the fix removes the dependency instead of tuning the number. The
+    block's own `border-radius` was dropped too: the modal's clip already rounds it, and a second radius left corner
+    slivers.
   - The negative margin and the padding cover the modal's padding on the sides too.
   - The background is the modal's, and a soft shadow underneath separates it from the rows.
 - Browser: `e2e/probe-admin-sticky.mjs` 14/14 (1280 light, 390 dark). Scrolled, the block sits at the modal's top edge,
