@@ -3468,6 +3468,19 @@ timer appears (the card pill, the expanded card's button, the calls dialog).
   emptied the board.
 - Checked and left: every service kind in production (vip / ext / basic / none) is one the aging recognises.
 
+**"קריאות פתוחות" pressed sorts by who has waited longest, and the calls pill opens the calls** (owner, later that
+evening: *"תמיין לפי מי שמחכה הכי הרבה זמן ושלחצו על קריאות ישר תיפתח הקריאה"*).
+- The key is the stopwatch's time: the oldest open call of the site, in real time (`oldestOpen`). It is not the service
+  hours behind the colour, so a site waiting since Thursday comes before one waiting since this morning, even if its
+  colour is lighter. A site with no known time goes last, and ties keep the usual order. The rule is
+  `waitingSince` / `compareByWaiting` in `utils/serviceCalls.js`. With "תקלות חוזרות" pressed too, the ↻ count is the
+  first key and waiting time decides within it.
+- **On a collapsed card the calls pill is a button again.** It opens the site's calls dialog and the card stays
+  collapsed. This is an exception to the 18/10 "icons on a collapsed card only show" rule. The pill appears only while
+  "קריאות פתוחות" is pressed, i.e. when the person came to handle calls. The lamps and the tasks pill stay display-only.
+- Tests: `service-calls-ui.test.js` (+1). Browser: `probe-open-calls` (O2 / O5 order) 60/60, `probe-card-click` B2 (the pill
+  opens the dialog, the card stays collapsed, it is this site's calls) 40/40.
+
 **A second independent review (the same evening) found seven more, all fixed:**
 - ⚠️ **Every return to a tab caused a full live load 5 minutes later.** The return ran the page-entry load (which clears
   `pendingRecover`), then `useSSE`'s recovery set it again, and the minute timer performed it at +5. Switching tabs

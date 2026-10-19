@@ -11,7 +11,7 @@ import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "..
 import { matchesBoardKind, DEFAULT_SITE_KIND, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
 import { matchesRepeatView, compareByRepeat } from "../../utils/repeatFaults";
 import { DEFAULT_TASKS_VIEW, matchesTasksView } from "../../utils/tasks";
-import { matchesOpenCallsView } from "../../utils/serviceCalls";
+import { matchesOpenCallsView, compareByWaiting } from "../../utils/serviceCalls";
 import "./OperatorView.css";
 
 function OperatorView({
@@ -94,8 +94,13 @@ function OperatorView({
   // ⚠️ 18/10/2026: רק כש"קריאות פתוחות" לחוץ. לא לחוץ — לא רואים קריאות, אז קריאה גם לא מקדמת אתר: סדר שזז בגלל דבר
   // שאינו על המסך נראה אקראי.
   const byPriority = makeCompareSites(calls?.show ? (s) => calls.bySite[s.id]?.open ?? 0 : null);
-  // "תקלות חוזרות" לחוץ (19/10/2026) — המספר על ↻ הוא המפתח הראשון, הגבוה ביותר קודם; לא לחוץ — הסדר הרגיל.
-  const ordered = [...filtered].sort(showRepeat === true ? compareByRepeat(byPriority) : byPriority);
+  // "קריאות פתוחות" לחוץ (19/10/2026, בעלת המוצר: "תמיין לפי מי שמחכה הכי הרבה זמן") — הקריאה הפתוחה הוותיקה ראשונה.
+  // "תקלות חוזרות" לחוץ (19/10/2026) — המספר על ↻ הוא המפתח הראשון, הגבוה ביותר קודם (גם כששניהם לחוצים: הוא מסנן
+  // ומפתח, והזמן מכריע בתוך אותו מספר); לא לחוץ — הסדר הרגיל.
+  let order = byPriority;
+  if (callsMode) order = compareByWaiting(calls.bySite, order);
+  if (showRepeat === true) order = compareByRepeat(order);
+  const ordered = [...filtered].sort(order);
 
   return (
     <div className="operator-view">

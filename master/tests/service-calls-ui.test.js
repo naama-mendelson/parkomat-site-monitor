@@ -179,3 +179,22 @@ test("⚠️ החמרה בכרטיס: רק כש'קריאות פתוחות' לח�
   assert.match(src, /const ageCls = markOpen \? callAgeClass\(/, "הצבע אינו מותנה ב-markOpen (הלחיצה על האריח)");
   assert.equal((src.match(/has-open-call" : ""\}\$\{ageCls\}/g) || []).length, 3, "לא בכל שלושת הכרטיסים (מכווץ, פרוש, ללא בקר)");
 });
+
+// בעלת המוצר, 19/10/2026: "תמיין לפי מי שמחכה הכי הרבה זמן"
+test("\"קריאות פתוחות\" — מי שמחכה הכי הרבה ראשון (הקריאה הפתוחה הוותיקה); תיקו ובלי זמן — הסדר הרגיל", async () => {
+  const m = await import("../../dashboard/src/utils/serviceCalls.js");
+  const by = {
+    1: { open: 1, oldestOpen: "2026-10-19T08:00:00Z" },
+    2: { open: 2, oldestOpen: "2026-10-15T13:50:00Z" },   // מיום חמישי — ראשון
+    3: { open: 1, oldestOpen: "2026-10-19T08:00:00Z" },   // תיקו עם 1
+    4: { open: 1, oldestOpen: null },                      // בלי זמן — בסוף
+    5: { open: 1, oldestOpen: "לא תאריך" },
+  };
+  const byCode = (a, b) => a.code.localeCompare(b.code);
+  const sites = [1, 2, 3, 4, 5].map((id) => ({ id, code: `S${id}` })).reverse();
+  assert.deepEqual([...sites].sort(m.compareByWaiting(by, byCode)).map((s) => s.id), [2, 1, 3, 4, 5]);
+  assert.equal(m.waitingSince(undefined), Infinity);
+  assert.equal(m.waitingSince({ oldestOpen: "2026-10-19T08:00:00Z" }), Date.parse("2026-10-19T08:00:00Z"));
+  // בלי מפת קריאות — הסדר הרגיל בלבד
+  assert.deepEqual([...sites].sort(m.compareByWaiting(null, byCode)).map((s) => s.id), [1, 2, 3, 4, 5]);
+});

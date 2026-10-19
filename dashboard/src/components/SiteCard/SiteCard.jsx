@@ -696,8 +696,12 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   // ובתוכה משימות 67 + קריאות 63 + הקוד 34 — לא נכנס, הגלולה יורדת שורה והכרטיס גדל ל-100px,
   // ועם הרשת גדלה איתו כל השורה. עם האייקון הכרטיס נשאר 74. השם המלא נשאר ב-aria-label,
   // והכרטיס ממילא פועם כשיש קריאה פתוחה — לא צריך מילה כדי שישימו לב.
+  // ⚠️ 19/10/2026 (בעלת המוצר: "שלוחצים על קריאות ישר תיפתח הקריאה"): גלולת הקריאות — חריגה מכלל "בכרטיס המכווץ
+  // האייקונים לתצוגה בלבד" (18/10) — היא כפתור שפותח את חלון הקריאות של האתר, בלי לפתוח את הכרטיס. היא מופיעה רק כש"קריאות
+  // פתוחות" לחוץ, כלומר כשמי שמסתכל בא לטפל בקריאות. שאר האייקונים בכרטיס המכווץ נשארו לתצוגה בלבד.
   const callsPill = calls && markOpen && !isMini && (
-    <Pill {...pillProps(openCallsDialog, callsLabel)} className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}${pillCls}`}
+    <button type="button" onClick={openCallsDialog} aria-label={callsLabel}
+      className={`tk-card-btn sc-card-btn${openCalls > 0 ? " has-open" : ""}`}
       title={callsLabel}>
       {density === "compact" ? (
         <svg className="sc-ico" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
@@ -709,7 +713,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
       {openCalls > 0 && oldestCall
         ? <FaultTimer since={oldestCall} tone="call" />
         : <span className="tk-card-n" aria-hidden="true">{callsN}</span>}
-    </Pill>
+    </button>
   );
   const callsButton = calls && anyCalls && (
     <button type="button" className={`tk-site-btn sc-site-btn${openCalls > 0 ? " has-open" : ""}`}
