@@ -3679,6 +3679,24 @@ The owner: *"במצב עריכה כשאני בתוך ניהול האתרים, כ
   reload skip the code; past 30 minutes asks again; nothing stores the code; a new tab asks). `probe-notier`,
   `probe-lift2`, `probe-agentpw` and `probe-mx-create` still pass.
 
+## Site management: the header and the search stay pinned while the list scrolls (19/10/2026)
+
+The owner: *"שהכותרת תישאר קבועה כשאני גולל מטה — עד וכולל שורת החיפוש. מוצא את עצמי לא מעט צריך לגלול חזרה עד למעלה בשביל
+לצאת מהמסך או לחזור לשורת החיפוש"*.
+
+- One pinned block, `.adm-top` (`AdminPanel.jsx` / `.css`), holds the title, the buttons including ✕, the search, and
+  the "עודכן" / error line. The message is in it, so saving an edit far down the list shows its result without
+  scrolling. The search moved up from the list into this block (it is still shown only with more than 6 sites, and
+  not on the identities screen).
+- `position: sticky` inside the modal, which is what scrolls.
+  - ⚠️ `top: -22px`, not 0. Chrome pins a sticky element at the inner edge of the scroll container's padding, and
+    with 0 the rows showed through the 22px above the header.
+  - The negative margin and the padding cover the modal's padding on the sides too.
+  - The background is the modal's, and a soft shadow underneath separates it from the rows.
+- Browser: `e2e/probe-admin-sticky.mjs` 14/14 (1280 light, 390 dark). Scrolled, the block sits at the modal's top edge,
+  and no row shows above, beside or inside it (`elementFromPoint`). The search filters from there, and ✕ closes from
+  there. `probe-notier`, `probe-admin-code`, `probe-roles`, `probe-agentpw`, `probe-lift2` and `probe-mx-create` still pass.
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only

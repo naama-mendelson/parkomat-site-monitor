@@ -371,6 +371,10 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
   return (
     <div className="adm-overlay">
       <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
+        {/* ⚠️ הכותרת קבועה בגלילה, עד וכולל שורת החיפוש (19/10/2026: "מוצא את עצמי לא מעט צריך לגלול חזרה עד למעלה
+            בשביל לצאת מהמסך או לחזור לשורת החיפוש"). גם הודעת "עודכן" / השגיאה בתוכה — עריכה בשורה שלמטה מראה את
+            התוצאה בלי לגלול. sticky בתוך המודל שגולל (AdminPanel.css, .adm-top). */}
+        <div className="adm-top">
         <header className="adm-head">
           <div>
             <h2>ניהול אתרים</h2>
@@ -400,8 +404,28 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
           </div>
         </header>
 
+        {/* רשימת האתרים — חיפוש */}
+        {/* ⚠️ מוצג רק כשיש מה לחפש בו. תיבת חיפוש מעל שלושה אתרים היא רעש. */}
+        {!showIdentities && sites.length > 6 && (
+          <div className="adm-search">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="חיפוש אתר לפי שם או קוד…"
+              aria-label="חיפוש אתר"
+            />
+            {q && (
+              <span className="adm-search-count">
+                {visibleSites.length} מתוך {sites.length}
+              </span>
+            )}
+          </div>
+        )}
+
         {msg && <div className="adm-msg">{msg}</div>}
         {err && <div className="adm-err adm-err-bar">{err}</div>}
+        </div>
 
         {/* ⚠️ החלפה מלאה ולא הצגה זו לצד זו: זהויות ואתרים הם שני נושאים,
             ושתי טבלאות באותו מסך היו מחזירות בדיוק את הבלבול שהמסך הזה נולד
@@ -479,24 +503,7 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
         {/* ============================================================ */}
         {/* הפעלה מחדש של השרת                                          */}
 
-        {/* רשימת האתרים */}
-        {/* ⚠️ מוצג רק כשיש מה לחפש בו. תיבת חיפוש מעל שלושה אתרים היא רעש. */}
-        {sites.length > 6 && (
-          <div className="adm-search">
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="חיפוש אתר לפי שם או קוד…"
-              aria-label="חיפוש אתר"
-            />
-            {q && (
-              <span className="adm-search-count">
-                {visibleSites.length} מתוך {sites.length}
-              </span>
-            )}
-          </div>
-        )}
+        {/* רשימת האתרים (החיפוש עבר לכותרת הקבועה, למעלה) */}
 
         <div className="adm-list">
           {sites.length === 0 ? (

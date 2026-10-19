@@ -123,6 +123,26 @@
   animation: admIn 0.2s ease-out;
 }
 
+/* ⚠️ הכותרת, החיפוש וההודעות — קבועים בראש המודל בזמן גלילה (19/10/2026). המודל הוא שגולל (overflow-y: auto), ולכן
+   sticky בתוכו. margin שלילי + padding מכסים את הריפוד של המודל (22px למעלה, 24px בצדדים): בלעדיהם השורות היו נראות
+   גוללות ברווח שמעל הכותרת ובשני צידיה. הרקע — של המודל, כדי שהשורות ייעלמו מתחתיה. */
+.adm-top {
+  position: sticky;
+  /* ⚠️ מינוס הריפוד ולא 0: Chrome מצמיד sticky לקצה הפנימי של הריפוד של המודל, ו-top: 0 השאיר 22px שבהם השורות
+     נראו גוללות מעל הכותרת (נמדד ב-probe-admin-sticky) */
+  top: -22px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: -22px -24px 0;
+  padding: 22px 24px 10px;
+  background: var(--bg-secondary);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 8px 10px -10px var(--shadow);
+}
+.adm-top .adm-search { margin: 0; }
+
 .adm-head {
   display: flex;
   justify-content: space-between;
