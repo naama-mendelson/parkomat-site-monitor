@@ -3548,6 +3548,8 @@ The owner: *"אני רוצה שיהיה עורך, בקר ומנהל. בקר אי
   without a second factor.
 - ⚠️ **The Wizenet intake identity holds the manager role in production.** `is_staff` already excluded it, and
   `require_editor` excludes it explicitly too (`is_intake_client`). Without that, a manager-role intake could edit.
+  Since the review the same evening, `current_app_role()` returns `'intake'` for it, so manager actions are closed to it
+  too (see *The review of 702eb98* below).
 - **What moved, beyond the obvious:**
   - Maintenance (start / schedule / cancel) used to be open to "any active user" ("attribution, not prevention"). It
     now requires an editor.
@@ -3630,6 +3632,40 @@ An old bundle before step 3 shows an editor as "בקר" in labels, but can do ev
   `service-calls` untouched.
 - **Dashboard:** pushed.
 - The owner also confirmed that a בקר may still send a field report ("כן, בקר יכול לדווח").
+
+### The review of 702eb98, and what it fixed (19/10/2026)
+
+An independent review called every public function as a בקר and as an editor (PGlite with Supabase's default grants)
+and found no write a בקר can reach and nothing manager-only an editor can reach. Five defects at the edges:
+
+1. **Every token refresh briefly turned the migrated editors back into בקרים on screen.** The one-time move and
+   `set_user_role` change only `app_users`; the token keeps the old `parkomat_role` (`operator` for the three, the call
+   centre among them). `onAuthChange` first reported the token's role, then the database's, so for one round trip
+   editor-only parts were **unmounted**: a one-time agent password in "זהויות אתרים" gone for good, PM tools with
+   unsaved edits gone. Fix: `services/auth.js` keeps the last `my_role()` answer per user id (`dbRole`,
+   `withKnownRole`) and the quick token callback uses it; sign-out clears it. `useAuth` shares the last known user
+   across instances (`lastUser`), so a dialog that mounts later starts from the real role instead of null ("בקר").
+   Not done: writing `parkomat_role` into `app_metadata` on a role change (needs the Secret key, i.e. an Edge Function).
+2. **"אין כרגע ממסר פעיל" never appeared** — `loadRelay` was a `useCallback(…, [])` reading `canWrite`, which is false
+   on the first render. Deps `[canWrite]`. Same root in `TasksDialog`'s focus effect (deps `[editable]`). The harness
+   could not catch either: its `mock-useAuth` returns the user synchronously.
+3. ⚠️ **The Wizenet intake identity is `manager` in `app_users` in production** (measured; the design said it would
+   have no row at all). `require_editor` and `is_staff` excluded it, `require_manager`, `my_role()` and the two Edge
+   Functions did not: with its password one could delete sites, invite users and rotate agent passwords. Fixed at the
+   root: `app.current_app_role()` returns **`'intake'`** for the identity in `settings.intake_user_id`, so
+   `is_manager`, `can_edit`, `my_role()` and every Edge Function check see a non-human role. The condition is written
+   inline (not `is_intake_client()`, which is defined in a later file, and a `sql` function is validated at creation).
+   The intake only inserts into `service_calls`, under a policy that does not read the role.
+4. **"השבת" / "הפעל מחדש" in "זהויות אתרים" always failed for an editor** (`set_user_active` is manager-only). Shown
+   to managers only. And `provision-agent` now refuses an editor's "סיסמה חדשה" on a **disabled** identity, since a new
+   password sets `is_active = true` — an editor could otherwise undo a manager's deactivation.
+5. **`claim_service_command` / `complete_service_command` were revoked from PUBLIC only.** Under Supabase's default
+   grants a fresh database leaves them executable by `anon` / `authenticated`. In production they were already closed
+   (measured); the file now revokes from both explicitly, so every database built from the code matches.
+
+Tests: `roles.test.js` 9 (the intake: `my_role = intake`, not manager, not editor, `delete_site` / `set_user_role` /
+`list_users` refused; the two functions closed to both roles). Mutations (`mut1910/run-mut5.cjs`): 4 of 4 caught. Full
+suite 1233/1233; probes roles 12, tasks 241, calls 63, agentpw 19, admin-sticky 14, relay 24.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

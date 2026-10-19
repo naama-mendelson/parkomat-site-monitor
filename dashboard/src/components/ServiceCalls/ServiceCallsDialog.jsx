@@ -109,7 +109,9 @@ export default function ServiceCallsDialog({ site = null, recent = false, rev = 
   useEffect(() => { fetchServiceCallLookups().then(setLookups).catch(() => {}); }, []);
   const loadRelay = useCallback(() => {
     if (canWrite) fetchWizenetRelayStatus().then(setRelay).catch(() => setRelay(null));
-  }, []);
+  // ⚠️ canWrite בתלויות (הסקירה של 19/10): הוא נגזר מהמשתמש, שיכול להגיע אחרי הרינדור הראשון — עם [] הבדיקה "אין ממסר"
+  // לא רצה לעולם, הבוררים נשארו פעילים ו"אין כרגע ממסר פעיל" לא הופיע
+  }, [canWrite]);
   useEffect(() => { loadRelay(); }, [loadRelay]);
   const noRelay = relay?.alive === 0;
 

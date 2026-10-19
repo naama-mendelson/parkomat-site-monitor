@@ -206,7 +206,7 @@ test("המסך: canEdit / isManagerRole / roleLabel — שלושה תפקידי�
   assert.ok(sql.includes(r.READ_ONLY_MSG.split(" — ")[0]), "המשפט במסך והמשפט במסד נפרדו");
 });
 
-test("⚠️ זהות הקליטה מוויזנט (בייצור — תפקיד מנהל) אינה עורכת: require_editor מוציא אותה במפורש", { skip }, async () => {
+test("⚠️ זהות הקליטה מוויזנט (בייצור — תפקיד מנהל) אינה עורכת ואינה מנהלת: התפקיד שלה הוא intake", { skip }, async () => {
   const INT = "d3000000-0000-0000-0000-000000000009";
   await sup(`INSERT INTO app_users (email, role, is_active, supabase_uid, created_at) VALUES ('rl-intake@parkomat.co.il','manager',true,$1,'x')`, [INT]);
   await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('intake_user_id', $1, 'x')
@@ -214,7 +214,28 @@ test("⚠️ זהות הקליטה מוויזנט (בייצור — תפקיד �
   try {
     await fails(rpc(INT, `SELECT * FROM public.register_site(p_code => 'ROLI1', p_site_name => 'מהקליטה')`), "42501", /בקר יכול רק לצפות/);
     await fails(rpc(INT, `SELECT public.task_add(NULL, 'משימה', NULL, gen_random_uuid())`), "42501");
+    // הסקירה של 19/10: require_manager ושתי ה-Edge Functions (שבודקות my_role) לא הוציאו אותה
+    assert.equal((await one(INT, `SELECT public.my_role() r`)).r, "intake");
+    assert.equal((await one(INT, `SELECT app.is_manager() m`)).m, false);
+    assert.equal((await one(INT, `SELECT app.can_edit() c`)).c, false);
+    const s = await newSite();
+    await fails(rpc(INT, `SELECT public.delete_site($1)`, [s.code]), "42501", /מנהלים בלבד/);
+    await fails(rpc(INT, `SELECT public.set_user_role($1, 'manager')`, [await uid2id(RO)]), "42501", /מנהלים בלבד/);
+    await fails(rpc(INT, `SELECT * FROM public.list_users()`), "42501");
+    assert.equal((await sup(`SELECT 1 FROM sites WHERE code = $1`, [s.code])).length, 1, "האתר נמחק בידי זהות הקליטה");
+    // ובלי המפתח ב-settings — אותה שורה היא שוב מה שכתוב בה (התנאי אינו נוגע במשתמשים אחרים)
+    assert.equal((await one(MGR, `SELECT public.my_role() r`)).r, "manager");
   } finally {
     await sup(`DELETE FROM settings WHERE key = 'intake_user_id'`);
   }
+});
+
+test("שתי פונקציות השרת המת (claim/complete_service_command) סגורות בפני anon ו-authenticated — גם במסד נקי", { skip }, async () => {
+  for (const fn of ["public.claim_service_command()", "public.complete_service_command(bigint, boolean, text)"]) {
+    for (const role of ["anon", "authenticated"]) {
+      const r = (await sup(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS can`, [role, fn]))[0];
+      assert.equal(r.can, false, `${role} רשאי להריץ את ${fn}`);
+    }
+  }
+  await fails(rpc(RO, `SELECT public.claim_service_command()`), "42501");
 });

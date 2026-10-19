@@ -2175,8 +2175,11 @@ $$;
 -- שאיש לא ביצע — כלומר להשתיק את הכפתור בלי שאיש ידע. הסקריפט על
 -- מכונת השרת מתחבר עם המפתח הסודי ורץ כ-service_role.
 REVOKE ALL ON FUNCTION public.request_service_restart(text)               FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.claim_service_command()                     FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.complete_service_command(bigint, boolean, text) FROM PUBLIC;
+-- ⚠️ גם מ-anon ו-authenticated במפורש (19/10/2026): ב-Supabase פונקציה חדשה ב-public מקבלת EXECUTE לשניהם ישירות,
+-- לא דרך PUBLIC, ולכן REVOKE מ-PUBLIC לבדו השאיר אותן פתוחות במסד נקי — בקר הריץ claim_service_command מקומית וכתב
+-- poller_heartbeat. בייצור הן כבר סגורות (נמדד); השורה מבטיחה שכך יהיה גם בכל מסד שייבנה מהקוד.
+REVOKE ALL ON FUNCTION public.claim_service_command()                     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.complete_service_command(bigint, boolean, text) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.request_service_restart(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_service_command()                     TO service_role;

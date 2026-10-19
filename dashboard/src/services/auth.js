@@ -140,6 +140,17 @@ export async function changePassword(currentPassword, nextPassword) {
 // הפחות זהירה והוא ההפוך: האכיפה במסד בכל מקרה, ולכן מסך שנפתח בטעות
 // אינו פרצה — הפעולות בו ייכשלו. נפילה ל-"בקר" הייתה נועלת מנהל אמיתי
 // מחוץ למסך בגלל הבהוב רשת, וזו תקלה שאין ממנה מוצא על המסך.
+// ============================================================
+// ⚠️ תפקיד שכבר נודע מהמסד אינו יורד חזרה לזה שבאסימון (19/10/2026)
+// ============================================================
+// הסקירה של שלושת התפקידים: המעבר החד-פעמי ו-set_user_role משנים רק את app_users, והאסימון נשאר עם parkomat_role
+// הישן — לשלושת העורכים שהיו בקרים (המוקד ביניהם) הוא אומר 'operator'. כל חידוש אסימון (בערך פעם בשעה) קרא קודם
+// ל-callback עם התפקיד מהאסימון, ולרגע המסך היה "בקר": AdminPanel עבר למסך הנעילה (סיסמת סוכן שמוצגת פעם אחת —
+// אבודה), וכלי התחזוקה המונעת התפרקו עם מה שנערך בהם. עכשיו: אחרי שהמסד ענה, אותו משתמש מקבל את התפקיד מהמסד גם
+// בקריאה המהירה, עד שהמסד עונה אחרת. משתמש אחר / יציאה — מתחילים מחדש.
+let dbRole = null;   // { id, role } — התשובה האחרונה של my_role()
+const withKnownRole = (base) => (base && dbRole?.id === base.id ? { ...base, role: dbRole.role } : base);
+
 async function withDbRole(user) {
   const base = mapUser(user);
   if (!base) return null;
@@ -147,10 +158,13 @@ async function withDbRole(user) {
   try {
     const { data, error } = await supabase.rpc("my_role");
     // 'anonymous' הוא תשובה תקפה — כך נראה משתמש שהושבת.
-    if (!error && typeof data === "string" && data) return { ...base, role: data };
+    if (!error && typeof data === "string" && data) {
+      dbRole = { id: base.id, role: data };
+      return { ...base, role: data };
+    }
   } catch { /* ראה למעלה — נשארים עם התביעה */ }
 
-  return base;
+  return withKnownRole(base);
 }
 
 /** ה-session הנוכחי, או null. נקרא בעלייה כדי לא לבקש התחברות מחדש. */
@@ -169,7 +183,7 @@ export async function currentUser() {
 export function onAuthChange(callback) {
   if (!isSupabaseConfigured) return () => {};
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    if (!session) return callback(null);
+    if (!session) { dbRole = null; return callback(null); }
 
     // ============================================================
     // ⚠️ ה-RPC נדחה ל-setTimeout, וזו אינה קוסמטיקה
@@ -182,7 +196,7 @@ export function onAuthChange(callback) {
     // ⚠️ ולכן גם ה-callback נקרא **פעמיים** בפועל: פעם עם התפקיד מהתביעה
     // (מיד) ופעם עם התפקיד מהמסד (מיד אחר כך). זה מכוון — המסך לא ממתין
     // לרשת כדי להיפתח, והוא מתקן את עצמו כשהתשובה האמיתית מגיעה.
-    callback(mapUser(session.user));
+    callback(withKnownRole(mapUser(session.user)));
     setTimeout(() => { withDbRole(session.user).then(callback).catch(() => {}); }, 0);
   });
   return () => data.subscription.unsubscribe();

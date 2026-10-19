@@ -435,11 +435,21 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, app, pg_temp
 AS $$
-  SELECT COALESCE(
-    (SELECT u.role FROM app_users u
-      WHERE u.supabase_uid::text = app.current_actor() AND u.is_active LIMIT 1),
-    'anonymous'
-  )
+  -- ⚠️ 19/10/2026 (סקירת שלושת התפקידים): זהות הקליטה מוויזנט אינה אדם, ובייצור יש לה שורה ב-app_users בתפקיד
+  -- 'manager'. require_editor ו-is_staff הוציאו אותה, אבל require_manager, my_role() ושתי ה-Edge Functions לא — כלומר
+  -- עם הסיסמה שלה אפשר היה למחוק אתרים, להזמין משתמשים ולהנפיק סיסמאות לסוכנים. כאן, במקום האחד שכל בדיקת תפקיד
+  -- עוברת בו, היא 'intake' — לא מנהל, לא עורך, לא בקר. ⚠️ הבדיקה כתובה כאן ולא דרך app.is_intake_client(), כי זו
+  -- מוגדרת ב-service-calls.postgres.sql שנטען אחרי הקובץ הזה, ופונקציית sql נבדקת ביצירה. אותו תנאי בדיוק.
+  SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM settings s
+                  WHERE s.key = 'intake_user_id'
+                    AND nullif(trim(s.value), '') = app.current_actor())
+      THEN 'intake'
+    ELSE COALESCE(
+      (SELECT u.role FROM app_users u
+        WHERE u.supabase_uid::text = app.current_actor() AND u.is_active LIMIT 1),
+      'anonymous')
+  END
 $$;
 
 -- ⚠️ שתי קבוצות בלבד: manager ו-operator. הפונקציה נקראה is_executive

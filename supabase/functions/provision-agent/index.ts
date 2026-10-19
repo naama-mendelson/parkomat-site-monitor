@@ -109,10 +109,16 @@ Deno.serve(async (req) => {
   // את אי-הרגישות לאותיות (Supabase מנרמל אימיילים), ומבטלת את התבנית.
   const literal = email.replace(/[\\%_]/g, (c) => "\\" + c);
   const { data: existing, error: existErr } = await admin
-    .from("app_users").select("id, supabase_uid, site_id")
+    .from("app_users").select("id, supabase_uid, site_id, is_active")
     .ilike("email", literal).maybeSingle();
 
   if (existErr) return json({ error: `בדיקת קיום נכשלה: ${existErr.message}` }, 500);
+
+  // ⚠️ 19/10/2026 (שלושה תפקידים): סיסמה חדשה מפעילה את הזהות מחדש (is_active = true למטה). זהות שמנהל השבית
+  // מוחזרת רק בידי מנהל — אחרת עורך, שאינו רשאי להשבית, היה מבטל השבתה של מנהל דרך "סיסמה חדשה".
+  if (existing && rotate && existing.is_active === false && role !== "manager") {
+    return json({ error: "הזהות של האתר הושבתה בידי מנהל — רק מנהל יכול להחזיר אותה" }, 403);
+  }
 
   if (existing && !rotate) {
     return json({

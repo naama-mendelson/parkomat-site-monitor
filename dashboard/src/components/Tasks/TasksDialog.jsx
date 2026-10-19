@@ -155,7 +155,8 @@ export default function TasksDialog({ site, rev = 0, onClose, onChanged }) {
   // אינו רוצה להקליד.
   useEffect(() => {
     if (window.matchMedia?.("(pointer: fine)").matches) inputRef.current?.focus({ preventScroll: true });
-  }, []);
+  // ⚠️ editable בתלויות (הסקירה של 19/10): הטופס קיים רק לעורך, והתפקיד יכול להגיע אחרי הרינדור הראשון
+  }, [editable]);
   useEffect(() => () => clearTimeout(confirmTimer.current), []);
   // ⚠️ שגיאת פעולה ("המשימה כבר בוצעה") מוצגת בראש החלון — ומי שגלל לשורה נמוכה לא היה רואה אותה
   useEffect(() => {

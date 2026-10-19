@@ -15,6 +15,7 @@
 // הוא פועם, ומה קורה אם משביתים.
 import { useEffect, useState } from "react";
 import { listSiteIdentities, provisionAgent, setUserActive, agentEverBeat } from "../../services/dataSource";
+import { useAuth } from "../../hooks/useAuth";
 import "./SiteIdentities.css";
 
 const STATE_LABEL = {
@@ -37,6 +38,10 @@ function beatLabel(seenAt) {
 }
 
 export default function SiteIdentities({ onSecretShown }) {
+  // 19/10/2026 (שלושה תפקידים): עורך רואה את המסך ומנפיק זהות לאתר שרשם; השבתה והפעלה מחדש — מנהל בלבד
+  // (set_user_active הוא ניהול משתמשים, והמסד דוחה עורך). בלי זה עורך קיבל כפתור שתמיד נכשל.
+  const { user } = useAuth();
+  const isManager = user?.role === "manager";
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -176,7 +181,7 @@ export default function SiteIdentities({ onSecretShown }) {
                       {busy === r.code ? "מנפיק…" : "צור זהות"}
                     </button>
                   )}
-                  {r.state === "disabled" && (
+                  {r.state === "disabled" && isManager && (
                     <button className="si-btn" disabled={busy === r.code} onClick={() => toggleActive(r, true)}>
                       הפעל מחדש
                     </button>
@@ -188,10 +193,12 @@ export default function SiteIdentities({ onSecretShown }) {
                           ערך — בדיוק מה שקרה ל-19 אתרים. השבתה עוצרת את
                           הכתיבה מיד (`app.agent_site_id()` דורשת is_active)
                           והיא הפיכה בלחיצה, בלי לנסוע לאף מקום. */}
-                      <button className="si-btn si-btn-warn" disabled={busy === r.code}
-                        onClick={() => setConfirmOff(r.code)}>
-                        השבת
-                      </button>
+                      {isManager && (
+                        <button className="si-btn si-btn-warn" disabled={busy === r.code}
+                          onClick={() => setConfirmOff(r.code)}>
+                          השבת
+                        </button>
+                      )}
                       <button className="si-btn" disabled={busy === r.code} onClick={() => askRotate(r)}>
                         סיסמה חדשה
                       </button>
