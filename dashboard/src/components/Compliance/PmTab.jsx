@@ -499,6 +499,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
         <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
           source={data.templates_source ?? (data.profile ? "profile" : data.templates_assigned ? "explicit" : "default")}
           typeKeys={Array.isArray(data.type_keys) ? data.type_keys : []}
+          typeCoverage={data.type_coverage}
           isManager={editable}
           onChanged={() => { setProfRev((r) => r + 1); load({ silent: true }); }} />
       )}

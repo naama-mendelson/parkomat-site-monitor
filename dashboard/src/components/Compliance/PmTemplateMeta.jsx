@@ -37,7 +37,9 @@ export default function PmTemplateMeta({ template, onSaved }) {
     } catch (e) { setMsg({ ok: false, text: e?.message || "השמירה נכשלה" }); }
     finally { setBusy(false); }
   };
-  const groups = [{ key: "lift", label: "סוגי מעלית" }, { key: "floor", label: "סוגי מתקן" }];
+  // מערכת וקונזול — 19/10/2026: רשימה שנכתבת לביטנקם או לקונזול אורכי מגיעה לאתרים כאלה מעצמה
+  const groups = [{ key: "lift", label: "סוגי מעלית" }, { key: "floor", label: "סוגי מתקן" },
+    { key: "system", label: "מערכת הפעלה" }, { key: "console", label: "קונזול" }];
   return (
     <div className="pm-tpl-meta" data-testid="pm-tpl-meta">
       <div className="pm-row pm-tpl-meta-row">

@@ -5,8 +5,9 @@
 //
 // ⚠️ ההחלטה מי מקבל מה היא ב-SQL (app.pm_auto_template_ids / app.pm_site_template_ids). כאן רק סידור לתצוגה:
 // הקטגוריות והמפתחות הם אותם ערכים ש-pm_template_meta_set מקבל, והתוויות באות מ-shared/*.mjs — מקום אחד לכל רשימה.
-import { LIFT_TYPES } from "../../../shared/lift-types.mjs";
+import { LIFT_TYPES, LIFT_CONSOLES } from "../../../shared/lift-types.mjs";
 import { SITE_TYPE_GROUPS } from "../../../shared/site-types.mjs";
+import { CONTROL_SYSTEMS } from "../../../shared/control-systems.mjs";
 
 /** הקטגוריות של רשימה, בסדר שבו הן מוצגות. המפתחות — כמו pm_templates.category. */
 export const PM_CATEGORIES = [
@@ -36,17 +37,41 @@ export function groupTemplates(templates) {
     .map((c) => ({ ...c, templates: by.get(c.key).slice().sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0) || (a.seq ?? 0) - (b.seq ?? 0) || a.id - b.id) }));
 }
 
-/** כל מפתחות הסוג שאפשר לסווג אליהם: lift:<סוג מעלית> ו-floor:<סוג מתקן>, עם תווית קריאה */
+/**
+ * כל מפתחות הסוג שאפשר לסווג אליהם: lift:<סוג מעלית>, floor:<סוג מתקן>, ומ-19/10/2026 גם system:<מערכת הפעלה> ו-
+ * console:<קונזול> (בעלת המוצר, על התג "XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי": "צריך בתחזוקה לראות שיש מענה
+ * גם ל…"). ⚠️ אותן צורות ש-pm_template_meta_set מקבל; system: הוא השם העברי עצמו, כמו sites.control_system.
+ */
 export function typeKeyOptions() {
   const lifts = LIFT_TYPES.map((t) => ({ value: `lift:${t.key}`, label: t.label, group: "lift", groupLabel: "מעלית" }));
   const floors = SITE_TYPE_GROUPS.flatMap((g) => g.types.map((t) => ({ value: `floor:${t.key}`, label: t.label, group: "floor", groupLabel: "מתקן" })));
-  return [...lifts, ...floors];
+  const systems = CONTROL_SYSTEMS.map((s) => ({ value: `system:${s.key}`, label: s.label, group: "system", groupLabel: "מערכת" }));
+  // התווית של קונזול כבר אומרת "קונזול אורכי" — בלי קידומת, אחרת "קונזול: קונזול אורכי"
+  const consoles = LIFT_CONSOLES.map((c) => ({ value: `console:${c.key}`, label: c.label, group: "console", groupLabel: null }));
+  return [...lifts, ...floors, ...systems, ...consoles];
 }
 const KEY_LABELS = Object.fromEntries(typeKeyOptions().map((o) => [o.value, o]));
-/** "מעלית: הידראולית בוכנה 1" / "מתקן: דולי"; מפתח לא מוכר — כמו שהוא */
+/** "מעלית: הידראולית בוכנה 1" / "מתקן: דולי" / "מערכת: ביטנקם" / "קונזול אורכי"; מפתח לא מוכר — כמו שהוא */
 export function typeKeyLabel(key) {
   const o = KEY_LABELS[key];
-  return o ? `${o.groupLabel}: ${o.label}` : String(key ?? "");
+  if (!o) return String(key ?? "");
+  return o.groupLabel ? `${o.groupLabel}: ${o.label}` : o.label;
+}
+
+/**
+ * הכיסוי לפי סוג, שורה לכל מאפיין של האתר (pm_site.type_coverage, בסדר התג, בלי כפולים) — 19/10/2026.
+ * state: "covered" — לפחות רשימה אחת מסווגת למאפיין והאתר מקבל אותה; "general" — אין רשימה נפרדת למאפיין, והוא מכוסה
+ * ברשימות הכלליות (בעלת המוצר: "אין צורך בתחזוקה נפרדת"); "unassigned" — יש רשימה, אבל בחירה ידנית או פרופיל הוציאו
+ * אותה מהאתר. ⚠️ ההחלטה מה מכסה מה היא במסד; כאן רק תרגום. מסד ישן בלי השדה — מערך ריק, ואין שורות.
+ */
+export function coverageRows(typeCoverage) {
+  return (Array.isArray(typeCoverage) ? typeCoverage : []).map((c) => {
+    const lists = Array.isArray(c?.lists) ? c.lists : [];
+    const assigned = lists.filter((l) => l.assigned).map((l) => l.name);
+    const unassigned = lists.filter((l) => !l.assigned).map((l) => l.name);
+    const state = assigned.length ? "covered" : unassigned.length ? "unassigned" : "general";
+    return { key: c.key, label: typeKeyLabel(c.key), assigned, unassigned, state };
+  });
 }
 
 /** מאיפה הרשימות של האתר (pm_site.templates_source) — במילים */

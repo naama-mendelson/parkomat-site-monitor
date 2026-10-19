@@ -2134,6 +2134,14 @@ specific to the type of facility"*.
     lists every group of the list, then "בלי קבוצה — שם הרשימה", then "+ קבוצה חדשה…", which swaps in a focused text
     field for that row (Enter, Esc or leaving it returns to the picker). `probe-groups` E1b–E1e (the reported case) and
     E3–E3d, 24/24.
+    ⚠️ **Two defects found by the review the same evening, fixed:** Esc in that field reached the site window
+    (`InsightsModal` closes on Esc at `document`), which closed or asked "לצאת בכל זאת?" and dropped unsaved edits — the
+    handler now calls `stopPropagation` (the list-rename field too). And choosing "+ קבוצה חדשה…" by mistake erased the
+    item's group: the previous group is remembered (`newGroupRef`) and restored by Esc, or by leaving the field empty;
+    the ref makes the restore happen once, so a late blur cannot undo it. `probe-groups` E1f–E1i (28/28); UI mutations
+    in a separate copy 4/4 caught. ⚠️ **Harness:** a separate copy for UI mutations must repoint `e2e/main.jsx`
+    (absolute import of `App.jsx` from the repo), use the long path rather than `746F~1` (Vite's allow-list compares
+    resolved paths), and allow the real `node_modules`.
   - **The base list has three groups since 19/10/2026: לובי (5), בטיחות ומרתף (3), חשמל (11).** From the field (on
     גרוזנברג 7): *"דלתות מרתף, קופסת מפתח… אלה דברים שקשורים למרתף, לא ללובי"*. The document puts its section 4
     "בטיחות" (parking doors locked, the key box, harnesses at the basement entrance) on the "לובי החניה" page, which is
@@ -2289,6 +2297,37 @@ editor's native `<select>` list: *"תעצב את זה יפה"*.
   profile; the only manual rows are 1384 and 1206. The one ⚠️ is a **question, not a bug**: the 88 multipliers on profile
   12 get list 11 alone, without the base "לובי וחשמל" — the automatic rule always adds the base, a profile does not.
   Whether a stacker needs the lobby/electrical list is the owner's call.
+
+### Control system and console are type keys too; "לפי סוג האתר" in the PM tab (19/10/2026)
+
+The owner, on a card badge "XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי": *"צריך בתחזוקה לראות שיש מענה גם לביטנקם,
+XY, הידראולית בוכנה 1, קונזול אורכי — מה שצריך ויש בשביל זה תשים"*. Measured first: machine and lift types were covered
+(except shuttle-x and hydraulic scissors, 3 sites each), but the control system (ביטנקם 16 / לולק 68) and the console
+(longitudinal 15 / transverse 55) were not keys at all, and the documents have no maintenance item specific to either.
+Her answers: **both** (a per-attribute display, and classification by system and console), and **"אין צורך בתחזוקה
+נפרדת"** — what has no list of its own is shown as covered by the general lists, not as missing.
+
+- **`app.pm_site_type_keys`** now returns, in the badge's order: `floor:` → `system:<control_system>` → `lift:` →
+  `console:<lift_console>` → the second lift and its console. `system:` is the Hebrew name itself, as in
+  `sites.control_system` and `shared/control-systems.mjs`.
+  ⚠️ No list is classified by system or console today, so **nothing changes** in which lists reach which site; the keys
+  only make such a list possible. The day one is classified (say `system:סוטפין`), the type-before-profile order means
+  the sites it matches get it automatically — including unmonitored Sotefin sites, which today live on their profile.
+- **`pm_template_meta_set`** accepts `console:<ascii>` and `system:<1–40 chars, no space, colon or control character>`.
+- **`pm_site.type_coverage`** (`[{key, lists:[{id, name, assigned}]}]`, the badge's order, a key once): the active lists
+  classified for each attribute, and whether the site really gets each one now. The decision is SQL; the dashboard only
+  translates (`coverageRows` in `utils/pmLists.js`).
+- **The PM tab** (`PmSiteLists`) shows "לפי סוג האתר:" and a row per attribute: "מתקן: XY — מיטת XY במרתף", "מערכת:
+  ביטנקם — מכוסה ברשימות הכלליות", "קונזול אורכי — …" (the console label already says "קונזול"). A list classified
+  for the attribute that a manual choice or a profile left out reads "יש רשימה (X) — לא משויכת לאתר" in amber. An old
+  database without the field shows no rows.
+- **The list editor** (`PmTemplateMeta`) has two more chip groups, "מערכת הפעלה" (the four systems) and "קונזול".
+- Tests: `pm-auto.test.js` (the badge order, a duplicate console once, a system-classified list reaching ביטנקם sites,
+  either key enough, `assigned` after a manual drop, validation; the existing `type_keys` expectation now includes the
+  console). **SQL mutations (isolated copy, `mut1910/run-mut6.cjs`): 7 of 7 caught.** `pm-lists-ui.test.js`
+  (`typeKeyOptions` / `typeKeyLabel` for systems and consoles, `coverageRows`). Browser `e2e/probe-pm-cover.mjs` 17/17
+  (rows and order at 1280 light and 390 dark, the unassigned row after a manual drop, the editor chips saved); the
+  harness PM mock builds `type_coverage` like the SQL and accepts the new key shapes.
 
 ## PM visit form: a photo on every item, and a larger detail line (18/10/2026)
 
@@ -3442,6 +3481,12 @@ used the *dot* colour as text), "בסיסי" 2.25:1.
 - Browser: `e2e/probe-ink.mjs` 5/5 — the state / tier / system / availability / stopwatch inks on the board and on an
   expanded card, ≥ 4.5:1 in both themes, and I3 injects the old light green and expects the check to fail (1.55:1). The
   card probes (call-age 29, tier-all 39, calls 63, card-click 40, repeat 14) and `check-colors` pass; unit tests 1233.
+- **From the review the same evening:** plain coloured text on a solid aging card ("מערכת 1 בתקלה", the systems age,
+  the agreement gap) was still 2.8–3.6:1 — it sits on the amber/red itself, not on the chip backing. On solid cards it is
+  a pale shade of its colour (`#fee2e2` / `#fef3c7`). `.systems-age` and `.card-agreement-gap` read `--warn-text` /
+  `--amber`, which do not exist (fallbacks 3.6:1 dark / 3.19:1 light); they read `--status-maint-ink` now.
+  `probe-ink` I4 puts each solid level on the collapsed two-system card and checks every coloured text (12/12). And
+  `useAuth` no longer lets a dialog that already closed write the signed-out user back into the shared `lastUser`.
 
 ## The expanded card spread over the whole row after returning to an empty board (fixed 19/10/2026)
 

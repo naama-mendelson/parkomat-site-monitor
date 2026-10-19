@@ -38,11 +38,36 @@ test("typeKeyOptions — כל סוגי המעלית והמתקן, בצורת lif
   const o = m.typeKeyOptions();
   assert.ok(o.some((x) => x.value === "lift:hydraulic-piston-1" && x.group === "lift"));
   assert.ok(o.some((x) => x.value === "floor:matzbet-x" && x.group === "floor"));
-  assert.ok(o.every((x) => /^(lift|floor):[A-Za-z0-9_-]+$/.test(x.value)), "אותה צורה ש-pm_template_meta_set מקבל");
+  // אותן שתי צורות ש-pm_template_meta_set מקבל (19/10/2026: גם system: בעברית ו-console:)
+  assert.ok(o.every((x) => /^(lift|floor|console):[A-Za-z0-9_-]{1,40}$/.test(x.value) || /^system:[^\s:]{1,40}$/.test(x.value)),
+    o.filter((x) => !/^(lift|floor|console|system):/.test(x.value)).map((x) => x.value).join(","));
   assert.equal(new Set(o.map((x) => x.value)).size, o.length, "בלי כפילויות");
   assert.equal(m.typeKeyLabel("floor:doli"), "מתקן: דולי");
   assert.equal(m.typeKeyLabel("lift:electric"), "מעלית: חשמלי");
   assert.equal(m.typeKeyLabel("lift:unknown"), "lift:unknown", "מפתח לא מוכר — כמו שהוא, לא נופל");
+  // מערכת וקונזול — כל ארבע המערכות ושני הקונזולים, מהרשימות המשותפות
+  for (const s of ["לולק", "ביטנקם", "סוטפין", "סוטפין-לולק"]) assert.ok(o.some((x) => x.value === `system:${s}` && x.group === "system"), s);
+  assert.equal(m.typeKeyLabel("system:ביטנקם"), "מערכת: ביטנקם");
+  assert.equal(m.typeKeyLabel("console:longitudinal"), "קונזול אורכי", "בלי 'קונזול: קונזול'");
+  assert.equal(m.typeKeyLabel("console:transverse"), "קונזול רוחבי");
+});
+
+test("coverageRows — מכוסה / ברשימות הכלליות / יש רשימה שלא משויכת; מסד ישן בלי השדה — אין שורות", () => {
+  const rows = m.coverageRows([
+    { key: "floor:xy", lists: [{ id: 5, name: "מיטת XY במרתף", assigned: true }] },
+    { key: "system:ביטנקם", lists: [] },
+    { key: "lift:hydraulic-piston-1", lists: [{ id: 2, name: "מעלית הידראולית", assigned: false }] },
+    { key: "console:longitudinal", lists: [{ id: 9, name: "א", assigned: true }, { id: 10, name: "ב", assigned: false }] },
+  ]);
+  assert.deepEqual(rows.map((r) => [r.label, r.state, r.assigned, r.unassigned]), [
+    ["מתקן: XY", "covered", ["מיטת XY במרתף"], []],
+    ["מערכת: ביטנקם", "general", [], []],
+    ["מעלית: הידראולית בוכנה 1", "unassigned", [], ["מעלית הידראולית"]],
+    ["קונזול אורכי", "covered", ["א"], ["ב"]],
+  ]);
+  assert.deepEqual(m.coverageRows(undefined), []);
+  assert.deepEqual(m.coverageRows(null), []);
+  assert.deepEqual(m.coverageRows([{ key: "floor:doli" }]).map((r) => r.state), ["general"], "בלי lists — כללי, לא קריסה");
 });
 
 test("sourceLabel — ארבעת המקורות במילים, ולא מוכר = ברירת המחדל", () => {

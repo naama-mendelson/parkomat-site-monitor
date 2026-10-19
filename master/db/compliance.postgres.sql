@@ -1977,13 +1977,21 @@ REVOKE ALL ON FUNCTION app.pm_may_discard(pm_visits) FROM PUBLIC;
 -- השיוך הישן אתר-אתר) → הרשימות שלו. אחרת (או שכל מה ששויך הושבת) → רשימת ברירת המחדל.
 -- תמיד לפי seq. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן, אחרת הכרטיס יאמר דבר
 -- אחד והביקור יצולם מדבר אחר.
--- מפתחות הסוג של אתר: floor:<plc_type>, lift:<lift_type>, lift:<lift2_type> (ריקים נזרקים)
+-- מפתחות הסוג של אתר: floor:<plc_type>, system:<control_system>, lift:<lift_type>, console:<lift_console>, ושוב lift/console
+-- למעלית השנייה (ריקים נזרקים). ⚠️ הסדר הוא סדר התג בכרטיס ("XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי") — type_coverage
+-- ב-pm_site מציג לפיו.
+-- ⚠️ system ו-console נוספו 19/10/2026 (בעלת המוצר, על התג של אתר: "צריך בתחזוקה לראות שיש מענה גם לביטנקם, XY,
+-- הידראולית בוכנה 1, קונזול אורכי"). היום אף רשימה אינה מסווגת לפיהם ("אין צורך בתחזוקה נפרדת"), ולכן הם אינם משנים
+-- לאיזה אתר מגיעה איזו רשימה — רק מאפשרים לסווג כך רשימה בעתיד, ומוצגים בלשונית כמכוסים ברשימות הכלליות.
 CREATE OR REPLACE FUNCTION app.pm_site_type_keys(p_site_id integer) RETURNS text[]
 LANGUAGE sql STABLE AS $$
   SELECT COALESCE(array_remove(ARRAY[
            CASE WHEN NULLIF(btrim(s.plc_type), '') IS NOT NULL THEN 'floor:' || btrim(s.plc_type) END,
+           CASE WHEN NULLIF(btrim(s.control_system), '') IS NOT NULL THEN 'system:' || btrim(s.control_system) END,
            CASE WHEN NULLIF(btrim(s.lift_type), '') IS NOT NULL THEN 'lift:' || btrim(s.lift_type) END,
-           CASE WHEN NULLIF(btrim(s.lift2_type), '') IS NOT NULL THEN 'lift:' || btrim(s.lift2_type) END], NULL), '{}')
+           CASE WHEN NULLIF(btrim(s.lift_console), '') IS NOT NULL THEN 'console:' || btrim(s.lift_console) END,
+           CASE WHEN NULLIF(btrim(s.lift2_type), '') IS NOT NULL THEN 'lift:' || btrim(s.lift2_type) END,
+           CASE WHEN NULLIF(btrim(s.lift2_console), '') IS NOT NULL THEN 'console:' || btrim(s.lift2_console) END], NULL), '{}')
     FROM sites s WHERE s.id = p_site_id
 $$;
 REVOKE ALL ON FUNCTION app.pm_site_type_keys(integer) FROM PUBLIC;
@@ -2035,10 +2043,11 @@ CREATE OR REPLACE FUNCTION public.pm_site(p_site_code text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_staff();
-  v_site integer; v_code text; v_name text; v_draft jsonb;
+  v_site integer; v_code text; v_name text; v_draft jsonb; v_ids integer[];
 BEGIN
   SELECT s.id, s.code, s.site_name INTO v_site, v_code, v_name FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
+  v_ids := app.pm_site_template_ids(v_site);
   SELECT jsonb_build_object('id', v.id, 'started_by', v.started_by, 'started_by_user_id', v.started_by_user_id,
            'started_at', v.started_at, 'last_activity_at', v.last_activity_at,
            'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -2071,6 +2080,17 @@ BEGIN
     'templates_source', app.pm_site_templates_source(v_site),
     'auto_template_ids', to_jsonb(app.pm_auto_template_ids(v_site)),
     'type_keys', to_jsonb(app.pm_site_type_keys(v_site)),
+    -- כיסוי לפי סוג (19/10/2026): לכל מאפיין של האתר (בסדר התג, בלי כפולים) — הרשימות הפעילות המסווגות לו, ולכל אחת
+    -- assigned = האתר באמת מקבל אותה עכשיו. ריק = אין רשימה נפרדת למאפיין (מכוסה ברשימות הכלליות); assigned=false =
+    -- יש רשימה, אבל בחירה ידנית / פרופיל הוציאו אותה. הדשבורד רק מתרגם.
+    'type_coverage', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('key', k.key,
+               'lists', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name,
+                                                                      'assigned', t.id = ANY (v_ids)) ORDER BY t.seq, t.id)
+                                    FROM pm_templates t WHERE t.active AND k.key = ANY (t.auto_for)), '[]'::jsonb))
+             ORDER BY k.o)
+        FROM (SELECT u.key, min(u.o) AS o FROM unnest(app.pm_site_type_keys(v_site)) WITH ORDINALITY AS u(key, o)
+               GROUP BY u.key) k), '[]'::jsonb),
     -- שם התצוגה של הקורא, כפי שנכתב ב-updated_by / started_by. הדפדפן מכיר רק את
     -- המייל — בלי זה עריכה של המשתמש עצמו הוצגה "עודכן ע״י <השם שלו>".
     'me', v_actor,
@@ -2225,8 +2245,11 @@ BEGIN
     RAISE EXCEPTION 'קטגוריה לא מוכרת: %', p_category USING ERRCODE = 'check_violation'; END IF;
   IF v_t.is_default AND (v_cat <> 'base' OR cardinality(v_keys) > 0) THEN
     RAISE EXCEPTION 'רשימת ברירת המחדל היא הבסיס של כולם — בלי סיווג לפי סוג' USING ERRCODE = 'check_violation'; END IF;
-  IF EXISTS (SELECT 1 FROM unnest(v_keys) k WHERE k !~ '^(lift|floor):[A-Za-z0-9_-]{1,40}$') THEN
-    RAISE EXCEPTION 'מפתח סוג לא תקין — lift:<סוג מעלית> או floor:<סוג מתקן>' USING ERRCODE = 'check_violation'; END IF;
+  -- ⚠️ system: בעברית (שמות המערכות עצמם, כמו sites.control_system — shared/control-systems.mjs), בלי רווח ובלי נקודתיים
+  IF EXISTS (SELECT 1 FROM unnest(v_keys) k
+              WHERE k !~ '^(lift|floor|console):[A-Za-z0-9_-]{1,40}$' AND k !~ '^system:[^[:space:][:cntrl:]:]{1,40}$') THEN
+    RAISE EXCEPTION 'מפתח סוג לא תקין — lift:<סוג מעלית>, floor:<סוג מתקן>, system:<מערכת> או console:<קונזול>'
+      USING ERRCODE = 'check_violation'; END IF;
   UPDATE pm_templates SET category = v_cat, auto_for = (SELECT COALESCE(array_agg(DISTINCT k ORDER BY k), '{}') FROM unnest(v_keys) k),
          updated_at = app.compliance_now_iso(), updated_by = v_actor
    WHERE id = v_t.id;

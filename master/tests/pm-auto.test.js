@@ -67,7 +67,8 @@ test("הרשימות נגזרות מסוג המתקן ומסוג המעלית �
   const a = await newSite("xy", "hydraulic-piston-1");
   const j = await site(a);
   assert.equal(j.templates_source, "auto");
-  assert.deepEqual(j.type_keys, ["floor:xy", "lift:hydraulic-piston-1"]);
+  // 19/10/2026: גם הקונזול (newSite נותן אורכי למעלית שיש לה קונזול), בסדר התג
+  assert.deepEqual(j.type_keys, ["floor:xy", "lift:hydraulic-piston-1", "console:longitudinal"]);
   assert.deepEqual(j.auto_template_ids, [BASE, HYD, XY]);
 });
 
@@ -134,6 +135,60 @@ test("pm_template_meta_set — ולידציה: קטגוריה, צורת המפת
   await assert.rejects(meta(999999, "lift", []), /לא נמצאה/);
   // הטיפוס נשאר כמו שהיה
   assert.deepEqual((await lists()).find((t) => t.id === HYD).auto_for, ["lift:hydraulic-piston-1", "lift:hydraulic-piston-2"]);
+});
+
+// 19/10/2026: בעלת המוצר, על התג "XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי" — "צריך בתחזוקה לראות שיש מענה גם
+// לביטנקם… קונזול אורכי". המערכת והקונזול הם מפתחות סוג; type_coverage אומר לכל מאפיין איזו רשימה מכסה אותו.
+const newSiteSys = async (plc, lift, system, lift2 = null) => {
+  const code = `PAU${++seq}`;
+  await rpc(MGR, `SELECT public.register_site($1, $2, $3, 'basic', true, NULL, $4, true, $5, $6, $7, $8)`,
+    [code, `אתר ${code}`, plc, system, lift, con(lift), lift2, con(lift2)]);
+  return code;
+};
+
+test("מערכת וקונזול: מפתחות סוג בסדר התג, וכיסוי לכל מאפיין (type_coverage)", { skip }, async () => {
+  const a = await newSiteSys("xy", "hydraulic-piston-1", "ביטנקם");
+  let j = await site(a);
+  assert.deepEqual(j.type_keys, ["floor:xy", "system:ביטנקם", "lift:hydraulic-piston-1", "console:longitudinal"]);
+  // היום אף רשימה אינה מסווגת למערכת או לקונזול — הרשימות לא השתנו
+  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY"]);
+  assert.deepEqual(j.type_coverage.map((c) => [c.key, c.lists.map((l) => `${l.name}${l.assigned ? "" : "×"}`)]), [
+    ["floor:xy", ["מיטת XY"]],
+    ["system:ביטנקם", []],
+    ["lift:hydraulic-piston-1", ["מעלית הידראולית"]],
+    ["console:longitudinal", []],
+  ]);
+  // שתי מעליות עם אותו קונזול — שורה אחת לקונזול, וסדר המופע הראשון
+  const two = await newSiteSys("doli", "hydraulic-piston-1", "לולק", "electric");
+  j = await site(two);
+  assert.deepEqual(j.type_keys, ["floor:doli", "system:לולק", "lift:hydraulic-piston-1", "console:longitudinal", "lift:electric", "console:longitudinal"]);
+  assert.deepEqual(j.type_coverage.map((c) => c.key), ["floor:doli", "system:לולק", "lift:hydraulic-piston-1", "console:longitudinal", "lift:electric"]);
+  // רשימה שמסווגת למערכת מגיעה מעצמה לאתרי ביטנקם בלבד — כמו כל מפתח סוג
+  const BIT = await createList("ביטנקם — בקר"); await saveItems(BIT, [{ label: "בקר ביטנקם", kind: "check", required: true }]);
+  await meta(BIT, "other", ["system:ביטנקם", "console:longitudinal"]);
+  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY", "ביטנקם — בקר"]);
+  // two הוא לולק, אבל עם קונזול אורכי — די במפתח אחד מהשניים
+  assert.ok((await names(two)).includes("ביטנקם — בקר"), "הקונזול האורכי לבדו מביא את הרשימה");
+  const lulak = await newSiteSys("doli", "electric", "לולק");   // con("electric") בבדיקה = אורכי
+  assert.ok((await names(lulak)).includes("ביטנקם — בקר"), "לולק עם קונזול אורכי — כן, דרך הקונזול");
+  const trans = await newSiteSys("xy", null, "לולק");
+  assert.ok(!(await names(trans)).includes("ביטנקם — בקר"), "בלי ביטנקם ובלי קונזול אורכי — לא");
+  j = await site(a);
+  assert.deepEqual(j.type_coverage.find((c) => c.key === "system:ביטנקם").lists.map((l) => [l.name, l.assigned]), [["ביטנקם — בקר", true]]);
+  // ידני שמוריד את הרשימה: הכיסוי עדיין מראה אותה, assigned=false
+  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, HYD, XY]]);
+  j = await site(a);
+  assert.deepEqual(j.type_coverage.find((c) => c.key === "system:ביטנקם").lists.map((l) => [l.name, l.assigned]), [["ביטנקם — בקר", false]]);
+  assert.deepEqual(j.type_coverage.find((c) => c.key === "floor:xy").lists.map((l) => [l.name, l.assigned]), [["מיטת XY", true]]);
+  // ולידציה: מערכת בעברית מותרת; ריק, רווח, נקודתיים, או קונזול בעברית — לא
+  await assert.rejects(meta(BIT, "other", ["system:"]), /מפתח סוג לא תקין/);
+  await assert.rejects(meta(BIT, "other", ["system:ביט נקם"]), /מפתח סוג לא תקין/);
+  await assert.rejects(meta(BIT, "other", ["system:a:b"]), /מפתח סוג לא תקין/);
+  await assert.rejects(meta(BIT, "other", ["console:אורכי"]), /מפתח סוג לא תקין/);
+  await assert.rejects(meta(BIT, "other", ["model:xy"]), /מפתח סוג לא תקין/);
+  await meta(BIT, "other", ["system:סוטפין-לולק"]);
+  assert.deepEqual((await lists()).find((t) => t.id === BIT).auto_for, ["system:סוטפין-לולק"]);
+  await meta(BIT, "other", []);   // לא להשאיר סיווג שמשנה את שאר הבדיקות
 });
 
 test("הקובץ אידמפוטנטי — העמודות והאילוץ שורדים החלה שנייה", { skip }, async () => {

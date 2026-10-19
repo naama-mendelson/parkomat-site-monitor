@@ -12,12 +12,31 @@
 import { useState } from "react";
 import { fetchPmTemplates, fetchPmProfiles, setPmSiteTemplates, setPmSiteProfile } from "../../services/dataSource";
 import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
-import { groupTemplates, sourceLabel, initialSelection, lockedIds, typeKeyLabel } from "../../utils/pmLists";
+import { groupTemplates, sourceLabel, initialSelection, lockedIds, typeKeyLabel, coverageRows } from "../../utils/pmLists";
 
 const NONE = "";
 const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 
-export default function PmSiteLists({ code, profile = null, templates = [], source = "default", typeKeys = [], isManager = false, onChanged }) {
+// ⚠️ 19/10/2026 — "לפי סוג האתר": שורה לכל מאפיין שבתג הכרטיס (מתקן, מערכת, מעלית, קונזול) ומה מכסה אותו. בעלת המוצר,
+// על "XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי": "צריך בתחזוקה לראות שיש מענה גם ל…". מאפיין בלי רשימה נפרדת —
+// "מכוסה ברשימות הכלליות" (תשובתה: "אין צורך בתחזוקה נפרדת"), לא "חסר". רשימה שהוצאה מהאתר — נאמר במפורש.
+function CoverageRow({ row }) {
+  return (
+    <li className={`pm-cover-row is-${row.state}`} data-key={row.key} data-state={row.state}>
+      <span className="pm-cover-key">{row.label} —</span>
+      <span className="pm-cover-val">
+        {row.state === "covered" && row.assigned.join(" · ")}
+        {row.state === "general" && <span className="pm-muted">מכוסה ברשימות הכלליות</span>}
+        {row.unassigned.length > 0 && (
+          <span className="pm-cover-off">{row.state === "covered" ? " · " : ""}יש רשימה ({row.unassigned.join(", ")}) — לא משויכת לאתר</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+export default function PmSiteLists({ code, profile = null, templates = [], source = "default", typeKeys = [], typeCoverage = null, isManager = false, onChanged }) {
+  const cover = coverageRows(typeCoverage);
   const [edit, setEdit] = useState(null);      // null | { all, profiles, chosen:Set, initial:Set, profileId:string }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -70,6 +89,14 @@ export default function PmSiteLists({ code, profile = null, templates = [], sour
           <button type="button" className="pm-btn pm-btn--ghost" disabled={busy} onClick={open}>שינוי</button>
         )}
       </div>
+      {cover.length > 0 && (
+        <div className="pm-cover" data-testid="pm-type-coverage">
+          <span className="pm-cover-cap">לפי סוג האתר:</span>
+          <ul className="pm-cover-list">
+            {cover.map((r) => <CoverageRow key={r.key} row={r} />)}
+          </ul>
+        </div>
+      )}
       <div className="pm-site-lists pm-muted">
         <span>פרופיל:</span>
         <span data-testid="pm-profile-name">{profile ? profile.name : "בלי פרופיל"}</span>
