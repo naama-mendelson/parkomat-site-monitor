@@ -41,7 +41,8 @@
    בעלת המוצר: "צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור". השלב (1–4) נקבע במסד
    לפי שעות השירות מאז הקריאה הוותיקה; שלב 0 הוא הכרטיס הרגיל. גוון על כל הכרטיס, מסגרת ופעימה בצבע השלב. פס צבע
    המצב (border-inline-start) לא משתנה — הסטטוס של המכונה נשאר קריא.
-   ⚠️ שחור — מחליפים את המשתנים בתוך הכרטיס, וכל מה שבתוכו (טקסט, תגים, גלולות) מתהפך לבהיר בלי לטפל ברכיב-רכיב. */
+   ⚠️ השלב האחרון — אדום כהה מלא ולא שחור (בעלת המוצר, אותו יום: "שלא יגיע לשחור אלא הכי גרוע זה אדום כהה"). מחליפים
+   את המשתנים בתוך הכרטיס, וכל מה שבתוכו (טקסט, תגים, גלולות) מתהפך לבהיר בלי לטפל ברכיב-רכיב. */
 .site-card.call-age-1 { --call-ring: var(--call-age-1); background: color-mix(in srgb, var(--call-age-1) 20%, var(--bg-card)); }
 .site-card.call-age-2 { --call-ring: var(--call-age-2); background: color-mix(in srgb, var(--call-age-2) 22%, var(--bg-card)); }
 .site-card.call-age-3 { --call-ring: var(--call-age-3); background: color-mix(in srgb, var(--call-age-3) 24%, var(--bg-card)); }
@@ -49,15 +50,15 @@
 .site-card.call-age-2:hover { background: color-mix(in srgb, var(--call-age-2) 28%, var(--bg-hover)); }
 .site-card.call-age-3:hover { background: color-mix(in srgb, var(--call-age-3) 30%, var(--bg-hover)); }
 .site-card.call-age-4 {
-  --bg-card: #050505;
-  --bg-hover: #141414;
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-  --border-color: #3f3f46;
-  /* צבע המותג הכחול-כהה נבלע על שחור (גלולת הקריאות והסטופר) — גוון בהיר שלו בתוך הכרטיס */
-  --accent: #a9c2f5;
-  --accent-soft: #c9d8f8;
+  --bg-card: #7f1d1d;
+  --bg-hover: #8b2424;
+  --text-primary: #fff7f7;
+  --text-secondary: #fecaca;
+  --text-muted: #fca5a5;
+  --border-color: #991b1b;
+  /* צבע המותג הכחול-כהה נבלע על אדום כהה (גלולת הקריאות והסטופר) — גוון בהיר שלו בתוך הכרטיס */
+  --accent: #c3d4fa;
+  --accent-soft: #dbe5fc;
   --call-ring: var(--call-age-4-frame);
   background: var(--bg-card);
   color: var(--text-primary);

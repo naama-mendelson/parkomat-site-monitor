@@ -16,7 +16,8 @@ import ComplianceFilters from "../ComplianceFilters/ComplianceFilters";
 import TasksFilter from "../TasksFilter/TasksFilter";
 import { tasksViewActive } from "../../utils/tasks";
 import { countSitesWithOpenCalls } from "../../utils/serviceCalls";
-import { countMultipliers, isMultiplierSite } from "../../utils/multipliers";
+import { countMultipliers, countRobotic, matchesSiteKind, nextSiteKind, DEFAULT_SITE_KIND, SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
+import { countRepeatSites } from "../../utils/repeatFaults";
 import { complianceActiveCount } from "../../utils/compliance";
 import SearchBar from "../SearchBar/SearchBar";
 import RoleSwitcher from "../RoleSwitcher/RoleSwitcher";
@@ -48,8 +49,10 @@ function Header({
   onAdmin,
   complianceView,
   onComplianceViewChange,
-  showMultipliers = false,    // המכפילים (אתרים בלי בקר) מוצגים בלוח? ברירת מחדל: מוסתרים (בעלת המוצר, 18/10/2026)
-  onShowMultipliersChange,
+  siteKind = DEFAULT_SITE_KIND,   // "רובוטיים" / "מכפילים" — תמיד אחד מהם בלוח (בעלת המוצר, 19/10/2026)
+  onSiteKindChange,
+  showRepeat = false,             // "תקלות חוזרות" — לחוץ: רק אתרים עם הסימון ↻ (19/10/2026)
+  onShowRepeatChange,
   tasksView,
   onTasksViewChange,
   taskCounts = null,
@@ -200,18 +203,18 @@ function Header({
     window.addEventListener("scroll", close, { passive: true, capture: true });
     return () => window.removeEventListener("scroll", close, { capture: true });
   }, [filtersOpen]);
-  // ⚠️ כשהמכפילים מוסתרים, אריחי המצב, הסוג ו"בודק מוסמך" סופרים את מה שהלוח מראה — אחרת "הכל · 206" מעל
-  // לוח של 78 כרטיסים. אריח "מכפילים" עצמו סופר את כולם, כי הוא אומר כמה מוסתרים.
-  const boardSites = showMultipliers === true ? sites : (sites ?? []).filter((s) => !isMultiplierSite(s));
+  // ⚠️ אריחי המצב, הסוג, "בודק מוסמך", "משימות", "קריאות פתוחות" ו"תקלות חוזרות" סופרים את מה שהלוח מראה — הסוג שנבחר
+  // (רובוטיים או מכפילים); אחרת "הכל · 206" מעל לוח של 78 כרטיסים. שני אריחי הסוג עצמם סופרים כל אחד את כל האתרים מסוגו.
+  const boardSites = (sites ?? []).filter((s) => matchesSiteKind(s, siteKind));
   const activeCount = (activeFilters?.length ?? 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
     (liftFilter ? 1 : 0) +
     complianceActiveCount(complianceView) +
-    // ⚠️ "מוצגים" הוא מה שנספר — לא "מוסתרים", שהוא ברירת המחדל (בעלת המוצר, 18/10/2026: "מכפילים מוסתרים לא צריך
-    // להיות לחוץ כי זה הברירת מחדל"). כמו "בודק מוסמך" ו"משימות": מסומן רק מה ששונה מברירת המחדל.
-    (onShowMultipliersChange && showMultipliers === true ? 1 : 0) +
+    // ⚠️ נספר רק "מכפילים" — "רובוטיים" הוא ברירת המחדל (כמו "בודק מוסמך" ו"משימות": נספר רק מה ששונה ממנה)
+    (onSiteKindChange && siteKind === SITE_KIND_MULTIPLIERS ? 1 : 0) +
+    (onShowRepeatChange && showRepeat === true ? 1 : 0) +
     (onTasksViewChange ? tasksViewActive(tasksView) : 0) +
     (onShowOpenCallsChange && showOpenCalls === true ? 1 : 0);
 
@@ -359,22 +362,25 @@ function Header({
               {onTasksViewChange && (
                 <TasksFilter sites={boardSites} bySite={taskCounts} value={tasksView} onChange={onTasksViewChange} />
               )}
-              {/* "מכפילים" — מוצגים או מוסתרים (בעלת המוצר, 18/10/2026: "כפתור סינון נוסף האם המכפילים מופיעים או
-                  לא"). מכפיל = אתר בלי בקר מחובר. אריח כמו אריחי המצב: המספר הגדול הוא כמה כאלה יש, והשורה
-                  מתחת — מה המצב. מסומן ונספר כמסנן פעיל רק "מוצגים" (ברירת המחדל היא "מוסתרים"). הבחירה נזכרת לכל מכשיר (useShowMultipliers). */}
-              {onShowMultipliersChange && (
-                <button type="button" className={`filter-btn mx-head-btn${showMultipliers === true ? " active" : ""}`}
-                  aria-pressed={showMultipliers === true}
-                  aria-label={`מכפילים גלויים (אתרים בלי בקר) — ${countMultipliers(sites)}`}
-                  onClick={() => onShowMultipliersChange(!showMultipliers)}>
-                  <span className="filter-count">{countMultipliers(sites)}</span>
-                  {/* ⚠️ מתג עם כיתוב קבוע, "מכפילים גלויים", והמצב — בהדגשה (לחוץ = גלויים). הכיתוב הוחלף ארבע פעמים ב-18/10/2026,
-                      והאחרונה היא ההחלטה: "כתוב מכפילים מוסתרים והם באמת מוסתרים — זה צריך להיות הפוך: כשהמכפילים מוסתרים יהיה
-                      כפתור שכתוב עליו מכפילים גלויים, וכשילחצו עליו יראו אותם". קודם: "הצג/הסתר מכפילים" (פעולה) ו"מכפילים
-                      מוסתרים/מוצגים" (מצב). */}
-                  <span className="filter-label">מכפילים גלויים</span>
-                </button>
-              )}
+              {/* "רובוטיים" / "מכפילים" (בעלת המוצר, 19/10/2026: "תוסיף סינון רובוטיים וזה נמצא אוטומטית. אם לוחצים על
+                  מכפילים — רואים רק מכפילים; אם מסירים מכפילים — הרובוטיים חוזרים; אם לוחצים על רובוטיים ומכפילים קיים —
+                  מכפילים נעלמים ורק רובוטיים נשאר"). שני אריחים, תמיד אחד מהם פעיל; המספר הגדול — כמה אתרים מהסוג. עד אז
+                  (18/10) מתג אחד, "מכפילים גלויים", שהוסיף את המכפילים לצד הרובוטיים. הבחירה נזכרת לכל מכשיר (useSiteKind). */}
+              {onSiteKindChange && [SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS].map((k) => {
+                const on = siteKind === k;
+                const n = k === SITE_KIND_ROBOTIC ? countRobotic(sites) : countMultipliers(sites);
+                const label = k === SITE_KIND_ROBOTIC ? "רובוטיים" : "מכפילים";
+                return (
+                  <button key={k} type="button" data-kind={k}
+                    className={`filter-btn kind-head-btn ${k === SITE_KIND_ROBOTIC ? "rb-head-btn" : "mx-head-btn"}${on ? " active" : ""}`}
+                    aria-pressed={on}
+                    aria-label={`${label} (${k === SITE_KIND_ROBOTIC ? "אתרים עם בקר" : "אתרים בלי בקר"}) — ${n}`}
+                    onClick={() => onSiteKindChange(nextSiteKind(siteKind, k))}>
+                    <span className="filter-count">{n}</span>
+                    <span className="filter-label">{label}</span>
+                  </button>
+                );
+              })}
               {/* "קריאות פתוחות" (בעלת המוצר, 18/10/2026: "כשלוחצים על קריאות פתוחות רואים קריאות פתוחות, וכשלא לחוץ
                   לא רואים כברירת מחדל"). לחוץ — רק אתרים עם קריאה פתוחה, עם הסטופר וההבהוב; לא לחוץ (ברירת המחדל) — כל
                   האתרים, בלי סימון קריאות, לא מסומן ולא נספר כמסנן. המספר הגדול — כמה אתרים בלוח יש להם קריאה פתוחה. */}
@@ -386,6 +392,17 @@ function Header({
                   <span className="filter-count">{countSitesWithOpenCalls(boardSites, callCounts ?? {})}</span>
                   {/* כמו "מכפילים גלויים": כיתוב קבוע, והמצב בהדגשה (לחוץ = רק אתרים עם קריאה פתוחה) */}
                   <span className="filter-label">קריאות פתוחות</span>
+                </button>
+              )}
+              {/* "תקלות חוזרות" (בעלת המוצר, 19/10/2026: "סינון של כאלו שהתקלות שיש להם את הסימון הזה של תקלות חוזרות").
+                  כמו "קריאות פתוחות": כיתוב קבוע, לחוץ — רק אתרים עם הסימון ↻; המספר הגדול — כמה אתרים בלוח יש להם אותו. */}
+              {onShowRepeatChange && (
+                <button type="button" className={`filter-btn rf-head-btn${showRepeat === true ? " active" : ""}`}
+                  aria-pressed={showRepeat === true}
+                  aria-label={`תקלות חוזרות — ${countRepeatSites(boardSites)} אתרים`}
+                  onClick={() => onShowRepeatChange(!(showRepeat === true))}>
+                  <span className="filter-count">{countRepeatSites(boardSites)}</span>
+                  <span className="filter-label">תקלות חוזרות</span>
                 </button>
               )}
               {/* ⚠️ כאן ישב "קריאות היום" (14/10/2026) — הוסר לבקשת בעלת המוצר, 18/10/2026 ("תעיף את זה"), כשנוסף

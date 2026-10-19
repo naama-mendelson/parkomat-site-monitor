@@ -157,7 +157,7 @@ test("קריאות פתוחות בכותרת (18/10/2026): לא לחוץ כבר�
 test("⚠️ החמרה: השלב מגיע מהמסד; הגבוה מבין השורות; ערך שבור — 0; לבן (0) בלי מחלקה", async () => {
   const { countsBySite, callAge, callAgeClass, callAgeText, CALL_AGE_MAX, CALL_AGE_LABEL } = await import(U);
   assert.equal(CALL_AGE_MAX, 4);
-  assert.deepEqual(CALL_AGE_LABEL.slice(1), ["צהוב", "כתום", "אדום", "שחור"]);
+  assert.deepEqual(CALL_AGE_LABEL.slice(1), ["צהוב", "כתום", "אדום", "אדום כהה"]);
   const by = countsBySite([{ site_id: 7, open: 1, age: 3, age_hours: 3.2 }, { site_id: 7, open: 1, age: 1, age_hours: 1.5 }, { site_id: 9, open: 1 }]);   // הגבוה ראשון — כדי ש"האחרונה קובעת" לא תעבור במקרה
   assert.equal(by[7].age, 3, "הגבוה");
   assert.equal(by[7].ageHours, 3.2);

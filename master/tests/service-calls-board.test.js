@@ -614,7 +614,7 @@ test("S16 · service_calls_board — הכרטיסים והכותרת בקריא�
 // S17 — החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
 // ============================================================
 // בעלת המוצר: מכפיל מחמיר כל 24 שעות שירות, רובוטי כל שעת שירות; זמן מחוץ לשעות השירות לא נספר; לבן → צהוב →
-// כתום → אדום → שחור (0..4); אתר בלי שעות שירות — נשאר לבן.
+// כתום → אדום → אדום כהה (0..4); אתר בלי שעות שירות — נשאר לבן.
 test("S17 · שעות שירות בין שני רגעים — שעון ישראל, רק בתוך החלונות; סוג בלי שעות — אפס", { skip }, async () => {
   const secs = async (kind, from, to) => Number((await sup(`SELECT app.service_seconds($1, $2::timestamptz, $3::timestamptz) AS s`, [kind, from, to]))[0].s);
   // יום ב' 19/10/2026: בסיסי 08:00–17:00 (שעון ישראל, UTC+3)
@@ -631,7 +631,7 @@ test("S17 · שעות שירות בין שני רגעים — שעון ישרא�
   assert.equal(await secs("basic", "2026-10-20T10:00:00+03:00", "2026-10-19T10:00:00+03:00"), 0, "טווח הפוך — אפס, לא שלילי");
 });
 
-test("S17 · השלב: רובוטי — כל שעת שירות, מכפיל — כל 24 שעות שירות, עד 4 (שחור)", { skip }, async () => {
+test("S17 · השלב: רובוטי — כל שעת שירות, מכפיל — כל 24 שעות שירות, עד 4 (אדום כהה)", { skip }, async () => {
   const lvl = async (s, m) => (await sup(`SELECT app.call_age_level($1, $2) AS l`, [s, m]))[0].l;
   const H = 3600;
   assert.deepEqual([await lvl(0, true), await lvl(H - 1, true), await lvl(H, true), await lvl(2 * H, true), await lvl(3 * H, true), await lvl(4 * H, true), await lvl(30 * H, true)],
@@ -667,12 +667,12 @@ test("S17 · בלוח: הקריאה הוותיקה, סוג השירות מהרמ
   await callAt({ ticket_number: "S17-mxoff", parking_code: mxOff.code, status: "1", customer_complaint: "לא בשירות" }, ago(30));
   const board = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
   const row = (s) => board.sites.find((r) => r.site_id === s.id);
-  // עשרה ימים ב-VIP הם 103×10/7 ≈ 147 שעות שירות → שחור; ב-30 ימים בבסיסי ~190 שעות שירות → 7 שלבים → שחור (4)
-  assert.equal(row(robot).age, 4, "רובוטי VIP, 10 ימים — שחור");
+  // עשרה ימים ב-VIP הם 103×10/7 ≈ 147 שעות שירות → אדום כהה; ב-30 ימים בבסיסי ~190 שעות שירות → 7 שלבים → אדום כהה (4)
+  assert.equal(row(robot).age, 4, "רובוטי VIP, 10 ימים — אדום כהה");
   assert.ok(row(robot).age_hours > 100, `שעות שירות: ${row(robot).age_hours}`);
   assert.equal(row(robotNone).age, 0, "לא חובר לרמזור — לבן");
   assert.equal(row(robotNone).age_hours, 0);
-  assert.equal(row(mx).age, 4, "מכפיל בסיסי, 30 ימים — שחור");
+  assert.equal(row(mx).age, 4, "מכפיל בסיסי, 30 ימים — אדום כהה");
   assert.equal(row(mxOff).age, 0, "מכפיל 'לא בשירות' — לבן");
   // השעות נספרות מהוותיקה: יותר מהקריאה החדשה (דקות)
   const fresh = await newSite();

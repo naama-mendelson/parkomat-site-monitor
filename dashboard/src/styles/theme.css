@@ -46,11 +46,11 @@
   --status-nocomm-ink: #334155;
   /* דיו של "תקלה חוזרת" (18/10/2026) — כתום כהה על גוון כתום בהיר; בכהה — ענבר בהיר. */
   --repeat-ink: #b45309;
-  /* החמרה של קריאה פתוחה (19/10/2026): לבן → צהוב → כתום → אדום → שחור. מסגרת השחור — שחורה בבהיר, בהירה בכהה. */
+  /* החמרה של קריאה פתוחה (19/10/2026): לבן → צהוב → כתום → אדום → אדום כהה. מסגרת האדום הכהה — כהה בבהיר, בהירה בכהה. */
   --call-age-1: #eab308;
   --call-age-2: #f97316;
   --call-age-3: #ef4444;
-  --call-age-4-frame: #000000;
+  --call-age-4-frame: #7f1d1d;
 
   --text-primary: #14213d;
   --text-secondary: #4a5670;
@@ -75,7 +75,7 @@
   /* הערך שהיה בתוך STATUS_COLORS — נכון לכהה, בלתי נראה בבהיר (ראו למעלה) */
   --status-nocomm-ink: #cbd5e1;
   --repeat-ink: #fbbf24;
-  --call-age-4-frame: #e2e8f0;
+  --call-age-4-frame: #fca5a5;
   --text-primary: #eef2f8;
   --text-secondary: #aab4c5;
   --text-muted: #6b7894;

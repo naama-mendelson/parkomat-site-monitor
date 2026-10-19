@@ -2943,7 +2943,47 @@ whatever closed in the last 24 hours, and a call closed from the dialog stayed i
     `makeCompareSites(null)` is unchanged (`sort-sites.test.js`). The unmonitored card now carries `has-open-call`.
     Browser: `e2e/probe-shell-sort.mjs` (12; `?shell=1&shellcall=1`).
 
+## "רובוטיים" / "מכפילים" — always exactly one kind on the board; and "תקלות חוזרות" (19/10/2026)
+
+⚠️ **Replaces the 18/10 single toggle described in the next section.** The owner: *"תוסיף סינון רובוטיים וזה נמצא
+אוטומטית. אם לוחצים על מכפילים — רואים רק מכפילים; אם מסירים מכפילים — הרובוטיים חוזרים; אם לוחצים על רובוטיים
+ומכפילים קיים — מכפילים נעלמים ורק רובוטיים נשאר"*. And, in the same turn: *"אני רוצה סינון של כאלו שהתקלות שיש להם את
+הסימון הזה של תקלות חוזרות"*.
+
+- **Two tiles, "רובוטיים" and "מכפילים", exactly one pressed** (`kind-head-btn`, `rb-head-btn` / `mx-head-btn`,
+  `data-kind`). Robotic (= `monitored` not false) is the default; multipliers → only `monitored === false`; pressing
+  multipliers again, or robotic → robotic; pressing robotic again changes nothing. **There is no "both" view any more**
+  — that was what "מכפילים גלויים" did. Each tile's big number is the count of its kind; only "מכפילים" counts in
+  "N פעילים" (non-default, as everywhere). Rules in `utils/multipliers.js` (`matchesSiteKind`, `nextSiteKind`,
+  `sanitizeSiteKind`, `countRobotic`); `matchesMultipliersView` / `sanitizeShowMultipliers` are gone.
+- **Remembered per user per device under a new key, `parkomat.siteKind:<uid>`** (`hooks/useSiteKind.js`;
+  `useShowMultipliers` deleted). ⚠️ Not the old `showMultipliers` key: its `true` meant "multipliers next to the
+  robotic sites", and reading it as "multipliers only" would have opened such a user on a multipliers-only board.
+- `boardSites` in `Header` = the chosen kind, so every other tile counts what the board shows.
+- ⚠️ **Consequences, stated plainly:** the 15/10 sort rule that put an unmonitored site with an open call right after
+  the faults (`sortSites` rank 0.5) still exists but can no longer meet a robotic card on one board; `probe-shell-sort`
+  is retired. An unmonitored site's open call shows only on the multipliers board.
+- **"תקלות חוזרות"** (`rf-head-btn`, after "קריאות פתוחות"): a toggle like "קריאות פתוחות" — pressed → only sites
+  with the ↻ mark (`site.repeatFaults` a non-empty array, the same condition as the card badge); the big number is how
+  many sites on the board have it; default off; remembered (`hooks/useShowRepeat.js`, `parkomat.showRepeatFaults:<uid>`);
+  rules in `utils/repeatFaults.js`. The mark comes from `site_card_metrics` (30 days), which is read on page entry, so
+  the tile reflects the statistics load, not the live one.
+- ⚠️ **Header width:** the two new tiles broke the row again — measured with 78/130 sites, ~77px short at 1280 and
+  ~91px at 1440 (the tightened padding stops at 1400). Between 641 and 1600px a two-word label now wraps to two lines
+  (`.filter-label`, `max-width: 4.6em`): "קריאות / פתוחות", "תקלות / חוזרות", "תחזוקה / מונעת", "אין / תקשורת". The
+  tiles are 125px tall anyway (the type/system/tier/lift box), so nothing grows: one row and a 212px header at every
+  width from 1280 to 1920 (`dbg-header-row.mjs`, with the counts set to 78/130/20). A first try at 6.4em changed
+  nothing — the label barely wrapped.
+- Tests: `multipliers-view.test.js` rewritten (5: kinds, clicks, storage incl. the old `true`, repeat rules). Browser
+  `e2e/probe-site-kind.mjs` 36/36 (replaces `probe-mx-tile`, now `.obsolete.mjs`). ⚠️ **Harness:** `openPage` defaults
+  to `multipliers: false` (robotic, like the site); `multipliers: true` switches to multipliers only; `setKind(page, k)`
+  switches mid-probe. Probes that needed 9001 beside robotic cards now switch for that step: `probe-call-age` 26,
+  `probe-card-click` 36, `probe-tasks-filter` 45, `probe-lists` 15, `probe-tier-all` 39, `probe-cf` 30,
+  `probe-keyboard-tiles` 12.
+
 ## "מכפילים" — a header tile that shows or hides the sites without a controller (18/10/2026)
+
+⚠️ **Superseded on 19/10/2026 by the section above** — kept for the history of the wording.
 
 The owner: *"אני רוצה שיהיה כפתור סינון נוסף האם המכפילים מופיעים או לא מופיעים"*. Since 15/10 the board carries 128
 multiplier sites (and the Sotefin ones) as "ללא בקר מחובר" cards between the 78 live sites.
@@ -3263,7 +3303,7 @@ app-side cost (20–27 calls per 10 minutes, and 2.8 MB of temp spill each).
 The owner: *"כשיש קריאה ככל שעובר זמן והיא לא טופלה המצב מחמיר… אתרים מכפילים כל 24 שעות שעוברות והפניה לא טופלה
 המצב מחמיר כלומר צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור. כך גם לגבי רובוטיים אבל
 כל שעה… זמן שלא בשעות השירות לא מחושב… בהתאם לסוג השירות של כל אתר. את סוג השירות של המכפילים תיקח מהרמזור"*.
-Her answers to the four questions: **white → yellow → orange → red → black** (levels 0–4); a multiplier steps every
+Her answers to the four questions: **white → yellow → orange → red → ~~black~~ dark red** (levels 0–4; the same day: *"שלא יגיע לשחור אלא הכי גרוע זה אדום כהה"* — level 4 is a solid dark red card, , with light text); a multiplier steps every
 **24 service hours** (literal — not every service day; on basic that is a step every ~2.7 working days); a site with
 no service hours stays white; the colour shows **only while "קריאות פתוחות" is pressed**.
 
@@ -3280,10 +3320,10 @@ no service hours stays white; the colour shows **only while "קריאות פתו
   `callAgeClass`, `callAgeText`; old database without the field → 0 → no colour, so the bundle is safe before the SQL).
   `SiteCard` adds `call-age-N` (1–4) only when `markOpen` (tile pressed), on all three card variants; the calls pill's
   label says "פתוחה N שעות שירות". CSS: a 20–24% tint of `--call-age-1/2/3` over the card, the pulse and frame in the
-  level's colour (`--call-ring`); level 4 overrides the card's own variables (`--bg-card` #050505, `--text-*`,
+  level's colour (`--call-ring`); level 4 overrides the card's own variables (`--bg-card` #7f1d1d — it was #050505 until the owner said "not black", `--text-*`,
   `--accent` lightened so the pill and stopwatch stay readable, `.exp-open` dark text) — everything inside turns light
   without per-element rules. The status strip (`border-inline-start`) is untouched. Dark theme: level 0 is the normal
-  dark card; the black card's frame is light (`--call-age-4-frame`).
+  dark card; the dark red card's frame is dark red in light, light red in dark (`--call-age-4-frame`).
 - **What it looks like today** (read-only preview, 19/10 morning): 3468 (ext, 17 service hours) and 2438 (vip, 19) black,
   1225 (ext, 2.4) orange; multipliers 1191 (basic, 35 service hours over 6 days) yellow, 1206 / 1153 white.
 - Tests: SQL S17 (service seconds per kind and weekday, reversed range, every level boundary both rates, the board:
@@ -3291,7 +3331,7 @@ no service hours stays white; the colour shows **only while "קריאות פתו
   one day open = 14–15 service hours and still white), S16 compares only the shared fields now;
   `service-calls-ui.test.js` (+2). **Mutations (isolated copy): 16 of 16** — one survived until the test put the higher
   level first. Browser `e2e/probe-call-age.mjs` 24/24 (not pressed → no colour; pressed → 4/2/3 incl. a card without a
-  controller; black ≥ 7:1 and the pill on it ≥ 4.5:1; orange and red names ≥ 4.5:1; expanded card keeps it; released →
+  controller; level 4 dark red (not black), its name ≥ 7:1 and the pill on it ≥ 4.5:1 against the card; orange and red names ≥ 4.5:1; expanded card keeps it; released →
   gone; 1371 light and 390 dark).
 - ⚠️ **Harness:** the browser now launches with `--autoplay-policy=no-user-gesture-required` (`lib.mjs`). The
   "הפעלת התראות קוליות" overlay appears with a variable delay, longer under load, and swallowed a probe's first click —
@@ -3307,6 +3347,19 @@ no service hours stays white; the colour shows **only while "קריאות פתו
   ההיבהוב"*. `.has-open-call` no longer animates (`callPulse` is gone); it is a steady frame — the style that until then
   only `prefers-reduced-motion` got — in the level's colour. This reverses the 14/10 *"היא צריכה להבהב על כל הכרטיס"*.
   `probe-calls` now asserts `animationName: none` and a frame.
+
+## The expanded card spread over the whole row after returning to an empty board (fixed 19/10/2026)
+
+The owner, with a screenshot of a full-width expanded card: *"למה שיניתי את הגודל רציתי שיהיה מרובע"*. The square card (2–4
+columns, since 05/10) depends on `SiteGrid` measuring its columns and width (`cols`, `box`). That measurement ran once,
+in an effect with `[]` deps, and returned at once when there was no grid element. A board that **mounted empty** —
+returning to "בקר" while a filter matched nothing ("לא נמצאו אתרים"), e.g. "קריאות פתוחות" pressed with none open, or
+a status tile at 0 — was never measured: `cols` stayed 0, `placementFor` returned `undefined`, and the expanded
+card fell back to the CSS `grid-column: 1 / -1`. The effect now depends on `sites.length > 0`, so it attaches when the
+grid appears. Reproduced and pinned by `e2e/probe-expand-square.mjs` (7: full from the start; emptied and refilled;
+remembered filter at load; emptied, refilled and resized; **back to an empty board, then released** — the one that
+failed: no inline placement, 1,552px wide). Not caused by that day's changes; the new filters only make an empty board
+more frequent.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

@@ -21,7 +21,8 @@ import { SERVICE_CALLS_ENABLED } from "./utils/serviceCalls";
 import { COMPLIANCE_TABS, toCompliance } from "./utils/compliance";
 import { useAuth } from "./hooks/useAuth";
 import { useComplianceView } from "./hooks/useComplianceView";
-import { useShowMultipliers } from "./hooks/useShowMultipliers";
+import { useSiteKind } from "./hooks/useSiteKind";
+import { useShowRepeat } from "./hooks/useShowRepeat";
 import { useTasksView } from "./hooks/useTasksView";
 import { useShowOpenCalls } from "./hooks/useShowOpenCalls";
 // מסגרת דקה בלבד — הלשונית שבתוכה נטענת בעצלות, כמו בחלון האתר
@@ -61,7 +62,9 @@ function App() {
   const { user } = useAuth();
   const [complianceView, setComplianceView] = useComplianceView(user?.id);
   // "מכפילים" מוצגים/מוסתרים בלוח (18/10/2026) — נזכר לכל מכשיר, כמו "בודק מוסמך"
-  const [showMultipliers, setShowMultipliers] = useShowMultipliers(user?.id);
+  // "רובוטיים" / "מכפילים" (19/10/2026) ו"תקלות חוזרות" — נזכרים לכל משתמש בכל מכשיר
+  const [siteKind, setSiteKind] = useSiteKind(user?.id);
+  const [showRepeat, setShowRepeat] = useShowRepeat(user?.id);
   // "משימות" בכותרת (18/10/2026): ברירת המחדל "בלי משימות" — בלי סימון על הכרטיסים; נזכר לכל מכשיר ולכל משתמש
   const [tasksView, setTasksView] = useTasksView(user?.id);
   // "קריאות פתוחות" בכותרת (18/10/2026): ברירת המחדל לא לחוץ — בלי סטופר והבהוב; לחוץ — רק אתרים עם קריאה פתוחה
@@ -537,7 +540,8 @@ function App() {
         tierFilter={tierFilter}
         liftFilter={liftFilter}
         complianceView={complianceView}
-        showMultipliers={showMultipliers}
+        siteKind={siteKind}
+        showRepeat={showRepeat}
         tasksView={tasksView}
         taskCounts={taskCounts?.bySite ?? null}
         searchQuery={searchQuery}
@@ -567,8 +571,10 @@ function App() {
         onSearchChange={setSearchQuery}
         complianceView={complianceView}
         onComplianceViewChange={setComplianceView}
-        showMultipliers={showMultipliers}
-        onShowMultipliersChange={setShowMultipliers}
+        siteKind={siteKind}
+        onSiteKindChange={setSiteKind}
+        showRepeat={showRepeat}
+        onShowRepeatChange={setShowRepeat}
         tasksView={tasksView}
         onTasksViewChange={useDirect ? setTasksView : undefined}
         taskCounts={taskCounts?.bySite ?? null}

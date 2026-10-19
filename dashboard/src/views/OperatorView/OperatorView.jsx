@@ -8,14 +8,15 @@ import { fuzzyMatch } from "../../utils/helpers";
 import { makeCompareSites } from "../../utils/sortSites";
 import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
-import { matchesMultipliersView } from "../../utils/multipliers";
+import { matchesSiteKind, DEFAULT_SITE_KIND } from "../../utils/multipliers";
+import { matchesRepeatView } from "../../utils/repeatFaults";
 import { DEFAULT_TASKS_VIEW, matchesTasksView } from "../../utils/tasks";
 import { matchesOpenCallsView } from "../../utils/serviceCalls";
 import "./OperatorView.css";
 
 function OperatorView({
   sites, loading, error, onRetry, activeFilters = [], typeFilter = "", systemFilter = "", tierFilter = "", liftFilter = "",
-  complianceView = DEFAULT_COMPLIANCE_VIEW, showMultipliers = false, tasksView = DEFAULT_TASKS_VIEW, taskCounts = null,
+  complianceView = DEFAULT_COMPLIANCE_VIEW, siteKind = DEFAULT_SITE_KIND, showRepeat = false, tasksView = DEFAULT_TASKS_VIEW, taskCounts = null,
   searchQuery, onSiteClick,
 }) {
   // ⚠️ לפני ה-return המוקדמים — hook חייב לרוץ בכל רינדור. ומערך יציב: בלעדי useMemo, כל רינדור
@@ -55,8 +56,10 @@ function OperatorView({
     // מסתיר מ"תחזוקה" אתר שכתוב עליו "תחזוקה" — כלומר הסרגל והכרטיס
     // היו סותרים זה את זה על אותו מסך.
     const shown = site.displayStatus ?? site.status;
-    // "מכפילים" בכותרת (18/10/2026): מוסתרים → אתר בלי בקר אינו מופיע כלל, בשום סינון אחר
-    if (!matchesMultipliersView(site, showMultipliers)) return false;
+    // "רובוטיים" / "מכפילים" בכותרת (19/10/2026): רק הסוג שנבחר בלוח, בשום סינון אחר — אין מצב של שניהם יחד
+    if (!matchesSiteKind(site, siteKind)) return false;
+    // "תקלות חוזרות" (19/10/2026): לחוץ — רק אתרים עם הסימון ↻
+    if (!matchesRepeatView(site, showRepeat)) return false;
     // ⚠️ אתר בלי בקר מחובר (07/10/2026) אינו בשום מצב: מופיע ב"הכל", ולא בסינון לפי מצב —
     // אחרת "אין תקשורת" היה מראה אותו, כי זה מה שנשאר במסד כברירת מחדל.
     if (activeFilters.length > 0 && (site.monitored === false || !activeFilters.includes(shown))) return false;
