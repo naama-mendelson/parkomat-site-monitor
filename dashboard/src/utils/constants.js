@@ -77,12 +77,14 @@ export const PEAK_COLOR = BRAND.lime;
 //
 // no_comm הוא אפור-פלדה (ולא כתום): "אין תקשורת" = לא ידוע, לא אזהרה.
 export const STATUS_COLORS = {
-  ready:       { dot: "#22c55e", bg: "rgba(34,197,94,0.14)",   text: "#4ade80", border: "#22c55e" },
-  operating:   { dot: BRAND.blue, bg: "rgba(61,120,216,0.16)", text: "#7fb0f2", border: BRAND.blue },
-  error:       { dot: "#ef4444", bg: "rgba(239,68,68,0.16)",   text: "#f87171", border: "#ef4444" },
-  maintenance: { dot: "#f59e0b", bg: "rgba(245,158,11,0.14)",  text: "#fbbf24", border: "#f59e0b" },
+  ready:       { dot: "#22c55e", bg: "rgba(34,197,94,0.14)",   text: "var(--status-ready-ink)", border: "#22c55e" },
+  operating:   { dot: BRAND.blue, bg: "rgba(61,120,216,0.16)", text: "var(--status-operating-ink)", border: BRAND.blue },
+  error:       { dot: "#ef4444", bg: "rgba(239,68,68,0.16)",   text: "var(--status-error-ink)", border: "#ef4444" },
+  maintenance: { dot: "#f59e0b", bg: "rgba(245,158,11,0.14)",  text: "var(--status-maint-ink)", border: "#f59e0b" },
   // ⚠️ text לפי ערכה (styles/theme.css): #cbd5e1 היה בלתי נראה בערכה הבהירה — "כיתוב אפור על רקע אפור"
-  //    (בעלת המוצר, 15/10/2026). ארבעת האחרים נשארו גוונים של הערכה הכהה; רק זה נתבקש.
+  //    (בעלת המוצר, 15/10/2026). מ-19/10/2026 גם ארבעת האחרים — אותה בעיה: "מוכן" ו"בתחזוקה" נמדדו 1.5:1 על כרטיס לבן.
+//    כל הדיו לפי ערכה ב-styles/theme.css; בכהה — הערכים שהיו כאן. ⚠️ text משמש רק כ-color ב-CSS (משתנה עובד שם); לחישוב
+//    צבע או לגרף — dot.
   no_comm:     { dot: "#94a3b8", bg: "rgba(148,163,184,0.14)", text: "var(--status-nocomm-ink)", border: "#94a3b8" },
 };
 
@@ -128,7 +130,7 @@ export const UPTIME_COLORS = {
 // הצבע איננו אומר "תקלה" אלא "המספר הזה לא סביר, שווה להסתכל" — וזו בדיוק
 // המשמעות: השרת אינו יודע שהאתר תקוע, הוא רק רואה מצב פעיל שלא זז.
 export const STUCK_COLOR = {
-  dot: "#a855f7", bg: "rgba(168,85,247,0.16)", text: "#d8b4fe", border: "#a855f7",
+  dot: "#a855f7", bg: "rgba(168,85,247,0.16)", text: "var(--stuck-ink)", border: "#a855f7",
 };
 
 // ==========================================================
@@ -201,9 +203,9 @@ export const TIER_LABELS = {
 const TIER_NEUTRAL = { bg: "transparent", text: "var(--tier-unlinked-ink)", border: "var(--tier-unlinked-ink)" };
 
 export const TIER_COLORS = {
-  vip:      { bg: "rgba(212,175,55,0.18)",  text: "#d4af37", border: "#d4af37" },   // זהב — פרימיום
-  extended: { bg: "rgba(139,92,246,0.16)",  text: "#a78bfa", border: "#8b5cf6" },   // סגול
-  basic:    { bg: "rgba(148,163,184,0.16)", text: "#94a3b8", border: "#94a3b8" },   // אפור נייטרלי
+  vip:      { bg: "rgba(212,175,55,0.18)",  text: "var(--tier-vip-ink)", border: "#d4af37" },   // זהב — פרימיום
+  extended: { bg: "rgba(139,92,246,0.16)",  text: "var(--tier-ext-ink)", border: "#8b5cf6" },   // סגול
+  basic:    { bg: "rgba(148,163,184,0.16)", text: "var(--tier-basic-ink)", border: "#94a3b8" },   // אפור נייטרלי
   [TIER_UNLINKED]: TIER_NEUTRAL,
   no_service: TIER_NEUTRAL,
   maintenance_only: TIER_NEUTRAL,

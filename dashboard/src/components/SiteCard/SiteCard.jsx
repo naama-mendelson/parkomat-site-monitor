@@ -55,11 +55,12 @@ const SYSTEM_LABELS = {
   unknown: "לא ידוע",
 };
 
+// ⚠️ הדיו של המצב (text) ולא הנקודה (dot): זה צבע של טקסט. הנקודה הירוקה כטקסט על כרטיס לבן נמדדה 2.15:1 (19/10/2026).
 function availabilityColor(pct) {
   if (pct == null) return "var(--text-muted)";
-  if (pct >= 99.9) return STATUS_COLORS.ready.dot;        // ירוק
-  if (pct >= 99)   return STATUS_COLORS.maintenance.dot;  // ענבר
-  return STATUS_COLORS.error.dot;                         // אדום
+  if (pct >= 99.9) return STATUS_COLORS.ready.text;        // ירוק
+  if (pct >= 99)   return STATUS_COLORS.maintenance.text;  // ענבר
+  return STATUS_COLORS.error.text;                         // אדום
 }
 
 // תג דרגת האתר (VIP / מורחב / בסיסי / לא חובר / מצב מהרמזור) — ליד שם האתר.
@@ -343,7 +344,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         return (
           <span key={u.unit} className="sys-chip" title={`מערכת ${u.unit}: ${word}`}
             style={{ background: c.bg, borderColor: c.dot, color: c.text }}>
-            <span className="sys-chip-num" style={{ color: c.dot }}>{u.unit}</span>
+            <span className="sys-chip-num" style={{ color: c.text }}>{u.unit}</span>
             {word}
           </span>
         );
@@ -516,7 +517,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
                   className="system-row"
                   style={{ background: c.bg, borderColor: c.dot }}
                 >
-                  <span className="system-num" style={{ color: c.dot }}>{u.unit}</span>
+                  <span className="system-num" style={{ color: c.text }}>{u.unit}</span>
                   <span className="system-state" style={{ color: c.text }}>
                     {SYSTEM_LABELS[u.state] || "לא ידוע"}
                   </span>

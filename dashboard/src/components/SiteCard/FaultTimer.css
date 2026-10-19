@@ -31,7 +31,8 @@
    במתקן, ואדום שני היה אומר למי שמסתכל שמדובר באותו דבר (14/10/2026). */
 .fault-timer--call {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  /* --call-ink מוגדר רק בכהה (styles/theme.css): כחול המותג הבהיר על הגוון שלו נמדד שם 3.06:1 (19/10/2026) */
+  color: var(--call-ink, var(--accent));
 }
 
 /* ⚠️ אותו דיו כמו השבב "אין תקשורת" (styles/theme.css): כהה בבהיר, בהיר בכהה. #cbd5e1 קבוע היה

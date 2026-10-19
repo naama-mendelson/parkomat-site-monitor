@@ -70,14 +70,15 @@ if (!fn) {
   problems.push("availabilityColor לא נמצאה — הצבע כנראה עדיין של אחוז הכשל");
 } else {
   const body = fn[0];
-  const green = body.match(/(>=\s*[\d.]+)[^\n]*ready\.dot/);
-  const red = /return STATUS_COLORS\.error\.dot/.test(body);
+  // 19/10/2026: הצבע הוא הדיו של המצב (text), לא הנקודה — שניהם אותו ירוק/אדום במשמעות
+  const green = body.match(/(>=\s*[\d.]+)[^\n]*ready\.(?:dot|text)/);
+  const red = /return STATUS_COLORS\.error\.(?:dot|text)/.test(body);
   const lastLine = body.trim().split("\n").slice(-2).join("\n");
 
   if (green) ok.push(`ירוק מותנה בסף גבוה (${green[1].trim()})`);
   else problems.push("לא נמצא סף שמחזיר ירוק לערך גבוה — הכיוון כנראה הפוך");
 
-  if (red && /error\.dot/.test(lastLine))
+  if (red && /error\.(?:dot|text)/.test(lastLine))
     ok.push("ברירת המחדל (הנמוכה ביותר) היא אדום");
   else problems.push("הערך הנמוך ביותר אינו מקבל אדום — הכיוון הפוך");
 

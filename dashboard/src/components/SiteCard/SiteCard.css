@@ -63,6 +63,10 @@
      תקשורת", ↻ ונורות הבודק נמדדו 1.05–1.6:1 על האדום הכהה). אפור "אין נתונים" — בהיר יותר מבכהה, כדי לעבור 4.5:1. */
   --status-nocomm-ink: #cbd5e1;
   --repeat-ink: #fbbf24;
+  /* ⚠️ דיו המצבים והדרגות — של הערכה הכהה גם בבהירה (19/10/2026): על הכרטיס המלא השבבים יושבים על רקע כהה משלהם (למטה),
+     והדיו הכהה של הערכה הבהירה היה נבלע בו. */
+  --status-ready-ink: #4ade80; --status-operating-ink: #7fb0f2; --status-error-ink: #f87171; --status-maint-ink: #fbbf24;
+  --stuck-ink: #d8b4fe; --tier-vip-ink: #d4af37; --tier-ext-ink: #a78bfa; --tier-basic-ink: #94a3b8;
   --cl-ok-fill: transparent;               --cl-ok-border: #e5e7eb;       --cl-ok-ink: #f9fafb;
   --cl-fixing-fill: rgba(34,197,94,0.18);  --cl-fixing-border: #22c55e;   --cl-fixing-ink: #4ade80;
   --cl-soon-fill: rgba(250,204,21,0.16);   --cl-soon-border: #eab308;     --cl-soon-ink: #fde047;
@@ -1039,12 +1043,14 @@
 
 /* ⚠️ אותו משקל נמוך כמו הגיל: זו הסתייגות/הבהרה על הפירוט, לא נתון נוסף
    שמתחרה בשבבים עצמם. */
+/* ⚠️ --muted ו---err-text אינם קיימים בערכה, ולכן חלו תמיד ערכי הנפילה — ו-#b23c3c על הכרטיס הכהה נמדד 2.72:1
+   (19/10/2026). עכשיו משתני הערכה האמיתיים. */
 .systems-note {
   font-weight: 400;
-  color: var(--muted, #77778a);
+  color: var(--text-muted);
 }
 .systems-note-bad {
-  color: var(--err-text, #b23c3c);
+  color: var(--status-error-ink);
   font-weight: 600;
 }
 

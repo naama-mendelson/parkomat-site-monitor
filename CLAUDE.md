@@ -3408,9 +3408,40 @@ nights do not count). Asked, she first chose to keep 24 hours, then interrupted 
   - `probe-call-age` A9: in dark, levels 2 and 3 are lighter than level 4 by more than 4 L\*, and every text on a solid
     card is ≥ 4.5:1 against its composited background (29/29). The old CSS measured L\* 26 / 22 against 28 and 2.39:1, so
     A9 fails it. `scratchpad/e2e/dbg-age-dark.mjs` prints every text's contrast per level (`CAND=` injects a stylesheet).
-  - ⚠️ **Not fixed, found on the way:** in the light theme `STATUS_COLORS` are the dark-theme inks — "מוכן" `#4ade80` is
-    ~1.3–1.6:1 on every light card, not only aging ones, and the "בסיסי" badge ~1.8:1. A light-theme ink set is a
-    separate change.
+  - ~~**Not fixed, found on the way:** in the light theme `STATUS_COLORS` are the dark-theme inks~~ — **fixed the same
+    evening, see *Status and tier inks per theme* below.**
+
+## Status and tier inks per theme (19/10/2026, evening)
+
+Found while measuring the dark aging cards, and done on "תמשיך": the same fix the owner asked for on 15/10 for "אין
+תקשורת" alone (*"כיתוב אפור על רקע אפור לא רואים"*) — the other inks had the same problem. `STATUS_COLORS.text`,
+`TIER_COLORS.text` and `STUCK_COLOR.text` were the dark theme's light shades in **both** themes. Measured on a white card
+(`scratchpad/e2e/dbg-light-ink.mjs`): "מוכן" / "בתחזוקה" 1.5:1, the system number 1.93:1, the availability % 2.15:1 (it
+used the *dot* colour as text), "בסיסי" 2.25:1.
+
+- **Every `text` is now a theme variable** (`--status-ready-ink`, `-operating-`, `-error-`, `-maint-`, `--stuck-ink`,
+  `--tier-vip-ink`, `-ext-`, `-basic-`, in `styles/theme.css`), like `--status-nocomm-ink`. Light: dark shades of the same
+  family (green-800, the brand blue, red-700, amber-800, purple-800, a dark gold, violet-700, slate-600), each ≥ 4.5:1 on
+  its own chip tint over white. Dark: the old values, except two lifted because they were under 4.5:1 on the expanded
+  card — "בסיסי" `#94a3b8` → `#a3afc2` (4.11 → 4.75) and the error ink `#f87171` → `#f98b8b` (4.38 → 4.9).
+  The dot, the border and the chip tint did not change.
+- ⚠️ `text` is used only as a CSS `color` (inline), where a variable works. Anything that computes with a colour or feeds
+  a chart must use `dot` (the header status tiles already do: dot background, white text).
+- **The availability % uses the ink, not the dot** (`availabilityColor` in `SiteCard.jsx`). `scripts/check-card-metric.mjs`
+  checks that function's direction by pattern; it now accepts `.text` as well as `.dot`.
+- **The system number** (`.system-num` / `.sys-chip-num`) uses the ink too (it used the dot).
+- **The dark-red card (level 4) sets these variables back to the dark-theme values** in both themes, because its chips
+  sit on their own dark backing; the dark ink of the light theme would vanish there.
+- `.systems-note` / `.systems-note-bad` read `--muted` / `--err-text`, which do not exist, so the fallbacks always applied
+  (`#b23c3c` on the dark card: 2.72:1). They read `--text-muted` / `--status-error-ink` now.
+- The call stopwatch in dark: `--call-ink` (`#93b4f5`, dark theme only; `FaultTimer.css` falls back to `--accent`). The
+  brand light blue on its own tint was 3.06:1 on the expanded card.
+- ⚠️ **Deliberately not touched:** the grey secondary text (`--text-muted`, ~3.05:1 light / 3.58:1 dark: the site code,
+  "פעולות", "lift", hints). It is a theme-wide choice across every screen, not a card bug. Also white on the accent
+  buttons in dark (`.exp-open`, `.tk-count`: 4.31:1).
+- Browser: `e2e/probe-ink.mjs` 5/5 — the state / tier / system / availability / stopwatch inks on the board and on an
+  expanded card, ≥ 4.5:1 in both themes, and I3 injects the old light green and expects the check to fail (1.55:1). The
+  card probes (call-age 29, tier-all 39, calls 63, card-click 40, repeat 14) and `check-colors` pass; unit tests 1233.
 
 ## The expanded card spread over the whole row after returning to an empty board (fixed 19/10/2026)
 
