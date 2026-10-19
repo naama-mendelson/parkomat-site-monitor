@@ -3192,6 +3192,26 @@ tables (compliance, tasks, settings, Wizenet) — by design. ⚠️ The 60 funct
   styles after the transition (`.search-bar` fades its border in 0.15 s), or the search box reads as unmarked.
 - **Load, 10 minutes:** 42 s of DB time (7% of one core), as the evening before. The old pair of call-count RPCs is gone
   from every screen. The top is `site_globals` (27 × 610 ms) — the 5-minute live load of every visible screen.
+- **Load, measured again at 08:40–08:50 (owner: "תעשה בדיקות שאין עומס על SUPABASE") — none.** 34 s of DB time in 10
+  minutes (6% of one core, ~2 s of it the measuring scripts). Connections 20 of 60, almost all Supabase's own
+  (`authenticator` 9, `supabase_admin` 8); nothing running over 5 s, nothing idle in a transaction, no lock waits.
+  2,655 commits against 3 rollbacks in 8.7 minutes, and the 3 were the scripts' own read-only rollbacks — no failing
+  RPC, no statement timeout. Cache hit 100%, 0 blocks read from disk (the 185 MB database fits in 256 MB of shared
+  buffers). Realtime: 14 subscriptions, both slots retain 59 kB. 761 `ingest_batch` calls (80 agents beating).
+  **The throttle gauge** is the silence scan's run time in `cron.job_run_details` (1,440 runs a day; normal 0.012 s):
+  since 08/10 no run over 1 s and a worst of 0.11 s; the last throttling was 06–07/10 (worst 117 s), and all 80 cron
+  failures in 14 days are from those two days ("job startup timeout"). Read this gauge first next time.
+  ⚠️ **Two cumulative counters look alarming and are history, not load** — `pg_stat_database` and
+  `pg_stat_user_tables` count since 30/06: 817 GB of temp files and 2.27 billion scans of `app_users` (~236/s on
+  average). The 10-minute delta says 3.1 scans/s now (one per request: the policies are correctly wrapped as
+  `(SELECT app.is_active_user())`, an InitPlan, not per row), and temp writes of 150 MB per 10 minutes (~0.25 MB/s),
+  more than a third of it `site_globals` (2.8 MB per call over `work_mem` 3.5 MB). Measure deltas (`delta-load.cjs`
+  pattern: two snapshots, subtract), never these totals.
+  Room for later, not needed now: `site_globals` is the largest app-side cost and grows with the number of visible
+  screens (it could move into the 10-minute cron table like the card statistics, or get more `work_mem`);
+  `service_calls_board` scans the 31-row `wizenet_lookups` once per call row (~36 scans/s); Realtime's own WAL
+  polling (10.5 s per 10 minutes) is Supabase's and constant. The Supabase connector also refuses the logs
+  (`query_logs`: "no permission"), so errors are measured by the rollback counter.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
