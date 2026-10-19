@@ -18,7 +18,7 @@ import {
 } from "../../dashboard/src/utils/compliance.js";
 import { COMPLIANCE_STATES, COMPLIANCE_COLORS, PM_OK_COLORS, complianceColor } from "../../dashboard/src/utils/constants.js";
 import { readFileSync } from "node:fs";
-import { mergeCompliance } from "../../dashboard/src/utils/complianceMerge.js";
+import { mergeCompliance, complianceRefreshDue, israelDay, COMPLIANCE_RETRY_MS } from "../../dashboard/src/utils/complianceMerge.js";
 
 const NOW = "2026-10-04T09:00:00.000Z";
 
@@ -562,4 +562,32 @@ test("נורת התחזוקה בתוקף ירוקה; הבודק בתוקף לא 
     const src = readFileSync(new URL("../../dashboard/src/components/Compliance/" + f, import.meta.url), "utf8");
     assert.ok(!src.includes("COMPLIANCE_COLORS["), f + " צובע בלי complianceColor");
   }
+});
+
+// ============================================================
+// רענון הנורות בלי טעינה חיה (19/10/2026)
+// ============================================================
+// בעלת המוצר: "למה הוא מריץ את המצב החי? אני לא רוצה!" — אין טעינה חיה מטיימר. הנורות מתרעננות רק כשהתאריך
+// בישראל התחלף (צבע לפי יום) או כעבור 5 דקות מכשל. כל השאר מגיע באירוע.
+test("⚠️ רענון הנורות: כשהיום בישראל מתחלף — לא בחצות UTC, ולא באותו יום", () => {
+  const ok = Date.parse("2026-10-19T08:00:00+03:00");
+  assert.equal(complianceRefreshDue(ok, 0, Date.parse("2026-10-19T23:59:00+03:00")), false, "אותו יום");
+  assert.equal(complianceRefreshDue(ok, 0, Date.parse("2026-10-20T00:00:30+03:00")), true, "חצות בישראל");
+  // חצות UTC עוברת בתוך אותו יום בישראל (23:30Z = 02:30, 00:30Z = 03:30, שניהם 20/10) — לא סיבה לרענן
+  assert.equal(complianceRefreshDue(Date.parse("2026-10-19T23:30:00Z"), 0, Date.parse("2026-10-20T00:30:00Z")), false,
+    "התאריך ב-UTC התחלף, בישראל לא");
+  assert.equal(complianceRefreshDue(Date.parse("2026-10-19T20:30:00Z"), 0, Date.parse("2026-10-20T00:30:00Z")), true,
+    "23:30 בישראל → 03:30 למחרת — יום חדש");
+  assert.equal(israelDay(Date.parse("2026-10-19T21:30:00Z")), "2026-10-20", "21:30Z הוא כבר 20/10 בישראל (שעון קיץ)");
+  assert.equal(israelDay(Date.parse("2026-10-19T20:59:00Z")), "2026-10-19");
+  assert.equal(complianceRefreshDue(0, 0, Date.now()), false, "עוד לא נטענו בכלל (מצב שרת / טעינה ראשונה) — לא מכאן");
+});
+
+test("⚠️ רענון הנורות אחרי כשל: כעבור 5 דקות, ושוב אם נכשל שוב; הצלחה מאוחרת יותר מבטלת", () => {
+  const T = Date.parse("2026-10-19T10:00:00+03:00");
+  assert.equal(COMPLIANCE_RETRY_MS, 5 * 60_000);
+  assert.equal(complianceRefreshDue(T - 3600e3, T, T + 4 * 60_000), false, "4 דקות אחרי הכשל — עוד לא");
+  assert.equal(complianceRefreshDue(T - 3600e3, T, T + 5 * 60_000), true, "5 דקות — כן");
+  assert.equal(complianceRefreshDue(0, T, T + 5 * 60_000), true, "כשל בטעינה הראשונה — גם");
+  assert.equal(complianceRefreshDue(T + 60_000, T, T + 10 * 60_000), false, "הצלחה אחרי הכשל — לא, עד מחר");
 });

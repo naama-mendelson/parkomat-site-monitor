@@ -180,6 +180,9 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
       manualTier: site.tier,
       status,
       inMaintenance,
+      // ⚠️ מתי חלון התחזוקה נגמר (19/10/2026). אין טעינה חיה מטיימר יותר, והבדיקה הזולה של כל דקה (statusesMatch)
+      // אינה משווה אתר בחלון תחזוקה — כך היא יודעת שהחלון נגמר מעצמו ומבקשת טעינה מלאה באותה דקה.
+      maintenanceUntil: inMaintenance ? (g.maintenance_expires_at ?? null) : null,
       // ============================================================
       // ⚠️ אחוז הכשל בתוך שעות המסלול בלבד
       // ============================================================

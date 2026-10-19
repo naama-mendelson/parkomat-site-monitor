@@ -117,7 +117,7 @@ function App() {
     const t = setTimeout(() => setExecReady(true), 8000);
     return () => clearTimeout(t);
   }, [role, execReady]);
-  const { sites, loading, error, reload, reloadStats, patch, patchSite } = useSites({ hold: role === "executive" && !execReady });
+  const { sites, loading, error, reload, reloadStats, patch, patchSite, refreshComplianceIfDue } = useSites({ hold: role === "executive" && !execReady });
   const lastFullAt = useRef(Date.now());   // מתי רצה הטעינה החיה האחרונה — הראשונה היא טעינת הפתיחה (utils/siteSync)
 
   // ==========================================================
@@ -134,6 +134,9 @@ function App() {
   const lastStatsAt = useRef(Date.now());
   const enterPage = useCallback(() => {
     lastStatsAt.current = Date.now();
+    // טעינה עם סטטיסטיקות מביאה גם את כל המצב החי — כך ההתאוששות שרצה באותה חזרה ללשונית (useSSE → onRecover)
+    // רואה טעינה טרייה ולא שולחת שנייה מיד אחריה (19/10/2026, נמדד ברתמה: שתי טעינות בכל חזרה).
+    if (showsCards) lastFullAt.current = Date.now();
     if (showsCards) reloadStats();
     setDataVersion((v) => v + 1);
   }, [showsCards, reloadStats]);
@@ -145,6 +148,7 @@ function App() {
     if (prevRole.current === role) return;
     prevRole.current = role;
     lastStatsAt.current = Date.now();
+    if (showsCards) lastFullAt.current = Date.now();
     if (showsCards) reloadStats();
   }, [role, showsCards, reloadStats]);
 
@@ -314,14 +318,28 @@ function App() {
   // ============================================================
   // כל מסך פתוח — גם מוסתר — הריץ כאן את כל הסטטיסטיקות של כל האתרים בכל דקה, ושוב
   // בכל חזרה ללשונית. עכשיו (utils/siteSync): בדיקה זולה של מצבי האתרים בלבד, ורק אם
-  // משהו לא תואם — טעינה מלאה מיד; הטעינה המלאה עצמה — פעם ב-5 דקות. מסך מוסתר — כלום.
+  // משהו לא תואם — טעינה מלאה מיד; טעינה מלאה מטיימר — כבר לא (19/10, למטה). מסך מוסתר — כלום.
   // אותה בדיקה (ולא טעינה מלאה) רצה גם בחזרה ללשונית ובהתאוששות הערוץ החי (useSSE).
   // רשת הביטחון של דקה נשמרת לסטטוס.
+  //
+  // ============================================================
+  // ⚠️ ואין טעינה חיה מטיימר בכלל (בעלת המוצר, 19/10/2026: "למה הוא מריץ את המצב החי? אני לא רוצה!")
+  // ============================================================
+  // עד אז כל מסך גלוי הריץ את הטעינה החיה (sites + site_globals + compliance, ~0.5 שנייה במסד) כל 5 דקות בלי
+  // סיבה — הצרכן הגדול ביותר של המסד מצד האפליקציה. הטיימר מריץ עכשיו רק את הבדיקה הזולה; טעינה מלאה רק כשהיא
+  // מוצאת אי-התאמה. `allowFull` — רק בהתאוששות (חזרה ללשונית, חידוש הערוץ החי), כשאירועים באמת עלולים היו
+  // ללכת לאיבוד, ולכל היותר פעם ב-5 דקות כמו קודם: הבדיקה הזולה לא משווה אתר בחלון תחזוקה, ולכן אירוע תחזוקה
+  // שאבד בניתוק לא היה מתוקן בלעדיה.
+  // ⚠️ וטעינה שנכשלה — ניסיון חוזר לכל היותר פעם ב-5 דקות, כל עוד יש שגיאה. הפס "העדכון האחרון נכשל" נשאר עד
+  // שטעינה מצליחה; עד 19/10 הטעינה המתוזמנת ניקתה אותו, ובלעדיה הוא היה נשאר שעות על מסך שהבדיקה הזולה שלו
+  // תקינה כל דקה.
+  const sitesErrorRef = useRef(error);
+  useEffect(() => { sitesErrorRef.current = error; }, [error]);
   const checking = useRef(false);
-  const syncNow = useCallback(async () => {
+  const syncNow = useCallback(async ({ allowFull = false } = {}) => {
     if (typeof document !== "undefined" && document.hidden) return;
     if (checking.current) return;
-    if (fullReloadDue(lastFullAt.current)) { resync(); return; }
+    if ((allowFull || sitesErrorRef.current) && fullReloadDue(lastFullAt.current)) { resync(); return; }
     checking.current = true;
     try {
       const fresh = await fetchSiteStatuses();
@@ -334,10 +352,12 @@ function App() {
     }
   }, [resync]);
   useEffect(() => {
-    const id = setInterval(syncNow, STATUS_CHECK_EVERY_MS);
+    // הנורות (בודק/תחזוקה) — רק כשהתאריך בישראל התחלף או אחרי כשל; אחרת הקריאה לא שולחת כלום (complianceRefreshDue)
+    const lamps = unlessHidden(refreshComplianceIfDue);
+    const id = setInterval(() => { syncNow(); lamps(); }, STATUS_CHECK_EVERY_MS);
     return () => clearInterval(id);
-  }, [syncNow]);
-  const onRecover = useCallback(() => { syncNow(); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
+  }, [syncNow, refreshComplianceIfDue]);
+  const onRecover = useCallback(() => { syncNow({ allowFull: true }); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
 
   useSSE(
     useCallback((data) => {

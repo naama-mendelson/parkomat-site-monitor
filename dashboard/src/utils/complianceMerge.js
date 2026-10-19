@@ -42,5 +42,27 @@ export function mergeCompliance(prev, next, startedAt = 0, patchedAt = {}) {
   });
   return { list, missing };
 }
+// ============================================================
+// ⚠️ רענון הנורות בלי טעינה חיה (19/10/2026)
+// ============================================================
+// עד אז הנורות נטענו עם הטעינה החיה של כל 5 דקות, שבוטלה (בעלת המוצר: "למה הוא מריץ את המצב החי? אני לא
+// רוצה!"). שינוי שמישהו עושה מגיע באירוע (compliance) ומרענן נורה אחת. מה שאירוע לא מביא:
+//   • **החלפת התאריך** — הנורה צבועה לפי היום (30 יום לפני פקיעה, מועד תיקון שעבר); מסך קיר פתוח ימים היה
+//     נשאר בצבעים של אתמול. ⚠️ לפי היום בישראל, כמו app.compliance_today — לא חצות UTC.
+//   • **התאוששות מכשל** — נורה מקווקוות ("לא התעדכן") מנסה שוב כעבור 5 דקות, לא נשארת כך עד רענון.
+// הבדיקה של כל דקה (App) שואלת כאן; התשובה "כן" מריצה site_compliance בלבד, לא את הטעינה החיה.
+export const COMPLIANCE_RETRY_MS = 5 * 60_000;
+const IL_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" });
+export const israelDay = (t) => IL_DAY.format(new Date(t));
+/**
+ * @param {number} lastOkAt   מתי נטענו הנורות בהצלחה לאחרונה (0 — עוד לא)
+ * @param {number} lastFailAt מתי נכשלה טעינתן לאחרונה (0 — לא נכשלה)
+ */
+export function complianceRefreshDue(lastOkAt, lastFailAt, now = Date.now()) {
+  if (lastFailAt > lastOkAt) return now - lastFailAt >= COMPLIANCE_RETRY_MS;
+  if (!lastOkAt) return false;
+  return israelDay(lastOkAt) !== israelDay(now);
+}
+
 export const complianceFailed = (list) => list.length > 0 && list.every((s) => s.compliance?.unknown && s.compliance?.error);
 export const complianceFetched = (list) => list.some((s) => s.compliance !== null && s.compliance !== undefined);

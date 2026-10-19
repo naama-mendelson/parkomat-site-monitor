@@ -2,9 +2,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // ה-hook לא יודע מאיפה הנתונים מגיעים — dataSource מכריע, והמבנה זהה
 // בשני המסלולים. ראה services/dataSource.js לתוכנית ב'.
-import { fetchSitesList } from "../services/dataSource";
+import { fetchSitesList, fetchSiteCompliance } from "../services/dataSource";
 import { applySiteUpdate } from "../utils/sitePatch";
-import { mergeCompliance, complianceFailed, complianceFetched } from "../utils/complianceMerge.js";
+import { mergeCompliance, complianceFailed, complianceFetched, complianceRefreshDue } from "../utils/complianceMerge.js";
+import { toCompliance } from "../utils/compliance";
 import { keepLastService, keepLastTier } from "../utils/serviceMerge.js";
 import { keepLastStats, statsMissing } from "../utils/siteSync.js";
 
@@ -79,6 +80,7 @@ export function useSites({ hold = false } = {}) {
   // שגיאה על מסך שכבר קיבל נתונים תקינים.
   const seq = useRef(0);
   const lastComplianceAt = useRef(0);
+  const lastComplianceFailAt = useRef(0); // מתי נכשלה טעינת הנורות לאחרונה (complianceRefreshDue)
   const patchedAt = useRef({});          // site id → מתי הוחלף ה-compliance שלו ב-patchSite
 
   // ============================================================
@@ -128,7 +130,10 @@ export function useSites({ hold = false } = {}) {
         // כשל ברמזורי הבודק אינו מקדם את השעון — השליפה הבאה תנסה שוב, ולא בעוד
         // חמש דקות. (פס "אינו מתעדכן" בראש המסך הוסר לבקשת בעלת המוצר, 04/10;
         // המנורות עצמן מציגות "?" מקווקו כשהסטטוס לא נטען — הן לא נעלמות.)
-        if (complianceFetched(data) && !complianceFailed(data)) lastComplianceAt.current = Date.now();
+        if (complianceFetched(data)) {
+          if (complianceFailed(data)) lastComplianceFailAt.current = Date.now();
+          else lastComplianceAt.current = Date.now();
+        }
         // ⚠️ "הגיעו סטטיסטיקות" — לפי השורות ולא לפי הבקשה: בזרוע השרת כל טעינה מלאה
         if (!data.some((s) => s && s.statsSkipped)) {
           statsIds.current = new Set(data.map((s) => s.id));
@@ -189,6 +194,33 @@ export function useSites({ hold = false } = {}) {
 
   const patch = useCallback((msg) => {
     setSites((current) => applySiteUpdate(current, msg));
+  }, []);
+
+  // ============================================================
+  // הנורות בלבד — כשהתאריך התחלף, או כעבור 5 דקות מכשל (19/10/2026)
+  // ============================================================
+  // אין טעינה חיה מטיימר יותר; ראו complianceRefreshDue. site_compliance לבד (~0.1 שנייה), בלי sites ו-site_globals.
+  // אותו מיזוג כמו בטעינה מלאה: כשל משאיר את המצב הידוע מקווקו, ועדכון ממוקד חדש יותר לא נדרס.
+  const complianceBusy = useRef(false);
+  const refreshComplianceIfDue = useCallback(async () => {
+    if (complianceBusy.current) return;
+    if (!complianceRefreshDue(lastComplianceAt.current, lastComplianceFailAt.current)) return;
+    complianceBusy.current = true;
+    const startedAt = Date.now();
+    const apply = (toRow) => setSites((prev) => mergeCompliance(
+      prev, prev.map((s) => (s.compliance === undefined ? s : { ...s, compliance: toRow(s) })), startedAt, patchedAt.current,
+    ).list);
+    try {
+      const rows = await fetchSiteCompliance(null);
+      const byId = new Map((rows || []).map((r) => [r.site_id, r]));
+      lastComplianceAt.current = Date.now();
+      apply((s) => toCompliance(byId.get(s.id)));
+    } catch (err) {
+      lastComplianceFailAt.current = Date.now();
+      apply(() => ({ unknown: true, error: err?.message || "שגיאה" }));
+    } finally {
+      complianceBusy.current = false;
+    }
   }, []);
 
   // טעינה ראשונית
@@ -255,5 +287,5 @@ export function useSites({ hold = false } = {}) {
     };
   }, [hasError, loadSites]);
 
-  return { sites, loading, error, reload, reloadStats, patch, patchSite };
+  return { sites, loading, error, reload, reloadStats, patch, patchSite, refreshComplianceIfDue };
 }

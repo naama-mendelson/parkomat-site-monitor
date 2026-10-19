@@ -37,9 +37,39 @@ test("⚠️ מצב שהשתנה בלי שהגיעה הודעה (ערוץ חי �
   assert.equal(statusesMatch(screen(), d), false);
 });
 
-test("אתר בחלון תחזוקה — לא משווים את המצב שלו (סוף החלון נתפס בטעינה המלאה)", () => {
+test("אתר בחלון תחזוקה — לא משווים את המצב שלו", () => {
   const d = db(); d[2].status = "no_comm";
   assert.equal(statusesMatch(screen(), d), true);
+});
+
+// ⚠️ 19/10/2026: אין טעינה חיה מטיימר ("למה הוא מריץ את המצב החי? אני לא רוצה!"). סוף חלון התחזוקה נתפס
+// בטעינה של כל 5 דקות; עכשיו הבדיקה הזולה עצמה רואה ששעת הסיום עברה. בלעדיה — כרטיס תקוע "בתחזוקה" עד רענון.
+test("⚠️ חלון תחזוקה שנגמר מעצמו → טעינה מלאה באותה דקה; לפני הסוף, או בלי שעה ידועה — לא", () => {
+  const T = Date.parse("2026-10-19T09:00:00Z");
+  const withUntil = (until) => { const s = screen(); s[2].maintenanceUntil = until; return s; };
+  assert.equal(statusesMatch(withUntil("2026-10-19T09:30:00Z"), db(), T), true, "עוד חצי שעה");
+  assert.equal(statusesMatch(withUntil("2026-10-19T09:00:00Z"), db(), T), false, "בדיוק עכשיו — נגמר");
+  assert.equal(statusesMatch(withUntil("2026-10-19T08:59:00Z"), db(), T), false, "נגמר לפני דקה");
+  assert.equal(statusesMatch(withUntil(null), db(), T), true, "בלי שעה — לא מכריעים");
+  assert.equal(statusesMatch(withUntil("לא תאריך"), db(), T), true, "שעה שבורה — לא מכריעים, לא נטען בלולאה");
+  // אתר שאינו בתחזוקה — שעת סיום ישנה עליו לא משנה דבר
+  const s = screen(); s[0].maintenanceUntil = "2026-10-01T00:00:00Z";
+  assert.equal(statusesMatch(s, db(), T), true);
+});
+
+test("⚠️ הטיימר מריץ רק את הבדיקה הזולה — טעינה מלאה לפי גיל רק בהתאוששות (App.jsx)", () => {
+  const app = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/App.jsx"), "utf8");
+  assert.match(app, /setInterval\(\(\) => \{ syncNow\(\); lamps\(\); \}, STATUS_CHECK_EVERY_MS\)/, "הטיימר אינו קורא ל-syncNow בלי allowFull");
+  assert.match(app, /const lamps = unlessHidden\(refreshComplianceIfDue\)/, "הנורות בטיימר אינן דרך refreshComplianceIfDue (ומדלגות על מסך מוסתר)");
+  assert.match(app, /if \(\(allowFull \|\| sitesErrorRef\.current\) && fullReloadDue\(lastFullAt\.current\)\)/,
+    "טעינה לפי גיל אינה מותנית בהתאוששות או בשגיאה");
+  assert.match(app, /syncNow\(\{ allowFull: true \}\)/, "ההתאוששות אינה מבקשת טעינה מלאה");
+  assert.equal((app.match(/fullReloadDue\(/g) || []).length, 1, "fullReloadDue נקראת ממקום נוסף");
+});
+
+test("sitesDirect מעביר את שעת סיום התחזוקה מ-site_globals לאתר", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/services/sitesDirect.js"), "utf8");
+  assert.match(src, /maintenanceUntil:\s*inMaintenance \? \(g\.maintenance_expires_at \?\? null\) : null/);
 });
 
 test("אתר שנוסף, נמחק או שינה קוד → טעינה מלאה", () => {
@@ -56,7 +86,7 @@ test("אין בדיקה זולה (מצב שרת, null) → לא מכריעים �
   assert.equal(statusesMatch([], db()), false);
 });
 
-test("⚠️ הקצב שנבחר: טעינה מלאה כל 5 דקות, בדיקה זולה כל דקה", () => {
+test("⚠️ הקצב שנבחר: בדיקה זולה כל דקה; טעינה מלאה לפי גיל — רק בהתאוששות, לכל היותר פעם ב-5 דקות", () => {
   assert.equal(FULL_RELOAD_EVERY_MS, 5 * 60_000);
   assert.equal(STATUS_CHECK_EVERY_MS, 60_000);
 });

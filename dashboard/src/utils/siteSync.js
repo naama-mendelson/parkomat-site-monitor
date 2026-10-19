@@ -15,7 +15,9 @@
 //     בעלת המוצר, 07/10/2026: "אין צורך לחשב את הסטטיסטיקות כל דקה. אין צורך אלא
 //     בשעה שעוברים לדף הזה". המחיר ידוע: מסך קיר שנשאר פתוח מציג את המספרים מרגע
 //     הכניסה.
-//   • הטעינה החיה (`sites`, site_globals — מצב, תקלה, תחזוקה) — פעם ב-5 דקות.
+//   • הטעינה החיה (`sites`, site_globals — מצב, תקלה, תחזוקה) — **לא מטיימר** (19/10/2026, בעלת המוצר: "למה
+//     הוא מריץ את המצב החי? אני לא רוצה!"; עד אז פעם ב-5 דקות בכל מסך גלוי). רק כשהבדיקה הזולה מוצאת אי-התאמה,
+//     או בהתאוששות (חזרה ללשונית / חידוש הערוץ החי) ולכל היותר פעם ב-5 דקות (fullReloadDue).
 //     שדות הסטטיסטיקה נשמרים בה מהטעינה הקודמת (keepLastStats).
 //   • בכל דקה — רק בדיקה זולה של מצבי האתרים (שאילתה אחת על `sites`, אלפיות
 //     שנייה). רק אם היא מוצאת אי-התאמה — טעינה חיה מיד. כך רשת הביטחון של דקה
@@ -24,7 +26,7 @@
 //
 // קובץ טהור (בלי React ובלי ייבוא) — כדי שאפשר יהיה לבדוק אותו ב-node.
 
-/** הטעינה החיה (בלי הסטטיסטיקות) — לכל היותר פעם בזמן הזה, מכל סיבה רגילה. */
+/** הטעינה החיה בהתאוששות (חזרה ללשונית, חידוש הערוץ) — לכל היותר פעם בזמן הזה. הטיימר אינו מפעיל אותה (19/10/2026). */
 export const FULL_RELOAD_EVERY_MS = 5 * 60_000;
 
 /** חזרה ללשונית מחשבת את הסטטיסטיקות מחדש רק אם החישוב הקודם ישן לפחות כך. */
@@ -118,18 +120,25 @@ export function fullReloadDue(lastFullAt, now = Date.now()) {
  *
  * @param {Array} sites — הרשימה שעל המסך
  * @param {Array|null} fresh — [{id, code, status}] מטבלת `sites`, או null כשאין בדיקה זולה
- * @returns {boolean} false → צריך טעינה מלאה: אתר נוסף/נמחק/שינה קוד, או שמצבו שונה
+ * @param {number} now — לבדיקות
+ * @returns {boolean} false → צריך טעינה מלאה: אתר נוסף/נמחק/שינה קוד, מצבו שונה, או שחלון התחזוקה שלו נגמר
  */
-export function statusesMatch(sites, fresh) {
+export function statusesMatch(sites, fresh, now = Date.now()) {
   if (!Array.isArray(fresh)) return true;   // אין בדיקה זולה (מצב שרת) — הטעינה המלאה תכריע
   if (!Array.isArray(sites) || fresh.length !== sites.length) return false;
   const byId = new Map(sites.map((s) => [s.id, s]));
   for (const f of fresh) {
     const s = byId.get(f.id);
     if (!s || s.code !== f.code) return false;
-    // ⚠️ אתר בחלון תחזוקה מוצג "בתחזוקה" בלי קשר למה שבטבלה — לא משווים אותו.
-    // סוף החלון נתפס בטעינה המלאה של כל 5 דקות.
-    if (!s.inMaintenance && s.status !== f.status) return false;
+    // ⚠️ אתר בחלון תחזוקה מוצג "בתחזוקה" בלי קשר למה שבטבלה — לא משווים את המצב שלו.
+    // סוף החלון: עד 19/10/2026 נתפס בטעינה המלאה של כל 5 דקות, שבוטלה ("למה הוא מריץ את המצב החי? אני לא רוצה!").
+    // עכשיו — לפי שעת הסיום שהגיעה בטעינה (maintenanceUntil): ברגע שעברה, טעינה מלאה. בלי שעה ידועה — לא מכריעים.
+    if (s.inMaintenance) {
+      const until = s.maintenanceUntil ? Date.parse(s.maintenanceUntil) : NaN;
+      if (Number.isFinite(until) && until <= now) return false;
+      continue;
+    }
+    if (s.status !== f.status) return false;
   }
   return true;
 }

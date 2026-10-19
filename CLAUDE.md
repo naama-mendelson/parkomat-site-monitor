@@ -1884,9 +1884,9 @@ The owner: *"אין צורך לחשב את הסטטיסטיקות כל דקה. �
 - **Statistics run only on page entry:** first load, switching to the operator page, returning
   to a hidden tab (at most once per 5 min, `STATS_ON_RETURN_MIN_MS`), and an admin change.
   A new site in the list gets one automatic statistics load.
-- **The live load runs every 5 min, or immediately on a status mismatch:** `sites`,
-  `site_globals` and compliance. It is `withStats: false`. The statistics fields are carried
-  over from the screen (`keepLastStats`, `STATS_FIELDS` in `utils/siteSync.js`). A test checks
+- ~~**The live load runs every 5 min**~~ **— not since 19/10/2026; see *No live load from a timer* below.** It runs
+  immediately on a status mismatch: `sites`, `site_globals` and compliance. It is `withStats: false`. The statistics
+  fields are carried over from the screen (`keepLastStats`, `STATS_FIELDS` in `utils/siteSync.js`). A test checks
   that list against `sitesDirect`.
 - **No timer bumps `dataVersion`.** The supervisor, executive and "all sites" pages compute on
   entry, not every 5 minutes.
@@ -3207,11 +3207,56 @@ tables (compliance, tasks, settings, Wizenet) — by design. ⚠️ The 60 funct
   `(SELECT app.is_active_user())`, an InitPlan, not per row), and temp writes of 150 MB per 10 minutes (~0.25 MB/s),
   more than a third of it `site_globals` (2.8 MB per call over `work_mem` 3.5 MB). Measure deltas (`delta-load.cjs`
   pattern: two snapshots, subtract), never these totals.
-  Room for later, not needed now: `site_globals` is the largest app-side cost and grows with the number of visible
-  screens (it could move into the 10-minute cron table like the card statistics, or get more `work_mem`);
+  ~~Room for later: `site_globals` is the largest app-side cost and grows with the number of visible screens~~ —
+  **removed the same morning** at the owner's word (*No live load from a timer*, below). Still room for later:
   `service_calls_board` scans the 31-row `wizenet_lookups` once per call row (~36 scans/s); Realtime's own WAL
   polling (10.5 s per 10 minutes) is Supabase's and constant. The Supabase connector also refuses the logs
   (`query_logs`: "no permission"), so errors are measured by the rollback counter.
+
+## No live load from a timer (19/10/2026)
+
+The owner, told that every visible screen ran the live load every 5 minutes: *"למה הוא מריץ את המצב החי? אני לא
+רוצה!"*. It was `sites` + `site_globals` + `site_compliance`, ~0.5 s of DB time per screen per load, the largest
+app-side cost (20–27 calls per 10 minutes, and 2.8 MB of temp spill each).
+
+- **The minute timer runs only the cheap status check** (`fetchSiteStatuses`, one query on `sites`). A full live load
+  only when it finds a mismatch. `syncNow({ allowFull })` in `App.jsx`: an age-based full load (`fullReloadDue`, at
+  most every 5 minutes) only on **recovery** — the return to a hidden tab and the Realtime channel's reconnect, when
+  events really may have been missed. A missed maintenance start is invisible to the cheap check (it does not compare a
+  site in a window), so recovery keeps that load.
+- **A page-entry statistics load counts as a full load** (`enterPage` and the role switch set `lastFullAt`). Before,
+  a return to the tab ran the statistics load *and*, right after it, the recovery load — two loads, measured in the
+  harness.
+- ⚠️ **What the timed load was silently doing, now done explicitly:**
+  - **The end of a maintenance window.** `inMaintenance` comes from `site_globals` at load time, the dashboard does not
+    end a window by itself, and the cheap check skips sites in a window; the 5-minute load is what took "בתחזוקה" off a
+    card. Now `sitesDirect` carries `maintenanceUntil` (`site_globals.maintenance_expires_at`), and `statusesMatch`
+    returns false once it has passed — one full load in the minute the window ends. No time known, or an unparsable
+    one: no decision (never a load per minute).
+  - **The lamps.** They are coloured by the day (30 days before expiry, a fix date that passed), and a failed fetch
+    left them dashed until the next timed load. `complianceRefreshDue(lastOkAt, lastFailAt)` in
+    `utils/complianceMerge.js`: when the **Israel** date changes (not UTC midnight; `israelDay`), or 5 minutes after a
+    failure. Then `useSites.refreshComplianceIfDue` fetches `site_compliance` alone (~0.1 s) and merges it like a full
+    load (last-known kept dashed on failure, a newer targeted patch not overwritten). Changes someone makes still come
+    as `compliance` events.
+  - **Recovery from a failed load.** "⚠️ העדכון האחרון נכשל" stays until a load succeeds; the timed load used to clear
+    it, and without it the stripe would stay for hours over a screen whose minute check is fine. While `error` stands,
+    `syncNow` retries the full load at most every 5 minutes (`sitesErrorRef`).
+- **Cost, stated plainly:** an operation event that is lost while the screen stays connected and visible is not
+  corrected by any timer (the last-operation time on the card stays old until a mismatch, a return to the tab or the
+  next page entry). Statuses are still caught by the minute check. The task and call counts keep their light 5-minute
+  safety timers (`service_calls_board` ~0.1 s, `task_counts`).
+- Tests: `site-sync.test.js` (window end: before, exactly at, after, none, unparsable; the timer runs no age-based
+  load; `sitesDirect` passes the end time), `compliance-ui.test.js` (Israel day vs UTC midnight, retry after 5
+  minutes, a later success cancels). Browser: `probe-stats` 21/21 (S2: 30 quiet minutes, zero live loads, the cheap
+  check every minute; S7: a 3-minute window — no load before, one load as it ends, the card leaves maintenance, quiet
+  after), `probe-load` 15/15 (no load at 5 minutes; a return after 8 minutes = one load, not two; again within 5 =
+  cheap check only; a failed load shows the stripe, is retried within 5 minutes, then quiet), `run.mjs` S10 rewritten 8/8 (same day no refresh, Israel midnight one refresh, it fails →
+  dashed, retried after 5 minutes, recovers, then 30 quiet minutes). ⚠️ `probe-load` and `probe-stats` were not in the
+  batch list, which is how `probe-load` had gone stale; they are now. Batch of 40 probes after the change: all green
+  but `probe-docs` (needs a separate demo server on 5180, not the harness) and `probe-repeat` R2 on desktop, whose first
+  click landed on the "הפעלת התראות קוליות" overlay (`.alert-unlock-backdrop`, shown while a site is in fault and
+  audio is locked) — the probe now dismisses it with `.alert-unlock-card-btn` first; 14/14.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
