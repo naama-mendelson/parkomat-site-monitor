@@ -3376,6 +3376,23 @@ nights do not count). Asked, she first chose to keep 24 hours, then interrupted 
   ההיבהוב"*. `.has-open-call` no longer animates (`callPulse` is gone); it is a steady frame — the style that until then
   only `prefers-reduced-motion` got — in the level's colour. This reverses the 14/10 *"היא צריכה להבהב על כל הכרטיס"*.
   `probe-calls` now asserts `animationName: none` and a frame.
+- ⚠️ **In the dark theme levels 1–3 are solid, not tints (the same evening).** The owner: *"על רקע כהה השקופים נראים
+  כהים יותר מהאדומים"*. Measured: 20–24% yellow / orange / red over the dark card (#182238) gave olive, brown and wine at
+  L\* 22–26, darker than level 4's dark red (L\* 28), so the scale read backwards; secondary text on them was 2.4:1.
+  Now `#854d0e` → `#9a3412` → `#b91c1c` → `#7f1d1d` (L\* 38 / 37 / 40 / 28; the worst is the darkest), with level 4's
+  light ink set; hover darkens slightly instead of lightening (lightening dropped the stopwatch to 4.1:1). The light
+  theme keeps its tints.
+  - **Inline-coloured chips get a dark backing on every solid card** (level 4 in both themes, 1–3 in dark): the tier
+    badge, the status chip, system chips/rows, the stuck chip, availability, and the expanded card's call stopwatch.
+    Their colours (`STATUS_COLORS`, tier colours, `availabilityColor`) are tuned for a dark card, and on amber or red they
+    measured 1.8–3.6:1 ("בסיסי" was 3.3:1 on the live dark red too). The backing keeps their own colour: green "מוכן",
+    red low availability. `.tk-count` (white on the light accent, 1.22:1) gets dark text, like `.exp-open`.
+  - `probe-call-age` A9: in dark, levels 2 and 3 are lighter than level 4 by more than 4 L\*, and every text on a solid
+    card is ≥ 4.5:1 against its composited background (29/29). The old CSS measured L\* 26 / 22 against 28 and 2.39:1, so
+    A9 fails it. `scratchpad/e2e/dbg-age-dark.mjs` prints every text's contrast per level (`CAND=` injects a stylesheet).
+  - ⚠️ **Not fixed, found on the way:** in the light theme `STATUS_COLORS` are the dark-theme inks — "מוכן" `#4ade80` is
+    ~1.3–1.6:1 on every light card, not only aging ones, and the "בסיסי" badge ~1.8:1. A light-theme ink set is a
+    separate change.
 
 ## The expanded card spread over the whole row after returning to an empty board (fixed 19/10/2026)
 
