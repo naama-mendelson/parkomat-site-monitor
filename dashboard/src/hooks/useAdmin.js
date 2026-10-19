@@ -27,11 +27,13 @@
 //
 // ⚠️ ולכן המסך **נעול בכל פתיחה**, ואין כפתור "נעל": אין מה לנעול, הוא
 // ננעל מעצמו בסגירה.
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 // ⚠️ מ-Supabase ולא מהשרת: בענן אין שרת, והנעילה פשוט נכשלה שם.
 // הגיבוב מושווה בתוך הפונקציה ב-SQL ולעולם אינו מגיע לדפדפן.
 import { verifyAdminCode } from "../services/dataSource";
-import { isUnlocked as getAdminCode, markUnlocked as storeAdminCode, lockAgain } from "../services/adminCodeDirect";
+import {
+  isUnlocked as getAdminCode, markUnlocked as storeAdminCode, lockAgain, adminCodeStillValid, rememberAdminCode,
+} from "../services/adminCodeDirect";
 import { useDirect } from "../services/dataSource";
 import { useAuth } from "./useAuth";
 
@@ -91,6 +93,20 @@ export function useAdmin() {
   // **להיות נעולים**.
   const [codeOkThisOpen, setCodeOkThisOpen] = useState(false);
 
+  // ============================================================
+  // ⚠️ חצי שעה בלי להקיש שוב (בעלת המוצר, 19/10/2026) — וזה הפוך ל"נעול בכל פתיחה" שלמעלה
+  // ============================================================
+  // "שזה יחזיק את הקוד נגיד לפחות לכחצי שעה ולא צריך להקיש אותו כל פעם מחדש — ב-5 הדקות האחרונות הקשתי אותו לפחות 10
+  // פעמים". נשמר **רק מתי האימות פג**, לא הקוד (קוד שנשמר בדפדפן הוא קוד משותף שדלף), ב-sessionStorage עם מזהה המשתמש:
+  // סגירת הלשונית נועלת, ומשתמש אחר על אותו מסך מתבקש לקוד משלו. ⚠️ חלון נע: כל פתיחה של הפאנל מאריכה בעוד חצי שעה,
+  // ובתוך פתיחה אחת הפאנל לא ננעל באמצע (codeOkThisOpen), גם אם עברה חצי שעה בעריכה.
+  const remembered = Boolean(user?.id) && adminCodeStillValid(user.id);
+  useEffect(() => {
+    if (!isManager || !user?.id) return;
+    if (remembered && !codeOkThisOpen) setCodeOkThisOpen(true);
+    if (remembered || codeOkThisOpen) rememberAdminCode(user.id);
+  }, [isManager, user?.id, remembered, codeOkThisOpen]);
+
   const unlockDirectByCode = useCallback(async (code) => {
     setChecking(true);
     setError(null);
@@ -98,6 +114,7 @@ export function useAdmin() {
       const ok = await verifyAdminCode(code);
       if (!ok) { setError("קוד מנהל שגוי"); return false; }
       setCodeOkThisOpen(true);
+      if (user?.id) rememberAdminCode(user.id);
       return true;
     } catch (e) {
       setError(e.message);
@@ -105,11 +122,11 @@ export function useAdmin() {
     } finally {
       setChecking(false);
     }
-  }, []);
+  }, [user?.id]);
 
   if (useDirect) {
     return {
-      unlocked: isManager && codeOkThisOpen,
+      unlocked: isManager && (codeOkThisOpen || remembered),
       unlock: unlockDirectByCode,
       // ⚠️ פונקציה ריקה ולא הסרה: AdminPanel עדיין מקבל `lock` מה-hook,
       // והמסך פשוט אינו מציג עוד כפתור. אין מה לנעול — סגירה נועלת.

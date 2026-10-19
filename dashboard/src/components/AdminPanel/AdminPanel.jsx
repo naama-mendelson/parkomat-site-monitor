@@ -363,8 +363,11 @@ function AdminPanel({ sites, onClose: closePanel, onChanged }) {
   }
 
   // ===== מסך הניהול =====
+  // ⚠️ הרקע אינו סוגר את מסך הניהול (בעלת המוצר, 19/10/2026: "במצב עריכה כל לחיצה הכי קטנה בצידי המסך מוציאה אותי
+  // מהעריכה"). לחיצה ליד החלון באמצע עריכת אתר סגרה את הפאנל כולו, והעריכה אבדה. סוגרים ב-✕ בלבד. מסכי הקוד והתפקיד
+  // (למעלה) עדיין נסגרים ברקע — שם אין מה לאבד.
   return (
-    <div className="adm-overlay" onClick={onClose}>
+    <div className="adm-overlay">
       <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
         <header className="adm-head">
           <div>

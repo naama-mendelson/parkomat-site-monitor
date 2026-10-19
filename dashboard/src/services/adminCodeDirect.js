@@ -54,6 +54,20 @@ export const lockAgain = () => {
 };
 
 // ============================================================
+// חצי שעה בלי להקיש שוב את קוד המנהל במסך ניהול האתרים (19/10/2026)
+// ============================================================
+// בעלת המוצר: "שזה יחזיק את הקוד לפחות לכחצי שעה". נשמר רק **עד מתי** האימות תקף — לא הקוד — לכל משתמש בנפרד,
+// ב-sessionStorage (סגירת הלשונית נועלת). useAdmin מאריך את החלון בכל פתיחה של הפאנל.
+export const ADMIN_CODE_REMEMBER_MS = 30 * 60 * 1000;
+const okKey = (uid) => `parkomat.adminCodeOkUntil:${uid}`;
+export function adminCodeStillValid(uid, now = Date.now()) {
+  try { return Number(sessionStorage.getItem(okKey(uid))) > now; } catch { return false; }
+}
+export function rememberAdminCode(uid, now = Date.now()) {
+  try { sessionStorage.setItem(okKey(uid), String(now + ADMIN_CODE_REMEMBER_MS)); } catch { /* מצב פרטי */ }
+}
+
+// ============================================================
 // אימות מחדש — מה שכפתור "נעל" נועל בפועל
 // ============================================================
 // ⚠️ **הסיסמה של החשבון, ולא קוד מנהל.** קוד המנהל הוסר מהזרוע הישירה

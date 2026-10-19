@@ -3171,6 +3171,26 @@ The owner asked for the checks to be run again. Local: 1199/1199, 37 browser pro
     and 1418 are about 30 minutes behind.
   - Wizenet relay 3513 has its socket down and works on the 60 s poll.
 
+## Site management: the admin code is remembered for 30 minutes, and the background no longer closes it (19/10/2026)
+
+The owner: *"במצב עריכה כשאני בתוך ניהול האתרים, כל לחיצה הכי קטנה בצידי המסך מוציאה אותי מהעריכה, ובחזור צריך להקיש
+כל פעם קוד מחדש… שזה יחזיק את הקוד נגיד לפחות לכחצי שעה… ב-5 דק האחרונות הקשתי אותו לפחות 10 פעמים"*.
+
+- **The management screen does not close on a background click** (`AdminPanel.jsx`). Only ✕ closes it. A click beside
+  the window in the middle of an edit used to close the whole panel, and the edit was lost. The code and role screens
+  still close on the background, because nothing is lost there.
+- **The code is remembered for 30 minutes, sliding** (`useAdmin`). This reverses the 07/10 "locked on every open":
+  - Only the expiry is stored, never the code, as `parkomat.adminCodeOkUntil:<user id>` in **sessionStorage**
+    (`rememberAdminCode` / `adminCodeStillValid` in `services/adminCodeDirect.js`).
+  - Closing the tab locks it again. Another user on the same screen is asked for their own code.
+  - Every open of the panel extends the window by 30 minutes. Within one open the panel never locks mid-edit, even after
+    30 minutes (`codeOkThisOpen`).
+  - The protection is unchanged: `app.require_manager()` in the SQL. The code is a confirmation step against an
+    accidental delete, not a lock.
+- Browser: `e2e/probe-admin-code.mjs` 9/9 (first open asks; background clicks during an edit keep it; reopen and
+  reload skip the code; past 30 minutes asks again; nothing stores the code; a new tab asks). `probe-notier`,
+  `probe-lift2`, `probe-agentpw` and `probe-mx-create` still pass.
+
 ## Every open dashboard answered every Wizenet event — 56% of DB time, fixed by not refreshing hidden tabs (18/10/2026)
 
 Measured after the day's SQL work, to find the next real cost: a 10-minute delta of `pg_stat_statements` (two read-only
