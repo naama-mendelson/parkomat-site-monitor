@@ -3258,6 +3258,52 @@ app-side cost (20–27 calls per 10 minutes, and 2.8 MB of temp spill each).
   click landed on the "הפעלת התראות קוליות" overlay (`.alert-unlock-backdrop`, shown while a site is in fault and
   audio is locked) — the probe now dismisses it with `.alert-unlock-card-btn` first; 14/14.
 
+## An open call that is not handled turns the card from white to black (built 19/10/2026)
+
+The owner: *"כשיש קריאה ככל שעובר זמן והיא לא טופלה המצב מחמיר… אתרים מכפילים כל 24 שעות שעוברות והפניה לא טופלה
+המצב מחמיר כלומר צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור. כך גם לגבי רובוטיים אבל
+כל שעה… זמן שלא בשעות השירות לא מחושב… בהתאם לסוג השירות של כל אתר. את סוג השירות של המכפילים תיקח מהרמזור"*.
+Her answers to the four questions: **white → yellow → orange → red → black** (levels 0–4); a multiplier steps every
+**24 service hours** (literal — not every service day; on basic that is a step every ~2.7 working days); a site with
+no service hours stays white; the colour shows **only while "קריאות פתוחות" is pressed**.
+
+- **The level is decided in SQL** (`service-calls-board.postgres.sql`): `app.service_seconds(kind, from, to)` sums
+  `app.service_windows` (basic/ext/vip, Israel time; any other kind — 0), and `app.call_age_level(secs, monitored)` =
+  `LEAST(4, floor(secs / (monitored ? 3600 : 86400)))`. `service_calls_board` adds `age` and `age_hours` to every site
+  row, from the **oldest open** call (open = not marked closed, as everywhere), with the kind the card shows:
+  `COALESCE(agreement, plan)` from `site_service_links` (for a site without a controller the multipliers board wins).
+  "Robotic" = `monitored`, "multiplier" = not (Sotefin included), as the "מכפילים גלויים" tile.
+- **Not stored, computed per board call** — the board already reloads on every call event and on the light 5-minute
+  count timer, so a robotic step (one service hour) shows at most 5 minutes late. Measured in production: +4 ms on a
+  ~63 ms board (`site_service_links`), the windows themselves ~0.
+- **The dashboard only translates** (`utils/serviceCalls.js`: `countsBySite` keeps the highest `age`, `callAge`,
+  `callAgeClass`, `callAgeText`; old database without the field → 0 → no colour, so the bundle is safe before the SQL).
+  `SiteCard` adds `call-age-N` (1–4) only when `markOpen` (tile pressed), on all three card variants; the calls pill's
+  label says "פתוחה N שעות שירות". CSS: a 20–24% tint of `--call-age-1/2/3` over the card, the pulse and frame in the
+  level's colour (`--call-ring`); level 4 overrides the card's own variables (`--bg-card` #050505, `--text-*`,
+  `--accent` lightened so the pill and stopwatch stay readable, `.exp-open` dark text) — everything inside turns light
+  without per-element rules. The status strip (`border-inline-start`) is untouched. Dark theme: level 0 is the normal
+  dark card; the black card's frame is light (`--call-age-4-frame`).
+- **What it looks like today** (read-only preview, 19/10 morning): 3468 (ext, 17 service hours) and 2438 (vip, 19) black,
+  1225 (ext, 2.4) orange; multipliers 1191 (basic, 35 service hours over 6 days) yellow, 1206 / 1153 white.
+- Tests: SQL S17 (service seconds per kind and weekday, reversed range, every level boundary both rates, the board:
+  oldest open call, closed calls ignored, not linked / "לא בשירות" → 0, "להתייחס כ" before "במקור", a VIP multiplier
+  one day open = 14–15 service hours and still white), S16 compares only the shared fields now;
+  `service-calls-ui.test.js` (+2). **Mutations (isolated copy): 16 of 16** — one survived until the test put the higher
+  level first. Browser `e2e/probe-call-age.mjs` 24/24 (not pressed → no colour; pressed → 4/2/3 incl. a card without a
+  controller; black ≥ 7:1 and the pill on it ≥ 4.5:1; orange and red names ≥ 4.5:1; expanded card keeps it; released →
+  gone; 1371 light and 390 dark).
+- ⚠️ **Harness:** the browser now launches with `--autoplay-policy=no-user-gesture-required` (`lib.mjs`). The
+  "הפעלת התראות קוליות" overlay appears with a variable delay, longer under load, and swallowed a probe's first click —
+  `probe-repeat` R2 and `probe-card-click` B failed only in parallel runs. A probe that needs the overlay must launch its
+  own browser.
+- ⚠️ **Deploy order: SQL first is not required** — the dashboard shows nothing until `age` arrives. The dry run shows
+  exactly five gaps: the two functions, the body of `service_calls_board`, and this morning's two index changes.
+- ⚠️ **No more blinking (the same day).** The owner, looking at the live board with the tile pressed: *"תפסיק את
+  ההיבהוב"*. `.has-open-call` no longer animates (`callPulse` is gone); it is a steady frame — the style that until then
+  only `prefers-reduced-motion` got — in the level's colour. This reverses the 14/10 *"היא צריכה להבהב על כל הכרטיס"*.
+  `probe-calls` now asserts `animationName: none` and a frame.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

@@ -596,7 +596,10 @@ test("S16 · service_calls_board — הכרטיסים והכותרת בקריא�
   const board = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
   const counts = await rpc(OPR, `SELECT site_id, open, recent, oldest_open FROM public.service_call_counts(24) ORDER BY site_id`);
   const sum = (await one(OPR, `SELECT public.service_calls_recent_summary(24) AS j`)).j;
-  assert.deepEqual(board.sites, counts, "אותן שורות, אותו סדר, אותם שדות — כולל oldest_open");
+  // ⚠️ מ-19/10/2026 ללוח יש גם age / age_hours (S17); השדות המשותפים — זהים
+  const shared = board.sites.map(({ site_id, open, recent, oldest_open }) => ({ site_id, open, recent, oldest_open }));
+  assert.deepEqual(shared, counts, "אותן שורות, אותו סדר, אותם שדות — כולל oldest_open");
+  assert.ok(board.sites.every((r) => Number.isInteger(r.age) && r.age >= 0 && r.age <= 4), "age לכל שורה");
   assert.deepEqual(board.summary, sum, "אותה כותרת");
   const mine = board.sites.find((r) => r.site_id === s.id);
   assert.deepEqual({ open: mine.open, recent: mine.recent }, { open: 2, recent: 2 });
@@ -605,4 +608,103 @@ test("S16 · service_calls_board — הכרטיסים והכותרת בקריא�
   assert.deepEqual((await one(AGT, `SELECT public.service_calls_board(24) AS j`)).j, { sites: [], summary: { total: 0, open: 0 } });
   // ברירת המחדל — 24 שעות
   assert.deepEqual((await one(OPR, `SELECT public.service_calls_board() AS j`)).j, board);
+});
+
+// ============================================================
+// S17 — החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
+// ============================================================
+// בעלת המוצר: מכפיל מחמיר כל 24 שעות שירות, רובוטי כל שעת שירות; זמן מחוץ לשעות השירות לא נספר; לבן → צהוב →
+// כתום → אדום → שחור (0..4); אתר בלי שעות שירות — נשאר לבן.
+test("S17 · שעות שירות בין שני רגעים — שעון ישראל, רק בתוך החלונות; סוג בלי שעות — אפס", { skip }, async () => {
+  const secs = async (kind, from, to) => Number((await sup(`SELECT app.service_seconds($1, $2::timestamptz, $3::timestamptz) AS s`, [kind, from, to]))[0].s);
+  // יום ב' 19/10/2026: בסיסי 08:00–17:00 (שעון ישראל, UTC+3)
+  assert.equal(await secs("basic", "2026-10-19T06:00:00+03:00", "2026-10-19T20:00:00+03:00"), 9 * 3600, "יום עבודה אחד");
+  assert.equal(await secs("basic", "2026-10-19T16:30:00+03:00", "2026-10-20T09:00:00+03:00"), 1.5 * 3600, "חצי שעה בערב + שעה בבוקר");
+  assert.equal(await secs("BASIC ", "2026-10-19T08:00:00+03:00", "2026-10-19T09:00:00+03:00"), 3600, "אותיות ורווח — מנורמל");
+  // שישי-שבת: בסיסי — כלום; מורחב — שישי 08:00–13:00; VIP — שבת 08:00–22:00
+  assert.equal(await secs("basic", "2026-10-23T00:00:00+03:00", "2026-10-25T00:00:00+03:00"), 0, "סוף שבוע בבסיסי");
+  assert.equal(await secs("ext", "2026-10-23T00:00:00+03:00", "2026-10-24T00:00:00+03:00"), 5 * 3600, "שישי במורחב");
+  assert.equal(await secs("vip", "2026-10-24T00:00:00+03:00", "2026-10-25T00:00:00+03:00"), 14 * 3600, "שבת ב-VIP");
+  for (const k of ["no_service", "none", "maintenance_only", null, ""]) {
+    assert.equal(await secs(k, "2026-10-19T00:00:00+03:00", "2026-10-26T00:00:00+03:00"), 0, `בלי שעות שירות: ${k}`);
+  }
+  assert.equal(await secs("basic", "2026-10-20T10:00:00+03:00", "2026-10-19T10:00:00+03:00"), 0, "טווח הפוך — אפס, לא שלילי");
+});
+
+test("S17 · השלב: רובוטי — כל שעת שירות, מכפיל — כל 24 שעות שירות, עד 4 (שחור)", { skip }, async () => {
+  const lvl = async (s, m) => (await sup(`SELECT app.call_age_level($1, $2) AS l`, [s, m]))[0].l;
+  const H = 3600;
+  assert.deepEqual([await lvl(0, true), await lvl(H - 1, true), await lvl(H, true), await lvl(2 * H, true), await lvl(3 * H, true), await lvl(4 * H, true), await lvl(30 * H, true)],
+    [0, 0, 1, 2, 3, 4, 4], "רובוטי");
+  assert.deepEqual([await lvl(23 * H, false), await lvl(24 * H, false), await lvl(48 * H, false), await lvl(72 * H, false), await lvl(96 * H, false), await lvl(500 * H, false)],
+    [0, 1, 2, 3, 4, 4], "מכפיל");
+  assert.equal(await lvl(null, true), 0);
+  assert.equal(await lvl(-50, true), 0, "שלילי — 0");
+  assert.equal(await lvl(5 * H, null), 4, "בלי ערך monitored — כמו אתר עם בקר");
+});
+
+test("S17 · בלוח: הקריאה הוותיקה, סוג השירות מהרמזור (למכפיל — לוח המכפילים), בלי שעות שירות — 0", { skip }, async () => {
+  await save(MGR, "status", [{ id: "1", name: "פתוחה" }, { id: "9", name: "סגורה" }]);
+  await sup(`INSERT INTO traffic_light_columns (key, label, kind, position) VALUES
+    ('c_code','קוד אתר','text',1), ('c_kind','להתייחס כ','text',3) ON CONFLICT (key) DO NOTHING`);
+  await sup(`INSERT INTO traffic_light_columns (key, label, kind, position, board) VALUES
+    ('c_mx_plan','סוג הסכם שירות','status',2,'multipliers') ON CONFLICT (key) DO NOTHING`);
+  const robot = await newSite();            // רובוטי, VIP
+  const robotNone = await newSite();        // רובוטי, לא חובר לרמזור
+  const mx = await newSite();               // מכפיל, בסיסי (מלוח המכפילים)
+  const mxOff = await newSite();            // מכפיל, "לא בשירות"
+  await sup(`UPDATE sites SET monitored = false WHERE id = ANY($1)`, [[mx.id, mxOff.id]]);
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 1, 'robotic')`, [JSON.stringify({ c_code: robot.code, c_kind: "vip" })]);
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 2, 'multipliers'), ($2::jsonb, 3, 'multipliers')`,
+    [JSON.stringify({ c_mx_site_code: mx.code, c_mx_plan: "בסיסי" }), JSON.stringify({ c_mx_site_code: mxOff.code, c_mx_plan: "לא בשירות" })]);
+  const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  // שתי קריאות פתוחות ברובוטי — הוותיקה (10 ימים) קובעת; וסגורה ישנה עוד יותר — לא נספרת
+  await callAt({ ticket_number: "S17-r-new", parking_code: robot.code, status: "1", customer_complaint: "חדשה" }, ago(0.01));
+  await callAt({ ticket_number: "S17-r-old", parking_code: robot.code, status: "1", customer_complaint: "ותיקה" }, ago(10));
+  await callAt({ ticket_number: "S17-r-closed", parking_code: robot.code, status: "9", customer_complaint: "סגורה" }, ago(30));
+  await callAt({ ticket_number: "S17-rn", parking_code: robotNone.code, status: "1", customer_complaint: "לא חובר" }, ago(10));
+  await callAt({ ticket_number: "S17-mx", parking_code: mx.code, status: "1", customer_complaint: "מכפיל" }, ago(30));
+  await callAt({ ticket_number: "S17-mxoff", parking_code: mxOff.code, status: "1", customer_complaint: "לא בשירות" }, ago(30));
+  const board = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
+  const row = (s) => board.sites.find((r) => r.site_id === s.id);
+  // עשרה ימים ב-VIP הם 103×10/7 ≈ 147 שעות שירות → שחור; ב-30 ימים בבסיסי ~190 שעות שירות → 7 שלבים → שחור (4)
+  assert.equal(row(robot).age, 4, "רובוטי VIP, 10 ימים — שחור");
+  assert.ok(row(robot).age_hours > 100, `שעות שירות: ${row(robot).age_hours}`);
+  assert.equal(row(robotNone).age, 0, "לא חובר לרמזור — לבן");
+  assert.equal(row(robotNone).age_hours, 0);
+  assert.equal(row(mx).age, 4, "מכפיל בסיסי, 30 ימים — שחור");
+  assert.equal(row(mxOff).age, 0, "מכפיל 'לא בשירות' — לבן");
+  // השעות נספרות מהוותיקה: יותר מהקריאה החדשה (דקות)
+  const fresh = await newSite();
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 4, 'robotic')`, [JSON.stringify({ c_code: fresh.code, c_kind: "vip" })]);
+  await callAt({ ticket_number: "S17-fresh", parking_code: fresh.code, status: "1", customer_complaint: "רק נפתחה" }, ago(0.0005));
+  const b2 = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
+  assert.equal(b2.sites.find((r) => r.site_id === fresh.id).age, 0, "נפתחה לפני דקה — לבן");
+  // ⚠️ סוג השירות: "להתייחס כ" גובר על "סוג הסכם במקור", כמו על הכרטיס (effectiveTier)
+  await sup(`INSERT INTO traffic_light_columns (key, label, kind, position) VALUES ('c_plan','סוג הסכם שירות במקור','text',2) ON CONFLICT (key) DO NOTHING`);
+  const served = await newSite();
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 5, 'robotic')`, [JSON.stringify({ c_code: served.code, c_kind: "no_service", c_plan: "vip" })]);
+  await callAt({ ticket_number: "S17-served", parking_code: served.code, status: "1", customer_complaint: "מתייחסים כלא בשירות" }, ago(10));
+  // ⚠️ רק קריאות פתוחות קובעות את הוותיקה: סגורה בת 30 יום לצד פתוחה טרייה — לבן
+  const mixed = await newSite();
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 6, 'robotic')`, [JSON.stringify({ c_code: mixed.code, c_kind: "vip" })]);
+  await callAt({ ticket_number: "S17-m-closed", parking_code: mixed.code, status: "9", customer_complaint: "סגורה ישנה" }, ago(30));
+  await callAt({ ticket_number: "S17-m-open", parking_code: mixed.code, status: "1", customer_complaint: "פתוחה טרייה" }, ago(0.0005));
+  // ⚠️ הקצב לפי סוג האתר: מכפיל VIP שפתוח יממה — 14–15 שעות שירות (כל יממה ב-VIP), כלומר מכפיל עדיין 0 ורובוטי היה 4
+  const mxVip = await newSite();
+  await sup(`UPDATE sites SET monitored = false WHERE id = $1`, [mxVip.id]);
+  await sup(`INSERT INTO traffic_light_rows (cells, position, board) VALUES ($1::jsonb, 7, 'multipliers')`, [JSON.stringify({ c_mx_site_code: mxVip.code, c_mx_plan: "VIP" })]);
+  await callAt({ ticket_number: "S17-mxvip", parking_code: mxVip.code, status: "1", customer_complaint: "יממה" }, ago(1));
+  const b4 = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
+  const r4 = (s) => b4.sites.find((r) => r.site_id === s.id);
+  assert.equal(r4(served).age, 0, "להתייחס כ 'לא בשירות' — לבן, גם כשבמקור VIP");
+  assert.equal(r4(mixed).age, 0, "הסגורה הישנה לא נספרת");
+  assert.ok(r4(mxVip).age_hours >= 13.9 && r4(mxVip).age_hours <= 15.1, `יממה ב-VIP: ${r4(mxVip).age_hours} שעות שירות`);
+  assert.equal(r4(mxVip).age, 0, "מכפיל: פחות מ-24 שעות שירות — עדיין לבן");
+  // אתר בלי קריאה פתוחה (רק סגורה ב-24 השעות) — 0
+  const closedOnly = await newSite();
+  await call({ ticket_number: "S17-c-only", parking_code: closedOnly.code, status: "9", customer_complaint: "נסגרה" });
+  const b3 = (await one(OPR, `SELECT public.service_calls_board(24) AS j`)).j;
+  const c = b3.sites.find((r) => r.site_id === closedOnly.id);
+  assert.deepEqual({ open: c.open, age: c.age, oldest_open: c.oldest_open }, { open: 0, age: 0, oldest_open: null });
 });

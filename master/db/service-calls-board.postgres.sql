@@ -465,6 +465,37 @@ REVOKE ALL ON FUNCTION app.service_calls_recent_summary_raw(integer) FROM PUBLIC
 -- המסד בחלון של 10 דקות. כאן: המצב מחושב **פעם אחת** (CTE מוגשם), ושני החלקים נגזרים ממנו; הדשבורד קורא לזה
 -- במקום לשתיים. ⚠️ אותן הגדרות בדיוק כמו בשתי הפונקציות הישנות (S16 משווה שורה-לשורה) — הן נשארות לבנייה ישנה
 -- של הדשבורד (מסך קיר שלא נטען מחדש). ⚠️ אינה זורקת: מי שאינו צוות מקבל לוח ריק, כמו הספירה.
+-- ============================================================
+-- החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
+-- ============================================================
+-- בעלת המוצר: "כשיש קריאה ככל שעובר זמן והיא לא טופלה המצב מחמיר… אתרים מכפילים כל 24 שעות… צבע הכרטיס מתחיל מלבן
+-- ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור. כך גם לגבי רובוטיים אבל כל שעה… זמן שלא בשעות השירות לא
+-- מחושב… בהתאם לסוג השירות של כל אתר". ההחלטות שלה: 0 לבן · 1 צהוב · 2 כתום · 3 אדום · 4 שחור; מכפיל = שלב לכל
+-- **24 שעות שירות** (לא לכל יום שירות — בבסיסי זה שלב כל ~2.7 ימי עבודה); אתר בלי שעות שירות ("לא בשירות", "אין",
+-- "תחזוקה בלבד", לא חובר לרמזור) — לא מחמיר, נשאר לבן; הצבע מוצג רק כש"קריאות פתוחות" לחוץ (הדשבורד).
+--   • "לא טופלה" = עדיין פתוחה (הסטטוס שלה אינו מסומן סגור — אותה הגדרה כמו בכל מקום), והוותיקה באתר קובעת.
+--   • סוג השירות — מה שהכרטיס מציג: COALESCE(agreement, plan) מ-site_service_links, שבו למכפיל גובר לוח המכפילים.
+--   • "רובוטי" = אתר עם בקר (monitored), "מכפיל" = בלי בקר (גם סוטפין), כמו אריח "מכפילים גלויים".
+
+-- שניות שירות בין שני רגעים לפי סוג השירות (basic/ext/vip), בשעון ישראל. סוג אחר או NULL — 0 (אין חלונות).
+CREATE OR REPLACE FUNCTION app.service_seconds(p_kind text, p_from timestamptz, p_to timestamptz)
+RETURNS numeric
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(sum(EXTRACT(EPOCH FROM w.ends_at - w.starts_at)), 0)
+    FROM app.service_windows(p_kind, p_from, p_to) w
+   WHERE p_from < p_to
+$$;
+REVOKE ALL ON FUNCTION app.service_seconds(text, timestamptz, timestamptz) FROM PUBLIC;
+
+-- השלב: 0..4. רובוטי — שלב לכל שעת שירות; מכפיל — לכל 24 שעות שירות. טהורה.
+CREATE OR REPLACE FUNCTION app.call_age_level(p_service_secs numeric, p_monitored boolean)
+RETURNS integer
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT LEAST(4, floor(GREATEST(COALESCE(p_service_secs, 0), 0)
+                        / CASE WHEN p_monitored IS FALSE THEN 86400 ELSE 3600 END))::int
+$$;
+REVOKE ALL ON FUNCTION app.call_age_level(numeric, boolean) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION public.service_calls_board(p_hours integer DEFAULT 24)
 RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
@@ -476,16 +507,35 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
     SELECT c.site_id,
            count(*) FILTER (WHERE c.open)::int AS open,
            count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since)::int AS recent,
-           to_char(min(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz))
-                     FILTER (WHERE c.open) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS oldest_open
+           min(COALESCE(app.wizenet_ts(c.payload ->> 'opened_at'), c.received_at::timestamptz))
+             FILTER (WHERE c.open) AS oldest_ts
       FROM cur c, w
      WHERE c.site_id IS NOT NULL
        AND (c.open OR COALESCE(c.changed_at, c.received_at) > w.since)
      GROUP BY c.site_id
+  ),
+  -- סוג השירות רק לאתרים עם קריאה פתוחה (site_service_links סורקת את שני הלוחות)
+  kinds AS MATERIALIZED (
+    SELECT l.site_id, COALESCE(l.agreement, l.plan) AS kind
+      FROM public.site_service_links() l
+     WHERE EXISTS (SELECT 1 FROM sites s WHERE s.site_id = l.site_id AND s.oldest_ts IS NOT NULL)
+  ),
+  aged AS (
+    SELECT s.*,
+           to_char(s.oldest_ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS oldest_open,
+           CASE WHEN s.oldest_ts IS NULL THEN 0
+                ELSE app.service_seconds(k.kind, s.oldest_ts, now()) END AS secs,
+           st.monitored
+      FROM sites s
+      JOIN public.sites st ON st.id = s.site_id
+      LEFT JOIN kinds k ON k.site_id = s.site_id
   )
   SELECT jsonb_build_object(
-    'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object('site_id', s.site_id, 'open', s.open, 'recent', s.recent, 'oldest_open', s.oldest_open)
-                                        ORDER BY s.site_id) FROM sites s), '[]'::jsonb),
+    -- ⚠️ age / age_hours נוספו (19/10/2026); site_id/open/recent/oldest_open — בדיוק כמו service_call_counts (S16)
+    'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object('site_id', a.site_id, 'open', a.open, 'recent', a.recent, 'oldest_open', a.oldest_open,
+                                                           'age', app.call_age_level(a.secs, a.monitored),
+                                                           'age_hours', round(a.secs / 3600, 1))
+                                        ORDER BY a.site_id) FROM aged a), '[]'::jsonb),
     'summary', (SELECT jsonb_build_object(
                   'total', (count(*) FILTER (WHERE COALESCE(c.changed_at, c.received_at) > w.since))::int,
                   'open',  (count(*) FILTER (WHERE c.open))::int)

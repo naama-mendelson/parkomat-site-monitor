@@ -20,9 +20,9 @@ test("countsBySite — לפי site_id, מחבר שורות, מתעלם משור�
   const { countsBySite } = await import(U);
   assert.deepEqual(countsBySite([{ site_id: 7, open: 2, recent: 2 }, { site_id: 9, open: "1", recent: "3" },
     { site_id: null, open: 5, recent: 5 }, { site_id: 7, open: 1, recent: 4 }]),
-    { 7: { open: 3, recent: 6, oldestOpen: null }, 9: { open: 1, recent: 3, oldestOpen: null } });
+    { 7: { open: 3, recent: 6, oldestOpen: null, age: 0, ageHours: 0 }, 9: { open: 1, recent: 3, oldestOpen: null, age: 0, ageHours: 0 } });
   // ⚠️ מסד ישן אינו מחזיר recent/oldest_open — הכרטיס חוזר להתנהגות הקודמת ולא נשבר
-  assert.deepEqual(countsBySite([{ site_id: 7, open: 2 }]), { 7: { open: 2, recent: 0, oldestOpen: null } });
+  assert.deepEqual(countsBySite([{ site_id: 7, open: 2 }]), { 7: { open: 2, recent: 0, oldestOpen: null, age: 0, ageHours: 0 } });
   // ⚠️ הסטופר מתחיל מהוותיקה ביותר, גם כששתי שורות הגיעו לאותו אתר
   assert.equal(countsBySite([{ site_id: 7, open: 1, oldest_open: "2026-10-14T09:00:00Z" },
     { site_id: 7, open: 1, oldest_open: "2026-10-14T05:00:00Z" }])[7].oldestOpen, "2026-10-14T05:00:00Z");
@@ -149,4 +149,33 @@ test("קריאות פתוחות בכותרת (18/10/2026): לא לחוץ כבר�
   const bySite = { 1: { open: 2 }, 2: { open: 0, recent: 1 }, 9: { open: 4 } };   // 9 — לא בלוח
   assert.equal(countSitesWithOpenCalls(sites, bySite), 1);
   assert.equal(countSitesWithOpenCalls([], null), 0);
+});
+
+// ============================================================
+// החמרה של קריאה פתוחה (19/10/2026) — השלב מה-SQL, כאן רק התרגום
+// ============================================================
+test("⚠️ החמרה: השלב מגיע מהמסד; הגבוה מבין השורות; ערך שבור — 0; לבן (0) בלי מחלקה", async () => {
+  const { countsBySite, callAge, callAgeClass, callAgeText, CALL_AGE_MAX, CALL_AGE_LABEL } = await import(U);
+  assert.equal(CALL_AGE_MAX, 4);
+  assert.deepEqual(CALL_AGE_LABEL.slice(1), ["צהוב", "כתום", "אדום", "שחור"]);
+  const by = countsBySite([{ site_id: 7, open: 1, age: 3, age_hours: 3.2 }, { site_id: 7, open: 1, age: 1, age_hours: 1.5 }, { site_id: 9, open: 1 }]);   // הגבוה ראשון — כדי ש"האחרונה קובעת" לא תעבור במקרה
+  assert.equal(by[7].age, 3, "הגבוה");
+  assert.equal(by[7].ageHours, 3.2);
+  assert.equal(by[9].age, 0, "מסד ישן בלי age — בלי צבע");
+  for (const [v, want] of [[2, 2], ["3", 3], [9, 4], [-1, 0], [null, 0], [undefined, 0], ["x", 0], [2.9, 2]]) assert.equal(callAge(v), want, String(v));
+  assert.equal(callAgeClass(0), "");
+  assert.equal(callAgeClass(1), " call-age-1");
+  assert.equal(callAgeClass(4), " call-age-4");
+  assert.equal(callAgeClass(7), " call-age-4");
+  assert.equal(callAgeText({ open: 1, ageHours: 3.2 }), "פתוחה 3.2 שעות שירות");
+  assert.equal(callAgeText({ open: 1, ageHours: 2 }), "פתוחה 2 שעות שירות");
+  assert.equal(callAgeText({ open: 1, ageHours: 37.6 }), "פתוחה 38 שעות שירות");
+  assert.equal(callAgeText({ open: 1, ageHours: 0 }), "לא עברו שעות שירות מאז שנפתחה");
+  assert.equal(callAgeText({ open: 0, ageHours: 5 }), "", "בלי פתוחה — בלי טקסט");
+});
+
+test("⚠️ החמרה בכרטיס: רק כש'קריאות פתוחות' לחוץ, ובשלושת סוגי הכרטיס", () => {
+  const src = require("node:fs").readFileSync(path.join(__dirname, "../../dashboard/src/components/SiteCard/SiteCard.jsx"), "utf8");
+  assert.match(src, /const ageCls = markOpen \? callAgeClass\(/, "הצבע אינו מותנה ב-markOpen (הלחיצה על האריח)");
+  assert.equal((src.match(/has-open-call" : ""\}\$\{ageCls\}/g) || []).length, 3, "לא בכל שלושת הכרטיסים (מכווץ, פרוש, ללא בקר)");
 });

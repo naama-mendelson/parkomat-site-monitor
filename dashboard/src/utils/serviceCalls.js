@@ -28,16 +28,42 @@ export function countsBySite(rows) {
   const out = {};
   for (const r of rows ?? []) {
     if (r?.site_id == null) continue;
-    const cur = out[r.site_id] ?? { open: 0, recent: 0, oldestOpen: null };
+    const cur = out[r.site_id] ?? { open: 0, recent: 0, oldestOpen: null, age: 0, ageHours: 0 };
     // ⚠️ הוותיק מכל השורות של אותו אתר — זמן אמיתי (UTC) שה-SQL כבר המיר משעון ויזנט
     const o = r.oldest_open || null;
     out[r.site_id] = {
       open: cur.open + (Number(r.open) || 0),
       recent: cur.recent + (Number(r.recent) || 0),
       oldestOpen: !o ? cur.oldestOpen : (!cur.oldestOpen || o < cur.oldestOpen ? o : cur.oldestOpen),
+      // החמרה (19/10/2026) — נקבעת ב-SQL (app.call_age_level); מסד ישן בלי השדה — 0, כלומר בלי צבע
+      age: Math.max(cur.age, callAge(r.age)),
+      ageHours: Math.max(cur.ageHours, Number(r.age_hours) || 0),
     };
   }
   return out;
+}
+
+// ============================================================
+// החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
+// ============================================================
+// בעלת המוצר: "צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור" — מכפיל כל 24 שעות שירות,
+// רובוטי כל שעת שירות, וזמן מחוץ לשעות השירות לא נספר. השלב נקבע במסד (service_calls_board → age); כאן רק התרגום.
+// הצבע מוצג רק כש"קריאות פתוחות" לחוץ (SiteCard, markOpen) — ההחלטה שלה.
+export const CALL_AGE_MAX = 4;
+export const CALL_AGE_LABEL = ["", "צהוב", "כתום", "אדום", "שחור"];
+/** שלב תקין 0..4 מכל ערך (מחרוזת, null, מספר מחוץ לטווח) */
+export function callAge(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? Math.min(CALL_AGE_MAX, Math.max(0, n)) : 0;
+}
+/** המחלקה על הכרטיס — רק משלב 1 (לבן = הכרטיס הרגיל) */
+export const callAgeClass = (age) => (callAge(age) > 0 ? ` call-age-${callAge(age)}` : "");
+/** לתיאור הנגיש ולמשיכת העכבר: כמה שעות שירות הקריאה הוותיקה פתוחה */
+export function callAgeText(counts) {
+  const h = Number(counts?.ageHours) || 0;
+  if (!(counts?.open > 0)) return "";
+  if (h <= 0) return "לא עברו שעות שירות מאז שנפתחה";
+  return `פתוחה ${h < 10 ? h.toFixed(1).replace(/[.]0$/, "") : Math.round(h)} שעות שירות`;
 }
 
 // ============================================================

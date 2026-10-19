@@ -28,20 +28,43 @@
    ⚠️ פעימה ולא הבהוב קשה: מצמוץ חד הוא מתיש על מסך קיר שדולק כל היום, והנחיות הנגישות מזהירות
    מהבהוב מהיר. כאן 1.8 שניות הלוך-חזור — נתפס בפינת העין, ולא מפריע לקרוא את הכרטיס.
    ⚠️ ומכבדים prefers-reduced-motion: מי שביקש בלי תנועה מקבל מסגרת קבועה במקום פעימה. */
+/* ⚠️ בלי הבהוב מ-19/10/2026 (בעלת המוצר, על הלוח עם "קריאות פתוחות" לחוץ: "תפסיק את ההיבהוב"). עד אז — פעימה של 1.8
+   שניות. עכשיו מסגרת קבועה, אותה שהוצגה עד אז רק למי שביקש "בלי תנועה"; הצבע לפי שלב ההחמרה (--call-ring). */
 .site-card.has-open-call {
-  border-color: var(--accent);
-  animation: callPulse 1.8s ease-in-out infinite;
+  border-color: var(--call-ring, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--call-ring, var(--accent)) 34%, transparent);
 }
-@keyframes callPulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
-  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 38%, transparent); }
+
+/* ============================================================
+   החמרה של קריאה פתוחה שלא טופלה (19/10/2026)
+   ============================================================
+   בעלת המוצר: "צבע הכרטיס מתחיל מלבן ולאט לאט מחמיר בצבעי הרמזור עד שיכול להגיע לשחור". השלב (1–4) נקבע במסד
+   לפי שעות השירות מאז הקריאה הוותיקה; שלב 0 הוא הכרטיס הרגיל. גוון על כל הכרטיס, מסגרת ופעימה בצבע השלב. פס צבע
+   המצב (border-inline-start) לא משתנה — הסטטוס של המכונה נשאר קריא.
+   ⚠️ שחור — מחליפים את המשתנים בתוך הכרטיס, וכל מה שבתוכו (טקסט, תגים, גלולות) מתהפך לבהיר בלי לטפל ברכיב-רכיב. */
+.site-card.call-age-1 { --call-ring: var(--call-age-1); background: color-mix(in srgb, var(--call-age-1) 20%, var(--bg-card)); }
+.site-card.call-age-2 { --call-ring: var(--call-age-2); background: color-mix(in srgb, var(--call-age-2) 22%, var(--bg-card)); }
+.site-card.call-age-3 { --call-ring: var(--call-age-3); background: color-mix(in srgb, var(--call-age-3) 24%, var(--bg-card)); }
+.site-card.call-age-1:hover { background: color-mix(in srgb, var(--call-age-1) 26%, var(--bg-hover)); }
+.site-card.call-age-2:hover { background: color-mix(in srgb, var(--call-age-2) 28%, var(--bg-hover)); }
+.site-card.call-age-3:hover { background: color-mix(in srgb, var(--call-age-3) 30%, var(--bg-hover)); }
+.site-card.call-age-4 {
+  --bg-card: #050505;
+  --bg-hover: #141414;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --border-color: #3f3f46;
+  /* צבע המותג הכחול-כהה נבלע על שחור (גלולת הקריאות והסטופר) — גוון בהיר שלו בתוך הכרטיס */
+  --accent: #a9c2f5;
+  --accent-soft: #c9d8f8;
+  --call-ring: var(--call-age-4-frame);
+  background: var(--bg-card);
+  color: var(--text-primary);
 }
-@media (prefers-reduced-motion: reduce) {
-  .site-card.has-open-call {
-    animation: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent);
-  }
-}
+.site-card.call-age-4:hover { background: var(--bg-hover); }
+/* ...והכפתור הראשי, שרקעו בצבע המותג — טקסט כהה על הגוון הבהיר */
+.site-card.call-age-4 .exp-open { color: #0b1530; }
 
 /* אתר VIP — מסגרת מודגשת */
 .site-card.is-vip {
