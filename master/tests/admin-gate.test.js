@@ -133,12 +133,16 @@ test("⚠️ במצב ישיר ההרשאה היא תפקיד, ולא הקוד �
   // שנפתח ומדלג על הקוד בפעם הבאה. state שמת עם פירוק הרכיב הוא כאן
   // התנהגות **נכונה** ולא באג — ההפך מהתכנון הקודם, שבו "נעל" היה כפתור
   // וההיזכרות הייתה הדרישה.
-  assert.match(direct, /unlocked:\s*isManager\s*&&\s*\w+/,
+  assert.match(direct, /unlocked:\s*isManager\s*&&\s*[(\w]/,
     "unlocked בענף הישיר אינו דורש אישור נוסף מעל התפקיד");
+  // ⚠️ עד 19/10/2026 כאן נדרש שלא יישמר דבר בין פתיחות ("קוד בכל פתיחה"). בעלת המוצר הפכה את זה: "שזה יחזיק את הקוד
+  // נגיד לפחות לכחצי שעה". הזיכרון חי ב-adminCodeDirect.js בלבד (הבדיקה הבאה), וה-hook עצמו לא נוגע באחסון.
   assert.ok(
     !/sessionStorage|localStorage/.test(src),
-    "הנעילה הישירה נשמרת בין פתיחות — הדרישה היא קוד בכל פתיחה",
+    "useAdmin ניגש לאחסון בעצמו — הזיכרון של חצי השעה הוא ב-adminCodeDirect.js בלבד",
   );
+  assert.match(direct, /unlocked:\s*isManager\s*&&\s*[(]\s*codeOkThisOpen\s*[|][|]\s*remembered\s*[)]/,
+    "unlocked בענף הישיר אינו 'אושר בפתיחה הזו או בחצי השעה האחרונה'");
 
   // ⚠️ "אין בכלל אופציה נעל": הפעולה קיימת בחוזה כדי שהמסך לא ייפול על
   // קריאה חסרה, אבל היא חייבת להיות ריקה — כפתור שנועל מיותר כשממילא
@@ -151,6 +155,57 @@ test("⚠️ במצב ישיר ההרשאה היא תפקיד, ולא הקוד �
   const rawDirect = rawHook.slice(rawHook.indexOf("if (useDirect)"));
   assert.match(rawDirect.slice(0, 600), /lock:\s*\(\)\s*=>\s*\{\s*\}/,
     "יש עדיין פעולת נעילה אמיתית — הדרישה היא שלא יהיה כפתור נעל");
+});
+
+// ============================================================
+// ⚠️ חצי שעה בלי להקיש שוב (19/10/2026) — התנהגות, לא רק טקסט
+// ============================================================
+// הפונקציות נשלפות מהקובץ ומורצות מול sessionStorage מדומה: הקובץ מייבא את supabase, ולכן אי אפשר לייבא אותו כאן.
+// נבדק: חצי שעה בדיוק (הגבול הוא "לפני", לא "עד וכולל"), משתמש אחר אינו נהנה מהאישור, נשמר רק מועד התפוגה ולא הקוד,
+// ואחסון חסום (מצב פרטי) נכשל בשקט ונועל — לא פותח.
+function loadRemember(storage) {
+  const raw = fs.readFileSync(path.join(SRC, "services/adminCodeDirect.js"), "utf8");
+  const from = raw.indexOf("export const ADMIN_CODE_REMEMBER_MS");
+  const fnStart = raw.indexOf("export function rememberAdminCode");
+  const to = raw.indexOf("\n}", fnStart) + 2;
+  assert.ok(from > 0 && fnStart > from && to > fnStart, "לא נמצאו פונקציות הזיכרון ב-adminCodeDirect.js");
+  const body = raw.slice(from, to).replace(/export /g, "");
+  return new Function("sessionStorage",
+    body + "; return { ADMIN_CODE_REMEMBER_MS, adminCodeStillValid, rememberAdminCode };")(storage);
+}
+function fakeStorage() {
+  const m = new Map();
+  return { m, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };
+}
+
+test("⚠️ קוד המנהל נזכר חצי שעה, לכל משתמש בנפרד, ונשמר רק מועד התפוגה", () => {
+  const st = fakeStorage();
+  const r = loadRemember(st);
+  const MIN = 60e3, t0 = 1_800_000_000_000;
+  assert.equal(r.ADMIN_CODE_REMEMBER_MS, 30 * MIN);
+  assert.equal(r.adminCodeStillValid("u1", t0), false, "לפני אישור — נעול");
+  r.rememberAdminCode("u1", t0);
+  assert.equal(r.adminCodeStillValid("u1", t0 + 29 * MIN), true);
+  assert.equal(r.adminCodeStillValid("u1", t0 + 30 * MIN - 1), true);
+  assert.equal(r.adminCodeStillValid("u1", t0 + 30 * MIN), false, "בדיוק חצי שעה — כבר פג");
+  assert.equal(r.adminCodeStillValid("u2", t0 + MIN), false, "משתמש אחר על אותו מסך — נעול");
+  // רק מועד, ובמפתח של המשתמש
+  assert.deepEqual([...st.m.keys()], ["parkomat.adminCodeOkUntil:u1"]);
+  assert.equal(st.m.get("parkomat.adminCodeOkUntil:u1"), String(t0 + 30 * MIN));
+  // חלון נע: אישור נוסף מאריך
+  r.rememberAdminCode("u1", t0 + 20 * MIN);
+  assert.equal(r.adminCodeStillValid("u1", t0 + 45 * MIN), true);
+  // אחסון חסום — לא זורק, ונועל
+  const broken = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  const b = loadRemember(broken);
+  assert.doesNotThrow(() => b.rememberAdminCode("u1", t0));
+  assert.equal(b.adminCodeStillValid("u1", t0), false);
+  // ⚠️ sessionStorage ולא localStorage: סגירת הלשונית נועלת
+  const raw = fs.readFileSync(path.join(SRC, "services/adminCodeDirect.js"), "utf8");
+  const from = raw.indexOf("export const ADMIN_CODE_REMEMBER_MS");
+  const block = raw.slice(from, raw.indexOf("\n}", raw.indexOf("export function rememberAdminCode")) + 2);
+  assert.ok(/sessionStorage/.test(block) && !/localStorage/.test(block),
+    "הזיכרון אינו ב-sessionStorage — ב-localStorage הוא היה שורד סגירת לשונית");
 });
 
 test("⚠️ מסך הנעילה לא מציע להקליד קוד כשההרשאה לפי תפקיד", () => {

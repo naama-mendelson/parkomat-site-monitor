@@ -100,9 +100,33 @@ test("כמה תקלות חוזרות באתר — הגבוהה ראשונה; א�
   assert.equal(await rf("RFD"), null);
 });
 
+test("⚠️ שני אתרים עם תקלה באותה שנייה בדיוק — כל אחד מקבל את הטקסט שלו", { skip }, async () => {
+  // הטקסט נשלף משורת ההיסטוריה שבה המקטע מתחיל. בלי `h.site_id = es.site_id` השליפה לוקחת את השורה הראשונה באותה שנייה
+  // מכל אתר שהוא. 84 אתרים וחותמות זמן בשניות — זה קורה. (מוטציה שהסירה את התנאי שרדה, 19/10/2026)
+  await site("RFS1");
+  await site("RFS2");
+  for (let i = 0; i < 4; i++) {
+    const at = Date.now() - 10 * DAY + i * 3 * HOUR;
+    for (const [code, text] of [["RFS1", "מעלית - A"], ["RFS2", "שאטל - B"]]) {
+      await q(`INSERT INTO status_history (site_id, status, started_at, ended_at, fault_text) VALUES ($1,'error',$2,$3,$4)`,
+        [S[code], iso(at), iso(at + 10 * 60e3), text]);
+      await q(`INSERT INTO status_history (site_id, status, started_at, ended_at) VALUES ($1,'ready',$2,$3)`,
+        [S[code], iso(at + 10 * 60e3), iso(at + 2 * HOUR)]);
+    }
+  }
+  assert.deepEqual((await rf("RFS1")).map((x) => [x.text, x.n]), [["מעלית - A", 4]]);
+  assert.deepEqual((await rf("RFS2")).map((x) => [x.text, x.n]), [["שאטל - B", 4]]);
+});
+
 test("⚠️ ה-cron שומר בדיוק את מה ש-app.repeat_faults מחזירה; אתר בלי — NULL", { skip }, async () => {
+  // RFE: שלוש תקלות בחלון ורביעית בגיל 35 יום — מחוץ ל-30, בתוך 40. בודק את החלון של ה-cron עצמו (rf_from), שהבדיקות
+  // האחרות עוקפות כשהן קוראות ל-app.repeat_faults ישירות. התקלה של RFB בגיל 40 יום בדיוק לא הבחינה בין 30 ל-40.
+  await site("RFE");
+  await fault("RFE", "מיטה - Q", { daysAgo: 35 });
+  for (let i = 0; i < 3; i++) await fault("RFE", "מיטה - Q");
+  assert.equal(await rf("RFE"), null);
   await q(`SELECT app.refresh_site_card_metrics()`);
-  for (const code of ["RFA", "RFB", "RFC", "RFD"]) {
+  for (const code of ["RFA", "RFB", "RFC", "RFD", "RFE", "RFS1", "RFS2"]) {
     const [row] = await q(`SELECT repeat_faults::text AS j FROM site_card_metrics WHERE site_id = $1`, [S[code]]);
     const want = await rf(code);
     if (want == null) assert.equal(row.j, null, code);

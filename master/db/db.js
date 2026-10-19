@@ -574,6 +574,14 @@ function init() {
         -- כל מדד מסנן על העמודה הזו; בלי אינדקס חלקי כל ספירה סורקת את הטבלה.
         CREATE INDEX IF NOT EXISTS idx_operations_superseded
           ON operations (site_id, occurred_at) WHERE superseded_by IS NULL;
+
+        -- ⚠️ והמפתח הזר עצמו צריך אינדקס על superseded_by. על כל פעולה שנמחקת Postgres בודק מי מצביע
+        -- עליה (ON DELETE SET NULL), ובלי אינדקס זו סריקה של כל הטבלה לכל שורה. נמדד 19/10/2026: 10ms
+        -- לשורה על 50k שורות. הניקוי של 12 חודשים מוחק חודש שלם ב-1 לכל חודש (~40k בקצב של היום) על
+        -- טבלה של ~חצי מיליון: כשעה של סריקה רצופה במחשוב Micro. חלקי, כי רק ~2.5% מהשורות מצביעות.
+        -- tests/operations-fk-index.test.js
+        CREATE INDEX IF NOT EXISTS idx_operations_superseded_by
+          ON operations (superseded_by) WHERE superseded_by IS NOT NULL;
       `);
 
       // ============================================================

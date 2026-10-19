@@ -3129,19 +3129,69 @@ From the field, forwarded by the owner: *"אם ישנה שורת תקלה שחו
   ×n.
 - Orange tint and frame, ink `--repeat-ink` per theme, weight 700.
 
-**Tests:** `tests/repeat-faults.test.js` (6, PGlite: the key, more than 3 versus exactly 3, the exclusions, no text, the
-30-day edge, maintenance, order, what the cron stores, re-applying the file) and `card-metrics.test.js` 15/15. Browser:
-`e2e/probe-repeat.mjs` 14/14 (mock `?repeat=1`).
+**Tests:** `tests/repeat-faults.test.js` (7, PGlite: the key, more than 3 versus exactly 3, the exclusions, no text, the
+30-day edge, maintenance, order, what the cron stores, re-applying the file, two sites with a fault in the same second) and
+`card-metrics.test.js` 15/15. Browser: `e2e/probe-repeat.mjs` 14/14 (mock `?repeat=1`). **Mutations (19/10/2026, isolated
+copy): 11 of 11 SQL caught**, after two cases were added: the cron's own window (a fault at 35 days; the one at exactly 40
+days could not tell 30 from 40) and the same-second case (without `h.site_id = es.site_id` one site's text lands on
+another's fault).
 
-⚠️ **NOT APPLIED — the owner is deciding the window** (18/10/2026, asked whether to apply: *"אני רוצה שפשוט כל יום תשמור
-את כל סוגי התקלה לכל אתר ותמחוק את זה אחרי זה, או אולי את ה-12 שעות האחרונות כל פעם... או 24 שעות אחרונות, צריך
-לחשוב"*). Measured the same day, same rule, sites flagged: **12 h — 0, 24 h — 0, 7 days — 5, 30 days — 19**. Nothing new
-is stored either way: the count reads the existing history, and the table keeps one overwritten row per site. The window
-is `rf_from` in `refresh_site_card_metrics`. Do not apply before she answers.
+⚠️ **The window is still the owner's question** (18/10/2026: *"אני רוצה שפשוט כל יום תשמור את כל סוגי התקלה לכל אתר
+ותמחוק את זה אחרי זה, או אולי את ה-12 שעות האחרונות כל פעם... או 24 שעות אחרונות, צריך לחשוב"*). Measured the same day,
+same rule, sites flagged: **12 h — 0, 24 h — 0, 7 days — 5, 30 days — 19**. Nothing new is stored either way: the count
+reads the existing history, and the table keeps one overwritten row per site. The window is `rf_from` in
+`refresh_site_card_metrics`.
+⚠️ **And yet it is LIVE, with 30 days — measured 19/10/2026 08:40:** the three functions and the column exist in
+production, the cron fills them, 20 sites are flagged, and the dry run no longer lists the four gaps. It was **not**
+applied from the session that built it (its transcript has two dry runs, both "4 פערים", and no `--apply`); someone
+applied it after the second one. pg_stat_statements keeps no trace of the DDL. Who and why is the owner's to say.
+
+⚠️ **Fault texts cut by two letters at three sites** (seen in the same data): at 1377, 1384 and 2431 every text is missing
+its first two letters, consistently ("טה 25" for "מיטה 25", "לית" for "מעלית", "הל חניון", "בט שאטל"). The agent reads one
+character per register from `FaultTextRegister` (default 2), so this fits a site config of 4, or a PLC that writes from
+0. The repeat count is unaffected (every occurrence is cut the same way); the text on the card is not, and neither,
+possibly, is FixFlow text matching. Check the register screen on those site PCs.
 
 ⚠️ **Deploy order:** the dashboard is safe before the SQL (it shows nothing until the column is filled). The SQL dry run
 shows 4 gaps: the three functions and the body of `refresh_site_card_metrics`. The new column does not appear in the
 dry run, but `--apply` creates it.
+
+## Checks on the morning of 19/10/2026: an unindexed foreign key that would have cost an hour a month
+
+The Supabase advisors are refused through the connector ("no permission"), so the same lints were run read-only by hand.
+Clean: no public table without RLS, no grant on a table without RLS, no `SECURITY DEFINER` function anon can execute,
+no definer view, no RLS policy re-evaluating `auth.*` per row. The 24 tables with RLS and no policy are the closed
+tables (compliance, tasks, settings, Wizenet) — by design. ⚠️ The 60 functions flagged "mutable search_path" are all
+**invoker** functions, and must stay that way where it matters: `SET search_path` on a SQL function stops inlining
+(`app.served_operations` — 64 ms inlined, 661 ms not). `pg_net` in `public` is Supabase's own.
+
+- **`operations.superseded_by` had no index** (`ON DELETE SET NULL` to `operations(id)`). On every deleted operation
+  Postgres runs `SELECT 1 FROM ONLY operations x WHERE superseded_by = $1 FOR KEY SHARE`, which was a full scan: measured
+  10 ms per row on 50k rows. `app.cleanup_old_data` cuts on a **month** boundary, so from 01/08/2027 it deletes a whole
+  month on the 1st (~40k rows at today's rate) from a ~half-million-row table: ~100 ms × 40k ≈ an hour of scanning on
+  Micro, the burstable CPU that took Auth, PostgREST and Supavisor down together on 07/10. Locally, 2,900 deletions from
+  100k rows: **33.5 s without, 27 ms with**. Fixed with a partial index, `idx_operations_superseded_by ON operations
+  (superseded_by) WHERE superseded_by IS NOT NULL` (1,241 of 50,069 rows), in `db.js` beside the FK.
+  `tests/operations-fk-index.test.js` reads the **generic** plan of that exact query (RI uses a prepared statement) and
+  shows it is a seq scan without the index. ⚠️ PGlite starts with `enable_seqscan=off` (source: command line); a plan
+  test must turn it on, or "uses the index" passes by force rather than by cost.
+- **`idx_suppressed_site_time` duplicated `idx_suppressed_dedup`** (same columns; the other one is unique) — dropped in
+  `schema.postgres.sql` with `DROP INDEX IF EXISTS`, since deleting a `CREATE IF NOT EXISTS` line drops nothing.
+- ⚠️ **Not applied:** the dry run shows exactly these two gaps. Not urgent (the first month-sized delete is 01/08/2027).
+- **`admin-gate.test.js` was red on `main` since 5cc5cd7**: it still asserted "a code on every open, nothing stored" —
+  the decision the owner reversed that day. It now pins the new one, and a new test runs `adminCodeStillValid` /
+  `rememberAdminCode` against a fake `sessionStorage` (exactly 30 minutes, per user, only the expiry stored, blocked
+  storage locks). The browser probe never checked the 30 minutes themselves. Lesson: run the full suite after a change
+  that reverses a product decision; the old decision usually has a test.
+- **Mutations of the 18–19/10 rules (isolated copy, `scratchpad/mut1910`): 43 of 44 caught**; the survivor (unlocking
+  without the explicit `rememberAdminCode`) is equivalent, because the effect remembers as soon as `codeOkThisOpen` is
+  set. Three were real gaps and got cases: "כל האתרים" in the tasks filter counted against a site with no counts row,
+  plus the two repeat-fault cases above.
+- **Keyboard:** `e2e/probe-keyboard-tiles.mjs` 12/12: Tab reaches the tasks, multipliers and open-calls tiles, all 24
+  header stops show a focus mark in both themes, and the tiles work with Enter, Space, the arrows and Esc. ⚠️ Read focus
+  styles after the transition (`.search-bar` fades its border in 0.15 s), or the search box reads as unmarked.
+- **Load, 10 minutes:** 42 s of DB time (7% of one core), as the evening before. The old pair of call-count RPCs is gone
+  from every screen. The top is `site_globals` (27 × 610 ms) — the 5-minute live load of every visible screen.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

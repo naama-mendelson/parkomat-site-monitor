@@ -261,9 +261,10 @@ CREATE TABLE IF NOT EXISTS suppressed_faults (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_suppressed_dedup
   ON suppressed_faults(site_id, occurred_at);
 
--- לשליפת הטווח בלוג הפעילות.
-CREATE INDEX IF NOT EXISTS idx_suppressed_site_time
-  ON suppressed_faults(site_id, occurred_at);
+-- ⚠️ היה כאן idx_suppressed_site_time על אותן עמודות בדיוק, "לשליפת הטווח בלוג הפעילות". הייחודי שמעל
+-- משרת את אותן שאילתות, והכפול רק הוסיף כתיבה לכל תקלה מושתקת (נמצא 19/10/2026). DROP ולא מחיקת השורה:
+-- CREATE IF NOT EXISTS שנמחק אינו מוחק אינדקס שכבר קיים בייצור.
+DROP INDEX IF EXISTS idx_suppressed_site_time;
 
 -- ============================================================
 -- app_users — טבלת המשתמשים **שלנו**

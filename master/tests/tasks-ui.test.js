@@ -130,14 +130,15 @@ test("סינון משימות: ערך מהאחסון — מוכר נשאר, סו
 });
 
 test("סינון משימות: ספירה לכל שורה מתוך האתרים שהלוח מראה", () => {
-  const sites = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+  // אתר 5 — בלוח ובלי רשומת ספירה בכלל. בלעדיו 4 אתרים בלוח ו-4 מפתחות במפה נתנו אותו מספר, ומוטציה שספרה את המפה שרדה (19/10/2026)
+  const sites = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }];
   const bySite = {
     1: { open: 2, byKind: { technical: 1, call_center: 1 } },
     2: { open: 1, byKind: { none: 1 } },
     3: { open: 0, byKind: {} },
     9: { open: 5, byKind: { customer: 5 } },   // אתר שאינו בלוח (למשל מכפיל מוסתר) — לא נספר
   };
-  assert.deepEqual(tasksFilterCounts(sites, bySite), { all: 4, open: 2, customer: 0, technical: 1, call_center: 1 });
+  assert.deepEqual(tasksFilterCounts(sites, bySite), { all: 5, open: 2, customer: 0, technical: 1, call_center: 1 });
   assert.deepEqual(tasksFilterCounts([], null), { all: 0, open: 0, customer: 0, technical: 0, call_center: 0 });
 });
 
