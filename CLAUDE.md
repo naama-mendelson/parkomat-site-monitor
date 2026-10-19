@@ -3177,7 +3177,7 @@ tables (compliance, tasks, settings, Wizenet) — by design. ⚠️ The 60 funct
   test must turn it on, or "uses the index" passes by force rather than by cost.
 - **`idx_suppressed_site_time` duplicated `idx_suppressed_dedup`** (same columns; the other one is unique) — dropped in
   `schema.postgres.sql` with `DROP INDEX IF EXISTS`, since deleting a `CREATE IF NOT EXISTS` line drops nothing.
-- ⚠️ **Not applied:** the dry run shows exactly these two gaps. Not urgent (the first month-sized delete is 01/08/2027).
+- ✅ **Applied 19/10/2026** together with the call aging (see *An open call that is not handled…*), at the owner's word.
 - **`admin-gate.test.js` was red on `main` since 5cc5cd7**: it still asserted "a code on every open, nothing stored" —
   the decision the owner reversed that day. It now pins the new one, and a new test runs `adminCodeStillValid` /
   `rememberAdminCode` against a fake `sessionStorage` (exactly 30 minutes, per user, only the expiry stored, blocked
@@ -3299,6 +3299,10 @@ no service hours stays white; the colour shows **only while "קריאות פתו
   own browser.
 - ⚠️ **Deploy order: SQL first is not required** — the dashboard shows nothing until `age` arrives. The dry run shows
   exactly five gaps: the two functions, the body of `service_calls_board`, and this morning's two index changes.
+  ✅ **Applied 19/10/2026 at the owner's word ("כן, להחיל הכול")**: 10 seconds, then "הייצור זהה לקוד" — the aging and
+  the two index changes together. Checked right after: 2438 and 3468 black, 1225 red (3.3 service hours), 1191 yellow,
+  the rest white; `idx_operations_superseded_by` present, `idx_suppressed_site_time` gone; 81 agents beating, events
+  flowing. Dashboard live as `index-CVQappDw.js` (998d47b).
 - ⚠️ **No more blinking (the same day).** The owner, looking at the live board with the tile pressed: *"תפסיק את
   ההיבהוב"*. `.has-open-call` no longer animates (`callPulse` is gone); it is a steady frame — the style that until then
   only `prefers-reduced-motion` got — in the level's colour. This reverses the 14/10 *"היא צריכה להבהב על כל הכרטיס"*.
