@@ -347,24 +347,32 @@ function App() {
   // ⚠️ התאוששות שהגיעה פחות מ-5 דקות אחרי הטעינה המלאה האחרונה **נדחית, לא נזרקת** (הסקירה של 19/10/2026): אירוע
   // ביטול תחזוקה שאבד בניתוק אינו משנה את sites.status, והבדיקה הזולה לא תתפוס אותו — בלי הדחייה הכרטיס היה נשאר
   // "בתחזוקה" עד סוף החלון המקורי. נרשמת גם כשהמסך מוסתר או כשבדיקה רצה, ומתבצעת בטיימר כשמגיע הזמן.
+  // ⚠️ **רק חידוש ערוץ נדחה** (defer), לא חזרה ללשונית (הסקירה השנייה של 19/10/2026): חזרה ללשונית רשמה התאוששות
+  // נדחית אחרי שטעינת הכניסה כבר רצה, וכל מעבר לשונית הוליד טעינה מלאה 5 דקות אחר כך — הטעינה המתוזמנת שבעלת המוצר
+  // ביקשה להסיר, בדלת אחורית. אירוע אובד רק כשהערוץ נותק, וחידוש הערוץ הוא מה שקורא עם defer.
+  // ⚠️ ולכל בדיקה זולה מספר משלה (checkToken): בדיקה שנתקעה וחזרה מאוחר אינה משחררת את הבדיקה שרצה אחריה, ותשובתה
+  // הישנה אינה מפעילה טעינה.
   const checking = useRef(false);
   const checkingSince = useRef(0);
-  const syncNow = useCallback(async ({ allowFull = false } = {}) => {
-    if (allowFull) pendingRecover.current = true;
+  const checkToken = useRef(0);
+  const syncNow = useCallback(async ({ allowFull = false, defer = false } = {}) => {
+    if (allowFull && defer) pendingRecover.current = true;
     if (typeof document !== "undefined" && document.hidden) return;
     // ⚠️ בדיקה זולה שנתקעה (רשת שנפלה באמצע, בלי timeout) אינה חוסמת את כל הבדיקות שאחריה לנצח
     if (checking.current && Date.now() - checkingSince.current < 30_000) return;
-    if ((pendingRecover.current || sitesErrorRef.current) && fullReloadDue(lastFullAt.current)) { resync(); return; }
+    if ((allowFull || pendingRecover.current || sitesErrorRef.current) && fullReloadDue(lastFullAt.current)) { resync(); return; }
+    const mine = ++checkToken.current;
     checking.current = true;
     checkingSince.current = Date.now();
     try {
       const fresh = await fetchSiteStatuses();
+      if (mine !== checkToken.current) return;
       if (!statusesMatch(sitesRef.current, fresh)) resync();
     } catch {
       // הבדיקה הזולה נכשלה — לא מנסים שוב מיד (שרת עמוס לא צריך עוד בקשות);
       // הבדיקה הבאה בעוד דקה, והטעינה המלאה תתקן ממילא.
     } finally {
-      checking.current = false;
+      if (mine === checkToken.current) checking.current = false;
     }
   }, [resync]);
   useEffect(() => {
@@ -373,7 +381,8 @@ function App() {
     const id = setInterval(() => { syncNow(); lamps(); }, STATUS_CHECK_EVERY_MS);
     return () => clearInterval(id);
   }, [syncNow, refreshComplianceIfDue]);
-  const onRecover = useCallback(() => { syncNow({ allowFull: true }); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
+  // why: "reconnect" (הערוץ חזר אחרי נתק — אירועים אולי אבדו, ולכן נדחה אם אינה בזמנה) או "visible" (חזרה ללשונית)
+  const onRecover = useCallback((why) => { syncNow({ allowFull: true, defer: why === "reconnect" }); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
 
   useSSE(
     useCallback((data) => {

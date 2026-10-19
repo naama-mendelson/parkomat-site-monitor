@@ -61,15 +61,24 @@ test("⚠️ הטיימר מריץ רק את הבדיקה הזולה — טעי�
   const app = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/App.jsx"), "utf8");
   assert.match(app, /setInterval\(\(\) => \{ syncNow\(\); lamps\(\); \}, STATUS_CHECK_EVERY_MS\)/, "הטיימר אינו קורא ל-syncNow בלי allowFull");
   assert.match(app, /const lamps = unlessHidden\(refreshComplianceIfDue\)/, "הנורות בטיימר אינן דרך refreshComplianceIfDue (ומדלגות על מסך מוסתר)");
-  assert.match(app, /if \(\(pendingRecover\.current \|\| sitesErrorRef\.current\) && fullReloadDue\(lastFullAt\.current\)\)/,
-    "טעינה לפי גיל אינה מותנית בהתאוששות (שנדחתה) או בשגיאה");
-  assert.match(app, /syncNow\(\{ allowFull: true \}\)/, "ההתאוששות אינה מבקשת טעינה מלאה");
+  assert.match(app, /if \(\(allowFull \|\| pendingRecover\.current \|\| sitesErrorRef\.current\) && fullReloadDue\(lastFullAt\.current\)\)/,
+    "טעינה לפי גיל אינה מותנית בהתאוששות, בהתאוששות שנדחתה או בשגיאה");
+  assert.match(app, /syncNow\(\{ allowFull: true, defer: why === "reconnect" \}\)/, "ההתאוששות אינה מבקשת טעינה מלאה, או דוחה גם חזרה ללשונית");
   assert.equal((app.match(/fullReloadDue\(/g) || []).length, 1, "fullReloadDue נקראת ממקום נוסף");
-  // ⚠️ הסקירה של 19/10: התאוששות מוקדמת מדי נדחית ולא נזרקת — נרשמת לפני כל יציאה מוקדמת, ונמחקת בכל טעינה מלאה
-  assert.match(app, /if \(allowFull\) pendingRecover\.current = true;\s*\n\s*if \(typeof document/, "ההתאוששות לא נרשמת לפני היציאות המוקדמות");
+  // ⚠️ הסקירה של 19/10: רק חידוש ערוץ נדחה — נרשם לפני כל יציאה מוקדמת, ונמחק בכל טעינה מלאה. חזרה ללשונית אינה נרשמת:
+  // היא רשמה התאוששות אחרי טעינת הכניסה, וכל מעבר לשונית הוליד טעינה מלאה 5 דקות אחר כך (הסקירה השנייה)
+  assert.match(app, /if \(allowFull && defer\) pendingRecover\.current = true;\s*\n\s*if \(typeof document/, "ההתאוששות לא נרשמת לפני היציאות המוקדמות, או נרשמת גם בלי defer");
   assert.equal((app.match(/lastFullAt\.current = Date\.now\(\); pendingRecover\.current = false;/g) || []).length, 4, "טעינה מלאה שלא מוחקת התאוששות שנדחתה");
   // ⚠️ ומאזין החזרה ללשונית נרשם פעם אחת — לפני של useSSE
   assert.match(app, /enterPageRef\.current\(\);[\s\S]{0,200}\}, \[\]\);/, "מאזין החזרה ללשונית נרשם מחדש (ואז אחרי useSSE)");
+  // ⚠️ בדיקה זולה שחזרה מאוחר אינה משחררת את זו שאחריה ואינה מפעילה טעינה (הסקירה השנייה)
+  assert.match(app, /if \(mine !== checkToken\.current\) return;/, "תשובה של בדיקה ישנה עדיין מפעילה טעינה");
+  assert.match(app, /if \(mine === checkToken\.current\) checking\.current = false;/, "בדיקה ישנה משחררת את הנעילה של החדשה");
+  // useSSE מבדיל בין חידוש ערוץ לחזרה ללשונית
+  const sse = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dashboard/src/hooks/useSSE.js"), "utf8");
+  assert.equal((sse.match(/reconnectRef\.current\?\.\("reconnect"\)/g) || []).length, 2, "חידוש ערוץ אינו מסומן reconnect");
+  assert.equal((sse.match(/reconnectRef\.current\?\.\("visible"\)/g) || []).length, 2, "חזרה ללשונית אינה מסומנת visible");
+  assert.doesNotMatch(sse, /reconnectRef\.current\?\.\(\)/, "קריאה בלי סיבה — תיחשב חזרה ללשונית ולא תידחה");
 });
 
 test("⚠️ תחילת חלון תחזוקה שתוזמן מראש → טעינה מלאה באותה דקה (הסקירה של 19/10)", () => {

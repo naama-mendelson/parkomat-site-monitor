@@ -56,10 +56,10 @@ export function useSSE(onUpdate, onReconnect) {
     if (useDirect) {
       const unsubscribe = subscribeRealtime(
         (data) => callbackRef.current(data),
-        () => reconnectRef.current?.()
+        () => reconnectRef.current?.("reconnect")
       );
       const onVisibleRt = () => {
-        if (document.visibilityState === "visible") reconnectRef.current?.();
+        if (document.visibilityState === "visible") reconnectRef.current?.("visible");
       };
       document.addEventListener("visibilitychange", onVisibleRt);
       return () => {
@@ -129,7 +129,7 @@ export function useSSE(onUpdate, onReconnect) {
         if (!sawDisconnect) return;
         sawDisconnect = false;
         console.info("SSE reconnected — refetching to close the gap.");
-        reconnectRef.current?.();
+        reconnectRef.current?.("reconnect");
       };
 
       source.onerror = () => {
@@ -151,7 +151,7 @@ export function useSSE(onUpdate, onReconnect) {
     // מחשב שנרדם או טאב ברקע: הדפדפן לא תמיד פולט error, ולכן ההסתמכות על
     // onopen לבדה משאירה מסך מיושן בלי שום סימן.
     const onVisible = () => {
-      if (document.visibilityState === "visible") reconnectRef.current?.();
+      if (document.visibilityState === "visible") reconnectRef.current?.("visible");
     };
     document.addEventListener("visibilitychange", onVisible);
 

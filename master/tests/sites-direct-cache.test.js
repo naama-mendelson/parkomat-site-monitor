@@ -78,7 +78,7 @@ test("⚠️ טעינה עם סטטיסטיקות — טבלה אחת, ואף א
   const { fetchSitesDirect } = await load();
   const calls = fake();
   await fetchSitesDirect("x", "y", "z", { withStats: true, withCompliance: true });
-  assert.deepEqual(calls.sort(), ["from:maintenance_windows", "from:site_card_metrics", "from:sites", "gt:maintenance_windows.started_at",
+  assert.deepEqual(calls.sort(), ["from:maintenance_windows", "from:site_card_metrics", "from:sites", "gt:maintenance_windows.expires_at", "gt:maintenance_windows.started_at",
     "is:maintenance_windows.cancelled_at=null", "rpc:site_compliance", "rpc:site_globals", "rpc:site_service_links"]);
   for (const fn of ["site_stats", "site_uptime", "site_uptime_service"]) {
     assert.ok(!calls.includes(`rpc:${fn}`), `${fn} נקראה מהמסך`);
@@ -179,6 +179,7 @@ test("חלון תחזוקה מתוזמן — maintenanceNextStart הוא המו�
   assert.equal(by["2438"].maintenanceNextStart, null);
   assert.ok(calls.includes("is:maintenance_windows.cancelled_at=null"), "רק חלונות שלא בוטלו");
   assert.ok(calls.includes("gt:maintenance_windows.started_at"), "רק חלונות שעוד לא התחילו");
+  assert.ok(calls.includes("gt:maintenance_windows.expires_at"), "גם חלון שהתחיל ועוד לא פג (שעון דפדפן שמקדים את המסד)");
   fake({ maintenance_windows: new Error("boom") });
   const again = await mod.fetchSitesDirect("x", "y", "z", { withStats: false });
   assert.equal(again.length, 2, "כשל בחלונות אינו מפיל את הטעינה");

@@ -109,7 +109,12 @@ export async function fetchSitesDirect(fromIso, toIso = new Date().toISOString()
     // ⚠️ חלונות תחזוקה מתוזמנים שעוד לא התחילו (19/10/2026, הסקירה): אין טעינה חיה מטיימר, ותחילת חלון אינה משנה את
     // sites.status — בלי השעה הזו הכרטיס לא היה עובר ל"בתחזוקה" בתחילת חלון שתוזמן מראש. statusesMatch מבקש טעינה כשהיא
     // מגיעה. אינה קטלנית: כשל — בלי רמז, כמו קודם.
-    supabase.from("maintenance_windows").select("site_id, started_at").is("cancelled_at", null).gt("started_at", new Date().toISOString()),
+    // ⚠️ "עתידי" לפי שעון הדפדפן, והמסד מחליט "פעיל" לפי שעונו (הסקירה השנייה של 19/10): דפדפן שמקדים את המסד היה טוען
+    // ברגע ההתחלה, המסד עוד אומר "לא פעיל", והחלון כבר נפל מהשאילתה — הכרטיס לא היה עובר ל"בתחזוקה". לכן גם חלון
+    // שהתחיל ב-10 הדקות האחרונות ועוד לא פג נשאר כאן; אתר שכבר בתחזוקה — statusesMatch בודק אצלו את הסוף ולא את זה.
+    // המחיר: אם המסד מפגר, טעינה בכל בדיקה זולה עד שהוא מגיע, ולכל היותר 10 דקות.
+    supabase.from("maintenance_windows").select("site_id, started_at").is("cancelled_at", null)
+      .gt("started_at", new Date(Date.now() - 10 * 60_000).toISOString()).gt("expires_at", new Date().toISOString()),
   ]);
 
   // השורות השמורות → אותם ארבעה "תשובות RPC" שהמיפוי למטה קרא תמיד. svc קיים רק

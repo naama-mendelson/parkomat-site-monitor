@@ -3468,6 +3468,30 @@ timer appears (the card pill, the expanded card's button, the calls dialog).
   emptied the board.
 - Checked and left: every service kind in production (vip / ext / basic / none) is one the aging recognises.
 
+**A second independent review (the same evening) found seven more, all fixed:**
+- ⚠️ **Every return to a tab caused a full live load 5 minutes later.** The return ran the page-entry load (which clears
+  `pendingRecover`), then `useSSE`'s recovery set it again, and the minute timer performed it at +5. Switching tabs
+  therefore brought back the timed live load the owner removed. Now `useSSE` passes the reason
+  (`"reconnect"` / `"visible"`). Only a channel reconnect, where events may really have been lost, is deferred
+  (`syncNow({ allowFull, defer })`). A tab return loads at once if due, otherwise only the cheap check. `probe-load` has a
+  new step: 6 quiet minutes after two returns, no full load.
+- **Calls mode from the multipliers board ignored the status filter.** `statusApplies` (Header) and the matching
+  condition in `OperatorView` are now `callsMode || siteKind !== multipliers`.
+- **In calls mode the header counted every site**, about 208, over a board of ~14. `boardSites` is now also filtered to
+  sites with an open call.
+- **The header and the board disagreed until the call counts loaded.** The header's `callsMode` now requires
+  `callCounts`, exactly as `OperatorView` does.
+- **A scheduled window start was missed when the browser's clock is ahead of the database's.** The query now also keeps
+  a window that started within the last 10 minutes and has not expired (`started_at > now − 10 min`,
+  `expires_at > now`).
+- **Tab out of a group left its panel open**, so two panels overlapped. `FilterGroup` closes on a `blur` whose
+  `relatedTarget` is outside it. A click on empty space inside the panel (`relatedTarget` null) does not close it.
+- **A stuck cheap check that finished late released the newer one.** Each check now has a number (`checkToken`); a stale
+  answer neither releases the lock nor triggers a load.
+- Browser: `probe-open-calls` O6 (from the multipliers board, "בתקלה" leaves only the multiplier with a call; the header
+  counts are the board's), `probe-keyboard-tiles` K1c (Tab out closes; an empty-space click keeps it open), 56/56 and
+  18/18. Unit tests 1222/1222.
+
 **Tests:**
 - Unit tests: `multipliers-view.test.js` 7 (`matchesBoardKind`, `repeatTop` / `compareByRepeat`), `site-sync.test.js`
   (window start, the timer structure with `pendingRecover`, `enterPageRef`), `sites-direct-cache.test.js` 9. The fake

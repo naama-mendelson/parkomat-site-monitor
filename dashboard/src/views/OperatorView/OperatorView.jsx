@@ -66,7 +66,8 @@ function OperatorView({
     // אחרת "אין תקשורת" היה מראה אותו, כי זה מה שנשאר במסד כברירת מחדל.
     // ⚠️ ובלוח "מכפילים" מסנן המצב אינו חל (הסקירה של 19/10/2026): למכפיל אין מצב, ו"בתקלה" שנשאר מסומן היה מרוקן את הלוח.
     // ⚠️ וכש"קריאות פתוחות" מביא גם מכפילים — המצב חל רק על הרובוטיים; מכפיל עם קריאה פתוחה עובר.
-    if (siteKind !== SITE_KIND_MULTIPLIERS && activeFilters.length > 0) {
+    // ⚠️ ובמצב הזה המצב חל גם כשהסוג השמור הוא מכפילים (הסקירה של 19/10) — אותו תנאי כמו statusApplies בכותרת.
+    if ((callsMode || siteKind !== SITE_KIND_MULTIPLIERS) && activeFilters.length > 0) {
       if (site.monitored === false) { if (!callsMode) return false; }
       else if (!activeFilters.includes(shown)) return false;
     }

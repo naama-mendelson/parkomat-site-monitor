@@ -207,12 +207,16 @@ function Header({
   }, [filtersOpen]);
   // ⚠️ אריחי המצב, הסוג, "בודק מוסמך", "משימות", "קריאות פתוחות" ו"תקלות חוזרות" סופרים את מה שהלוח מראה — הסוג שנבחר
   // (רובוטיים או מכפילים); אחרת "הכל · 206" מעל לוח של 78 כרטיסים. שני אריחי הסוג עצמם סופרים כל אחד את כל האתרים מסוגו.
-  // ⚠️ "קריאות פתוחות" לחוץ — הלוח מראה את שני הסוגים (רק אתרים עם קריאה פתוחה), ולכן גם הספירות כאן.
-  const callsMode = onShowOpenCallsChange && showOpenCalls === true;
-  const boardSites = (sites ?? []).filter((s) => matchesBoardKind(s, siteKind, callsMode));
+  // ⚠️ "קריאות פתוחות" לחוץ — הלוח מראה רק אתרים עם קריאה פתוחה, משני הסוגים, ולכן גם הספירות כאן (הסקירה של 19/10:
+  // בלי הסינון לפי קריאה "הכל" ספר 208 מעל לוח של 14). ⚠️ ורק כשמספרי הקריאות נטענו — כמו OperatorView, שבלעדיהם לא
+  // מסנן; אחרת הכותרת והלוח היו סותרים זה את זה עד הטעינה (ואחרי כשל — עד 5 דקות).
+  const callsMode = Boolean(onShowOpenCallsChange && showOpenCalls === true && callCounts);
+  const boardSites = (sites ?? []).filter((s) => matchesBoardKind(s, siteKind, callsMode)
+    && (!callsMode || (callCounts[s.id]?.open ?? 0) > 0));
   const openCallSites = countSitesWithOpenCalls(sites ?? [], callCounts ?? {});
-  // מסנן המצב אינו חל בלוח "מכפילים" (OperatorView) — ולכן גם לא נספר שם
-  const statusApplies = siteKind !== SITE_KIND_MULTIPLIERS;
+  // מסנן המצב אינו חל בלוח "מכפילים" (OperatorView) — ולכן גם לא נספר שם. ⚠️ חוץ מ"קריאות פתוחות" לחוץ: שם הלוח מראה
+  // גם רובוטיים, והמצב חל עליהם (הסקירה של 19/10 — בלי זה "בתקלה" לא סינן כלום כשהסוג השמור היה מכפילים)
+  const statusApplies = callsMode || siteKind !== SITE_KIND_MULTIPLIERS;
   const activeCount = (statusApplies ? (activeFilters?.length ?? 0) : 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +

@@ -46,10 +46,18 @@ export default function FilterGroup({ title, summary, active = false, className 
   }, [open]);
 
   const toggle = () => { if (open) close(); else { setAlignEnd(false); setOpen(true); } };
+  // ⚠️ מקלדת (הסקירה של 19/10): Tab שיוצא מהמלבן סוגר אותו. בלי זה Tab ל"מידע" ו-Enter השאירו שתי חלוניות פתוחות זו על זו.
+  // רק כשהפוקוס עבר לרכיב אחר מחוץ למלבן (relatedTarget): לחיצה על שטח ריק בתוך החלונית מעבירה את הפוקוס ל-body
+  // (relatedTarget ריק) ואסור שתסגור; לחיצה בחוץ — מאזין ה-pointerdown למעלה.
+  const onBlur = (e) => {
+    const to = e.relatedTarget;
+    if (!open || !to || wrap.current?.contains(to) || to.closest?.(".cs-menu, .cs-backdrop")) return;
+    setOpen(false);
+  };
   const onKey = (e) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); close(); } };
 
   return (
-    <div className={`fg ${className}`.trim()} ref={wrap}>
+    <div className={`fg ${className}`.trim()} ref={wrap} onBlur={onBlur}>
       <button
         ref={btn}
         type="button"
