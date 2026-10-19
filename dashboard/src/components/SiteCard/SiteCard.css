@@ -119,6 +119,12 @@
      .sc-site-btn .fault-timer--call) {
   background: rgba(17, 25, 43, 0.82) !important;
 }
+/* ...וטקסט רגיל בצבע (לא שבב) — גוון חיוור של אותו צבע, ישירות על הענבר/האדום (הסקירה של 19/10: "מערכת 1 בתקלה" נמדד
+   2.8–3.6:1 על הכרטיסים המלאים) */
+:is(.site-card.call-age-4, [data-theme="dark"] .site-card:is(.call-age-1, .call-age-2, .call-age-3))
+  .systems-note-bad { color: #fee2e2; }
+:is(.site-card.call-age-4, [data-theme="dark"] .site-card:is(.call-age-1, .call-age-2, .call-age-3))
+  :is(.systems-age, .card-agreement-gap) { color: #fef3c7; }
 :is(.site-card.call-age-4, [data-theme="dark"] .site-card:is(.call-age-1, .call-age-2, .call-age-3))
   :is(.detail-value[style], .exp-value[style]) {
   padding: 0 5px;
@@ -1004,7 +1010,8 @@
    תקלה — לרוב זו החלטה מכוונת. אדום היה הופך החלטה לשגיאה. */
 .card-agreement-gap {
   margin-inline-start: 5px;
-  color: var(--amber, #d97706);
+  /* ⚠️ --amber אינו קיים בערכה (19/10/2026): הנפילה #d97706 נמדדה 3.19:1 על כרטיס לבן */
+  color: var(--status-maint-ink);
   font-weight: 700;
   cursor: help;
 }
@@ -1038,7 +1045,8 @@
    לנתון, ואינו נתון בפני עצמו. שורה נפרדת הייתה מתחרה בשבבים עצמם. */
 .systems-age {
   font-weight: 400;
-  color: var(--warn-text, #a86a00);
+  /* ⚠️ --warn-text אינו קיים בערכה (19/10/2026): הנפילה #a86a00 נמדדה 3.6:1 על הכרטיס הכהה */
+  color: var(--status-maint-ink);
 }
 
 /* ⚠️ אותו משקל נמוך כמו הגיל: זו הסתייגות/הבהרה על הפירוט, לא נתון נוסף

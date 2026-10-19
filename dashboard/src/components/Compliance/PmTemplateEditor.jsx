@@ -98,7 +98,21 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
   const [saveError, setSaveError] = useState("");
   const [savedMsg, setSavedMsg] = useState("");
   const [focusKey, setFocusKey] = useState(null);
-  const [newGroupKey, setNewGroupKey] = useState(null);   // השורה שבה מקלידים עכשיו שם של קבוצה חדשה
+  // השורה שבה מקלידים עכשיו שם של קבוצה חדשה, והקבוצה שהייתה לה לפני כן — Esc, או יציאה מהשדה כשהוא ריק, מחזירים אותה
+  // (הסקירה של 19/10: "+ קבוצה חדשה…" שנבחר בטעות מחק את הקבוצה, ואם זה היה הפריט היחיד בה — היא נעלמה מכל הבוררים)
+  const [newGroup, setNewGroup] = useState(null);   // { key, prev } | null
+  const newGroupKey = newGroup?.key ?? null;
+  // ⚠️ ref ולא רק state: אחרי Esc השדה יורד, ו-blur מאוחר (מה-render הקודם, עם section ריק) היה מוחק את מה שהוחזר.
+  // הסיום קורה פעם אחת — מי שבא אחריו מוצא את ה-ref ריק.
+  const newGroupRef = useRef(null);
+  const startNewGroup = (r) => { newGroupRef.current = { key: r.key, prev: r.section }; setNewGroup(newGroupRef.current); };
+  const endNewGroup = (r, restore) => {
+    const g = newGroupRef.current;
+    if (!g || g.key !== r.key) return;
+    newGroupRef.current = null;
+    if (restore) edit(r.key, { section: g.prev });
+    setNewGroup(null);
+  };
   const [touched, setTouched] = useState(false);
   // הרשימות (07/10/2026). tplId == null = רשימת ברירת המחדל — כמו לפני שהיו רשימות,
   // וכך הטעינה הראשונה אינה מחכה לרשימת הרשימות.
@@ -271,7 +285,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
           <input className="pm-input" autoFocus maxLength={60} value={nameDraft.value}
             placeholder={nameDraft.mode === "new" ? "שם הרשימה החדשה, למשל: דולי" : ""}
             onChange={(e) => setNameDraft({ ...nameDraft, value: e.target.value })}
-            onKeyDown={(e) => { if (e.key === "Enter") submitName(); if (e.key === "Escape") setNameDraft(null); }} />
+            onKeyDown={(e) => { if (e.key === "Enter") submitName(); if (e.key === "Escape") { e.stopPropagation(); setNameDraft(null); } }} />
           <button type="button" className="pm-btn pm-btn--primary" onClick={submitName}>
             {nameDraft.mode === "new" ? "יצירה" : "שמירת השם"}</button>
           <button type="button" className="pm-btn pm-btn--ghost" onClick={() => setNameDraft(null)}>ביטול</button>
@@ -335,8 +349,12 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
                       <input className="pm-input" type="text" value={r.section} maxLength={SECTION_MAX} autoFocus
                         placeholder="שם הקבוצה, למשל: מרתף" disabled={busy}
                         onChange={(e) => edit(r.key, { section: e.target.value })}
-                        onBlur={() => setNewGroupKey(null)}
-                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); setNewGroupKey(null); } }} />
+                        onBlur={() => endNewGroup(r, !r.section.trim())}
+                        onKeyDown={(e) => {
+                          // ⚠️ stopPropagation: חלון האתר (InsightsModal) נסגר על Esc ב-document — בלעדיו Esc כאן סגר את כל החלון
+                          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endNewGroup(r, true); }
+                          else if (e.key === "Enter") { e.preventDefault(); endNewGroup(r, !r.section.trim()); }
+                        }} />
                     </label>
                   ) : (
                     <div className="pm-field pm-tpl-sec">
@@ -349,7 +367,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
                           { value: NEW_GROUP, label: "+ קבוצה חדשה…" },
                         ]}
                         onChange={(v) => {
-                          if (v === NEW_GROUP) { edit(r.key, { section: "" }); setNewGroupKey(r.key); }
+                          if (v === NEW_GROUP) { startNewGroup(r); edit(r.key, { section: "" }); }
                           else edit(r.key, { section: v });
                         }} />
                     </div>
