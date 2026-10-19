@@ -3329,7 +3329,11 @@ nights do not count). Asked, she first chose to keep 24 hours, then interrupted 
   day = 0, one signature only; on the board, a basic multiplier open a week is 45 service hours = level 4, where the old
   rule gave 1). Mutations in the isolated copy: 9 of 9 caught (`mut1910/run-mut3.cjs`).
 - The dry run shows exactly three gaps: the two functions and the body of `service_calls_board`. The dashboard needs no
-  change (it only translates `age`). ⚠️ **Not applied yet** at the time of the commit: it waits for the owner's word.
+  change (it only translates `age`). ✅ **Applied 19/10/2026 at the owner's word ("כן, להחיל")**, then "הייצור זהה
+  לקוד". The first `--apply` died on `ECONNRESET` before writing anything (checked: the old two-argument function was
+  still there, so the board kept working); the second took 13 seconds. Checked right after through `service_calls_board`
+  as a manager: 1153 and 1206 at 1 (yellow), 1191 at 4, the robotic 2438 / 3468 / 1225 at 4 as before; 81 agents beating,
+  28 events in 10 minutes.
 
 - **The level is decided in SQL** (`service-calls-board.postgres.sql`): `app.service_seconds(kind, from, to)` sums
   `app.service_windows` (basic/ext/vip, Israel time; any other kind — 0), and `app.call_age_level(secs, monitored)` =
