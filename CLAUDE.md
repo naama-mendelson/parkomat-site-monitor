@@ -2134,6 +2134,18 @@ specific to the type of facility"*.
     lists every group of the list, then "בלי קבוצה — שם הרשימה", then "+ קבוצה חדשה…", which swaps in a focused text
     field for that row (Enter, Esc or leaving it returns to the picker). `probe-groups` E1b–E1e (the reported case) and
     E3–E3d, 24/24.
+  - **The base list has three groups since 19/10/2026: לובי (5), בטיחות ומרתף (3), חשמל (11).** From the field (on
+    גרוזנברג 7): *"דלתות מרתף, קופסת מפתח… אלה דברים שקשורים למרתף, לא ללובי"*. The document puts its section 4
+    "בטיחות" (parking doors locked, the key box, harnesses at the basement entrance) on the "לובי החניה" page, which is
+    why they were loaded under "לובי"; the owner chose a group of their own. Written through `pm_template_save` (stale
+    check, history, audit) as a temporary editor named "Claude — קבוצת "בטיחות ומרתף" לבקשת הבעלים", deleted in the same
+    transaction (`compliance_history.actor_user_id` is `ON DELETE SET NULL`; the name stays in `actor`). Visits opened
+    before keep their snapshot (4 drafts: 1326, 1079, 1297, 1342).
+  - ⚠️ **"Where is the mechanical maintenance?"** — it exists and is not in the base list. A site gets the base list
+    plus the lists of its machine types: גרוזנברג 7 (2222: piston 1 + XY) gets 46 items — the base 19, "מעלית
+    הידראולית" 21 (יחידת כוח, בוכנה, שרשרת, פילוס) and "מיטת XY במרתף" 6. The editor shows one list at a time (the
+    picker at its top), which is how only "לובי" and "חשמל" were seen. The document has no section named "mechanical";
+    its machine parts are per type.
     A heading appears where a group starts. A new item inherits the last item's group.
   - Tests:
     - `pm-templates.test.js`: 2 tests, 10/10 SQL mutations caught.
@@ -3689,6 +3701,12 @@ and found no write a בקר can reach and nothing manager-only an editor can rea
 Tests: `roles.test.js` 9 (the intake: `my_role = intake`, not manager, not editor, `delete_site` / `set_user_role` /
 `list_users` refused; the two functions closed to both roles). Mutations (`mut1910/run-mut5.cjs`): 4 of 4 caught. Full
 suite 1233/1233; probes roles 12, tasks 241, calls 63, agentpw 19, admin-sticky 14, relay 24.
+
+✅ **Deployed 19/10/2026 at the owner's word** ("כן, להחיל" / "כן, לפרוס"): the dashboard by push; the SQL — the dry run
+showed exactly one gap (`current_app_role` body; the two REVOKEs were already true in production), applied in 9 s,
+then "הייצור זהה לקוד"; `provision-agent` redeployed (`verify_jwt` still on — a request without a token gets the
+gateway's 401). Checked in rolled-back transactions: intake → `my_role = intake`, not manager / editor / staff; a manager,
+an editor and an agent unchanged. 80 of 84 agents beating.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
