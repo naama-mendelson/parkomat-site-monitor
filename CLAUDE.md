@@ -3622,6 +3622,15 @@ database):
 
 An old bundle before step 3 shows an editor as "בקר" in labels, but can do everything the database allows.
 
+✅ **Deployed 19/10/2026 at the owner's word ("כן, לפרוס את הכול"), in that order.**
+- **SQL:** 12 seconds, then "הייצור זהה לקוד". Checked right after: 3 active editors and 15 managers, the flag set, the
+  constraint with `editor`, both functions present. An editor gets `my_role = editor`, `can_edit = true`,
+  `is_staff = true`. 81 agents beating.
+- **Edge Functions:** `invite-user` v7 and `provision-agent` v6, both with `verify_jwt = true` as before;
+  `service-calls` untouched.
+- **Dashboard:** pushed.
+- The owner also confirmed that a בקר may still send a field report ("כן, בקר יכול לדווח").
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates
