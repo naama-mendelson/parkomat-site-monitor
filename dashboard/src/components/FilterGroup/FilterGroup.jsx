@@ -14,7 +14,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import "./FilterGroup.css";
 
-export default function FilterGroup({ title, summary, active = false, className = "", children }) {
+// disabled — כשהמסננים שבו לא חלים על מה שמוצג (20/10/2026: האריח "טכנאים" מחליף את כרטיסי האתרים): לא נפתח, ונסגר אם פתוח
+export default function FilterGroup({ title, summary, active = false, disabled = false, className = "", children }) {
   const [open, setOpen] = useState(false);
   const [alignEnd, setAlignEnd] = useState(false);
   const wrap = useRef(null);
@@ -23,6 +24,7 @@ export default function FilterGroup({ title, summary, active = false, className 
   const id = useId();
 
   const close = (refocus = true) => { setOpen(false); if (refocus) btn.current?.focus(); };
+  useEffect(() => { if (disabled && open) setOpen(false); }, [disabled, open]);
 
   // נסגרת בלחיצה מחוץ למלבן ולחלונית (רשימה פנימית של אריח — בתוכה; רשימת ChoiceSelect בפורטל — לא "בחוץ")
   useEffect(() => {
@@ -64,6 +66,7 @@ export default function FilterGroup({ title, summary, active = false, className 
         className={`filter-btn fg-btn${active ? " active" : ""}${open ? " is-open" : ""}`}
         aria-expanded={open}
         aria-controls={id}
+        disabled={disabled}
         onClick={toggle}
       >
         <span className="fg-title">{title}<span className="fg-chevron" aria-hidden="true">▾</span></span>

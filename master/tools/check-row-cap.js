@@ -115,6 +115,11 @@ const BOUNDED = {
   // שורה לאתר, אבל נקרא עם אתר **אחד** (detailDirect: p_site_ids: [site.id])
   site_uptime_service: "שורה לאתר — נקרא עם אתר אחד",
 
+  // ---- רכבי הטכנאים ומיקומי האתרים (vehiclesDirect.js, 20/10/2026) ----
+  vehicles_live_list: "jsonb יחיד — כל הרכבים (38) + שורת הסנכרון",
+  site_locations_list: "jsonb יחיד — כל האתרים (219) עם המיקום שלהם",
+  site_geo_set: "כתיבה",
+
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
   task_counts: "שורה לאתר×סוג (עד 4: שלושת הסוגים — app.task_kinds() — ו-'none' למשימה בלי סוג) — רק אתרים עם משימה פתוחה",

@@ -34,7 +34,8 @@ import ExecutiveView from "./views/ExecutiveView/ExecutiveView";
 import Announcement from "./components/Announcement/Announcement";
 import { needsRefetch } from "./utils/sitePatch";
 // רכבי הטכנאים מאיתוראן (20/10/2026) — נטען רק כשפותחים: Leaflet לא נכנס לחבילה הראשית
-const VehiclesMap = lazy(() => import("./components/Vehicles/VehiclesMap"));
+// "טכנאים" (20/10/2026) — נטען רק כשלוחצים על האריח: Leaflet ותמונות המפה לא בחבילה הראשית
+const TechniciansView = lazy(() => import("./components/Vehicles/TechniciansView"));
 import { statusesMatch, fullReloadDue, statsDueOnReturn, STATUS_CHECK_EVERY_MS } from "./utils/siteSync";
 import { makeCoalesced, unlessHidden } from "./utils/coalesce";
 import { fetchSiteStatuses } from "./services/dataSource";
@@ -83,7 +84,9 @@ function App() {
   const [complianceRev, setComplianceRev] = useState({});
   const [adminOpen, setAdminOpen] = useState(false);            // פאנל ניהול האתרים
   const [trafficOpen, setTrafficOpen] = useState(false);        // לוח הרמזור
-  const [vehiclesOpen, setVehiclesOpen] = useState(false);      // רכבי הטכנאים (איתוראן)
+  // "טכנאים" — האריח בכותרת מחליף את כרטיסי האתרים בתצוגת הטכנאים (בעלת המוצר, 20/10/2026). לא נזכר בין רענונים:
+  // התצוגה שואלת את המסד כל דקה, ומסך קיר שנשאר עליה בטעות היה ממשיך לשאול.
+  const [techMode, setTechMode] = useState(false);
   // משימות: מספרי הפתוחות לכל אתר (הכפתור בכרטיס), החלון הפתוח ({site}), ומונה אירועים
   const [taskCounts, setTaskCounts] = useState(null);
   // קריאות ויזנט (13/10/2026) — המספרים לכרטיסים, החלון הפתוח, ומונה לטעינה מחדש באירוע
@@ -554,6 +557,13 @@ function App() {
     if (role === "executive") {
       return <ExecutiveView dataVersion={dataVersion} onFirstData={markExecReady} />;
     }
+    if (techMode && useDirect) {
+      return (
+        <Suspense fallback={<div className="app-loading">טוען את הטכנאים…</div>}>
+          <TechniciansView />
+        </Suspense>
+      );
+    }
     return (
       <OperatorView
         sites={sites}
@@ -606,6 +616,8 @@ function App() {
         taskCounts={taskCounts?.bySite ?? null}
         showOpenCalls={showOpenCalls}
         onShowOpenCallsChange={useDirect && SERVICE_CALLS_ENABLED ? setShowOpenCalls : undefined}
+        techMode={techMode && useDirect}
+        onTechModeChange={useDirect ? setTechMode : undefined}
         callCounts={callCounts?.bySite ?? null}
         darkMode={darkMode}
         onToggleDarkMode={toggleTheme}
@@ -711,18 +723,8 @@ function App() {
 
       {trafficOpen && <TrafficLight onClose={() => setTrafficOpen(false)} />}
 
-      {/* רכבי הטכנאים מאיתוראן (20/10/2026) — כפתור צף בפינה הנגדית לרמזור; "כל מי שמחובר" רואה (בעלת המוצר).
-          ⚠️ מוסתר במצב שרת: אין לו זרוע שרת — הסנכרון רץ ב-Supabase. */}
-      {useDirect && <button type="button" className="veh-fab" onClick={() => setVehiclesOpen(true)} title="רכבי הטכנאים — איתוראן">
-        <span className="veh-fab-icon" aria-hidden="true">🚐</span>
-        רכבים
-      </button>}
-
-      {vehiclesOpen && (
-        <Suspense fallback={<div className="veh-overlay"><div className="veh-panel"><p className="veh-empty">טוען מפה…</p></div></div>}>
-          <VehiclesMap onClose={() => setVehiclesOpen(false)} />
-        </Suspense>
-      )}
+      {/* ⚠️ כאן ישב הכפתור הצף "רכבים" (20/10/2026). באותו ערב, לבקשת בעלת המוצר, הפך לאריח "טכנאים" בכותרת שמחליף את
+          כרטיסי האתרים (renderView למעלה). */}
 
       {/* ⚠️ עוזר ה-AI הוסר (17/09/2026) לבקשת בעלת המוצר: הוא רץ על master,
           ו-master יוצא משימוש — המערכת נשענת על Supabase והדשבורד בלבד. */}

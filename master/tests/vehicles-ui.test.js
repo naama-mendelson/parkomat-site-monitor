@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   vehicleName, stateOf, stateText, rowAge, placeText, powerAlert, clockText, ageText, sortVehicles, stateCounts, syncState,
   placeNames, hasPosition, matchesVehicle, STATES, STALE_MS, SYNC_LATE_MS,
+  distanceText, nearList, nearText, SITE_GEO, siteGeoKey, sitesNeedingCheck, siteGeoCounts,
 } from "../../dashboard/src/utils/vehicles.js";
 
 const NOW = "2026-10-20T10:00:00Z";   // 13:00 בישראל
@@ -37,6 +38,7 @@ test("מצב ממסד ישן (בלי state): ההתנהגות הקודמת — �
   assert.equal(stateOf(old({ motion: "none" }), NOW).label, "לא ידוע");
   assert.equal(stateOf(old({ motion: "driving", located_at: ago(STALE_MS / 60_000 + 1) }), NOW).tone, "stale");
   assert.equal(stateOf(old({ motion: "parking", located_at: ago(STALE_MS / 60_000 - 1) }), NOW).tone, "parking");
+  assert.equal(stateOf(old({ motion: "parking", located_at: ago(STALE_MS / 60_000) }), NOW).tone, "parking");   // בדיוק יממה — עוד לא (כמו > 86400 במסד)
   assert.equal(stateOf(old({ located_at: null }), NOW).tone, "stale");
   assert.equal(stateText(old({ motion: "driving", located_at: ago(2 * 24 * 60) }), NOW), "לא מדווח מאז 18/10 13:00");
 });
@@ -52,6 +54,12 @@ test("שעה בשעון ישראל: היום, אתמול (לפי לוח השנה
   assert.equal(clockText("2026-10-24T20:30:00Z", "2026-10-26T08:00:00Z"), "24/10 23:30");
   assert.equal(clockText(null, NOW), "");
   assert.equal(clockText("2026-10-20T10:30:00Z", NOW), "13:30");   // שעון קצת קדימה — עדיין "היום"
+  // "אתמול" לפי התאריך בישראל, לא "לפני 24 שעות": 28/03 00:30 (+3); לפני 24 שעות זה 26/03, אבל אתמול הוא 27/03
+  assert.equal(clockText("2026-03-27T10:00:00Z", "2026-03-27T21:30:00Z"), "אתמול 13:00");
+  // 20/10 01:00 בישראל כשבתאריך UTC עוד 19/10 — "אתמול" לפי ישראל
+  assert.equal(clockText("2026-10-19T08:00:00Z", "2026-10-19T22:00:00Z"), "אתמול 11:00");
+  // שעון מכשיר שקופץ שתי דקות קדימה מעבר לחצות — עדיין "היום", בלי תאריך
+  assert.equal(clockText("2026-10-20T21:01:00Z", "2026-10-20T20:59:00Z"), "00:01");
 });
 
 test("שורת המצב: חונה מאז / לא מתעדכן מאז / לא מדווח מאז; בנסיעה — בלי זמן; חונה בלי 'מאז' — רק 'חונה'", () => {
@@ -75,7 +83,7 @@ test("עמודת הזמן: רק לבנסיעה / מנוע דולק / לא ידו
 test("המקום: אזור ואם אין — כתובת; ברכב שלא מתעדכן — 'מקום אחרון'", () => {
   assert.equal(placeText(v({ places: [{ place_name: "משרד" }], address: "אילן רמון, נס ציונה" }), NOW), "משרד");
   assert.equal(placeText(v({ address: "אילן רמון, נס ציונה" }), NOW), "אילן רמון, נס ציונה");
-  assert.equal(placeText(v({ state: "silent", address: "חניון, תל אביב" }), NOW), "מקום אחרון: חניון, תל אביב");
+  assert.equal(placeText(v({ state: "silent", address: "חניון, תל אביב" }), NOW), "כתובת אחרונה: חניון, תל אביב");
   assert.equal(placeText(v({ state: "no_report", places: [{ place_name: "מחסן" }] }), NOW), "מקום אחרון: מחסן");
   assert.equal(placeText(v({ address: null }), NOW), "");
 });
@@ -134,4 +142,46 @@ test("מקומות, מיקום וחיפוש", () => {
   const x = v({ address: "הרצל 5, רחובות", places: [{ place_name: "מחסן" }] });
   for (const q of ["ישראל", "1234", "רחובות", "מחסן", "", "  ישראל   ישראלי "]) assert.equal(matchesVehicle(x, q), true, q);
   assert.equal(matchesVehicle(x, "חיפה"), false);
+});
+
+test("לאיזה אתרים הם קרובים: מרחק, כ- למשוער, השם בלי העיר; אין אתר בטווח — אין שורה", () => {
+  assert.equal(distanceText(4), "10 מ׳");
+  assert.equal(distanceText(124), "120 מ׳");
+  assert.equal(distanceText(125), "130 מ׳");
+  assert.equal(distanceText(999), "1000 מ׳");
+  assert.equal(distanceText(1440), "1.4 ק״מ");
+  assert.equal(distanceText(300, true), "כ-300 מ׳");
+  assert.equal(distanceText(null), "");
+  assert.equal(distanceText(-5), "");
+  const x = v({ near: [{ code: "1227", name: "הרצל 50, ת\"א", m: 118, approx: false }, { code: "1373", name: "מזאה 63-65, ת\"א", m: 412, approx: true }] });
+  assert.equal(nearText(x), "ליד הרצל 50 · 120 מ׳");
+  assert.deepEqual(nearList(x), [
+    { code: "1227", label: "הרצל 50", dist: "120 מ׳", approx: false },
+    { code: "1373", label: "מזאה 63-65", dist: "כ-410 מ׳", approx: true },
+  ]);
+  assert.equal(nearText(v({ near: [] })), "");
+  assert.equal(nearText(v()), "");                       // מסד ישן בלי near
+  assert.deepEqual(nearList(v({ near: [null, { name: "בלי קוד" }] })), []);
+  // החיפוש ברשימה מוצא גם לפי האתר הקרוב
+  assert.equal(matchesVehicle(x, "הרצל"), true);
+  assert.equal(matchesVehicle(x, "מזאה"), true);
+});
+
+test("מצב המיקום של אתר: מאושר / לפי הכתובת / משוער / אין; מה דורש בדיקה, ובאיזה סדר", () => {
+  const s = (over) => ({ code: "1", name: "א", lat: 32.1, lon: 34.8, source: "geocoded", precision: "house", ...over });
+  assert.equal(siteGeoKey(s()), "house");
+  assert.equal(siteGeoKey(s({ source: "manual", precision: "pin" })), "manual");
+  assert.equal(siteGeoKey(s({ precision: "street" })), "street");
+  assert.equal(siteGeoKey(s({ precision: "area" })), "area");
+  assert.equal(siteGeoKey(s({ lat: null, lon: null, source: null, precision: null })), "none");
+  assert.equal(siteGeoKey(s({ precision: "weird" })), "street");   // לא מוכר — נחשב משוער, לא מדויק
+  for (const k of Object.keys(SITE_GEO)) assert.ok(SITE_GEO[k].label, k);
+  const list = [
+    s({ code: "a", name: "ב", precision: "street" }), s({ code: "b", name: "א", precision: "street" }),
+    s({ code: "c", name: "ג", lat: null, lon: null }), s({ code: "d", name: "ד", precision: "area" }),
+    s({ code: "e", name: "ה" }), s({ code: "f", name: "ו", source: "manual", precision: "pin" }),
+  ];
+  assert.deepEqual(sitesNeedingCheck(list).map((x) => x.code), ["c", "d", "b", "a"]);
+  assert.deepEqual(siteGeoCounts(list), { manual: 1, house: 1, street: 2, area: 1, none: 1 });
+  assert.deepEqual(sitesNeedingCheck(null), []);
 });

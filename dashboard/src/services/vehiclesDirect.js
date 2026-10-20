@@ -15,3 +15,24 @@ export async function fetchVehicles() {
     now: data?.now ?? new Date().toISOString(),
   };
 }
+
+/** כל האתרים עם המיקום שלהם (20/10/2026): [{code, name, monitored, lat, lon, source, precision, set_at, set_by}]. */
+export async function fetchSiteLocations() {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+  const { data, error } = await supabase.rpc("site_locations_list");
+  if (error) throw new Error(error.message || "טעינת מיקומי האתרים נכשלה");
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * עורך מסמן או מאשר מיקום של אתר (מקור "ידני"). lat/lon null = ניקוי. expectedAt = geo_set_at שהמסך ראה ('' כשלא היה):
+ * מסך ישן מקבל שגיאה במקום לדרוס סימון של מישהו אחר. כל המפתחות נשלחים במפורש — PostgREST בוחר פונקציה לפי המפתחות.
+ */
+export async function saveSiteLocation(code, lat, lon, expectedAt) {
+  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
+  const { data, error } = await supabase.rpc("site_geo_set", {
+    p_code: code, p_lat: lat ?? null, p_lon: lon ?? null, p_expected_at: expectedAt ?? null,
+  });
+  if (error) throw new Error(error.message || "שמירת המיקום נכשלה");
+  return data;
+}

@@ -60,3 +60,6 @@
     background: rgba(255, 255, 255, 0.06);
   }
 }
+
+/* לא חל על מה שמוצג (האריח "טכנאים", 20/10/2026) */
+.fg-btn:disabled { opacity: 0.55; cursor: default; }

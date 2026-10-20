@@ -773,6 +773,29 @@ ALTER TABLE sites ADD CONSTRAINT sites_lift2_shape CHECK (
 ) NOT VALID;
 ALTER TABLE sites VALIDATE CONSTRAINT sites_lift2_shape;
 
+-- מיקום האתר (20/10/2026) — "לאיזה אתרים הם קרובים" (בעלת המוצר, על רכבי הטכנאים). עד אז לא היה לאף אתר מיקום.
+-- lat/lon במעלות; geo_source: geocoded = הצעה מהכתובת שבשם (OpenStreetMap, tools/geocode-sites.js), manual = עורך סימן או
+-- אישר על המפה; geo_precision: house = הבניין עצמו, street = נקודה כלשהי ברחוב, area = שכונה / אזור, pin = סומן ביד.
+-- ⚠️ "משוער" במסך = street / area. ייבוא חוזר מהכתובת לעולם לא דורס manual (public.site_geo_import).
+-- ⚠️ שלוש קבוצות שהולכות יחד: אין מיקום בלי מקור ובלי דיוק, ואין מקור בלי מיקום — מצב חצי-מוגדר לא ניתן לביטוי.
+-- והתחום: ישראל (29.3–33.4 / 34.2–35.95), כדי שהיפוך lat/lon או 0,0 ייכשלו ולא יציבו אתר באוקיינוס.
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_source TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_precision TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_set_at TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_set_by TEXT;
+ALTER TABLE sites DROP CONSTRAINT IF EXISTS sites_geo_shape;
+ALTER TABLE sites ADD CONSTRAINT sites_geo_shape CHECK (
+      (lat IS NULL) = (lon IS NULL)
+  AND (lat IS NULL) = (geo_source IS NULL)
+  AND (lat IS NULL) = (geo_precision IS NULL)
+  AND (lat IS NULL OR (lat BETWEEN 29.3 AND 33.4 AND lon BETWEEN 34.2 AND 35.95))
+  AND (geo_source IS NULL OR geo_source IN ('geocoded', 'manual'))
+  AND (geo_precision IS NULL OR geo_precision IN ('house', 'street', 'area', 'pin'))
+) NOT VALID;
+ALTER TABLE sites VALIDATE CONSTRAINT sites_geo_shape;
+
 -- ============================================================
 -- מי בפועל הכניס לתחזוקה — שם מוקלד, לצד הזהות המאומתת
 -- ============================================================

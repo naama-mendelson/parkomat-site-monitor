@@ -1,56 +1,18 @@
-/* components/Vehicles/Vehicles.css — רכבי הטכנאים (20/10/2026) */
+/* components/Vehicles/Vehicles.css — "טכנאים": רכבי הטכנאים מאיתוראן ומיקומי האתרים (20/10/2026).
+   ⚠️ עד ערב 20/10 זה היה חלון צף (.veh-overlay) שנפתח מכפתור בפינה. עכשיו — תצוגה בתוך הלוח, מתחת לכותרת, מהאריח "טכנאים". */
 
-/* ── הכפתור הצף — בפינה הנגדית ל"רמזור" (שם ישב פעם העוזר, שהוסר ב-17/09) ── */
-.veh-fab {
-  position: fixed;
-  inset-block-end: calc(24px + env(safe-area-inset-bottom, 0px));
-  inset-inline-start: 24px;
-  z-index: 55;                     /* כמו .tl-fab: מעל הדף, מתחת לכל חלון */
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px 8px 10px;
-  border: none;
-  border-radius: 999px;
-  background: var(--surface-2, #1f2430);
-  color: var(--text, #fff);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 8px 24px var(--shadow, rgba(0, 0, 0, 0.3));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.veh-fab:hover { transform: translateY(-2px); box-shadow: 0 12px 30px var(--shadow, rgba(0, 0, 0, 0.35)); }
-.veh-fab:focus-visible { outline: 2px solid var(--brand, #3d78d8); outline-offset: 3px; }
-.veh-fab-icon { font-size: 1.2rem; line-height: 1; }
-@media (max-width: 640px) {
-  .veh-fab {
-    inset-inline-start: 12px;
-    padding: 6px;
-    gap: 0;
-    font-size: 0;                  /* המילה נשארת ב-DOM (ולקורא מסך), האייקון מזהה */
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-  }
-  .veh-fab-icon { font-size: 1.3rem; }
-}
-
-/* ── החלון ── */
-.veh-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1300;                   /* כמו לוח הרמזור */
-  background: rgba(0, 0, 0, 0.55);
-}
+/* ── התצוגה ── */
 .veh-panel {
-  position: absolute;
-  inset: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: var(--veh-h, 72vh);
+  margin: 12px 16px 16px;
   background: var(--bg-card);
   color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
 }
 .veh-head {
   flex: 0 0 auto;
@@ -58,37 +20,54 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 18px;
+  padding: 12px 16px;
   border-block-end: 1px solid var(--border-color);
 }
 .veh-head-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; min-width: 0; }
 .veh-head h2 { margin: 0; font-size: 1.15rem; }
 .veh-summary { font-size: 0.92rem; color: var(--text-secondary); }
+/* פריט אחד ("4 בנסיעה") לא נשבר באמצע; הנקודה צמודה לפריט שלפניה (בטלפון "לא" נשאר בשורה ו"מתעדכנים" בבאה — הסקירה, 20/10) */
+.veh-sum-item { white-space: nowrap; }
 .veh-summary b { font-weight: 700; color: var(--text-primary); }
+/* ⚠️ הצבעים של המספרים: בספציפיות של .veh-summary b, אחרת הוא דורס אותם (הסקירה: אף אחד מהם לא חל) */
+.veh-summary b.veh-tone--driving { color: var(--veh-driving); }
+.veh-summary b.veh-tone--idle { color: var(--veh-idle); }
+.veh-summary b.veh-tone--parking { color: var(--veh-parking); }
+.veh-summary b.veh-tone--silent { color: var(--veh-silent); }
+.veh-summary b.veh-tone--stale, .veh-summary b.veh-tone--unknown { color: var(--veh-stale); }
 .veh-sync { font-size: 0.82rem; color: var(--text-secondary); }
-.veh-close {
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-size: 1.1rem;
-  cursor: pointer;
-  min-width: 40px;
-  min-height: 40px;
-  border-radius: 6px;
-}
-.veh-close:hover { background: var(--bg-secondary); }
 
-.veh-warn {
+.veh-sites-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  min-height: 36px;
+}
+.veh-sites-btn:hover { background: var(--bg-secondary); }
+.veh-sites-btn.is-on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.veh-sites-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.veh-warn, .veh-pick {
   margin: 0;
-  padding: 8px 18px;
+  padding: 8px 16px;
   font-size: 0.88rem;
   background: rgba(245, 158, 11, 0.14);
   border-block-end: 1px solid rgba(245, 158, 11, 0.4);
   color: var(--text-primary);
 }
+.veh-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.veh-pick button { border: 1px solid var(--border-color); background: var(--bg-card); color: inherit; font: inherit; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 
 .veh-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .veh-map { flex: 1 1 auto; min-width: 0; background: var(--bg-secondary); }
+.leaflet-container.is-picking, .leaflet-container.is-picking .leaflet-interactive { cursor: crosshair; }
 .veh-side {
   flex: 0 0 340px;
   display: flex;
@@ -96,6 +75,11 @@
   min-height: 0;
   border-inline-start: 1px solid var(--border-color);
 }
+.veh-tabs { display: flex; gap: 0; margin: 10px 10px 0; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+.veh-tabs button { flex: 1 1 0; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.86rem; font-weight: 600; padding: 7px 8px; cursor: pointer; }
+.veh-tabs button + button { border-inline-start: 1px solid var(--border-color); }
+.veh-tabs button.is-on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text-primary); }
+.veh-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .veh-search {
   margin: 10px;
   padding: 9px 11px;
@@ -107,6 +91,8 @@
   font-size: 0.92rem;
 }
 .veh-empty { margin: 12px; color: var(--text-secondary); font-size: 0.9rem; }
+.veh-sites { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.veh-sites-sum { margin: 10px 12px 4px; font-size: 0.85rem; color: var(--text-secondary); }
 .veh-list { list-style: none; margin: 0; padding: 0 0 12px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .veh-row {
   width: 100%;
@@ -123,22 +109,24 @@
   cursor: pointer;
 }
 .veh-row:hover:not(:disabled) { background: var(--bg-secondary); }
-.veh-row.is-selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* ⚠️ 8% ולא 14%: בשורה מסומנת צבעי המצב ירדו מתחת ל-4.5:1 (הסקירה, 20/10) */
+.veh-row.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .veh-row:disabled { cursor: default; opacity: 0.7; }
 .veh-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .veh-row-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .veh-row-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.veh-row-sub { font-size: 0.8rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.veh-row-sub, .veh-row-near { font-size: 0.8rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.veh-row-near { color: var(--text-primary); }
 .veh-row-age { flex: 0 0 auto; font-size: 0.78rem; color: var(--text-secondary); }
 
 /* ── צבעי המצב: אותם בסמן, בנקודה ובמילה ── */
 :root {
-  --veh-driving: #15803d; --veh-idle: #b45309; --veh-parking: #2563eb; --veh-silent: #4b5563; --veh-stale: #6b7280;
-  --veh-unknown: #6b7280; --veh-power: #b91c1c;
+  --veh-driving: #15803d; --veh-idle: #b45309; --veh-parking: #2563eb; --veh-silent: #4b5563; --veh-stale: #5b6472;
+  --veh-unknown: #5b6472; --veh-power: #b91c1c; --veh-site: #0e4194; --veh-site-addr: #475569;
 }
 [data-theme="dark"] {
   --veh-driving: #4ade80; --veh-idle: #fbbf24; --veh-parking: #93b4f5; --veh-silent: #cbd5e1; --veh-stale: #9ca3af;
-  --veh-unknown: #9ca3af; --veh-power: #fca5a5;
+  --veh-unknown: #9ca3af; --veh-power: #fca5a5; --veh-site: #93b4f5; --veh-site-addr: #cbd5e1;
 }
 .veh-tone--driving { color: var(--veh-driving); }
 .veh-tone--idle { color: var(--veh-idle); }
@@ -151,8 +139,8 @@
 .veh-dot--driving { background: var(--veh-driving); }
 .veh-dot--idle { background: var(--veh-idle); }
 .veh-dot--parking { background: var(--veh-parking); }
-/* לא מתעדכן: חצי מלא — היה בתנועה, והיחידה השתתקה; לא מדווח: ריק */
-.veh-dot--silent { background: linear-gradient(90deg, var(--veh-silent) 50%, transparent 50%); border: 2px solid var(--veh-silent); }
+/* לא מתעדכן: מסגרת מקווקווה, כמו הסמן במפה; לא מדווח: ריק */
+.veh-dot--silent { background: color-mix(in srgb, var(--veh-silent) 35%, transparent); border: 2px dashed var(--veh-silent); }
 .veh-dot--stale { background: transparent; border: 2px solid var(--veh-stale); }
 
 /* הסמן על המפה */
@@ -171,12 +159,13 @@
 .veh-marker--driving { background: var(--veh-driving); }
 .veh-marker--idle { background: var(--veh-idle); }
 .veh-marker--parking { background: var(--veh-parking); }
-/* לא מתעדכן: אפור עם מסגרת מקווקוות — המיקום האחרון שידוע, בלי חץ ובלי תווית */
+/* לא מתעדכן: אפור עם מסגרת מקווקווה — המיקום האחרון שידוע, בלי חץ ובלי תווית */
 .veh-marker--silent { background: #9ca3af; border: 3px dashed #4b5563; }
 .veh-marker--stale { background: #d1d5db; border-color: #6b7280; opacity: 0.75; }
+/* ⚠️ בכהה שני האפורים היו אותו עיגול על אריחים הפוכים (הסקירה): לא מתעדכן — טבעת בהירה מקווקווה */
+[data-theme="dark"] .veh-marker--silent { background: #6b7280; border-color: #e5e7eb; }
 /* חץ הכיוון: משולש מעל העיגול, מסובב סביב מרכז הסמן.
-   ⚠️ המיקום יחסי לתוך המסגרת (22×22, מרכז ב-11px): החץ מתחיל 11px מעליו, ולכן נקודת הסיבוב 22px מתחת לקצה החץ.
-   ב-19px (הגרסה הראשונה) הוא סבב סביב נקודה מעל המרכז ונדחף הצידה — נראה בצילום. */
+   ⚠️ המיקום יחסי לתוך המסגרת (22×22, מרכז ב-11px): החץ מתחיל 11px מעליו, ולכן נקודת הסיבוב 22px מתחת לקצה החץ. */
 .veh-arrow {
   position: absolute;
   top: -11px;
@@ -198,26 +187,59 @@
   direction: rtl;
 }
 
-/* חלון הרכב (popup).
+/* ── אתרים: ריבוע קטן; מאושר — מלא בכחול; לפי הכתובת — מלא באפור; משוער — מסגרת מקווקווה; בלי מיקום (ברשימה) — נקודות ── */
+.veh-site-wrap { background: none; border: 0; }
+.veh-site {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin: 1px;
+  border-radius: 3px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: var(--veh-site-addr);
+}
+.veh-site--manual { background: var(--veh-site); }
+.veh-site--street, .veh-site--area { background: rgba(255, 255, 255, 0.85); border: 2px dashed var(--veh-site-addr); box-shadow: none; }
+.veh-site--none { background: transparent; border: 2px dotted var(--veh-site-addr); box-shadow: none; }
+.veh-site-row .veh-site { margin-inline-start: 0; }
+
+/* חלון הרכב / האתר (popup).
    ⚠️ הרקע של Leaflet לבן גם בערכה הכהה, ולכן הגוונים כאן הם של הערכה הבהירה — הגוונים הבהירים של הכהה (#4ade80 וכו')
    על לבן היו 1.5–2:1. */
 .veh-pop {
   font-family: inherit; font-size: 13px; line-height: 1.5; text-align: right; color: #1f2937;
-  --veh-driving: #15803d; --veh-idle: #b45309; --veh-parking: #2563eb; --veh-silent: #4b5563; --veh-stale: #6b7280;
-  --veh-unknown: #6b7280; --veh-power: #b91c1c;
+  --veh-driving: #15803d; --veh-idle: #b45309; --veh-parking: #2563eb; --veh-silent: #4b5563; --veh-stale: #5b6472;
+  --veh-unknown: #5b6472; --veh-power: #b91c1c;
 }
 .veh-pop-name { font-weight: 700; font-size: 14px; }
 .veh-pop-plate, .veh-pop-age { color: #4b5563; }
 .veh-pop-state { font-weight: 700; }
+.veh-pop-near { color: #1f2937; }
 .veh-pop a { display: inline-block; margin-top: 4px; }
+.veh-site-state { font-weight: 700; color: #334155; }
+.veh-site-state--street, .veh-site-state--area { color: #8a3c0c; }
+.veh-site-state--manual { color: #0e4194; }
+.veh-site-hint { color: #4b5563; }
+.veh-site-msg { color: #b91c1c; font-weight: 600; }
+.veh-site-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.veh-site-actions button {
+  border: 1px solid #cbd5e1; background: #fff; color: #1f2937; font: inherit; font-size: 12.5px; font-weight: 600;
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; min-height: 30px;
+}
+.veh-site-actions button.is-primary { background: #0e4194; border-color: #0e4194; color: #fff; }
+.veh-site-actions button:disabled { opacity: 0.6; cursor: default; }
 
 /* ⚠️ מפה כהה בערכה הכהה: היפוך האריחים (הסמנים בשכבה אחרת ולא מתהפכים) */
 [data-theme="dark"] .veh-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
 
-/* ── טלפון: המפה למעלה, הרשימה למטה ── */
+/* ── טלפון: המפה למעלה, הרשימה למטה, בגובה טבעי ── */
 @media (max-width: 760px) {
+  .veh-panel { height: auto; margin: 8px; }
   .veh-body { flex-direction: column; }
-  .veh-map { flex: 0 0 55%; }
+  .veh-map { flex: 0 0 auto; height: 55vh; }
   .veh-side { flex: 1 1 auto; border-inline-start: 0; border-block-start: 1px solid var(--border-color); }
+  .veh-list { max-height: none; overflow: visible; }
   .veh-head { padding: 10px 12px; }
 }

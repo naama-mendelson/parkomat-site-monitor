@@ -73,6 +73,25 @@ AS $$
   END
 $$;
 
+-- ⚠️ השעה שחוזרת פעמיים (25/10/2026, ובכל סוף קיץ): 01:00–02:00 קורה פעמיים, ו-AT TIME ZONE בוחר את קריאת החורף. רשומה
+-- מהמעבר הראשון (קיץ) נשמרה אז שעה בעתיד — והמצב הראה יחידה שותקת "בנסיעה" כשעה (הסקירה, 20/10). כאן: כשהקריאה יוצאת
+-- יותר מ-5 דקות אחרי p_ref (רגע הקליטה / הסנכרון), והשעה הזו באמת כפולה (שעה קודם — אותה שעת קיר), לוקחים את קריאת הקיץ.
+-- רק לטקסט בלי אזור זמן; עם Z או היסט — כמו שהוא.
+CREATE OR REPLACE FUNCTION app.ituran_ts_at(p text, p_ref timestamptz)
+RETURNS timestamptz
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT CASE
+    WHEN t IS NULL OR p_ref IS NULL OR btrim(p) ~ '(Z|[+-]\d\d:?\d\d)$' THEN t
+    WHEN t > p_ref + interval '5 minutes' AND t - interval '1 hour' <= p_ref + interval '5 minutes'
+         AND (t - interval '1 hour') AT TIME ZONE 'Asia/Jerusalem' = t AT TIME ZONE 'Asia/Jerusalem'
+      THEN t - interval '1 hour'
+    ELSE t
+  END
+    FROM (SELECT app.ituran_ts(p) AS t) x
+$$;
+
 -- מספר מתוך JSON, או NULL — בלי ::numeric שזורק על ערך משובש
 CREATE OR REPLACE FUNCTION app.ituran_num(p text)
 RETURNS numeric
@@ -106,22 +125,37 @@ AS $$
   END
 $$;
 
+-- שם אירוע מנורמל להשוואה: כל רווח — גם רווח קשיח (U+00A0), טאב ושורה חדשה — לרווח אחד, ורק אז חיתוך הקצוות.
+-- ⚠️ בסדר הזה: btrim מוריד רק רווחים רגילים, וקודם חיתוך ואז צמצום השאיר טאב בסוף כרווח (הסקירה, 20/10). והרווח הקשיח —
+-- כי "חיבור מתח" מוגדר בחשבון כ"חיבור" + רווח + U+00A0 + "מתח", ו-\s של Postgres לא תופס את U+00A0.
+CREATE OR REPLACE FUNCTION app.ituran_event_name(p_name text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT NULLIF(btrim(regexp_replace(translate(COALESCE(p_name, ''), chr(160) || chr(8199) || chr(8239), '   '), '\s+', ' ', 'g')), '')
+$$;
+
 -- סוג אירוע של איתוראן — לפי המזהה בחשבון של פרקומט, ואם האירועים הוגדרו מחדש — לפי השם (שאיתוראן מאפשרים לערוך,
--- ולכן המזהה קודם; המזהים אינם סוד). off = כיבוי ההצתה או המנוע; stop = הרכב נעצר; on = הדלקה או תנועה.
--- ⚠️ "חיבור  מתח" מוגדר בחשבון עם שני רווחים — הרווחים מצומצמים לפני ההשוואה.
+-- ולכן המזהה קודם; המזהים אינם סוד).
+--   ign_on / ign_off = הדלקה / כיבוי של הסוויץ' או המנוע;  moving / stop = הרכב בתנועה / נעצר (לפי GPS ותאוצה);
+--   power_cut = ניתוק מתח או מתח מצבר נמוך;  power_ok = חיבור מתח.
+-- ⚠️ ההצתה והתנועה נפרדות בכוונה: רכב שנגרר (גניבה) על סוללת גיבוי מייצר "בתנועה" / "בעצירה" — ואסור שזה יבטל התראת
+-- ניתוק מתח. רק הצתה מוכיחה שהמתח חזר (הסקירה, 20/10).
 CREATE OR REPLACE FUNCTION app.ituran_event_kind(p_id text, p_name text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
 AS $$
   SELECT CASE
-    WHEN p_id IN ('10181704', '12746436') OR n IN ('סגירת סוויץ', 'מנוע כבוי') THEN 'off'
+    WHEN p_id IN ('10181704', '12746436') OR n IN ('סגירת סוויץ', 'מנוע כבוי') THEN 'ign_off'
+    WHEN p_id IN ('12746440', '5295693') OR n IN ('פתיחת סוויץ', 'מנוע עובד') THEN 'ign_on'
     WHEN p_id = '12746438' OR n = 'רכב בעצירה' THEN 'stop'
-    WHEN p_id IN ('12746440', '5295693', '12746437') OR n IN ('פתיחת סוויץ', 'מנוע עובד', 'רכב בתנועה') THEN 'on'
+    WHEN p_id = '12746437' OR n = 'רכב בתנועה' THEN 'moving'
     WHEN p_id IN ('12746446', '12746445') OR n IN ('ניתוק מתח', 'מתח מצבר נמוך') THEN 'power_cut'
     WHEN p_id = '12746447' OR n = 'חיבור מתח' THEN 'power_ok'
   END
-    FROM (SELECT regexp_replace(btrim(COALESCE(p_name, '')), '\s+', ' ', 'g') AS n) x
+    FROM (SELECT app.ituran_event_name(p_name) AS n) x
 $$;
 
 -- מרחק במטרים בין שתי נקודות (haversine; בלי PostGIS — דלת היציאה). NULL באחת הנקודות → NULL.
@@ -140,6 +174,8 @@ $$;
 -- מלפני חודשיים ובמקום אחר, וזה נכון שלא יקבל.
 -- ⚠️ למה לא מספיק located_at: יחידה חונה שולחת "אני כאן" כל 10 דקות עד 12 שעות, והוא מתקדם איתם — רכב שחנה אתמול ב-17:45
 -- הוצג "עודכן לפני 4 דק'".
+-- ⚠️ רשימת האירועים של איתוראן שומרת את האחרון מכל **זוג** (הדלקה/כיבוי, מנוע עובד/כבוי, תנועה/עצירה) — לא מכל סוג. אצל
+-- רכב חונה נשארים רק הכיבויים (נמדד: 0 מ-30 חונים עם אירוע הדלקה). התנאי "אחרי כל הדלקה" חל כשהרכב הודלק שוב.
 CREATE OR REPLACE FUNCTION app.vehicle_parked_since(p_events jsonb, p_lat double precision, p_lon double precision)
 RETURNS timestamptz
 LANGUAGE sql
@@ -147,38 +183,39 @@ STABLE
 AS $$
   WITH e AS (
     SELECT app.ituran_event_kind(x->>'event_id', x->>'event_name') AS kind,
-           app.ituran_ts(x->>'time_start') AS at,
+           app.ituran_ts_at(x->>'time_start', now()) AS at,
            app.ituran_num(x #>> '{point,lat}')::double precision AS lat,
            app.ituran_num(x #>> '{point,lon}')::double precision AS lon
       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_events) = 'array' THEN p_events ELSE '[]'::jsonb END) x
   ), near AS (
     SELECT kind, at FROM e
-     WHERE kind IN ('off', 'stop') AND at IS NOT NULL
+     WHERE kind IN ('ign_off', 'stop') AND at IS NOT NULL
        AND app.geo_distance_m(lat, lon, p_lat, p_lon) <= 200
-       AND at >= COALESCE((SELECT max(at) FROM e WHERE kind = 'on'), '-infinity'::timestamptz)
+       AND at >= COALESCE((SELECT max(at) FROM e WHERE kind IN ('ign_on', 'moving')), '-infinity'::timestamptz)
   )
-  SELECT COALESCE((SELECT max(at) FROM near WHERE kind = 'off'), (SELECT max(at) FROM near WHERE kind = 'stop'))
+  SELECT COALESCE((SELECT max(at) FROM near WHERE kind = 'ign_off'), (SELECT max(at) FROM near WHERE kind = 'stop'))
 $$;
 
 -- ניתוק מתח / מתח מצבר נמוך שלא בא אחריו חיבור מתח או הדלקה — שורה אחת (מתי התחיל, ושם האירוע כמו באיתוראן), או אף
 -- שורה. נמדד 20/10/2026: אופנוע אחד דיווח ניתוק מתח ומתח מצבר נמוך ארבע וחמש דקות אחרי שכובה, ומאז היחידה מדווחת
 -- לעיתים רחוקות — והמפה לא אמרה כלום. כשיש כמה, הראשון: מאז מתי הבעיה, ובשם שטכנאי מכיר.
--- ⚠️ הדלקה אחרי הניתוק מבטלת אותו: רכב שהונע — המתח שלו חזר. בלי זה ההתראה הייתה נשארת לתמיד, כי "חיבור מתח" לא הופיע
--- אצל אף רכב בכל הצילומים (אולי האירוע אינו נשלח בכלל).
+-- ⚠️ כל אירוע הצתה אחרי הניתוק — הדלקה **או כיבוי** — מבטל אותו: רכב שהונע, המתח שלו חזר. כיבוי נחשב כי הרשימה שומרת רק
+-- את האחרון מכל זוג: אצל רכב שהונע ואז חנה נשארים רק הכיבויים, ובלעדיהם ההתראה הייתה חוזרת אחרי כל חניה (הסקירה, 20/10).
+-- "חיבור מתח" לא הופיע אצל אף רכב בכל הצילומים. ⚠️ תנועה ועצירה **לא** מבטלות: רכב שנגרר על סוללת גיבוי זז גם בלי מתח.
 CREATE OR REPLACE FUNCTION app.vehicle_power_alert(p_events jsonb)
 RETURNS TABLE (at timestamptz, name text)
 LANGUAGE sql
 STABLE
 AS $$
   WITH e AS (
-    SELECT app.ituran_event_kind(x->>'event_id', x->>'event_name') AS kind, app.ituran_ts(x->>'time_start') AS at,
-           NULLIF(regexp_replace(btrim(COALESCE(x->>'event_name', '')), '\s+', ' ', 'g'), '') AS name
+    SELECT app.ituran_event_kind(x->>'event_id', x->>'event_name') AS kind, app.ituran_ts_at(x->>'time_start', now()) AS at,
+           app.ituran_event_name(x->>'event_name') AS name
       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_events) = 'array' THEN p_events ELSE '[]'::jsonb END) x
   )
   SELECT e.at, COALESCE(e.name, 'תקלת מתח')
     FROM e
    WHERE e.kind = 'power_cut' AND e.at IS NOT NULL
-     AND e.at > COALESCE((SELECT max(o.at) FROM e o WHERE o.kind IN ('power_ok', 'on')), '-infinity'::timestamptz)
+     AND e.at > COALESCE((SELECT max(o.at) FROM e o WHERE o.kind IN ('power_ok', 'ign_on', 'ign_off')), '-infinity'::timestamptz)
    ORDER BY e.at
    LIMIT 1
 $$;
@@ -225,7 +262,8 @@ BEGIN
     -- ⚠️ רשומה בלי מיקום אינה "המיקום האחרון", ולכן גם הזמן שלה לא נרשם — אחרת היא הייתה דורסת מיקום ידוע ב-NULL
     -- ומעלימה את הרכב מהמפה. נמדד 20/10/2026: יחידה אחת עם תקלת GPS משדרת רשומות 0,0 עם מהירות וכיוון -999
     -- ו"!! Address not found !!".
-    v_at := CASE WHEN v_lat IS NOT NULL THEN app.ituran_ts(v #>> '{last_location,timestamp}') END;
+    -- (ituran_ts_at: בשעה שחוזרת פעמיים ב-25/10 — קריאת הקיץ כשקריאת החורף בעתיד)
+    v_at := CASE WHEN v_lat IS NOT NULL THEN app.ituran_ts_at(v #>> '{last_location,timestamp}', now()) END;
     v_addr := NULLIF(btrim(COALESCE(v #>> '{last_location,location,address,location}',
                                     concat_ws(', ', v #>> '{last_location,location,address,street}',
                                                     v #>> '{last_location,location,address,city}'))), '');
@@ -316,6 +354,168 @@ REVOKE ALL ON FUNCTION public.ituran_sync_failed(text) FROM PUBLIC, anon, authen
 GRANT EXECUTE ON FUNCTION public.ituran_sync_failed(text) TO service_role;
 
 -- ============================================================
+-- מיקומי אתרים — "לאיזה אתרים הם קרובים" (20/10/2026)
+-- ============================================================
+-- בעלת המוצר, על רכבי הטכנאים: "רק מיקומים ולאיזה אתרים הם קרובים". העמודות על sites (schema.postgres.sql:
+-- lat / lon / geo_source / geo_precision / geo_set_at / geo_set_by). הבחירה שלה: הצעה משוערת מהכתובת שבשם לכל האתרים
+-- (OpenStreetMap, tools/geocode-sites.js → site_geo_import), שעורך מאשר או מתקן על המפה (site_geo_set).
+-- ⚠️ בלי שורת events, כמו כל השאר כאן: סימון 219 אתרים היה 219 טעינות מלאות בכל מסך פתוח. המפה קוראת בעצמה.
+
+-- האתרים הקרובים לנקודה: עד p_limit, בטווח p_max_m מטרים, הקרוב ראשון. approx = מיקום האתר משוער (רחוב / אזור).
+-- התיבה (lat ± מטרים/111,195, lon מתוקן ב-cos) רק מצמצמת; המרחק עצמו — app.geo_distance_m. LIMIT לפני הסינון לפי
+-- הטווח נכון: מי שבתוך הטווח קרוב יותר מכל מי שמחוצה לו.
+CREATE OR REPLACE FUNCTION app.near_sites(p_lat double precision, p_lon double precision,
+                                          p_max_m double precision DEFAULT 1500, p_limit integer DEFAULT 3)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(jsonb_agg(jsonb_build_object('code', n.code, 'name', n.site_name, 'm', round(n.m)::integer,
+                                               'approx', n.geo_precision IN ('street', 'area'))
+                            ORDER BY n.m), '[]'::jsonb)
+    FROM (SELECT s.code, s.site_name, s.geo_precision, app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) AS m
+            FROM sites s
+           WHERE p_lat IS NOT NULL AND p_lon IS NOT NULL AND s.lat IS NOT NULL
+             AND s.lat BETWEEN p_lat - p_max_m / 111195.0 AND p_lat + p_max_m / 111195.0
+             AND s.lon BETWEEN p_lon - p_max_m / (111195.0 * cos(radians(p_lat)))
+                           AND p_lon + p_max_m / (111195.0 * cos(radians(p_lat)))
+           ORDER BY 4
+           LIMIT p_limit) n
+   WHERE n.m <= p_max_m
+$$;
+REVOKE ALL ON FUNCTION app.near_sites(double precision, double precision, double precision, integer) FROM PUBLIC;
+
+-- כל האתרים עם המיקום שלהם (או בלעדיו) — לשכבת האתרים במפה ולרשימת "דורשים בדיקה". כל מי שמחובר; jsonb אחד.
+CREATE OR REPLACE FUNCTION public.site_locations_list()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  PERFORM app.require_staff();
+  RETURN COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+             'code', s.code, 'name', s.site_name, 'monitored', s.monitored IS NOT FALSE,
+             'lat', s.lat, 'lon', s.lon, 'source', s.geo_source, 'precision', s.geo_precision,
+             'set_at', s.geo_set_at, 'set_by', s.geo_set_by)
+           ORDER BY s.code)
+      FROM sites s), '[]'::jsonb);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.site_locations_list() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_locations_list() TO authenticated;
+
+-- עורך מסמן / מאשר / מנקה מיקום של אתר. אישור = אותן קואורדינטות, והמקור הופך ל-manual. NULL ו-NULL = ניקוי.
+-- p_expected_at = geo_set_at שהמסך ראה ('' כשלא היה מיקום): מסך ישן מקבל PT409 במקום לדרוס סימון של מישהו אחר.
+-- NULL = בלי בדיקה. ⚠️ התחום נבדק כאן עם הודעה בעברית לפני שה-CHECK זורק בלעדיה (היפוך lat/lon הוא הטעות הסבירה).
+CREATE OR REPLACE FUNCTION public.site_geo_set(p_code text, p_lat double precision, p_lon double precision,
+                                               p_expected_at text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_editor();
+  v_id    integer;
+  v_code  text;
+  v_cur   text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_lat   double precision := CASE WHEN p_lat IS NOT NULL THEN round(p_lat::numeric, 6)::double precision END;
+  v_lon   double precision := CASE WHEN p_lon IS NOT NULL THEN round(p_lon::numeric, 6)::double precision END;
+BEGIN
+  SELECT id, code, geo_set_at INTO v_id, v_code, v_cur FROM sites WHERE code = btrim(COALESCE(p_code, '')) FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'האתר לא נמצא' USING ERRCODE = 'PT404';
+  END IF;
+  IF p_expected_at IS NOT NULL AND COALESCE(v_cur, '') <> p_expected_at THEN
+    RAISE EXCEPTION 'המיקום של האתר השתנה בינתיים — יש לרענן ולנסות שוב' USING ERRCODE = 'PT409';
+  END IF;
+  IF (v_lat IS NULL) <> (v_lon IS NULL) THEN
+    RAISE EXCEPTION 'חסרה קואורדינטה — צריך גם קו רוחב וגם קו אורך' USING ERRCODE = '22023';
+  END IF;
+  IF v_lat IS NOT NULL AND NOT (v_lat BETWEEN 29.3 AND 33.4 AND v_lon BETWEEN 34.2 AND 35.95) THEN
+    RAISE EXCEPTION 'המיקום מחוץ לישראל — אולי קו הרוחב וקו האורך הוחלפו' USING ERRCODE = '22023';
+  END IF;
+  UPDATE sites
+     SET lat = v_lat, lon = v_lon,
+         geo_source    = CASE WHEN v_lat IS NULL THEN NULL ELSE 'manual' END,
+         geo_precision = CASE WHEN v_lat IS NULL THEN NULL ELSE 'pin' END,
+         geo_set_at = v_now, geo_set_by = v_actor
+   WHERE id = v_id;
+  PERFORM app.record_write_audit('site.geo', v_actor, app.current_app_role(), 'site', v_code,
+    jsonb_build_object('cleared', v_lat IS NULL));
+  RETURN jsonb_build_object('code', v_code, 'lat', v_lat, 'lon', v_lon,
+                            'source', CASE WHEN v_lat IS NULL THEN NULL ELSE 'manual' END,
+                            'precision', CASE WHEN v_lat IS NULL THEN NULL ELSE 'pin' END,
+                            'set_at', v_now, 'set_by', v_actor);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.site_geo_set(text, double precision, double precision, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_geo_set(text, double precision, double precision, text) TO authenticated;
+
+-- ייבוא ההצעות מהכתובת — לשירות בלבד (tools/geocode-sites.js מריץ אותו כ-postgres). p_rows = [{code, lat, lon, precision}].
+-- ⚠️ לעולם לא דורס manual: מה שעורך סימן או אישר נשאר, גם בהרצה חוזרת של הכלי. שורה משובשת (בלי קוד, מחוץ לישראל,
+-- דיוק לא מוכר) נספרת ולא מפילה את השאר. מחזיר מונים, כדי שהכלי יגיד מה קרה.
+CREATE OR REPLACE FUNCTION public.site_geo_import(p_rows jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  r       jsonb;
+  v_code  text;
+  v_lat   double precision;
+  v_lon   double precision;
+  v_prec  text;
+  v_src   text;
+  v_now   text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  n_upd   integer := 0;
+  n_kept  integer := 0;
+  n_bad   integer := 0;
+  n_unk   integer := 0;
+BEGIN
+  IF p_rows IS NULL OR jsonb_typeof(p_rows) <> 'array' THEN
+    RAISE EXCEPTION 'site_geo_import: p_rows חייב להיות מערך' USING ERRCODE = '22023';
+  END IF;
+  FOR r IN SELECT value FROM jsonb_array_elements(p_rows) LOOP
+    v_code := NULLIF(btrim(COALESCE(r->>'code', '')), '');
+    v_lat  := app.ituran_num(r->>'lat');
+    v_lon  := app.ituran_num(r->>'lon');
+    v_prec := COALESCE(r->>'precision', '');
+    IF v_code IS NULL OR v_lat IS NULL OR v_lon IS NULL OR v_prec NOT IN ('house', 'street', 'area')
+       OR NOT (v_lat BETWEEN 29.3 AND 33.4 AND v_lon BETWEEN 34.2 AND 35.95) THEN
+      n_bad := n_bad + 1;
+      CONTINUE;
+    END IF;
+    SELECT geo_source INTO v_src FROM sites WHERE code = v_code;
+    IF NOT FOUND THEN
+      n_unk := n_unk + 1;
+      CONTINUE;
+    END IF;
+    IF v_src = 'manual' THEN
+      n_kept := n_kept + 1;
+      CONTINUE;
+    END IF;
+    UPDATE sites
+       SET lat = round(v_lat::numeric, 6)::double precision, lon = round(v_lon::numeric, 6)::double precision,
+           geo_source = 'geocoded', geo_precision = v_prec, geo_set_at = v_now,
+           geo_set_by = 'הצעה מהכתובת (OpenStreetMap)'
+     WHERE code = v_code AND geo_source IS DISTINCT FROM 'manual';
+    n_upd := n_upd + 1;
+  END LOOP;
+  RETURN jsonb_build_object('updated', n_upd, 'kept_manual', n_kept, 'invalid', n_bad, 'unknown_code', n_unk);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.site_geo_import(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.site_geo_import(jsonb) TO service_role;
+
+-- ============================================================
 -- הקריאה של המפה — כל מי שמחובר (בעלת המוצר, 20/10/2026: "כל מי שמחובר"), כלומר require_staff: מנהל, עורך, בקר.
 -- jsonb אחד — בלי תקרת 1,000 השורות של PostgREST.
 -- ============================================================
@@ -344,6 +544,8 @@ BEGIN
                                       END AT TIME ZONE 'UTC', iso),
                'power_alert', CASE WHEN pa.at IS NOT NULL
                                    THEN jsonb_build_object('at', to_char(pa.at AT TIME ZONE 'UTC', iso), 'name', pa.name) END,
+               -- עד 3 אתרים בטווח 1.5 ק"מ מהמיקום (האחרון שידוע), הקרוב ראשון: [{code, name, m, approx}]
+               'near', app.near_sites(v.lat, v.lon),
                'lat', v.lat, 'lon', v.lon, 'address', v.address, 'speed', v.speed,
                'heading', v.heading, 'odometer', v.odometer,
                'located_at', to_char(v.located_at AT TIME ZONE 'UTC', iso),

@@ -4111,7 +4111,88 @@ What changed:
   suite 1288/1288.
 - ⚠️ **Deploy:** the SQL dry run shows 7 gaps (5 new functions, 2 bodies); the `events` column does not show, `--apply`
   creates it. Then redeploy `ituran-sync` (Events) and push. Any order is safe: the old `ituran_ingest` ignores `events`, and
-  an old bundle ignores `state`.
+  an old bundle ignores `state`. ✅ Deployed 20/10/2026 at the owner's word ("תעלה לייצור"): 1bf14e5.
+- **The independent review of 1bf14e5** (mutations, a replay of the morning's real snapshots through the new SQL, three
+  reviewers with three skeptics per finding) confirmed the four frozen units, the GPS-fault unit, 27 of 28 "חונה מאז" and the
+  scooter's power alert on real data, caught 19/21 SQL and 11/15 UI mutations, and found, fixed the same evening:
+  - ⚠️ **High: the power alert came back after every park.** Ituran's `Events` keep the latest event of each **pair**
+    (switch on/off, engine on/off, moving/stopped), not of each type: 0 of 30 parked vehicles carried an "on" event. The kinds
+    are now `ign_on` / `ign_off` / `moving` / `stop` / `power_cut` / `power_ok`, and **any ignition event after the cut — on or
+    off — clears it** (a vehicle that was started has its power back). ⚠️ `moving` / `stop` do **not** clear it: a vehicle
+    towed away on backup power moves without power, which is exactly when the alert matters.
+  - **The repeated hour on 25/10** (01:00–02:00 happens twice; `AT TIME ZONE` picks winter): a first-pass fix was stored an
+    hour in the future and a silent unit read "בנסיעה" for about an hour. `app.ituran_ts_at(text, ref)` takes the summer
+    reading when the winter one is more than 5 minutes after the reference and the wall-clock hour really repeats; used for
+    `last_location` (ref = ingest time) and for event times (ref = now()).
+  - **Event names:** "חיבור מתח" is defined as "חיבור" + space + **U+00A0** + "מתח", which `\s` does not match, and the old
+    order (trim, then collapse) left an edge tab as a space. `app.ituran_event_name` turns every whitespace (incl. U+00A0,
+    U+2007, U+202F) into one space first, then trims.
+  - Screen: the summary broke inside an item on phones (each item is `nowrap` now, the "·" glued to the item before it);
+    "לא ידוע" was missing from it; "3 מנוע דולק" → "עם מנוע דולק"; the tone colours on the counts never applied
+    (`.veh-summary b` won on specificity); the selected-row tint dropped the state colours under 4.5:1 (8% now, and the stale
+    grey is `#5b6472`); "לא מתעדכן" and "לא מדווח" were the same grey disc on the dark map (a light dashed ring now); the row
+    and the popup used "מקום אחרון" for two different fields (now "מקום" = the Ituran place, "כתובת" = the address).
+  - Test gaps closed: out-of-range and one-coordinate records, the ±90/180 boundary, "yesterday" by the Israel date across
+    UTC midnight and the 23-hour day, a clock ahead across midnight, exactly 24 h in the old-database fallback.
+
+### "טכנאים" — a header tile, site locations and "which sites they are near" (20/10/2026, evening)
+
+The owner, the same evening: *"שגם יראו בתוך מפה מסודרת איפה הם נמצאים, מצידי בלי מפה — רק מיקומים ולאיזה אתרים הם
+קרובים"*; asked how to get site coordinates (there were none), *"כן, עכשיו"* to an approximate location from each site's
+address, confirmed or corrected on the map; and then *"אני רוצה שהרכבים יקראו לעמוד הזה טכנאים, וזה יהיה סינון למעלה לצד
+הקריאות פתוחות"*.
+
+- **The tile "טכנאים"** (`tech-head-btn`, right after "קריאות פתוחות") replaces the site cards with `TechniciansView` (the
+  map and the list), below the header — no floating button, no ✕, no Esc that closes. Pressing "רובוטיים" / "מכפילים" /
+  "קריאות פתוחות" or the tile again goes back to the cards (pressing "קריאות פתוחות" from it shows the calls, it does not
+  toggle the remembered choice off). While it is pressed the three groups read "לא חל על טכנאים" and are disabled
+  (`FilterGroup` has a `disabled` prop now), and the kind tiles are not highlighted. It shows a 🛵 instead of a count: the
+  vehicles are fetched only while the view is open. **Not remembered** across reloads, on purpose: the view polls every
+  minute, and a wall screen left on it would keep polling. `techMode` lives in `App.jsx`; the header measured one row and
+  165px at every width from 1280 to 1920.
+- **Site locations:** `sites.lat` / `lon` / `geo_source` (`geocoded` / `manual`) / `geo_precision` (`house` / `street` /
+  `area` / `pin`) / `geo_set_at` / `geo_set_by` (`schema.postgres.sql`), with `sites_geo_shape`: all or nothing, inside
+  Israel (29.3–33.4 / 34.2–35.95, so a swapped lat/lon or 0,0 fails). "משוער" on screen = `street` / `area`.
+  - `public.site_geo_import(rows)` — service only, used by the tool; **never overwrites `manual`**; a bad row is counted, not
+    fatal.
+  - `public.site_geo_set(code, lat, lon, expected_at)` — editor; confirm (same coordinates → `manual` / `pin`), move, or
+    clear (NULLs); `expected_at` = the `geo_set_at` the screen saw (`''` = it saw none) → PT409 for a stale screen;
+    audit `site.geo`; **no `events` row** (pinning 219 sites must not reload every screen 219 times).
+  - `public.site_locations_list()` — staff; one jsonb.
+  - `app.near_sites(lat, lon, 1500 m, 3)` — bounding box, then `geo_distance_m`; `vehicles_live_list` adds `near`
+    `[{code, name, m, approx}]` for every vehicle (its last known position).
+- **The geocoder, `tools/geocode-sites.js`** (dry run by default, `--apply`, `--only=`, `--refresh`, `--csv=<Wizenet
+  project list>`): OpenStreetMap Nominatim, at most one request per 1.1 s with an identifying User-Agent, **only the address
+  is sent**, results cached in the machine's tmp dir (not the repo). The address comes from the site name through
+  `shared/site-address.mjs` (35 city spellings measured — ת"א / ת''א / יפו ת"א, רשל"צ / רשל'''צ / ראשלצ, י''ם / ירשלים,
+  רמהש, הודש, בת-ים…; ranges → the first number; ⚠️ no `\b`, which never matches Hebrew in JS — the 15/10 normaliser in
+  `link-multiplier-codes.js` has that bug). A result counts only in the same city **and** on the same street, compared on a
+  skeleton without י/ו, geresh and a final א/ה (OSM writes "שינקין", "וילנה", "ארלוזורוב", "כינרת" where our names say
+  "שנקין", "וילנא", "ארלוזרוב", "כנרת"). Queries in order: structured, free text, the English address from Wizenet's project
+  list (its range "67-69" → "67": Nominatim returns nothing for a range), the street alone, the English street alone.
+  Measured on the 219 sites: **126 at the building, 74 approximate (street), 19 not found** (15 + the four with no number or
+  city: נמל מסילות, פלורנטין, נמל דולי, פייבל 17) — those are pinned by hand. ⚠️ OSM writes Tel Aviv "תל־אביב–יפו" (maqaf and
+  en dash); the city compare normalises both. ⚠️ The first run held the database connection through minutes of searching
+  and the pooler dropped it at site 80; the tool now reads, disconnects, searches, and reconnects only to write.
+- **On screen:** each row gets "ליד הרצל 50 · 120 מ׳" (the nearest site within 1.5 km, the name without the city;
+  "כ-300 מ׳" when the site's location is approximate); the popup lists up to three ("אתרים קרובים: …"); the list search also
+  matches the nearby site's name. "אתרים במפה" turns on the site layer (small squares: confirmed = filled blue, by address =
+  filled grey, approximate = dashed, none = dotted in the list) and a second tab, "אתרים לבדיקה · N" (no location first, then
+  area, then street). An editor confirms from a site's popup ("אישור המיקום"), drags it ("הזזה" → "שמירה כאן"), or pins a
+  site with no location (a banner, a click on the map, "שמירה כאן"; Esc cancels). A בקר sees it all with no buttons.
+  `components/Vehicles/siteLayer.js` is plain Leaflet (popup buttons wired with `onclick`, so a re-opened popup cannot save
+  twice); `utils/vehicles.js` has `distanceText`, `nearList`, `nearText`, `SITE_GEO`, `siteGeoKey`, `sitesNeedingCheck`,
+  `siteGeoCounts`.
+- **Tests:** `vehicles.test.js` 17 (shape, import, set/confirm/clear/stale, permissions, nearest sites, the review cases),
+  `site-address.test.js` 5, `geocode-sites.test.js` 7, `vehicles-ui.test.js` 14, roles census (`site_geo_set` editor;
+  `site_locations_list`, `site_geo_import` other), `check-row-cap` declares the three. Full suite 1308/1308. Browser
+  `e2e/probe-vehicles.mjs` 96/96 (the tile and its place, the groups disabled, back to the cards, "ליד", the site layer —
+  confirm, pin with Esc in between, a failed save, a read-only בקר — polling only while open, 1371 light and 390 dark);
+  `probe-keyboard-tiles` 18, `probe-site-kind` 36 (its "הכל" selector now skips the new tile), `probe-open-calls` 60,
+  `probe-square` 201, `probe-cf` 30.
+- ⚠️ **Deploy:** SQL first (the dry run shows 11 gaps: 6 new functions, 5 bodies; the six `sites` columns and
+  `sites_geo_shape` do **not** show — check `information_schema.columns` after `--apply`), then
+  `node --env-file=.env tools/geocode-sites.js --csv=<project list> --apply`, then push. An old bundle ignores `near`.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

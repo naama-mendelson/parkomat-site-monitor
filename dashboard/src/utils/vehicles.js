@@ -4,6 +4,8 @@
 // app.vehicle_state, "חונה מאז", התראת מתח). כאן רק תרגום לתצוגה. ה-motion של איתוראן לבדו אינו מצב: יחידה שהפסיקה לשדר
 // באמצע נסיעה נשארת אצלם "בנסיעה" שעות (נמדד 20/10/2026; בעלת המוצר, על אחד מהם: "לא בנסיעה").
 
+import { siteShortName } from "../../../shared/site-address.mjs";
+
 /** רק למסד ישן, לפני שהוחל ה-SQL של 20/10 (אין state בתשובה): אחרי יממה בלי דיווח — "לא מדווח". */
 export const STALE_MS = 24 * 60 * 60_000;
 /** אחרי כמה זמן בלי סנכרון מוצלח המסך מזהיר שהמיקומים ישנים — הסנכרון רץ כל דקה. */
@@ -89,13 +91,17 @@ export function rowAge(v, nowIso) {
   return tone === "driving" || tone === "idle" || tone === "unknown" ? ageText(v?.located_at, nowIso) : "";
 }
 
-/** המקום: האזורים באיתוראן, ואם אין — הכתובת. כשהרכב לא מתעדכן — "מקום אחרון: …", כי זה לא בהכרח איפה שהוא עכשיו. */
+/**
+ * המקום בשורה: האזור באיתוראן, ואם אין — הכתובת. כשהרכב לא מתעדכן — "מקום אחרון: …" (אזור) או "כתובת אחרונה: …", כי זה לא
+ * בהכרח איפה שהוא עכשיו. ⚠️ אותן מילים כמו בחלון הרכב: "מקום" = אזור באיתוראן, "כתובת" = מה שאיתוראן כתבו (הסקירה, 20/10).
+ */
 export function placeText(v, nowIso) {
-  const places = placeNames(v);
-  const where = places.length ? places.join(", ") : String(v?.address ?? "").trim();
-  if (!where) return "";
   const tone = stateOf(v, nowIso).tone;
-  return tone === "silent" || tone === "stale" ? `מקום אחרון: ${where}` : where;
+  const old = tone === "silent" || tone === "stale";
+  const places = placeNames(v);
+  if (places.length) return `${old ? "מקום אחרון: " : ""}${places.join(", ")}`;
+  const addr = String(v?.address ?? "").trim();
+  return addr ? `${old ? "כתובת אחרונה: " : ""}${addr}` : "";
 }
 
 /** התראת המתח, או null: { name: "ניתוק מתח", at, text: "ניתוק מתח מאז 08:54" }. */
@@ -138,9 +144,66 @@ export function hasPosition(v) {
   return Number.isFinite(v?.lat) && Number.isFinite(v?.lon) && !(v.lat === 0 && v.lon === 0);
 }
 
+// ============================================================
+// "לאיזה אתרים הם קרובים" (20/10/2026) — המסד מחזיר near: עד 3 אתרים בטווח 1.5 ק"מ, הקרוב ראשון,
+// [{code, name, m, approx}]; approx = מיקום האתר משוער (לפי רחוב / אזור). כאן רק התרגום לטקסט.
+// ============================================================
+
+/** "120 מ׳" (מעוגל לעשרות), "1.4 ק״מ"; כשמיקום האתר משוער — "כ-120 מ׳". */
+export function distanceText(m, approx = false) {
+  const n = Number(m);
+  if (m == null || !Number.isFinite(n) || n < 0) return "";
+  const t = n < 1000 ? `${Math.max(10, Math.round(n / 10) * 10)} מ׳` : `${(n / 1000).toFixed(1)} ק״מ`;
+  return approx ? `כ-${t}` : t;
+}
+
+/** האתרים הקרובים, מוכנים להצגה: [{code, label, dist, approx}]. label = רחוב ומספר, בלי העיר. */
+export function nearList(v) {
+  return (Array.isArray(v?.near) ? v.near : [])
+    .filter((s) => s && s.code)
+    .map((s) => ({ code: s.code, label: siteShortName(s.name) || s.code, dist: distanceText(s.m, s.approx === true), approx: s.approx === true }));
+}
+
+/** שורת הקרבה ברשימה: "ליד הרצל 50 · 120 מ׳" — האתר הקרוב ביותר, או "" כשאין אתר בטווח. */
+export function nearText(v) {
+  const s = nearList(v)[0];
+  return s ? `ליד ${s.label} · ${s.dist}` : "";
+}
+
+/** מצב המיקום של אתר בשכבת האתרים: manual (מאושר) / house (לפי הכתובת, הבניין) / street / area (משוער) / none. */
+export const SITE_GEO = {
+  manual: { label: "מיקום מאושר", approx: false },
+  house: { label: "לפי הכתובת — הבניין", approx: false },
+  street: { label: "משוער — לפי הרחוב", approx: true },
+  area: { label: "משוער — לפי האזור", approx: true },
+  none: { label: "אין מיקום", approx: true },
+};
+
+export function siteGeoKey(s) {
+  if (!Number.isFinite(s?.lat) || !Number.isFinite(s?.lon)) return "none";
+  if (s.source === "manual") return "manual";
+  return s.precision === "house" || s.precision === "area" ? s.precision : "street";
+}
+
+/** האתרים שדורשים בדיקה: בלי מיקום, אחר כך משוער לפי אזור, אחר כך לפי רחוב; בתוך כל קבוצה לפי שם. */
+export function sitesNeedingCheck(list) {
+  const rank = { none: 0, area: 1, street: 2 };
+  return (Array.isArray(list) ? list : [])
+    .filter((s) => siteGeoKey(s) in rank)
+    .sort((a, b) => rank[siteGeoKey(a)] - rank[siteGeoKey(b)] || String(a.name ?? "").localeCompare(String(b.name ?? ""), "he"));
+}
+
+/** ספירה לשורת הסיכום של שכבת האתרים. */
+export function siteGeoCounts(list) {
+  const c = { manual: 0, house: 0, street: 0, area: 0, none: 0 };
+  for (const s of Array.isArray(list) ? list : []) c[siteGeoKey(s)]++;
+  return c;
+}
+
 /** חיפוש ברשימה: שם, מספר רכב, כתובת או מקום — בלי רגישות לרווחים. */
 export function matchesVehicle(v, query) {
   const q = String(query ?? "").replace(/\s+/g, " ").trim();
   if (!q) return true;
-  return [vehicleName(v), v?.plate, v?.address, ...placeNames(v)].some((x) => String(x ?? "").includes(q));
+  return [vehicleName(v), v?.plate, v?.address, ...placeNames(v), ...nearList(v).map((s) => s.label)]
+    .some((x) => String(x ?? "").includes(q));
 }

@@ -48,7 +48,7 @@ const EDITOR = [
   "pm_site_profile_set", "pm_site_templates_set", "pm_template_create", "pm_template_meta_set", "pm_template_rename",
   "pm_template_save", "pm_visit_delete", "pm_visit_discard", "pm_visit_item_check", "pm_visit_item_note", "pm_visit_photo_add",
   "pm_visit_photo_delete", "pm_visit_start", "pm_visit_submit", "publish_announcement", "reclassify_status", "register_site",
-  "schedule_maintenance", "start_maintenance", "task_add", "task_delete", "task_done", "task_start", "task_unstart",
+  "schedule_maintenance", "site_geo_set", "start_maintenance", "task_add", "task_delete", "task_done", "task_start", "task_unstart",
   "tl_add_column", "tl_add_row", "tl_delete_column", "tl_delete_row", "tl_move_column", "tl_move_row", "tl_paste_rows",
   "tl_set_cell", "tl_update_column", "unmark_test", "update_site", "wizenet_request_lookups", "wizenet_request_update",
 ];
@@ -63,7 +63,7 @@ const OTHER = [
   "activity_rows", "claim_service_command", "complete_service_command", "compliance_file", "compliance_history_list",
   "compliance_thumbs", "executive_series", "executive_series_json", "ingest_batch", "insights_rows", "inspection_site",
   "login_code_issue", "login_code_status", "login_code_unsend", "login_code_verify",
-  "ituran_ingest", "ituran_sync_failed", "vehicles_live_list",
+  "ituran_ingest", "ituran_sync_failed", "vehicles_live_list", "site_geo_import", "site_locations_list",
   "mark_announcement_seen", "my_role", "my_seen_announcements", "pending_announcement", "pm_profiles_list", "pm_site",
   "pm_template", "pm_templates_list", "pm_visit_detail", "recent_errors", "report_by_site", "report_monthly",
   "report_site_months", "server_heartbeat", "service_call_counts", "service_calls_board", "service_calls_history",

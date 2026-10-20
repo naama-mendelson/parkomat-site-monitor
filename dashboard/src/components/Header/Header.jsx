@@ -62,6 +62,8 @@ function Header({
   showOpenCalls,
   onShowOpenCallsChange,
   callCounts = null,
+  techMode = false,               // "טכנאים" — התצוגה מחליפה את כרטיסי האתרים (20/10/2026)
+  onTechModeChange,
 }) {
   // החיפוש והפילטרים הם כלי עבודה של הבקר. למנהל הבקרה יש חיפוש/סינון
   // משלו בתוך הטבלה, ולמנהל הכללי אין בהם צורך — אז הם לא מוצגים שם.
@@ -221,7 +223,8 @@ function Header({
   // מסנן המצב אינו חל בלוח "מכפילים" (OperatorView) — ולכן גם לא נספר שם. ⚠️ חוץ מ"קריאות פתוחות" לחוץ: שם הלוח מראה
   // גם רובוטיים, והמצב חל עליהם (הסקירה של 19/10 — בלי זה "בתקלה" לא סינן כלום כשהסוג השמור היה מכפילים)
   const statusApplies = callsMode || siteKind !== SITE_KIND_MULTIPLIERS;
-  const activeCount = (statusApplies ? (activeFilters?.length ?? 0) : 0) +
+  // ⚠️ "טכנאים" לחוץ — הלוח מראה טכנאים ולא אתרים: אף מסנן אתרים אינו חל, והתצוגה עצמה נספרת כאחד
+  const activeCount = techMode ? 1 : (statusApplies ? (activeFilters?.length ?? 0) : 0) +
     (typeFilter && typeFilter !== "all" ? 1 : 0) +
     (systemFilter && systemFilter !== "all" ? 1 : 0) +
     (tierFilter && tierFilter !== "all" ? 1 : 0) +
@@ -235,12 +238,12 @@ function Header({
 
   // שלושת המלבנים (19/10/2026) — מה פעיל בכל אחד, בשורה שמתחת לשם; מסומן כשמשהו שונה מברירת המחדל
   const statusN = statusApplies ? (activeFilters?.length ?? 0) : 0;
-  const statusSummary = !statusApplies ? "לא חל על מכפילים" : statusN === 0 ? "הכל" : statusN <= 2 ? activeFilters.map((st) => STATUS_LABELS[st] ?? st).join(" + ") : `${statusN} מצבים`;
+  const statusSummary = techMode ? "לא חל על טכנאים" : !statusApplies ? "לא חל על מכפילים" : statusN === 0 ? "הכל" : statusN <= 2 ? activeFilters.map((st) => STATUS_LABELS[st] ?? st).join(" + ") : `${statusN} מצבים`;
   const infoN = [typeFilter && typeFilter !== "all", systemFilter && systemFilter !== "all", tierFilter && tierFilter !== "all", !!liftFilter].filter(Boolean).length;
-  const infoSummary = infoN === 0 ? "הכל" : infoN === 1 ? "מסנן אחד" : `${infoN} מסננים`;
+  const infoSummary = techMode ? "לא חל על טכנאים" : infoN === 0 ? "הכל" : infoN === 1 ? "מסנן אחד" : `${infoN} מסננים`;
   const extrasN = complianceActiveCount(complianceView) + (onTasksViewChange ? tasksViewActive(tasksView) : 0) +
     (onShowRepeatChange && showRepeat === true ? 1 : 0);
-  const extrasSummary = extrasN === 0 ? "כבויים" : extrasN === 1 ? "אחד פעיל" : `${extrasN} פעילים`;
+  const extrasSummary = techMode ? "לא חל על טכנאים" : extrasN === 0 ? "כבויים" : extrasN === 1 ? "אחד פעיל" : `${extrasN} פעילים`;
 
   return (
     <header className="app-header">
@@ -374,7 +377,7 @@ function Header({
             {/* ⚠️ כש"קריאות פתוחות" לחוץ הסוג אינו חל, ולכן אף אחד משני האריחים אינו מודגש; לחיצה על אחד מהם יוצאת
                 מ"קריאות פתוחות" ומראה את הסוג הזה (19/10/2026) */}
             {onSiteKindChange && [SITE_KIND_ROBOTIC, SITE_KIND_MULTIPLIERS].map((k) => {
-              const on = siteKind === k && !callsMode;
+              const on = siteKind === k && !callsMode && !techMode;
               const n = k === SITE_KIND_ROBOTIC ? countRobotic(sites) : countMultipliers(sites);
               const label = k === SITE_KIND_ROBOTIC ? "רובוטיים" : "מכפילים";
               return (
@@ -382,7 +385,10 @@ function Header({
                   className={`filter-btn kind-head-btn ${k === SITE_KIND_ROBOTIC ? "rb-head-btn" : "mx-head-btn"}${on ? " active" : ""}`}
                   aria-pressed={on}
                   aria-label={`${label} (${k === SITE_KIND_ROBOTIC ? "אתרים עם בקר" : "אתרים בלי בקר"}) — ${n}`}
-                  onClick={() => { if (callsMode) { onShowOpenCallsChange(false); onSiteKindChange(k); } else onSiteKindChange(nextSiteKind(siteKind, k)); }}>
+                  onClick={() => {
+                    if (techMode) onTechModeChange(false);
+                    if (callsMode) { onShowOpenCallsChange(false); onSiteKindChange(k); } else onSiteKindChange(nextSiteKind(siteKind, k));
+                  }}>
                   <span className="filter-count">{n}</span>
                   <span className="filter-label">{label}</span>
                 </button>
@@ -393,18 +399,34 @@ function Header({
                 פתוחה, משני הסוגים, עם הסטופר וצבע ההחמרה; לא לחוץ (ברירת המחדל, 18/10) — בלי סימון קריאות. המספר הגדול —
                 כמה אתרים יש להם קריאה פתוחה, משני הסוגים. */}
             {onShowOpenCallsChange && (
-              <button type="button" className={`filter-btn oc-head-btn${showOpenCalls === true ? " active" : ""}`}
-                aria-pressed={showOpenCalls === true}
+              <button type="button" className={`filter-btn oc-head-btn${showOpenCalls === true && !techMode ? " active" : ""}`}
+                aria-pressed={showOpenCalls === true && !techMode}
                 aria-label={`קריאות פתוחות, רובוטיים ומכפילים — ${openCallSites} אתרים`}
-                onClick={() => onShowOpenCallsChange(!(showOpenCalls === true))}>
+                onClick={() => {
+                  // מתוך "טכנאים" — חוזרים לאתרים עם קריאה פתוחה (ולא מכבים את הבחירה השמורה)
+                  if (techMode) { onTechModeChange(false); onShowOpenCallsChange(true); } else onShowOpenCallsChange(!(showOpenCalls === true));
+                }}>
                 <span className="filter-count">{openCallSites}</span>
                 <span className="filter-label">קריאות פתוחות</span>
               </button>
             )}
-            <FilterGroup title="מצבים" summary={statusSummary} active={statusN > 0} className="fg-status">
+            {/* "טכנאים" (בעלת המוצר, 20/10/2026: "שהרכבים יקראו לעמוד הזה טכנאים וזה יהיה סינון למעלה לצד הקריאות פתוחות").
+                לחוץ — במקום כרטיסי האתרים: רכבי הטכנאים מאיתוראן על מפה ורשימה, ולאיזה אתרים הם קרובים (TechniciansView).
+                לחיצה על אריח אחר, או שוב על זה — חוזרים לאתרים. בלי מספר: הרכבים נטענים רק כשהתצוגה פתוחה (לא שאילתה
+                מכל מסך כל דקה), ולכן סמל במקום המספר — כמו "בודק מוסמך". */}
+            {onTechModeChange && (
+              <button type="button" className={`filter-btn tech-head-btn${techMode ? " active" : ""}`}
+                aria-pressed={techMode}
+                aria-label="טכנאים — רכבי הטכנאים מאיתוראן ולאיזה אתרים הם קרובים"
+                onClick={() => onTechModeChange(!techMode)}>
+                <span className="filter-count" aria-hidden="true">🛵</span>
+                <span className="filter-label">טכנאים</span>
+              </button>
+            )}
+            <FilterGroup title="מצבים" summary={statusSummary} active={statusN > 0 && !techMode} disabled={techMode} className="fg-status">
               <StatusFilters sites={boardSites} activeFilters={activeFilters} onFilterChange={onFilterChange} />
             </FilterGroup>
-            <FilterGroup title="מידע" summary={infoSummary} active={infoN > 0} className="fg-info">
+            <FilterGroup title="מידע" summary={infoSummary} active={infoN > 0 && !techMode} disabled={techMode} className="fg-info">
               <SiteFilterTile
                 sites={boardSites}
                 typeFilter={typeFilter}
@@ -417,7 +439,7 @@ function Header({
                 onLiftChange={onLiftFilterChange}
               />
             </FilterGroup>
-            <FilterGroup title="תוספים" summary={extrasSummary} active={extrasN > 0} className="fg-extras">
+            <FilterGroup title="תוספים" summary={extrasSummary} active={extrasN > 0 && !techMode} disabled={techMode} className="fg-extras">
               {/* "בודק מוסמך" — נפתח לרשימה, בוחרים מה לראות, נסגר; בחירה מדליקה גם את הנורה בכרטיסים
                   (בעלת המוצר, 08/10/2026) */}
               {onComplianceViewChange && (
