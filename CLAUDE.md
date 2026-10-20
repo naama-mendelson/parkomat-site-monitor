@@ -3978,7 +3978,7 @@ replaces the TOTP app**, whose screens were deleted (nobody had enrolled; `auth.
 - ⚠️ **Gates that sign in with a real token** (`check-security`, `check-mfa`, `check-writes`… through `lib/gate-user`)
   will see `'unverified'` once the flag covers their throwaway user. Not handled yet.
 
-## Technicians' vehicles from Ituran — a live map (built 20/10/2026, NOT live yet)
+## Technicians' vehicles from Ituran — a live map (built and live 20/10/2026)
 
 The owner: *"יש לפרקומט רכבים של אנשי תחזוקה, על כל רכב יש איתוראן"* → asked what she wants, *"כל מידע אפשרי הכלל"* →
 phase 1 is a live map, and **everyone signed in sees it** (her choice over "managers and editors"). Ituran opened API access
@@ -4048,13 +4048,70 @@ calls it directly — no relay.
   newest 22 s old, the token reused on the second run.
 - `check-bundle` now looks for `veh-row-name`; three stale markers there (removed screens) were replaced.
 
-**To go live, in this order:** (1) SQL — it carries the login-code functions too (they stay off without their flag);
-(2) `supabase secrets set ITURAN_USERNAME=… ITURAN_PASSWORD=… ITURAN_CALLER_SECRET=<random>` and
-`npx supabase functions deploy ituran-sync --project-ref xvfsikwaaaohnmldjbtv --use-api`; (3) the same random value into
-`settings.ituran_caller_secret` — the cron starts within a minute; check `vehicles_sync.last_ok_at`; (4) push the dashboard.
-⚠️ The Ituran password was pasted into the chat on 20/10/2026: change it at Ituran once this works, and keep the new one
-only in the Edge Function secrets. Later phases (not built): nearest technician to a site in fault, visits to sites (needs
-coordinates for the sites — none are stored today — and a geofence per site at Ituran), reports from Ituran's full report.
+✅ **Live since 20/10/2026, at the owner's word ("כן"), in this order:** (1) SQL — it carried the login-code functions too
+(they stay off without their flag); (2) the three secrets and `npx supabase functions deploy ituran-sync --project-ref
+xvfsikwaaaohnmldjbtv --use-api`; (3) the same random value into `settings.ituran_caller_secret` — the cron started within a
+minute (`vehicles_sync.last_ok_at`); (4) the dashboard pushed.
+⚠️ The Ituran password was pasted into the chat on 20/10/2026: change it at Ituran, and keep the new one only in the Edge
+Function secrets (`ITURAN_PASSWORD`).
+⚠️ **Open, the owner's call: every sync signs in to Ituran.** Measured after go-live: 77 of 77 runs got a fresh token — pg_cron
+calls once a minute and every call lands on a cold function instance, so the in-memory token never survives: ~1,440 sign-ins
+a day at Ituran. Keeping the token in a closed table would stop it, but the token may allow vehicle commands (the account has
+immobilizer events), which is why it was kept in memory. The alternatives: accept the rate, or sync every 2–3 minutes.
+Later phases (not built): nearest technician to a site in fault, visits to sites (needs coordinates for the sites — none are
+stored today — and a geofence per site), reports from Ituran's full report.
+
+### The state on the map is decided in SQL — "לא מתעדכן", "חונה מאז", power alert (20/10/2026, evening)
+
+The owner, a few hours after go-live: the data looks wrong; and on one technician shown as driving: *"לא בנסיעה"*. A
+multi-agent audit (a full-fleet snapshot plus ten one-minute samples of the list against Ituran's full report) found the
+**positions, addresses, places and clock correct** and two things wrong:
+- **`motion_status` is "ignition + speed of the last record", and it never expires.** A unit that stops transmitting mid-drive
+  (an underground car park, most likely) stays "driving" for hours: 4 of the 7 "moving" vehicles were frozen 40 minutes to
+  7 hours. Measured cadence while the ignition is on: a fix at least every 160 s driving (p99 ~70 s) and 300 s at speed 0;
+  parked units send heartbeats every 10 minutes up to ~12 hours, or nothing.
+- **"עודכן לפני 4 דק'" on a parked vehicle was the last heartbeat**, not when it parked: a vehicle parked since yesterday
+  17:45 read as updated four minutes ago.
+
+What changed:
+- **`app.vehicle_state(motion, located_at, synced_at)`** — `driving` while the last fix is ≤ 300 s old, `idle` ≤ 600 s,
+  beyond that both are **`silent`** ("לא מתעדכן"); `parking`; `unknown`; **`no_report`** when there is no fix or it is older
+  than 24 h (twice the longest parked heartbeat). ⚠️ The age is measured against the row's **`synced_at`, not `now()`**: a
+  stalled sync is the sync line's job, not a reason to turn the whole fleet grey (test: a row synced two hours ago with a
+  one-minute-old fix stays `driving`).
+- **"חונה מאז"** — `app.vehicle_parked_since(events, lat, lon)`, from Ituran's `Events` realtime field (the latest event of
+  each type, ≤ 5 per vehicle, now stored raw in `vehicles_live.events`): the latest switch-off / engine-off (else "vehicle
+  stopped") **within 200 m of the fix and after every switch-on / engine-on / moving event**. Measured: 27 of 28 parked
+  vehicles get a time; the one that does not has events from two months ago, elsewhere. `app.ituran_event_kind(id, name)`
+  maps the account's own event ids (off 10181704 / 12746436, stop 12746438, on 12746440 / 5295693 / 12746437, power cut
+  12746446 / 12746445, power back 12746447), with the name as a fallback (names are editable at Ituran; spaces are collapsed —
+  "חיבור  מתח" has two). `app.geo_distance_m` is a plain haversine (no PostGIS: the exit door).
+- **Power alert** — `app.vehicle_power_alert(events)`: the **first** power cut / low battery after the latest power-back
+  **or switch-on** (a vehicle that was started has its power back; "חיבור מתח" appeared in no snapshot, so without that rule an
+  alert would never clear). Measured: one scooter reported a power cut and low battery four and five minutes after it was
+  switched off, and has reported rarely since; the map said nothing.
+- **Ingest guards** (`ituran_ingest`): a record without a valid position (0,0, one coordinate, out of range) no longer sets
+  `located_at`, so it cannot erase a known position (one unit with a GPS fault sends 0,0 records with speed and heading −999
+  and "!! Address not found !!"); speed outside 0–999 and heading outside 0–360 → NULL; an address starting with "!!" → NULL;
+  `places` follow the forward-only position rule and are kept when the key is absent; `events` are kept when absent.
+- **`vehicles_live_list`** adds `state`, `state_since` (parking → the parked-since time or NULL; silent / no_report → the last
+  fix) and `power_alert {at, name}`. `ituran-sync` asks for `LastLocation`, `Places` and `Events` (`Driver` dropped: no unit
+  returns a driver).
+- **The dashboard only translates** (`utils/vehicles.js`): "חונה מאז 09:12", "לא מתעדכן מאז 11:02", "לא מדווח מאז 13/10
+  08:00" in Israel time ("אתמול 17:45" by calendar date, not 24 hours — 25/10 is a 25-hour day); the age column only for
+  driving / idle; "מקום אחרון: …" for silent and no_report; "⚠ ניתוק מתח" in the row and "… מאז 08:54" in the popup. A
+  silent vehicle is a grey dashed marker with no arrow, no speed and no label, sorted after the parked ones, and counted in
+  the summary ("1 לא מתעדכן"). ⚠️ The Leaflet popup is white in both themes, so it forces the light-theme colours (the dark
+  greens on white were 1.5–2:1). Without `state` in the reply (an older database) the screen keeps the old rule.
+- **Preview in production** (read only, the rows as synced at 15:00): 4 driving, 2 engine on, 25 parked, 5 not updating (the
+  four frozen ones, plus one silent for 14 minutes), 2 not reporting.
+- **Tests:** `vehicles.test.js` 11 (state boundaries at 4:59/5:00/5:01, 9:59/10:01, 24 h; event kinds; parked-since and power
+  scenarios; the guards; `synced_at`), `vehicles-ui.test.js` 12, `ituran-sync-fn.test.js` 6. Browser `probe-vehicles` 70/70
+  (silent row and popup, parked with and without a time, the power alert, popup contrast in dark, an old database). Full
+  suite 1288/1288.
+- ⚠️ **Deploy:** the SQL dry run shows 7 gaps (5 new functions, 2 bodies); the `events` column does not show, `--apply`
+  creates it. Then redeploy `ituran-sync` (Events) and push. Any order is safe: the old `ituran_ingest` ignores `events`, and
+  an old bundle ignores `state`.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

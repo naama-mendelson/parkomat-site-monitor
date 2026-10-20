@@ -8,12 +8,14 @@
 // ממסך מוסתר הייתה עומס בלי קורא (אותו כלל כמו ספירות הקריאות, 18/10).
 // ⚠️ Leaflet בלי עטיפת React: המפה נבנית פעם אחת, והסמנים מתעדכנים במקום (setLatLng / setIcon / setContent) — בנייה
 // מחדש בכל סבב הייתה סוגרת חלון פתוח של רכב ומאבדת את הזום של המשתמש.
+// ⚠️ המצב ("בנסיעה", "לא מתעדכן", "חונה מאז") נקבע במסד (state, state_since); כאן רק מתורגם (utils/vehicles.js).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchVehicles } from "../../services/dataSource";
 import {
-  ageText, hasPosition, matchesVehicle, motionCounts, motionOf, placeNames, sortVehicles, syncState, vehicleName,
+  ageText, hasPosition, matchesVehicle, placeNames, placeText, powerAlert, rowAge, sortVehicles, stateCounts, stateOf,
+  stateText, syncState, vehicleName,
 } from "../../utils/vehicles";
 import "./Vehicles.css";
 
@@ -21,25 +23,30 @@ const POLL_MS = 60_000;
 const ISRAEL = [31.95, 34.85];
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+// "לא מתעדכן" / "לא מדווח": המיקום הוא האחרון שידוע, לא בהכרח איפה שהרכב עכשיו
+const isOld = (s) => s.tone === "silent" || s.tone === "stale";
 
-function markerHtml(v, m) {
-  // חץ לפי כיוון הנסיעה רק כשהרכב זז; אחרת עיגול
-  const arrow = m.tone === "driving" && Number.isFinite(v.heading)
+function markerHtml(v, s) {
+  // חץ לפי כיוון הנסיעה רק כשהרכב באמת בנסיעה (המסד אמר driving); אחרת עיגול
+  const arrow = s.tone === "driving" && Number.isFinite(v.heading)
     ? `<span class="veh-arrow" style="transform: rotate(${Number(v.heading)}deg)"></span>` : "";
-  return `<span class="veh-marker veh-marker--${m.tone}">${arrow}</span>`;
+  return `<span class="veh-marker veh-marker--${s.tone}">${arrow}</span>`;
 }
 
-function popupHtml(v, m, now) {
+function popupHtml(v, s, now) {
   const places = placeNames(v);
-  const speed = m.tone === "driving" && Number.isFinite(v.speed) ? ` · ${v.speed} קמ"ש` : "";
+  const old = isOld(s);
+  const speed = s.tone === "driving" && Number.isFinite(v.speed) ? ` · ${v.speed} קמ"ש` : "";
+  const power = powerAlert(v, now);
   const nav = hasPosition(v) ? `<a href="https://www.google.com/maps?q=${v.lat},${v.lon}" target="_blank" rel="noopener noreferrer">פתיחה במפות</a>` : "";
   return `<div class="veh-pop" dir="rtl">
     <div class="veh-pop-name">${esc(vehicleName(v))}</div>
     <div class="veh-pop-plate">${esc(v.plate)}${v.make || v.model ? ` · ${esc([v.make, v.model].filter(Boolean).join(" "))}` : ""}</div>
-    <div class="veh-pop-state veh-tone--${m.tone}">${esc(m.label)}${speed}</div>
-    ${v.address ? `<div>${esc(v.address)}</div>` : ""}
-    ${places.length ? `<div>במקום: ${esc(places.join(", "))}</div>` : ""}
-    <div class="veh-pop-age">עודכן ${esc(ageText(v.located_at, now))}</div>
+    <div class="veh-pop-state veh-tone--${s.tone}">${esc(stateText(v, now))}${speed}</div>
+    ${power ? `<div class="veh-power">⚠ ${esc(power.text)}</div>` : ""}
+    ${v.address ? `<div>${old ? "מקום אחרון: " : ""}${esc(v.address)}</div>` : ""}
+    ${places.length ? `<div>${old ? "אזור אחרון" : "במקום"}: ${esc(places.join(", "))}</div>` : ""}
+    ${old ? "" : `<div class="veh-pop-age">עודכן ${esc(ageText(v.located_at, now))}</div>`}
     ${nav}
   </div>`;
 }
@@ -111,7 +118,7 @@ function VehiclesMap({ onClose }) {
     for (const v of data.vehicles) {
       if (!hasPosition(v)) continue;
       seen.add(v.plate);
-      const m = motionOf(v, data.now);
+      const m = stateOf(v, data.now);
       const icon = L.divIcon({ className: "veh-marker-wrap", html: markerHtml(v, m), iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12] });
       let mk = markers.current.get(v.plate);
       if (!mk) {
@@ -124,7 +131,7 @@ function VehiclesMap({ onClose }) {
       }
       const html = popupHtml(v, m, data.now);
       if (mk.getPopup()) mk.setPopupContent(html); else mk.bindPopup(html, { maxWidth: 260 });
-      // שם קבוע רק לרכבים שזזים — 38 תוויות על המפה (12 מהן במשרד) היו מסתירות אותה
+      // שם קבוע רק לרכבים שזזים — 38 תוויות על המפה (12 מהן במשרד) היו מסתירות אותה. "לא מתעדכן" אינו זז.
       const label = m.tone === "driving" || m.tone === "idle";
       if (label && mk.getTooltip()) mk.setTooltipContent(esc(vehicleName(v)));
       else if (label) mk.bindTooltip(esc(vehicleName(v)), { permanent: true, direction: "top", offset: [0, -12], className: "veh-label" });
@@ -155,7 +162,7 @@ function VehiclesMap({ onClose }) {
   const now = data?.now;
   const sorted = useMemo(() => sortVehicles(data?.vehicles ?? [], now), [data, now]);
   const shown = useMemo(() => sorted.filter((v) => matchesVehicle(v, query)), [sorted, query]);
-  const counts = useMemo(() => motionCounts(data?.vehicles ?? [], now), [data, now]);
+  const counts = useMemo(() => stateCounts(data?.vehicles ?? [], now), [data, now]);
 
   return (
     <div className="veh-overlay" role="dialog" aria-modal="true" aria-labelledby="veh-title">
@@ -167,8 +174,9 @@ function VehiclesMap({ onClose }) {
               <span className="veh-summary">
                 <b className="veh-tone--driving">{counts.driving}</b> בנסיעה ·{" "}
                 <b className="veh-tone--idle">{counts.idle}</b> מנוע דולק ·{" "}
-                <b>{counts.parking}</b> חונים
-                {counts.stale ? <> · <b className="veh-tone--stale">{counts.stale}</b> לא מדווחים</> : null}
+                <b>{counts.parking}</b> {counts.parking === 1 ? "חונה" : "חונים"}
+                {counts.silent ? <> · <b className="veh-tone--silent">{counts.silent}</b> {counts.silent === 1 ? "לא מתעדכן" : "לא מתעדכנים"}</> : null}
+                {counts.stale ? <> · <b className="veh-tone--stale">{counts.stale}</b> {counts.stale === 1 ? "לא מדווח" : "לא מדווחים"}</> : null}
               </span>
             )}
             {data && syncState(data.sync, now) === "ok" && <SyncLine sync={data.sync} now={now} />}
@@ -194,8 +202,10 @@ function VehiclesMap({ onClose }) {
             {data && !shown.length && <p className="veh-empty">{data.vehicles.length ? "אין רכב שמתאים לחיפוש" : "אין רכבים"}</p>}
             <ul className="veh-list">
               {shown.map((v) => {
-                const m = motionOf(v, now);
-                const places = placeNames(v);
+                const m = stateOf(v, now);
+                const where = placeText(v, now);
+                const power = powerAlert(v, now);
+                const age = rowAge(v, now);
                 return (
                   <li key={v.plate}>
                     <button
@@ -209,12 +219,13 @@ function VehiclesMap({ onClose }) {
                       <span className="veh-row-main">
                         <span className="veh-row-name">{vehicleName(v)}</span>
                         <span className="veh-row-sub">
-                          <span className={`veh-tone--${m.tone}`}>{m.label}</span>
+                          <span className={`veh-tone--${m.tone}`}>{stateText(v, now)}</span>
                           {m.tone === "driving" && Number.isFinite(v.speed) ? ` · ${v.speed} קמ"ש` : ""}
-                          {places.length ? ` · ${places.join(", ")}` : v.address ? ` · ${v.address}` : ""}
+                          {power ? <> · <span className="veh-power" title={power.text}>⚠ {power.name}</span></> : null}
+                          {where ? ` · ${where}` : ""}
                         </span>
                       </span>
-                      <span className="veh-row-age">{ageText(v.located_at, now)}</span>
+                      {age && <span className="veh-row-age">{age}</span>}
                     </button>
                   </li>
                 );

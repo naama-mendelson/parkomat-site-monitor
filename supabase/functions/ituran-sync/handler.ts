@@ -1,8 +1,9 @@
 // supabase/functions/ituran-sync/handler.ts — מושכת את רכבי הטכנאים מאיתוראן ומעבירה אותם למסד (20/10/2026).
 //
 // נקראת מ-pg_cron כל דקה (app.ituran_sync_request, vehicles.postgres.sql) — לא מהדפדפן. מה שהיא עושה: מחזיקה טוקן של
-// איתוראן, מושכת GET /api/v2/vehicles (עם LastLocation, Driver, Places — בלעדיהם איתוראן לא מחזירים מיקום; נמדד),
-// ומעבירה את המערך **כמות שהוא** ל-public.ituran_ingest. כל הפענוח, השעון והמחיקה — ב-SQL (rule 3).
+// איתוראן, מושכת GET /api/v2/vehicles (עם LastLocation, Places, Events — בלעדיהם איתוראן לא מחזירים מיקום, אזורים
+// ואירועים; נמדד), ומעבירה את המערך **כמות שהוא** ל-public.ituran_ingest. כל הפענוח, השעון, המחיקה והמצב שמוצג — ב-SQL
+// (rule 3). Events (20/10/2026) = האירוע האחרון מכל סוג: מהם נגזרים "חונה מאז" וניתוק מתח. Driver הוסר: אף רכב לא החזיר.
 //
 // ⚠️ **הטוקן בזיכרון בלבד, לא במסד ולא בקובץ** — כמו הטוקן של ויזנט. תקף 24 שעות (expires_in=1440 דקות); מופע חם
 // משתמש בו שוב, מופע קר מבקש חדש (ונספר ב-vehicles_sync.token_fetches, כדי שנדע כמה פעמים זה קורה באמת). לפני שפג —
@@ -85,7 +86,7 @@ export function makeHandler(env: Env, f: typeof fetch = fetch, now: () => number
     const list: unknown[] = [];
     for (let page = 1; page <= MAX_PAGES; page++) {
       const q = `page_number=${page}&page_size=${PAGE_SIZE}` +
-        "&realtime_fields=LastLocation&realtime_fields=Driver&realtime_fields=Places";
+        "&realtime_fields=LastLocation&realtime_fields=Places&realtime_fields=Events";
       const res = await call(`${env.ituranBase}/api/v2/vehicles?${q}`, { method: "GET", headers: { Authorization: `Bearer ${token}` } });
       if (res.status === 401) return { status: 401, list, complete: false, pages: page - 1 };
       if (!res.ok) throw new Error(`איתוראן החזירו ${res.status} ברשימת הרכבים`);

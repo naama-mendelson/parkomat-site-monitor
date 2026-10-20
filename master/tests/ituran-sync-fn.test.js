@@ -47,7 +47,7 @@ const req = (secret = "CALLER-SECRET", method = "POST") =>
 const run = async (h, r) => { const res = await h(r); const text = await res.text(); return { status: res.status, text, body: text ? JSON.parse(text) : null }; };
 const of = (calls, part) => calls.filter((c) => c.url.includes(part));
 
-test("סנכרון: טוקן בשם משתמש, רשימת הרכבים עם מיקום/נהג/מקומות, והמערך כמות שהוא למסד במפתח השירות", async () => {
+test("סנכרון: טוקן בשם משתמש, רשימת הרכבים עם מיקום/מקומות/אירועים, והמערך כמות שהוא למסד במפתח השירות", async () => {
   const { makeHandler } = await load();
   const { f, calls } = fakeFetch();
   const r = await run(makeHandler(ENV, f), req());
@@ -57,7 +57,7 @@ test("סנכרון: טוקן בשם משתמש, רשימת הרכבים עם מ�
   assert.deepEqual(tokenCall.body, { grant_type: "password", username: "user-x", password: "PW-SECRET" });
   const [v] = of(calls, "/api/v2/vehicles");
   const q = new URL(v.url).searchParams;
-  assert.deepEqual(q.getAll("realtime_fields"), ["LastLocation", "Driver", "Places"]);
+  assert.deepEqual(q.getAll("realtime_fields"), ["LastLocation", "Places", "Events"]);
   assert.equal(q.get("page_size"), "100");
   assert.equal(v.headers.Authorization, "Bearer TOK-1");
   const [ing] = of(calls, "rpc/ituran_ingest");
