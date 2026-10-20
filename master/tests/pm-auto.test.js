@@ -205,6 +205,22 @@ test("pm_templates_list.site_count — האתרים שמקבלים את הרשי
   // ובדיקה מול הפותר עצמו, לכל רשימה
   const real = (await h.pg.query(`SELECT x.tid, count(*)::int n FROM sites s, unnest(app.pm_site_template_ids(s.id)) x(tid) GROUP BY x.tid`)).rows;
   for (const t of await lists()) assert.equal(t.site_count, real.find((r) => r.tid === t.id)?.n ?? 0, t.name);
+  // ⚠️ הפותר רץ פעם אחת לכל אתר — לא לכל אתר × רשימה (בלי MATERIALIZED: 4.0 שניות במקום 0.4 בייצור)
+  const oid = (await h.pg.query(`SELECT 'app.pm_site_template_ids(integer)'::regprocedure::oid o`)).rows[0].o;
+  const nSites = (await h.pg.query(`SELECT count(*)::int n FROM sites`)).rows[0].n;
+  const nLists = (await lists()).length;
+  await h.pg.exec(`SET track_functions = 'all'`);
+  try {
+    const calls = await h.as("authenticated", MGR, async (tx) => {
+      const q = `SELECT COALESCE(pg_stat_get_xact_function_calls($1), 0)::int c`;
+      const b = (await tx.query(q, [oid])).rows[0].c;
+      await tx.query(`SELECT public.pm_templates_list()`);
+      return (await tx.query(q, [oid])).rows[0].c - b;
+    });
+    assert.ok(nLists > 2 && calls === nSites, `pm_site_template_ids: ${calls} קריאות ל-${nSites} אתרים ו-${nLists} רשימות`);
+  } finally {
+    await h.pg.exec(`RESET track_functions`);
+  }
 });
 
 test("הקובץ אידמפוטנטי — העמודות והאילוץ שורדים החלה שנייה", { skip }, async () => {

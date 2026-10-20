@@ -2355,7 +2355,11 @@ lists one under another**, over a button per list.
   leave a stale "busy" that locks the picker for good.
 - **`pm_templates_list.site_count` now means the sites that really get the list** — once per site through
   `app.pm_site_template_ids` (`CROSS JOIN LATERAL`, ~0.5 s for all sites, measured in production; it runs when the
-  editor opens and after a save). Until then it counted only profiles and manual assignments, so since 15/10 (lists by
+  editor opens and after a save). ⚠️ **The CTE must be `AS MATERIALIZED`.** The first apply (the same evening) took
+  **3.4–4.0 s**: Postgres inlined the CTE into each list's correlated subquery, so the resolver ran per site × list.
+  Measured read-only on the query alone: 4.0 s without, 0.4 s with. Re-applied at once under the same approval (same
+  function, same numbers); 511 ms through the function afterwards. `pm-auto.test.js` counts the resolver's calls inside
+  one transaction (`track_functions`) and demands exactly one per site; the mutation that drops `MATERIALIZED` is caught. Until then it counted only profiles and manual assignments, so since 15/10 (lists by
   type) "מעלית הידראולית" was counted through the old profiles only. Production numbers that day: base 126, hydraulic
   52, XY bed 30, electric 29, dolly 29, multipliers 89.
 - Tests: `pm-auto.test.js` (`site_count` follows a new typed site and a manual drop, and equals the resolver for every

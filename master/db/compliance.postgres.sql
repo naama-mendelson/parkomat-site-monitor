@@ -2190,7 +2190,9 @@ CREATE OR REPLACE FUNCTION public.pm_templates_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE v_actor text := app.require_staff();
 BEGIN
-  RETURN COALESCE((WITH r AS (SELECT x.tid, count(*)::int AS n
+  -- ⚠️ MATERIALIZED חובה (נמדד בייצור, 19/10/2026): בלעדיו Postgres משטיח את ה-CTE לתוך תת-השאילתה של כל רשימה, והפותר
+  -- רץ לכל אתר × כל רשימה — 4.0 שניות במקום 0.4. pm-auto.test.js סופר את הקריאות לפותר (פעם אחת לכל אתר).
+  RETURN COALESCE((WITH r AS MATERIALIZED (SELECT x.tid, count(*)::int AS n
                                 FROM sites s CROSS JOIN LATERAL unnest(app.pm_site_template_ids(s.id)) AS x(tid)
                                GROUP BY x.tid)
            SELECT jsonb_agg(jsonb_build_object(
