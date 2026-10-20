@@ -698,6 +698,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
           {mounted.has("template") && (
             <div hidden={tool !== "template"}>
               <PmTemplateEditor active={tool === "template"} onDirty={setTplReason}
+                siteTemplates={Array.isArray(data?.templates) ? data.templates : null}
                 onSaved={() => { changed(); load({ silent: true }); }} />
             </div>
           )}

@@ -1,124 +1,36 @@
-// components/Compliance/PmTemplateEditor.jsx — עריכת רשימת הבדיקה של התחזוקה המונעת. מנהל בלבד.
+// components/Compliance/PmTemplateEditor.jsx — עריכת רשימות הבדיקה של התחזוקה המונעת. עורך או מנהל.
 //
-// ⚠️ מ-07/10/2026 כמה רשימות: משותפת (ברירת המחדל — מה שהיה "הרשימה" של D15), רשימה
-// לכל סוג מתקן, ולסוטפין. העורך עורך רשימה אחת בכל פעם; אילו רשימות אתר מקבל נקבע
-// בלשונית התחזוקה של האתר (PmTab). אתר שלא שויך מקבל את ברירת המחדל, כמו קודם.
+// ⚠️ מ-07/10/2026 כמה רשימות: הבסיס (ברירת המחדל — מה שהיה "הרשימה" של D15), רשימה לכל סוג מעלית ומתקן, ולסוטפין.
+// אילו רשימות אתר מקבל נקבע בלשונית התחזוקה של האתר (PmTab / PmSiteLists) ולפי סוגו.
 //
-// פתיחת ביקור **מצלמת** את הפריטים הפעילים,
-// ולכן שינוי כאן חל רק על ביקורים שייפתחו אחרי השמירה — ביקור פתוח ממשיך
-// עם מה שהיה בעת פתיחתו, והמסך אומר את זה במפורש.
-//
-// השמירה שולחת את **מצב היעד** כולו (pm_template_save): פריט עם id מתעדכן,
-// בלי id נוסף, ומה שלא נשלח מושבת — לא נמחק, כי ביקורים קיימים מצביעים עליו.
-//
-// ⚠️ כלל הצילום משוקף כאן מה-CHECK בטבלה (pm_checklist_items_photo_shape),
-// כדי שהמנהל לא יגלה אותו רק בשגיאה אחרי השמירה:
-//   • סימון בלבד          → 0 תמונות
-//   • צילום, חובה          → לפחות תמונה אחת
-//   • צילום, רשות          → 0 (פריט רשות לא יכול לדרוש תמונות)
-// השרת אוכף בכל מקרה; כאן רק לא מאפשרים להגיע למצב שהוא ידחה.
-//
-// קבוצה (07/10/2026): שדה של הפריט ("יחידת כוח", "מעלית אנכית"). פריטים רצופים עם אותה
-// קבוצה הם שורה אחת בביקור, שנפתחת בלחיצה ונהיית ירוקה כשהושלמה. ריק = קבוצה בשם הרשימה.
-// פריט חדש מקבל את הקבוצה של הפריט האחרון — כך מוסיפים לקבוצה בלי להקליד אותה שוב.
-// ⚠️ 19/10/2026: הקבוצה נבחרת מרשימה, לא מ-<datalist>. מהשטח: "אם אני רוצה להוסיף, קיים לי רק חשמל" — הפריט החדש ירש
-// "חשמל" מהאחרון, ו-datalist מציע רק מה שמתאים למה שכבר כתוב בשדה, כלומר "חשמל" לבדו; "לובי" הופיעה רק אחרי מחיקה.
-// עכשיו: כל הקבוצות של הרשימה תמיד, "בלי קבוצה", ו"+ קבוצה חדשה…" שפותח שדה טקסט לשורה הזו.
-//
-// ⚠️ סך התמונות הנדרשות בביקור (סכום min_photos של פריטי החובה) מוגבל ל-40 —
-// התקרה של pm_visit_photo_add. רשימה שדורשת יותר נשמרה בעבר בלי מילה, וכל
-// ביקור שנפתח ממנה, בכל האתרים (D15), לא היה יכול להיות מוגש לעולם.
-//
-// ⚠️ שמירה מעורך ישן נדחית. הרשימה נשלחת כמצב יעד שלם, כך שעורך שנטען לפני
-// שמנהל אחר שמר היה מבטל את השמירה שלו בשקט: פריטים שהוסיף מושבתים, ופריטים
-// שהסיר חוזרים. לכן נשלח `version` — ה-updated_at המאוחר שנטען — והשרת
-// משווה אותו לנוכחי (PT409). העורך גם נטען מחדש כשפותחים אותו שוב בלי שינויים.
-//
-// ⚠️ ובזמן טעינה מחדש (פתיחה חוזרת, אחרי שמירה, "טעינת הרשימה העדכנית") הכול
-// נעול (`reloading`). התשובה מחליפה את השורות כולן: עריכה שהוקלדה בינתיים
-// הייתה נעלמת בלי מילה, ושמירה שנייה לפני שהגרסה החדשה הגיעה הייתה נשלחת עם
-// האסימון הישן — ונדחית כ"עודכנה בינתיים ע״י" המנהל עצמו.
+// ⚠️ 19/10/2026 — כשהעורך נפתח מאתר, הוא מציג את **כל הרשימות של האתר אחת מתחת לשנייה** (בעלת המוצר, על עורך שהראה רק את
+// "בסיס פרקומט — לובי וחשמל" בעוד הכפתור אמר 46: "צריך להיות הרבה יותר — מעלית הידראולית, מיטת XY, למה זה לא מוסף שם").
+// הרשימות היו שם — בבורר, אחת בכל פעם — וזה בדיוק מה שלא נראה. לכל רשימה כותרת, ומתחתיה כמה אתרים חולקים אותה ("משותפת
+// ל-52 אתרים"): הרשימות משותפות לכל האתרים מאותו סוג, ושינוי בהן חל על כולם. כל רשימה נשמרת לבדה (PmListEditor).
+// הבורר נשאר: הבחירה הראשונה בו היא "הרשימות של האתר הזה", ובחירת רשימה אחת חוזרת לעורך של רשימה אחת, עם שינוי השם
+// והסיווג לפי סוג (PmTemplateMeta), שאינם מוצגים בתצוגת האתר.
 import { useEffect, useRef, useState } from "react";
-import { fetchPmTemplate, savePmTemplate, fetchPmTemplates, createPmTemplate, renamePmTemplate } from "../../services/dataSource";
+import { fetchPmTemplates, createPmTemplate, renamePmTemplate } from "../../services/dataSource";
 import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
-
-const NEW_GROUP = "\u0000new-group";   // אפשרות "קבוצה חדשה" — לא שם של קבוצה (תו NUL לא נכנס לשם)
 import PmTemplateMeta from "./PmTemplateMeta";
-import { groupTemplates } from "../../utils/pmLists";
-import { formatStampIL } from "../../utils/compliance";
-import { newId } from "../../utils/complianceFiles";
-import {
-  HINT_MAX, KIND_LABEL, LABEL_MAX, LABEL_MIN, MAX_PHOTOS_PER_ITEM, MAX_PHOTOS_PER_VISIT, PHOTO_TOTAL_WARN,
-  TEMPLATE_MAX_ITEMS, templatePhotoTotal, kindHasPhotos, valueNum,
-} from "./PmUtils";
+import PmListEditor from "./PmListEditor";
+import { groupTemplates, sharedLabel } from "../../utils/pmLists";
 
-// צורת הכלל — פונקציה אחת שכל שינוי עובר דרכה
-function shape(r) {
-  if (!kindHasPhotos(r.kind) || !r.required) return r.min_photos === 0 ? r : { ...r, min_photos: 0 };
-  if (r.min_photos < 1) return { ...r, min_photos: 1 };
-  return r;
-}
-
-const SECTION_MAX = 60;
-const serialize = (rows) => JSON.stringify((rows || []).map((r) => ({
-  id: r.id ?? null, label: r.label.trim(), hint: r.hint.trim(), kind: r.kind, required: r.required, min_photos: r.min_photos,
-  section: r.section.trim(), unit: r.kind === "value" ? String(r.unit ?? "").trim() : "", warn_above: r.kind === "value" ? String(r.warn_above ?? "").trim() : "",
-})));
-
-function rowError(r) {
-  const n = r.label.trim().length;
-  if (n < LABEL_MIN) return "שם הפריט — שני תווים לפחות";
-  if (n > LABEL_MAX) return `שם הפריט ארוך מדי (עד ${LABEL_MAX})`;
-  if (r.hint.trim().length > HINT_MAX) return `ההסבר ארוך מדי (עד ${HINT_MAX})`;
-  if (r.section.trim().length > SECTION_MAX) return `שם הקבוצה ארוך מדי (עד ${SECTION_MAX})`;
-  // "ערך" (13/10/2026): הסף — מספר (פסיק עשרוני מותר), ויחידה עד 10 תווים, כמו בשרת
-  if (r.kind === "value") {
-    const w = String(r.warn_above ?? "").trim();
-    // ⚠️ אותו כלל כמו מדידה (valueNum / app.pm_value_num) — לא "1e3", לא "0x10" (סקירה, 13/10/2026)
-    if (w && valueNum(w) == null) return "הסף חייב להיות מספר, למשל 2";
-    if (String(r.unit ?? "").trim().length > 10) return "היחידה ארוכה מדי (עד 10 תווים)";
-  }
-  return "";
-}
+const SITE = "site";   // ערך הבורר של "הרשימות של האתר הזה" — לא מזהה רשימה
 
 /**
  * @param {object} p
  * @param {boolean} [p.active=true] — הכלי גלוי. מעבר ל-true בלי שינויים → טעינה מחדש.
+ * @param {{id: number, name: string}[]|null} [p.siteTemplates] — הרשימות של האתר (pm_site.templates, לפי הסדר). בלעדיהן — רשימה אחת.
  */
-export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
-  const [rows, setRows] = useState(null);           // null = טוען
-  const [base, setBase] = useState(serialize([]));
-  const [meta, setMeta] = useState(null);           // {by, at} — העדכון האחרון
-  const [version, setVersion] = useState(null);     // ה-updated_at המאוחר שנטען ('' = ריקה) — לבדיקת השרת
-  const [stale, setStale] = useState(false);        // השרת דחה: מנהל אחר שמר מאז שנטענה
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const [reloading, setReloading] = useState(false);   // טעינה מחדש בדרך — הכול נעול (ראה הכותרת)
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [savedMsg, setSavedMsg] = useState("");
-  const [focusKey, setFocusKey] = useState(null);
-  // השורה שבה מקלידים עכשיו שם של קבוצה חדשה, והקבוצה שהייתה לה לפני כן — Esc, או יציאה מהשדה כשהוא ריק, מחזירים אותה
-  // (הסקירה של 19/10: "+ קבוצה חדשה…" שנבחר בטעות מחק את הקבוצה, ואם זה היה הפריט היחיד בה — היא נעלמה מכל הבוררים)
-  const [newGroup, setNewGroup] = useState(null);   // { key, prev } | null
-  const newGroupKey = newGroup?.key ?? null;
-  // ⚠️ ref ולא רק state: אחרי Esc השדה יורד, ו-blur מאוחר (מה-render הקודם, עם section ריק) היה מוחק את מה שהוחזר.
-  // הסיום קורה פעם אחת — מי שבא אחריו מוצא את ה-ref ריק.
-  const newGroupRef = useRef(null);
-  const startNewGroup = (r) => { newGroupRef.current = { key: r.key, prev: r.section }; setNewGroup(newGroupRef.current); };
-  const endNewGroup = (r, restore) => {
-    const g = newGroupRef.current;
-    if (!g || g.key !== r.key) return;
-    newGroupRef.current = null;
-    if (restore) edit(r.key, { section: g.prev });
-    setNewGroup(null);
-  };
-  const [touched, setTouched] = useState(false);
-  // הרשימות (07/10/2026). tplId == null = רשימת ברירת המחדל — כמו לפני שהיו רשימות,
-  // וכך הטעינה הראשונה אינה מחכה לרשימת הרשימות.
+export default function PmTemplateEditor({ onSaved, onDirty, active = true, siteTemplates = null }) {
+  const site = Array.isArray(siteTemplates) ? siteTemplates : [];
   const [lists, setLists] = useState(null);
   const [listsRev, setListsRev] = useState(0);
-  const [tplId, setTplId] = useState(null);
+  // SITE = כל רשימות האתר; מזהה = רשימה אחת; null = רשימת ברירת המחדל (כך הטעינה הראשונה אינה מחכה לרשימת הרשימות)
+  const [view, setView] = useState(site.length ? SITE : null);
+  const [states, setStates] = useState({});     // מפתח מופע → { dirty, busy }
+  const [reasons, setReasons] = useState({});   // מפתח מופע → "שינויים לא נשמרו" / null
   const [nameDraft, setNameDraft] = useState(null);   // {mode:'new'|'rename', value}
   const [listError, setListError] = useState("");
   useEffect(() => {
@@ -127,121 +39,30 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
     return () => { alive = false; };
   }, [listsRev]);
   const defaultId = lists?.find((t) => t.is_default)?.id ?? null;
-  const current = lists?.find((t) => t.id === (tplId ?? defaultId)) ?? null;
+  const siteMode = view === SITE && site.length > 0;
+  const tplId = siteMode ? null : (view === SITE ? null : view);
+  const current = siteMode ? null : lists?.find((t) => t.id === (tplId ?? defaultId)) ?? null;
+  // ⚠️ רק המופעים שעל המסך עכשיו: רשימה שיצאה מהאתר באמצע טעינה הייתה משאירה busy במפה, והבורר היה ננעל לתמיד
+  const shown = siteMode ? site.map((t) => `s${t.id}`) : ["one"];
+  const dirty = shown.some((k) => states[k]?.dirty);
+  const busy = shown.some((k) => states[k]?.busy);
 
-  // ⚠️ הנעילה נדלקת **יחד** עם הבקשה (באותו רינדור), ולא בתוך האפקט: אפקט רץ
-  // אחרי הציור, ובפריים שביניהם השדות היו פתוחים.
-  const reload = () => { setReloading(true); setAttempt((x) => x + 1); };
-
-  useEffect(() => {
-    let alive = true;
-    setLoadError("");
-    fetchPmTemplate(tplId)
-      .then((list) => {
-        if (!alive) return;
-        const next = list.map((t) => shape({
-          key: `id:${t.id}`, id: t.id, label: t.label || "", hint: t.hint || "", section: t.section || "",
-          kind: t.kind || "check", required: !!t.required, min_photos: Number(t.min_photos) || 0,
-          unit: t.unit || "", warn_above: t.warn_above == null ? "" : String(t.warn_above),
-        }));
-        const last = list.reduce((a, t) => (!a || (t.updated_at || "") > (a.updated_at || "") ? t : a), null);
-        setRows(next);
-        setBase(serialize(next));
-        setMeta(last ? { by: last.updated_by, at: last.updated_at } : null);
-        setVersion(last?.updated_at || "");
-        setStale(false);
-        setSaveError("");
-        setTouched(false);
-      })
-      .catch((err) => { if (alive) setLoadError(err?.message || "רשימת הבדיקה לא נטענה"); })
-      .finally(() => { if (alive) setReloading(false); });
-    return () => { alive = false; };
-  }, [attempt, tplId]);
-
-  const dirty = rows != null && serialize(rows) !== base;
-  const busy = saving || reloading;
-
-  // ⚠️ הכלי נשאר מורכב (מוסתר) כל עוד הלשונית פתוחה — בלי זה, מי שפותח אותו
-  // שוב אחרי שעה עורך את מה שהיה לפני שעה.
-  const prevActive = useRef(active);
-  useEffect(() => {
-    if (active && !prevActive.current && rows != null && !dirty && !busy) { setReloading(true); setAttempt((x) => x + 1); }
-    prevActive.current = active;
-  }, [active, rows, dirty, busy]);
-
+  // "שינויים לא נשמרו" של אחת הרשימות → PmTab (שמירה מפני סגירת החלון)
   const onDirtyRef = useRef(onDirty);
   useEffect(() => { onDirtyRef.current = onDirty; }, [onDirty]);
-  const reason = dirty ? "שינויים ברשימת הבדיקה לא נשמרו." : null;
+  const reason = Object.values(reasons).find(Boolean) ?? null;
   useEffect(() => { onDirtyRef.current?.(reason); }, [reason]);
   useEffect(() => () => onDirtyRef.current?.(null), []);
+  const dirtyFor = (k) => (r) => setReasons((m) => (m[k] === r ? m : { ...m, [k]: r }));
+  const stateFor = (k) => (s) => setStates((m) => (m[k]?.dirty === s.dirty && m[k]?.busy === s.busy ? m : { ...m, [k]: s }));
+  const saved = () => { setListsRev((x) => x + 1); onSaved?.(); };   // מספרי הפריטים והאתרים בבורר ובכותרות
 
-  const edit = (key, fields) => {
-    setSavedMsg("");
-    setRows((rs) => rs.map((r) => (r.key === key ? shape({ ...r, ...fields }) : r)));
-  };
-  const move = (i, d) => setRows((rs) => {
-    const j = i + d;
-    if (j < 0 || j >= rs.length) return rs;
-    const next = rs.slice();
-    [next[i], next[j]] = [next[j], next[i]];
-    return next;
-  });
-  const add = () => {
-    const key = newId();
-    setRows((rs) => [...rs, { key, id: null, label: "", hint: "", section: rs.length ? rs[rs.length - 1].section : "",
-      kind: "check", required: true, min_photos: 0, unit: "", warn_above: "" }]);
-    setFocusKey(key);
-    setSavedMsg("");
-  };
-  const remove = (key) => { setRows((rs) => rs.filter((r) => r.key !== key)); setSavedMsg(""); };
-
-  const errors = (rows || []).map(rowError);
-  const sections = [...new Set((rows || []).map((r) => r.section.trim()).filter(Boolean))];
-  const photoTotal = templatePhotoTotal(rows);
-  const tooManyPhotos = photoTotal > MAX_PHOTOS_PER_VISIT;
-  const invalid = errors.some(Boolean) || (rows || []).length > TEMPLATE_MAX_ITEMS || tooManyPhotos;
-
-  const save = async () => {
-    setTouched(true);
-    if (invalid || busy) return;
-    setSaving(true);
-    setSaveError("");
-    const sent = rows;
-    try {
-      const n = await savePmTemplate(sent.map((r) => ({
-        ...(r.id ? { id: r.id } : {}),
-        label: r.label.trim(),
-        hint: r.hint.trim() || null,
-        section: r.section.trim() || null,
-        kind: r.kind,
-        required: r.required,
-        min_photos: r.min_photos,
-        // "ערך" (13/10/2026): יחידה וסף. בסוג אחר השרת מוחק אותם בכל מקרה
-        ...(r.kind === "value" ? { unit: String(r.unit ?? "").trim() || null, warn_above: String(r.warn_above ?? "").trim().replace(",", ".") || null } : {}),
-      })), version, tplId);
-      setListsRev((x) => x + 1);   // מספר הפריטים בבורר
-      setSavedMsg(`נשמר — ${n} פריטים פעילים. חל על ביקורים שייפתחו מעכשיו.`);
-      // ⚠️ מה שנשלח הוא עכשיו הבסיס (ולא "שינויים שלא נשמרו"), והעורך נעול עד
-      // שהטעינה מחדש מביאה את ה-id של הפריטים החדשים ואת האסימון החדש. שמירה
-      // נוספת עם האסימון הקודם הייתה נדחית כהתנגשות של המנהל עם עצמו.
-      setBase(serialize(sent));
-      reload();
-      onSaved?.();
-    } catch (err) {
-      if (err?.code === "PT409") setStale(true);
-      setSaveError(err?.message || "השמירה נכשלה");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // מעבר רשימה — נעול כשיש שינויים שלא נשמרו (אחרת הם נעלמים בשקט), ונועל את הכול עד שהיא נטענת.
-  const pick = (id) => {
-    const next = id === defaultId ? null : id;
-    if (next === tplId) return;
-    setSavedMsg(""); setSaveError(""); setStale(false);
-    setReloading(true);
-    setTplId(next);
+  // מעבר תצוגה — נעול כשיש שינויים שלא נשמרו (אחרת הם נעלמים בשקט); המופעים הקודמים יורדים, והמצב שלהם מתאפס
+  const pick = (v) => {
+    const next = v === SITE ? SITE : (v === defaultId ? null : v);
+    if (next === view) return;
+    setStates({});
+    setView(next);
   };
   const submitName = async () => {
     const value = (nameDraft?.value || "").trim();
@@ -260,24 +81,33 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
       }
     } catch (err) { setListError(err?.message || "הפעולה נכשלה"); }
   };
-  const listBar = (
-    <>
+
+  const siteLists = site.map((t) => lists?.find((l) => l.id === t.id) ?? t);
+  const siteItems = siteLists.reduce((n, t) => n + (Number(t.item_count) || 0), 0);
+  const siteOption = site.length ? [{
+    value: SITE, group: "האתר הזה",
+    label: `הרשימות של האתר הזה · ${site.length} ${site.length === 1 ? "רשימה" : "רשימות"}${lists ? ` · ${siteItems} פריטים` : ""}`,
+  }] : [];
+
+  return (
+    <div className="pm-tpl">
       <div className="pm-row pm-tpl-lists">
         {/* ⚠️ הרשימה המעוצבת ולא <select> (בעלת המוצר, 15/10/2026, על הרשימה הפתוחה: "תעצב את זה יפה") — את הרשימה
-            של <select> מציירת מערכת ההפעלה. מקובץ לפי קטגוריה: בסיס / מעליות / רצפה ומרתף / אחר. */}
+            של <select> מציירת מערכת ההפעלה. מקובץ: האתר הזה / בסיס / מעליות / רצפה ומרתף / אחר. */}
         <div className="pm-tpl-pick" title={dirty ? "יש שינויים שלא נשמרו — לשמור או לבטל לפני מעבר לרשימה אחרת" : undefined}>
           <span>רשימה</span>
-          <ChoiceSelect name="pm_template" label="רשימת תחזוקה" value={String(tplId ?? defaultId ?? "")}
+          <ChoiceSelect name="pm_template" label="רשימת תחזוקה" value={siteMode ? SITE : String(tplId ?? defaultId ?? "")}
             disabled={busy || dirty || !lists} menuMinWidth={380}
-            options={groupTemplates(lists || []).flatMap((g) => g.templates.map((t) => ({
+            options={[...siteOption, ...groupTemplates(lists || []).flatMap((g) => g.templates.map((t) => ({
               value: String(t.id), group: g.label,
               label: `${t.name}${t.is_default ? " (ברירת מחדל)" : ""} · ${t.item_count} פריטים`,
-            })))}
-            onChange={(v) => pick(Number(v))} />
+            })))]}
+            onChange={(v) => pick(v === SITE ? SITE : Number(v))} />
         </div>
         <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || dirty}
           onClick={() => { setListError(""); setNameDraft({ mode: "new", value: "" }); }}>+ רשימה חדשה</button>
         <button type="button" className="pm-btn pm-btn--ghost" disabled={busy || dirty || !current}
+          title={siteMode ? "שינוי שם — לבחור רשימה אחת בבורר" : undefined}
           onClick={() => { setListError(""); setNameDraft({ mode: "rename", value: current.name }); }}>שינוי שם</button>
       </div>
       {nameDraft && (
@@ -292,184 +122,34 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true }) {
         </div>
       )}
       {listError && <div className="pm-banner pm-banner--error" role="alert">{listError}</div>}
-      {/* סיווג הרשימה לפי סוג האתר (15/10/2026) — קטגוריה + הסוגים שהיא חלה עליהם מעצמה */}
-      {/* ⚠️ key לפי הרשימה: בלי זה הטופס שומר רגע את הסיווג של הרשימה הקודמת (ה-state נולד פעם אחת) */}
-      {current && !nameDraft && <PmTemplateMeta key={current.id} template={current} onSaved={() => setListsRev((x) => x + 1)} />}
-    </>
-  );
+      {/* סיווג הרשימה לפי סוג האתר (15/10/2026) — רק בעורך של רשימה אחת */}
+      {/* ⚠️ key לפי הרשימה: בלי זה הטופס שומר רגע את הסיווג של הרשימה הקודמת (ה-state נולד פעם אחת). ⚠️ עם קידומת:
+          PmListEditor שלמטה הוא אח באותו הורה, ו-key זהה (המזהה לבדו) שכפל רכיב — שני טופסי סיווג על המסך (19/10/2026) */}
+      {current && !nameDraft && <PmTemplateMeta key={`meta-${current.id}`} template={current} onSaved={() => setListsRev((x) => x + 1)} />}
 
-  if (loadError) {
-    return (
-      <div className="pm-banner pm-banner--error" role="alert">
-        {loadError}
-        <button type="button" className="pm-btn pm-btn--inline" onClick={reload}>נסה שוב</button>
-      </div>
-    );
-  }
-  if (!rows) return <p className="pm-muted">טוען את רשימת הבדיקה…</p>;
-
-  return (
-    <div className="pm-tpl">
-      {listBar}
       <div className="pm-banner pm-banner--info">
         שינויים חלים על ביקורים שייפתחו <strong>אחרי</strong> השמירה. ביקור שכבר פתוח ממשיך עם הרשימה שהייתה בעת פתיחתו.
       </div>
-      {meta?.at && <p className="pm-meta">עודכנה לאחרונה ע״י {meta.by || "—"} ב-{formatStampIL(meta.at)}</p>}
-      {reloading && <p className="pm-muted" role="status">טוען את הרשימה העדכנית מהשרת…</p>}
 
-      {rows.length === 0 ? (
-        <p className="pm-muted">הרשימה ריקה. בלי פריטים אי אפשר לפתוח ביקור תחזוקה.</p>
-      ) : (
-        <ol className="pm-tpl-list">
-          {rows.map((r, i) => (
-            <li key={r.key} className={`pm-tpl-row${touched && errors[i] ? " pm-tpl-row--bad" : ""}`}>
-              {r.section.trim() && (i === 0 || rows[i - 1].section.trim() !== r.section.trim()) && (
-                <div className="pm-tpl-group">{r.section.trim()}</div>
-              )}
-              <div className="pm-tpl-top">
-                <span className="pm-tpl-num" aria-hidden="true">{i + 1}</span>
-                <label className="pm-field pm-tpl-label">
-                  <span className="pm-sr">שם פריט {i + 1}</span>
-                  <input className="pm-input" type="text" value={r.label} maxLength={LABEL_MAX}
-                    placeholder="שם הפריט, למשל: בדיקת מפלס שמן" autoFocus={focusKey === r.key} disabled={busy}
-                    onChange={(e) => edit(r.key, { label: e.target.value })} />
-                </label>
-              </div>
-              <label className="pm-field">
-                <span className="pm-sr">הסבר לפריט {i + 1}</span>
-                <input className="pm-input" type="text" value={r.hint} maxLength={HINT_MAX}
-                  placeholder="הסבר לטכנאי (רשות)" disabled={busy} onChange={(e) => edit(r.key, { hint: e.target.value })} />
-              </label>
-
-              <div className="pm-tpl-bar">
-                <div className="pm-tpl-opts">
-                  {newGroupKey === r.key ? (
-                    <label className="pm-field pm-tpl-sec">
-                      <span>קבוצה חדשה</span>
-                      <input className="pm-input" type="text" value={r.section} maxLength={SECTION_MAX} autoFocus
-                        placeholder="שם הקבוצה, למשל: מרתף" disabled={busy}
-                        onChange={(e) => edit(r.key, { section: e.target.value })}
-                        onBlur={() => endNewGroup(r, !r.section.trim())}
-                        onKeyDown={(e) => {
-                          // ⚠️ stopPropagation: חלון האתר (InsightsModal) נסגר על Esc ב-document — בלעדיו Esc כאן סגר את כל החלון
-                          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endNewGroup(r, true); }
-                          else if (e.key === "Enter") { e.preventDefault(); endNewGroup(r, !r.section.trim()); }
-                        }} />
-                    </label>
-                  ) : (
-                    <div className="pm-field pm-tpl-sec">
-                      <span aria-hidden="true">קבוצה</span>
-                      <ChoiceSelect value={r.section.trim()} label={`קבוצה של פריט ${i + 1}`} name="pm-tpl-sec" disabled={busy}
-                        placeholder="בלי קבוצה — שם הרשימה" menuMinWidth={220}
-                        options={[
-                          ...sections.map((x) => ({ value: x, label: x })),
-                          { value: "", label: "בלי קבוצה — שם הרשימה" },
-                          { value: NEW_GROUP, label: "+ קבוצה חדשה…" },
-                        ]}
-                        onChange={(v) => {
-                          if (v === NEW_GROUP) { startNewGroup(r); edit(r.key, { section: "" }); }
-                          else edit(r.key, { section: v });
-                        }} />
-                    </div>
-                  )}
-                  <label className="pm-field pm-tpl-kind">
-                    <span>סוג</span>
-                    <select className="pm-input" value={r.kind} disabled={busy} onChange={(e) => edit(r.key, { kind: e.target.value })}>
-                      {Object.entries(KIND_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                    </select>
-                  </label>
-                  <label className="pm-inline-check">
-                    <input type="checkbox" className="pm-checkbox pm-checkbox--sm" checked={r.required}
-                      disabled={busy} onChange={(e) => edit(r.key, { required: e.target.checked })} />
-                    <span>חובה</span>
-                  </label>
-                  {r.kind === "value" && (
-                    <>
-                      <label className="pm-field pm-tpl-unit">
-                        <span>יחידה</span>
-                        <input className="pm-input" type="text" maxLength={10} value={r.unit} placeholder="%"
-                          disabled={busy} onChange={(e) => edit(r.key, { unit: e.target.value })} />
-                      </label>
-                      <label className="pm-field pm-tpl-unit">
-                        <span>סימון מעל</span>
-                        <input className="pm-input" type="text" inputMode="decimal" maxLength={12} value={r.warn_above}
-                          placeholder="למשל 2" disabled={busy} onChange={(e) => edit(r.key, { warn_above: e.target.value })} />
-                      </label>
-                    </>
-                  )}
-                  {kindHasPhotos(r.kind) && (
-                    <div className="pm-stepper" role="group" aria-label={`מספר תמונות מינימלי לפריט ${i + 1}`}>
-                      <span>תמונות לפחות</span>
-                      <button type="button" className="pm-icon-btn" aria-label="פחות"
-                        disabled={busy || !r.required || r.min_photos <= 1}
-                        onClick={() => edit(r.key, { min_photos: r.min_photos - 1 })}>−</button>
-                      <output className="pm-stepper-val">{r.min_photos}</output>
-                      <button type="button" className="pm-icon-btn" aria-label="יותר"
-                        disabled={busy || !r.required || r.min_photos >= MAX_PHOTOS_PER_ITEM}
-                        onClick={() => edit(r.key, { min_photos: r.min_photos + 1 })}>+</button>
-                    </div>
-                  )}
-                </div>
-                <div className="pm-tpl-move">
-                  <button type="button" className="pm-icon-btn" aria-label={`העברת פריט ${i + 1} למעלה`}
-                    disabled={busy || i === 0} onClick={() => move(i, -1)}>↑</button>
-                  <button type="button" className="pm-icon-btn" aria-label={`העברת פריט ${i + 1} למטה`}
-                    disabled={busy || i === rows.length - 1} onClick={() => move(i, 1)}>↓</button>
-                  <button type="button" className="pm-btn pm-btn--danger" disabled={busy} onClick={() => remove(r.key)}>
-                    הסרה
-                  </button>
-                </div>
-              </div>
-              {kindHasPhotos(r.kind) && !r.required && (
-                <small className="pm-hint">פריט רשות אינו יכול לדרוש תמונות — הטכנאי יצלם אם ירצה.</small>
-              )}
-              {touched && errors[i] && <span className="pm-field-err">{errors[i]}</span>}
-            </li>
+      {siteMode ? (
+        <div className="pm-tpl-sites" data-testid="pm-tpl-site-lists">
+          {siteLists.map((t) => (
+            <section key={t.id} className="pm-tpl-site" data-template={t.id}>
+              <PmListEditor tplId={t.id} active={active} onDirty={dirtyFor(`s${t.id}`)} onState={stateFor(`s${t.id}`)} onSaved={saved}
+                head={(
+                  <div className="pm-tpl-site-head">
+                    <h4>{t.name}</h4>
+                    <span className="pm-muted" data-testid="pm-tpl-shared">
+                      {t.item_count != null ? `${t.item_count} פריטים · ` : ""}{sharedLabel(t)}
+                    </span>
+                  </div>
+                )} />
+            </section>
           ))}
-        </ol>
-      )}
-
-      {rows.length > TEMPLATE_MAX_ITEMS && (
-        <div className="pm-banner pm-banner--error">עד {TEMPLATE_MAX_ITEMS} פריטים ברשימה.</div>
-      )}
-      {tooManyPhotos ? (
-        <div className="pm-banner pm-banner--error pm-tpl-photos" role="alert">
-          סך התמונות הנדרשות בביקור ({photoTotal}) עולה על {MAX_PHOTOS_PER_VISIT} — אף ביקור לא יוכל
-          להיות מוגש. יש להוריד את מספר התמונות הנדרש בפריטים.
         </div>
-      ) : photoTotal > PHOTO_TOTAL_WARN && (
-        <div className="pm-banner pm-banner--warn pm-tpl-photos" role="status">
-          כל ביקור יידרש ל-{photoTotal} תמונות לפחות. נפח התמונות בביקור מוגבל ל-15MB — בערך 16 עד 40
-          תמונות, לפי הצילום — ומעבר לו התמונות הבאות נדחות וההגשה נחסמת.
-        </div>
+      ) : (
+        <PmListEditor key={`list-${tplId ?? "default"}`} tplId={tplId} active={active} onDirty={dirtyFor("one")} onState={stateFor("one")} onSaved={saved} />
       )}
-      {saveError && (
-        <div className="pm-banner pm-banner--error" role="alert">
-          הרשימה לא נשמרה — {saveError}
-          {stale && (
-            <button type="button" className="pm-btn pm-btn--inline"
-              disabled={busy}
-              onClick={() => { if (!dirty || window.confirm("לטעון את הרשימה העדכנית? השינויים שלא נשמרו כאן יימחקו.")) reload(); }}>
-              טעינת הרשימה העדכנית
-            </button>
-          )}
-        </div>
-      )}
-      {savedMsg && !dirty && <div className="pm-banner pm-banner--ok" role="status">{savedMsg}</div>}
-
-      <div className="pm-row">
-        <button type="button" className="pm-btn" onClick={add} disabled={busy}>+ הוספת פריט</button>
-        <button type="button" className="pm-btn pm-btn--primary" onClick={save} disabled={busy || !dirty}>
-          {saving ? "שומר…" : "שמירת הרשימה"}
-        </button>
-        {dirty && !busy && (
-          <button type="button" className="pm-btn pm-btn--ghost"
-            onClick={() => { setRows(JSON.parse(base).map((b, n) => ({ ...b, key: b.id ? `id:${b.id}` : `n:${n}` }))); setTouched(false); }}>
-            ביטול השינויים
-          </button>
-        )}
-      </div>
-      {touched && invalid && <span className="pm-field-err">יש לתקן את הפריטים המסומנים לפני השמירה.</span>}
     </div>
   );
 }

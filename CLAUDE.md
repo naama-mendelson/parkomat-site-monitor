@@ -2329,6 +2329,44 @@ Her answers: **both** (a per-attribute display, and classification by system and
   (rows and order at 1280 light and 390 dark, the unassigned row after a manual drop, the editor chips saved); the
   harness PM mock builds `type_coverage` like the SQL and accepts the new key shapes.
 
+### The list editor opened from a site shows all of the site's lists, stacked (19/10/2026, evening)
+
+The owner, on "עריכת רשימת הבדיקה (46)" at הרצל 50 that showed only "בסיס פרקומט — לובי וחשמל": *"צריך להיות הרבה
+יותר — מעלית הידראולית, מיטת XY, למה זה לא מוסף שם"*. The lists were there, in the picker, one at a time — exactly what
+was not visible (the second time that day someone saw only lobby and electrical). Her choice, of two: **all the site's
+lists one under another**, over a button per list.
+
+- **`PmListEditor.jsx`** (new) is the editor of one list: load, the stale-edit token, items, the group picker, save. It
+  is the old body of `PmTemplateEditor`, moved unchanged. ⚠️ It reports `dirty` / `busy` up with `useLayoutEffect`, so
+  the picker above locks in the same frame as the edit, not one frame later. ⚠️ It must **not** clear the "נשמר — N
+  פריטים" message when it loads: the save itself reloads, and a reset there erased the message the moment it appeared
+  (`probe-pm-profiles` V caught it). A list switch is a new instance anyway (`key`).
+- **`PmTemplateEditor.jsx`** is now the frame: the picker, "+ רשימה חדשה", "שינוי שם" and the classification
+  (`PmTemplateMeta`), and either one `PmListEditor` or, when opened from a site (`siteTemplates` = `pm_site.templates`,
+  passed by `PmTab`), one per site list. The picker's first option is **"הרשימות של האתר הזה · N רשימות · M פריטים"**,
+  and the editor opens on it; picking one list returns to the single editor with its classification (not shown in the
+  stacked view); "שינוי שם" needs one list. Each section has a heading — the list's name, its item count and
+  `sharedLabel`: **"משותפת ל-N אתרים — שינוי כאן חל על כולם"**, or "רק באתר הזה" — its own "+ הוספת פריט" and its own
+  "שמירת הרשימה". The info banner is shown once, at the top.
+- ⚠️ **Siblings need distinct keys:** `PmTemplateMeta` and the single `PmListEditor` sit in one parent, and both were
+  keyed by the list id alone — React duplicated a component (two classification panels on screen). They are
+  `meta-<id>` / `list-<id>` now.
+- ⚠️ **Dirty and busy are computed over the lists on screen only**, so a list that leaves the site mid-load cannot
+  leave a stale "busy" that locks the picker for good.
+- **`pm_templates_list.site_count` now means the sites that really get the list** — once per site through
+  `app.pm_site_template_ids` (`CROSS JOIN LATERAL`, ~0.5 s for all sites, measured in production; it runs when the
+  editor opens and after a save). Until then it counted only profiles and manual assignments, so since 15/10 (lists by
+  type) "מעלית הידראולית" was counted through the old profiles only. Production numbers that day: base 126, hydraulic
+  52, XY bed 30, electric 29, dolly 29, multipliers 89.
+- Tests: `pm-auto.test.js` (`site_count` follows a new typed site and a manual drop, and equals the resolver for every
+  list), `pm-lists-ui.test.js` (`sharedLabel`). Browser `e2e/probe-pm-sitelists.mjs` 15/15 (three sections in the site's
+  order, the picker's label and total, each heading's count and sharing, an edit locks the picker and leaves the other
+  saves disabled, the save writes one list only, "נשמר" stays, one list and back, 390 dark). `probe-groups`,
+  `probe-lists`, `probe-pm-types` and `pm/run` (an empty-list check now waits for the text, since the frame appears
+  before the list loads) follow the new shape; `probe-pm-profiles` 133/133, `probe-pm-cover` 17/17, `pm/run` 141/142.
+- ⚠️ **Deploy order: SQL first.** Before it, `site_count` keeps its old meaning and the headings would show the wrong
+  number of sites.
+
 ## PM visit form: a photo on every item, and a larger detail line (18/10/2026)
 
 From the field, forwarded by the owner: *"חייבת להיות אפשרות להוסיף תמונה\ות לכל סעיף, כמו שתמיד היה לנו. זה חלק

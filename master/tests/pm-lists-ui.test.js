@@ -52,6 +52,15 @@ test("typeKeyOptions — כל סוגי המעלית והמתקן, בצורת lif
   assert.equal(m.typeKeyLabel("console:transverse"), "קונזול רוחבי");
 });
 
+test("sharedLabel — כמה אתרים חולקים רשימה, לכותרת שלה בעורך", () => {
+  assert.equal(m.sharedLabel({ site_count: 52 }), "משותפת ל-52 אתרים — שינוי כאן חל על כולם");
+  assert.equal(m.sharedLabel({ site_count: 1 }), "רק באתר הזה");
+  assert.equal(m.sharedLabel({ site_count: 0 }), "רק באתר הזה", "0 = האתר עוד לא נספר (רשימה שזה עתה שויכה)");
+  assert.equal(m.sharedLabel({}), "", "בלי מספר — בלי משפט");
+  assert.equal(m.sharedLabel(null), "");
+  assert.equal(m.sharedLabel({ site_count: "x" }), "");
+});
+
 test("coverageRows — מכוסה / ברשימות הכלליות / יש רשימה שלא משויכת; מסד ישן בלי השדה — אין שורות", () => {
   const rows = m.coverageRows([
     { key: "floor:xy", lists: [{ id: 5, name: "מיטת XY במרתף", assigned: true }] },

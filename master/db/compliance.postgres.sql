@@ -2182,22 +2182,22 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.pm_template(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_template(integer) TO authenticated;
 
--- כל הרשימות, לבורר בעורך ולשיוך באתר: כמה פריטים, וכמה אתרים שויכו אליה במפורש.
+-- כל הרשימות, לבורר בעורך ולשיוך באתר: כמה פריטים, וכמה אתרים מקבלים אותה.
+-- ⚠️ site_count = האתרים שמקבלים אותה **בפועל**, לפי הפותר (app.pm_site_template_ids) — ידני, לפי הסוג, פרופיל או ברירת
+-- המחדל (19/10/2026). עד אז נספרו רק פרופיל ושיוך ידני, וכך מאז 15/10 (לפי הסוג) "מעלית הידראולית" נספרה רק דרך
+-- הפרופילים הישנים. העורך מציג אותו כ"משותפת ל-N אתרים" — מי ששינוי ברשימה הזו נוגע בו. הפותר נקרא פעם אחת לאתר.
 CREATE OR REPLACE FUNCTION public.pm_templates_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE v_actor text := app.require_staff();
 BEGIN
-  RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object(
+  RETURN COALESCE((WITH r AS (SELECT x.tid, count(*)::int AS n
+                                FROM sites s CROSS JOIN LATERAL unnest(app.pm_site_template_ids(s.id)) AS x(tid)
+                               GROUP BY x.tid)
+           SELECT jsonb_agg(jsonb_build_object(
              'id', t.id, 'name', t.name, 'seq', t.seq, 'is_default', t.is_default,
              'category', t.category, 'auto_for', to_jsonb(t.auto_for),
              'item_count', (SELECT count(*)::int FROM pm_checklist_items i WHERE i.active AND i.template_id = t.id),
-             -- אתרים שמקבלים אותה בפועל: דרך פרופיל, או בשיוך הישן אתר-אתר (13/10/2026)
-             'site_count', (SELECT count(DISTINCT x.site_id)::int FROM (
-                               SELECT st.site_id FROM pm_site_templates st WHERE st.template_id = t.id
-                               UNION
-                               SELECT ps.site_id FROM pm_profile_sites ps
-                                 JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
-                                WHERE pt.template_id = t.id) x))
+             'site_count', COALESCE((SELECT r.n FROM r WHERE r.tid = t.id), 0))
            ORDER BY t.is_default DESC, t.seq, t.id)
          FROM pm_templates t WHERE t.active), '[]'::jsonb);
 END $fn$;

@@ -74,6 +74,17 @@ export function coverageRows(typeCoverage) {
   });
 }
 
+/**
+ * כמה אתרים חולקים רשימה (pm_templates_list.site_count — האתרים שמקבלים אותה בפועל) — לכותרת שלה בעורך (19/10/2026).
+ * הרשימות משותפות לכל האתרים מאותו סוג, ושינוי בהן חל על כולם; מי שעורך מאתר אחד צריך לדעת את זה לפני שהוא שומר.
+ */
+export function sharedLabel(t) {
+  const n = Number(t?.site_count);
+  if (!Number.isFinite(n) || n < 0 || t?.site_count == null) return "";
+  if (n <= 1) return "רק באתר הזה";
+  return `משותפת ל-${n} אתרים — שינוי כאן חל על כולם`;
+}
+
 /** מאיפה הרשימות של האתר (pm_site.templates_source) — במילים */
 export function sourceLabel(source) {
   switch (source) {

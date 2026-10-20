@@ -191,6 +191,22 @@ test("מערכת וקונזול: מפתחות סוג בסדר התג, וכיסו
   await meta(BIT, "other", []);   // לא להשאיר סיווג שמשנה את שאר הבדיקות
 });
 
+test("pm_templates_list.site_count — האתרים שמקבלים את הרשימה בפועל, גם לפי הסוג (19/10/2026)", { skip }, async () => {
+  const before = Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]));
+  const a = await newSite("xy", "hydraulic-piston-1");
+  const after = Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]));
+  assert.equal(after[HYD], before[HYD] + 1, "הידראולית: אתר חדש לפי הסוג נספר");
+  assert.equal(after[XY], before[XY] + 1, "מיטת XY: גם");
+  assert.equal(after[BASE], before[BASE] + 1, "הבסיס: גם");
+  assert.equal(after[DOLI], before[DOLI], "דולי: לא");
+  // ידני שמוריד את ההידראולית — כבר לא נספר בה
+  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, XY]]);
+  assert.equal(Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]))[HYD], before[HYD]);
+  // ובדיקה מול הפותר עצמו, לכל רשימה
+  const real = (await h.pg.query(`SELECT x.tid, count(*)::int n FROM sites s, unnest(app.pm_site_template_ids(s.id)) x(tid) GROUP BY x.tid`)).rows;
+  for (const t of await lists()) assert.equal(t.site_count, real.find((r) => r.tid === t.id)?.n ?? 0, t.name);
+});
+
 test("הקובץ אידמפוטנטי — העמודות והאילוץ שורדים החלה שנייה", { skip }, async () => {
   const fs = require("node:fs"), path = require("node:path");
   await h.pg.exec(fs.readFileSync(path.join(__dirname, "..", "db", "compliance.postgres.sql"), "utf8"));

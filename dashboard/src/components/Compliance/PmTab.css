@@ -766,6 +766,11 @@ select.pm-input { padding-block: 8px; }
 .pm-tpl-name .pm-input { flex: 1 1 220px; }
 .pm-site-lists { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .pm-site-lists-names { font-weight: 600; }
+/* העורך מאתר (19/10/2026): כל רשימות האתר זו מתחת לזו — קו דק וכותרת לכל רשימה, לא קופסה */
+.pm-tpl-sites { display: flex; flex-direction: column; }
+.pm-tpl-site + .pm-tpl-site { border-top: 1px solid var(--border-color); margin-top: 16px; padding-top: 14px; }
+.pm-tpl-site-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-bottom: 6px; }
+.pm-tpl-site-head h4 { margin: 0; font-size: 1.05rem; font-weight: 700; }
 /* "לפי סוג האתר" (19/10/2026): שורה לכל מאפיין — שורות ולא קופסאות, בגודל הטקסט של השורה שמעליה */
 .pm-cover { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-top: 6px; }
 .pm-cover-cap { color: var(--text-secondary); }
