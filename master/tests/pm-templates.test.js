@@ -135,15 +135,17 @@ test("⚠️ שיוך: האתר מקבל משותף + דולי, בסדר הרש�
   assert.deepEqual((await site(b)).templates.map((t) => t.name), ["משותף"], "האתר השני — עדיין רק ברירת המחדל");
 });
 
-test("'כמו אתר אחר': קוראים את הרשימות שלו ושולחים — וריק מחזיר לברירת המחדל", { skip }, async () => {
+test("'כמו אתר אחר': קוראים את הרשימות שלו ושולחים — וריק מחזיר לבסיס בלבד", { skip }, async () => {
   const l = await list();
   const sot = l.find((t) => t.name === "סוטפין").id;
   const src = await newSite();
   const dst = await newSite();
   await assign(src, [sot]);
-  const ids = (await site(src)).templates.map((t) => t.id);
+  const ids = (await site(src)).templates.map((t) => t.id);   // כולל הבסיס — שאינו נשמר, ונגזר מהסוג
   await assign(dst, ids);
-  assert.deepEqual((await site(dst)).templates.map((t) => t.name), ["סוטפין"]);
+  assert.deepEqual((await site(dst)).templates.map((t) => t.name), ["משותף", "סוטפין"]);
+  assert.equal((await sup(`SELECT count(*)::int n FROM pm_site_templates st JOIN sites s ON s.id = st.site_id WHERE s.code = $1`, [dst]))[0].n, 1,
+    "20/10/2026: רק סוטפין נשמר; הבסיס של רובוטי אינו שורה");
   await assign(dst, []);
   const back = await site(dst);
   assert.deepEqual([back.templates.map((t) => t.name), back.templates_assigned], [["משותף"], false]);
@@ -161,16 +163,22 @@ test("⚠️ ביקור שכבר נפתח אינו משתנה כשמשנים א�
   assert.equal(again.created, false, "אותה טיוטה");
 });
 
-test("תקרת 40 תמונות — על כל הרשימות של האתר יחד, בשיוך ובפתיחה", { skip }, async () => {
+test("תקרת 40 תמונות — על כל הרשימות של האתר יחד: בשמירת רשימה, בשיוך ובפתיחה", { skip }, async () => {
   const big = await create("צילום רב");
   const extra = await create("צילום נוסף");
   await save(Array.from({ length: 6 }, (_, i) => photo(`צילום ${i + 1}`, 6)), big);   // 36
   await save([photo("צילום א", 3)], extra);                                         // 3 → 39
   const code = await newSite();
   await assign(code, [big, extra]);
-  await save([photo("צילום א", 6)], extra);   // כל רשימה ≤ 40, אבל יחד 42
-  await fails(start(code), "23514", /40/);
-  await fails(assign(await newSite(), [big, extra]), "23514", /40/);
+  // כל רשימה ≤ 40, אבל יחד 42 — מ-20/10/2026 השמירה עצמה נדחית ואומרת באיזה אתר (עד אז — רק בפתיחה, בשטח)
+  await fails(save([photo("צילום א", 6)], extra), "23514", new RegExp(`משויכת לאתר ${code}`));
+  const extra2 = await create("צילום שלישי");
+  await save([photo("צילום ב", 6)], extra2);                                        // לא משויכת — עוברת
+  await fails(assign(await newSite(), [big, extra2]), "23514", /40/);
+  // והפתיחה בודקת בעצמה — גם שיוך שעקף את הפונקציה
+  const raw = await newSite();
+  await sup(`INSERT INTO pm_site_templates (site_id, template_id) SELECT s.id, x FROM sites s, unnest($2::int[]) x WHERE s.code = $1`, [raw, [big, extra2]]);
+  await fails(start(raw), "23514", /40/);
 });
 
 test("הרשאות (19/10/2026): בקר קורא ואינו משנה; עורך משנה; משתמש מושבת — לא כלום", { skip }, async () => {

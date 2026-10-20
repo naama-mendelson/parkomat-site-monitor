@@ -1,7 +1,7 @@
 // components/Compliance/PmTemplateEditor.jsx — עריכת רשימות הבדיקה של התחזוקה המונעת. עורך או מנהל.
 //
 // ⚠️ מ-07/10/2026 כמה רשימות: הבסיס (ברירת המחדל — מה שהיה "הרשימה" של D15), רשימה לכל סוג מעלית ומתקן, ולסוטפין.
-// אילו רשימות אתר מקבל נקבע בלשונית התחזוקה של האתר (PmTab / PmSiteLists) ולפי סוגו.
+// אילו רשימות אתר מקבל נבחר בלשונית התחזוקה של האתר (PmTab / PmSiteLists) — מ-20/10/2026 רק בבחירה, לא לפי סוגו.
 //
 // ⚠️ 19/10/2026 — כשהעורך נפתח מאתר, הוא מציג את **כל הרשימות של האתר אחת מתחת לשנייה** (בעלת המוצר, על עורך שהראה רק את
 // "בסיס פרקומט — לובי וחשמל" בעוד הכפתור אמר 46: "צריך להיות הרבה יותר — מעלית הידראולית, מיטת XY, למה זה לא מוסף שם").
@@ -39,11 +39,21 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true, site
     return () => { alive = false; };
   }, [listsRev]);
   const defaultId = lists?.find((t) => t.is_default)?.id ?? null;
-  const siteMode = view === SITE && site.length > 0;
+  // ⚠️ רשימה שיצאה מהאתר (בחירה בלשונית שמעל, או טעינה מחדש) בזמן שיש בה שינויים שלא נשמרו או שמירה בדרך — נשארת על
+  // המסך, מסומנת "כבר לא נבחרה לאתר", עד שנשמרת או מבוטלת. בלי זה המופע שלה ירד, השינויים נמחקו בשקט, ושומר הסגירה
+  // הפסיק לשאול (סקירה, 20/10/2026). מפה של השמות האחרונים — רשימה שיצאה כבר אינה ב-siteTemplates.
+  const namesRef = useRef(new Map());
+  for (const t of site) namesRef.current.set(t.id, t);
+  const siteIds = site.map((t) => t.id);
+  const held = Object.keys(states)
+    .filter((k) => k.startsWith("s") && (states[k]?.dirty || states[k]?.busy))
+    .map((k) => Number(k.slice(1)))
+    .filter((id) => Number.isFinite(id) && !siteIds.includes(id));
+  const siteMode = view === SITE && (site.length > 0 || held.length > 0);
   const tplId = siteMode ? null : (view === SITE ? null : view);
   const current = siteMode ? null : lists?.find((t) => t.id === (tplId ?? defaultId)) ?? null;
   // ⚠️ רק המופעים שעל המסך עכשיו: רשימה שיצאה מהאתר באמצע טעינה הייתה משאירה busy במפה, והבורר היה ננעל לתמיד
-  const shown = siteMode ? site.map((t) => `s${t.id}`) : ["one"];
+  const shown = siteMode ? [...siteIds, ...held].map((id) => `s${id}`) : ["one"];
   const dirty = shown.some((k) => states[k]?.dirty);
   const busy = shown.some((k) => states[k]?.busy);
 
@@ -58,31 +68,38 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true, site
   const saved = () => { setListsRev((x) => x + 1); onSaved?.(); };   // מספרי הפריטים והאתרים בבורר ובכותרות
 
   // מעבר תצוגה — נעול כשיש שינויים שלא נשמרו (אחרת הם נעלמים בשקט); המופעים הקודמים יורדים, והמצב שלהם מתאפס
+  // ⚠️ וגם שם שבעריכה נסגר: "שינוי שם" שנפתח לרשימה A ונשאר פתוח אחרי מעבר לרשימה B היה משנה את B, ובתצוגת האתר
+  // (אין current) נכשל ב-"Cannot read properties of null" (סקירה, 20/10/2026)
   const pick = (v) => {
     const next = v === SITE ? SITE : (v === defaultId ? null : v);
     if (next === view) return;
     setStates({});
+    setNameDraft(null);
     setView(next);
   };
   const submitName = async () => {
+    if (busy || dirty) return;
+    if (nameDraft?.mode === "rename" && !current) { setNameDraft(null); return; }
     const value = (nameDraft?.value || "").trim();
     if (value.length < 2) { setListError("שם הרשימה — לפחות 2 תווים"); return; }
     setListError("");
     try {
+      // ⚠️ saved() ולא רק listsRev (20/10/2026): רשימה חדשה או שם חדש צריכים להופיע גם בבחירה של האתר (PmSiteLists)
       if (nameDraft.mode === "new") {
         const id = await createPmTemplate(value);
         setNameDraft(null);
-        setListsRev((x) => x + 1);
+        saved();
         pick(id);
       } else {
         await renamePmTemplate(current.id, value);
         setNameDraft(null);
-        setListsRev((x) => x + 1);
+        saved();
       }
     } catch (err) { setListError(err?.message || "הפעולה נכשלה"); }
   };
 
-  const siteLists = site.map((t) => lists?.find((l) => l.id === t.id) ?? t);
+  const siteLists = site.map((t) => lists?.find((l) => l.id === t.id) ?? t)
+    .concat(held.map((id) => ({ ...(lists?.find((l) => l.id === id) ?? namesRef.current.get(id) ?? { id, name: `רשימה ${id}` }), gone: true })));
   const siteItems = siteLists.reduce((n, t) => n + (Number(t.item_count) || 0), 0);
   const siteOption = site.length ? [{
     value: SITE, group: "האתר הזה",
@@ -116,7 +133,8 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true, site
             placeholder={nameDraft.mode === "new" ? "שם הרשימה החדשה, למשל: דולי" : ""}
             onChange={(e) => setNameDraft({ ...nameDraft, value: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter") submitName(); if (e.key === "Escape") { e.stopPropagation(); setNameDraft(null); } }} />
-          <button type="button" className="pm-btn pm-btn--primary" onClick={submitName}>
+          <button type="button" className="pm-btn pm-btn--primary" onClick={submitName} disabled={busy || dirty}
+            title={dirty ? "יש שינויים שלא נשמרו ברשימה — לשמור או לבטל קודם" : undefined}>
             {nameDraft.mode === "new" ? "יצירה" : "שמירת השם"}</button>
           <button type="button" className="pm-btn pm-btn--ghost" onClick={() => setNameDraft(null)}>ביטול</button>
         </div>
@@ -125,7 +143,8 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true, site
       {/* סיווג הרשימה לפי סוג האתר (15/10/2026) — רק בעורך של רשימה אחת */}
       {/* ⚠️ key לפי הרשימה: בלי זה הטופס שומר רגע את הסיווג של הרשימה הקודמת (ה-state נולד פעם אחת). ⚠️ עם קידומת:
           PmListEditor שלמטה הוא אח באותו הורה, ו-key זהה (המזהה לבדו) שכפל רכיב — שני טופסי סיווג על המסך (19/10/2026) */}
-      {current && !nameDraft && <PmTemplateMeta key={`meta-${current.id}`} template={current} onSaved={() => setListsRev((x) => x + 1)} />}
+      {/* ⚠️ onSaved גם כאן (סקירה, 20/10/2026): הסיווג משנה את "לפי סוג האתר" בלשונית, והלשונית צריכה להיטען מחדש */}
+      {current && !nameDraft && <PmTemplateMeta key={`meta-${current.id}`} template={current} onSaved={saved} />}
 
       <div className="pm-banner pm-banner--info">
         שינויים חלים על ביקורים שייפתחו <strong>אחרי</strong> השמירה. ביקור שכבר פתוח ממשיך עם הרשימה שהייתה בעת פתיחתו.
@@ -142,6 +161,7 @@ export default function PmTemplateEditor({ onSaved, onDirty, active = true, site
                     <span className="pm-muted" data-testid="pm-tpl-shared">
                       {t.item_count != null ? `${t.item_count} פריטים · ` : ""}{sharedLabel(t)}
                     </span>
+                    {t.gone && <span className="pm-cover-off" data-testid="pm-tpl-gone">כבר לא נבחרה לאתר — לשמור או לבטל את השינויים</span>}
                   </div>
                 )} />
             </section>

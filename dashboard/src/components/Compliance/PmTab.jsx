@@ -58,7 +58,6 @@ import PmVisitView from "./PmVisitView";
 import PmHistoricalUpload from "./PmHistoricalUpload";
 import PmTemplateEditor from "./PmTemplateEditor";
 import PmSiteLists from "./PmSiteLists";
-import PmProfilesBoard from "./PmProfilesBoard";
 import { PmLamp } from "./PmCommon";
 import {
   DISCARD_IDLE_MS, agoText, countText, idleMs, readMe, readStore, sameName, submitReqKey, writeMe, writeStore,
@@ -430,10 +429,9 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
   // ---------------- היסטוריה וכלי מנהל ----------------
   const [openVisit, setOpenVisit] = useState(null);
   const [showAll, setShowAll] = useState(false);
-  const [tool, setTool] = useState(null);               // 'upload' | 'template' | 'profiles'
-  // ⚠️ שינוי הפרופיל של האתר מזיז את updated_at של הפרופילים, ולכן לוח פתוח חייב להיטען מחדש —
-  // אחרת השמירה הבאה ממנו נדחית ב-PT409 בלי שאיש נגע בו.
-  const [profRev, setProfRev] = useState(0);
+  // ⚠️ 20/10/2026: "לוח פרופילי התחזוקה" ירד — הפרופיל כבר אינו קובע את רשימות האתר (רק מה שנבחר לו, PmSiteLists)
+  const [tool, setTool] = useState(null);               // 'upload' | 'template'
+  const [listsRev, setListsRev] = useState(0);           // הרשימות השתנו בעורך → הבחירה של האתר טוענת אותן מחדש
   const [mounted, setMounted] = useState(() => new Set());   // כלי שנפתח נשאר חי (מוסתר) — עבודה בו לא נזרקת
   const toolsRef = useRef(null);
   const openTool = (t, scroll = false) => {
@@ -446,7 +444,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
   const [formReason, setFormReason] = useState(null);
   const [uploadReason, setUploadReason] = useState(null);
   const [tplReason, setTplReason] = useState(null);
-  const [profReason, setProfReason] = useState(null);
+  const [listsReason, setListsReason] = useState(null);   // בחירת רשימות שלא נשמרה (PmSiteLists)
   let outboxReason = null;
   if (ob.n > 0) {
     const what = countText(ob.n, "שינוי אחד", "שינויים");
@@ -454,7 +452,7 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
       ? `${what} בביקור עדיין לא סונכרנו לשרת — הם שמורים במכשיר הזה בלבד, ויישלחו רק כשהלשונית תיפתח שוב עם קליטה.`
       : `המכשיר אינו שומר טיוטה: ${what} שלא סונכרנו יימחקו אם החלון ייסגר.`;
   }
-  const reason = [outboxReason, formReason, uploadReason, tplReason, profReason].filter(Boolean).join("\n") || null;
+  const reason = [outboxReason, formReason, uploadReason, tplReason, listsReason].filter(Boolean).join("\n") || null;
   const onDirtyRef = useRef(onDirtyChange);
   useEffect(() => { onDirtyRef.current = onDirtyChange; }, [onDirtyChange]);
   useEffect(() => { onDirtyRef.current?.(reason); }, [reason]);
@@ -494,14 +492,15 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
         </div>
       </section>
 
-      {/* אילו רשימות תחזוקה האתר מקבל (07/10/2026) — רק כשאין טופס פתוח */}
+      {/* מה נבחר לאתר (20/10/2026): בסיס לרובוטי + בחירה מרובה לכל קבוצה — רק כשאין טופס פתוח */}
       {!formOpen && Array.isArray(data?.templates) && (
-        <PmSiteLists code={site.code} profile={data.profile ?? null} templates={data.templates}
-          source={data.templates_source ?? (data.profile ? "profile" : data.templates_assigned ? "explicit" : "default")}
-          typeKeys={Array.isArray(data.type_keys) ? data.type_keys : []}
+        <PmSiteLists code={site.code} templates={data.templates}
+          robotic={data.site?.monitored !== false && site.monitored !== false}
           typeCoverage={data.type_coverage}
-          isManager={editable}
-          onChanged={() => { setProfRev((r) => r + 1); load({ silent: true }); }} />
+          editable={editable}
+          rev={listsRev}
+          onDirty={setListsReason}
+          onChanged={() => load({ silent: true })} />
       )}
 
       {notice && (
@@ -581,7 +580,9 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
                 onClick={() => start(false)} disabled={!!busy || templateCount === 0 || !online}>
                 {busy === "start" ? "פותח ביקור…" : "התחלת ביקור תחזוקה"}
               </button>
-              {templateCount === 0 ? (
+              {Array.isArray(data?.templates) && data.templates.length === 0 ? (
+                <p className="pm-hint">לא נבחרה תחזוקה לאתר — יש לבחור רשימות למעלה, ב"רשימות התחזוקה של האתר".</p>
+              ) : templateCount === 0 ? (
                 <p className="pm-hint">
                   רשימת הבדיקה ריקה — מנהל או עורך צריך להגדיר אותה לפני שאפשר לפתוח ביקור.
                   {editable && (
@@ -678,10 +679,6 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
               aria-expanded={tool === "template"} onClick={() => openTool("template")}>
               עריכת רשימת הבדיקה ({templateCount})
             </button>
-            <button type="button" className={`pm-btn${tool === "profiles" ? " pm-btn--on" : ""}`}
-              aria-expanded={tool === "profiles"} onClick={() => openTool("profiles")}>
-              לוח פרופילי התחזוקה
-            </button>
           </div>
           {mounted.has("upload") && (
             <div hidden={tool !== "upload"}>
@@ -689,17 +686,11 @@ export default function PmTab({ site, complianceRev = 0, onDirtyChange, onChange
                 onUploaded={() => { changed(); load({ silent: true }); }} />
             </div>
           )}
-          {mounted.has("profiles") && (
-            <div hidden={tool !== "profiles"}>
-              <PmProfilesBoard active={tool === "profiles"} rev={profRev} onDirty={setProfReason}
-                onSaved={() => { changed(); load({ silent: true }); }} />
-            </div>
-          )}
           {mounted.has("template") && (
             <div hidden={tool !== "template"}>
               <PmTemplateEditor active={tool === "template"} onDirty={setTplReason}
                 siteTemplates={Array.isArray(data?.templates) ? data.templates : null}
-                onSaved={() => { changed(); load({ silent: true }); }} />
+                onSaved={() => { setListsRev((r) => r + 1); changed(); load({ silent: true }); }} />
             </div>
           )}
         </section>

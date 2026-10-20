@@ -1,8 +1,9 @@
 // tests/pm-profiles.test.js — פרופילי תחזוקה, "כמו ברמזור" (13/10/2026).
 //
 // בעלת המוצר: "כיון שיש תחזוקה שמתאימה להרבה אתרים אותו דבר — שנקשר את האתר לתחזוקה שמתאימה
-// לו כמו ברמזור". פרופיל = שם + רשימות + אתרים; אתר בפרופיל אחד. ⚠️ מה שחייב להישאר: אתר בלי
-// פרופיל מקבל בדיוק מה שקיבל קודם (שיוך ישן, או ברירת המחדל), וביקור פתוח אינו משתנה.
+// לו כמו ברמזור". פרופיל = שם + רשימות + אתרים; אתר בפרופיל אחד.
+// ⚠️ מ-20/10/2026 הפרופיל **אינו קובע** את רשימות האתר (בעלת המוצר: "עד שלא בוחרים אין כלום" — האתר מקבל רק מה שנבחר לו,
+// ועוד הבסיס לרובוטי). הלוח והטבלאות נשארו כנתונים; הבדיקות כאן שומרות על הכתיבה שלהם, ועל כך שהם לא משנים רשימות.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const local = require("./helpers/local-pg");
@@ -30,6 +31,13 @@ async function newSite() {
   await sup(`INSERT INTO sites (code, site_name, status, registered_at) VALUES ($1,$1,'ready','2026-01-01T00:00:00.000Z')`, [code]);
   return code;
 }
+// מכפיל (בלי בקר): אין לו בסיס — הביקור הוא רק מה שנבחר לו (20/10/2026)
+async function newShell() {
+  const code = `PPF${++seq}`;
+  await sup(`INSERT INTO sites (code, site_name, status, registered_at, monitored) VALUES ($1,$1,'no_comm','2026-01-01T00:00:00.000Z',false)`, [code]);
+  return code;
+}
+const assign = (code, ids) => rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [code, ids]);
 const tplItems = (id = null) => one(MGR, `SELECT public.pm_template($1) j`, [id]).then((r) => r.j);
 const token = async (id) => (await tplItems(id)).reduce((m, i) => (i.updated_at > m ? i.updated_at : m), "");
 const saveList = async (items, id) => one(MGR, `SELECT public.pm_template_save($1::jsonb, $2, $3) n`, [JSON.stringify(items), await token(id), id]);
@@ -74,58 +82,45 @@ test("הטבלאות החדשות סגורות — אין קריאה ישירה,
   }
 });
 
-test("אתר בפרופיל מקבל את רשימות הפרופיל, לפי הסדר שלהן; אתר בלי פרופיל — כמו קודם", { skip }, async () => {
-  const a = await newSite(), b = await newSite(), c = await newSite();
+test("⚠️ מ-20/10/2026 פרופיל אינו קובע רשימות — אתר בפרופיל מקבל רק מה שנבחר לו (ובסיס לרובוטי)", { skip }, async () => {
+  const a = await newSite(), b = await newSite(), m = await newShell();
   const id = await saveProfile(null, "פרקומט – הידראולית + דולי", [DOLLY, HYD, BASE]);
-  assert.equal(await setSites(id, [a, b]), 2);
-  assert.deepEqual(await listNames(a), ["בסיס פרקומט", "מעלית הידראולית", "דולי"], "סדר הרשימות (seq), לא סדר הבחירה");
+  assert.equal(await setSites(id, [a, b, m]), 3, "הלוח עדיין כותב את האתרים");
   const s = await site(a);
-  assert.deepEqual(s.profile, { id, name: "פרקומט – הידראולית + דולי" });
-  assert.equal(s.templates_assigned, true);
-  assert.equal(s.template_count, 5);
-  // בלי פרופיל — ברירת המחדל, בדיוק כמו לפני הפרופילים
-  const sc = await site(c);
-  assert.equal(sc.profile, null);
-  assert.deepEqual(sc.templates.map((t) => t.name), ["משותף"]);
-  assert.equal(sc.templates_assigned, false);
-  // ביקור שנפתח מצלם את רשימות הפרופיל
+  assert.deepEqual(s.profile, { id, name: "פרקומט – הידראולית + דולי" }, "הפרופיל עדיין נקרא — לבנייה ישנה");
+  assert.deepEqual(s.templates.map((t) => t.name), ["משותף"], "רובוטי: הבסיס בלבד, לא רשימות הפרופיל");
+  assert.equal(s.templates_source, "base");
+  assert.equal(s.templates_assigned, false);
+  assert.equal(s.template_count, 1);
+  const sm = await site(m);
+  assert.deepEqual([sm.templates, sm.templates_source, sm.template_count], [[], "none", 0], "מכפיל בפרופיל: כלום");
+  // שינוי הרשימות של הפרופיל אינו נוגע באתרים שבו
+  const p = await prof("פרקומט – הידראולית + דולי");
+  await saveProfile(id, "פרקומט – הידראולית + דולי", [HYD], p.updated_at);
+  assert.deepEqual(await listNames(b), ["משותף"]);
+  // ביקור מצלם את מה שהאתר מקבל באמת
   const v = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
   const labels = (await sup(`SELECT label FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [v.visit_id])).map((r) => r.label);
-  assert.deepEqual(labels, ["לובי", "חשמל", "שמן", "בוכנה", "גלגלים"]);
+  assert.deepEqual(labels, ["ברירת מחדל 1"]);
+  await fails(one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [m]), "23514", /לא נבחרה תחזוקה לאתר/);
 });
 
-test("⚠️ שינוי רשימה בפרופיל חל מיד על כל האתרים שבו — וביקור פתוח אינו משתנה", { skip }, async () => {
-  const a = await newSite(), b = await newSite();
-  const id = await saveProfile(null, "פרופיל משתנה", [BASE]);
-  await setSites(id, [a, b]);
-  const v = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
-  const p = await prof("פרופיל משתנה");
-  await saveProfile(id, "פרופיל משתנה", [BASE, DOLLY], p.updated_at);
-  assert.deepEqual(await listNames(a), ["בסיס פרקומט", "דולי"]);
-  assert.deepEqual(await listNames(b), ["בסיס פרקומט", "דולי"]);
-  const n = (await sup(`SELECT count(*)::int n FROM pm_visit_items WHERE visit_id = $1`, [v.visit_id]))[0].n;
-  assert.equal(n, 2, "הביקור הפתוח נשאר עם מה שצולם בפתיחה");
-});
-
-test("⚠️ שיוך ידני לאתר גובר על הפרופיל (15/10/2026 — עד אז הפרופיל גבר); ניקוי הידני מחזיר את הפרופיל", { skip }, async () => {
-  // בעלת המוצר: "מלכתחילה תשים לכל אתר את מה שמתאים לו, ואפשר יהיה להוסיף ולשנות" — השינוי באתר הוא ההחלטה האחרונה
+test("הבחירה היא ההחלטה היחידה — עם פרופיל או בלי; ניקוי מחזיר לבסיס, לא לפרופיל", { skip }, async () => {
   const a = await newSite();
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [HYD]]);
-  assert.deepEqual(await listNames(a), ["מעלית הידראולית"]);
-  const id = await saveProfile(null, "גובר על ישן", [BASE]);
+  const id = await saveProfile(null, "גובר על ישן", [BASE, DOLLY]);
   await setSiteProfile(a, id);
-  assert.deepEqual(await listNames(a), ["מעלית הידראולית"], "הידני נשאר גם אחרי שיוך לפרופיל");
+  await assign(a, [HYD]);
+  assert.deepEqual(await listNames(a), ["משותף", "מעלית הידראולית"]);
   assert.equal((await site(a)).templates_source, "explicit");
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, []]);
-  assert.deepEqual(await listNames(a), ["בסיס פרקומט"], "בלי ידני — הפרופיל");
-  assert.equal((await site(a)).templates_source, "profile");
+  await assign(a, []);
+  assert.deepEqual(await listNames(a), ["משותף"], "בלי בחירה — הבסיס, לא הפרופיל");
+  assert.equal((await site(a)).templates_source, "base");
   await setSiteProfile(a, null);
-  assert.deepEqual(await listNames(a), ["משותף"], "בלי פרופיל — רשימת ברירת המחדל (בקובץ הזה שמה 'משותף')");
-  assert.equal((await site(a)).templates_source, "default");
+  assert.deepEqual(await listNames(a), ["משותף"]);
   assert.equal((await site(a)).profile, null);
 });
 
-test("אתר בפרופיל אחד: הוספה לפרופיל אחר מעבירה אותו; הסרה מחזירה לברירת המחדל", { skip }, async () => {
+test("אתר בפרופיל אחד: הוספה לפרופיל אחר מעבירה אותו; הסרה מוציאה אותו מהלוח", { skip }, async () => {
   const a = await newSite(), b = await newSite();
   const p1 = await saveProfile(null, "ראשון", [BASE]);
   const p2 = await saveProfile(null, "שני", [HYD]);
@@ -134,7 +129,7 @@ test("אתר בפרופיל אחד: הוספה לפרופיל אחר מעביר�
   const l = await listing();
   assert.deepEqual(l.profiles.find((p) => p.id === p1).sites.map((s) => s.code), [b]);
   assert.deepEqual(l.profiles.find((p) => p.id === p2).sites.map((s) => s.code), [a]);
-  assert.deepEqual(await listNames(a), ["מעלית הידראולית"]);
+  assert.deepEqual(await listNames(a), ["משותף"], "20/10/2026: הפרופיל אינו מביא רשימות");
   await setSites(p1, []);                                      // b יוצא
   assert.deepEqual(await listNames(b), ["משותף"]);
   assert.ok((await listing()).unassigned.some((s) => s.code === b), "b בשורה 'בלי פרופיל'");
@@ -226,29 +221,32 @@ test("ביקורת: audit_log עם מזהים בלבד; היסטוריה ואי�
   assert.ok(hist.some((r) => r.action === "create") && hist.some((r) => r.action === "set"));
 });
 
-test("pm_templates_list: מספר האתרים סופר גם אתרים שמקבלים את הרשימה דרך פרופיל", { skip }, async () => {
-  const L = await createList("נספרת דרך פרופיל");
+test("pm_templates_list: מספר האתרים — רק מי שהרשימה נבחרה לו; פרופיל אינו נספר (20/10/2026)", { skip }, async () => {
+  const L = await createList("נספרת רק בבחירה");
   await saveList([check("x1")], L);
   const a = await newSite(), b = await newSite();
   const id = await saveProfile(null, "סופר אתרים", [L]);
   await setSites(id, [a]);
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [b, [L]]);
+  await assign(b, [L]);
   const row = (await one(MGR, `SELECT public.pm_templates_list() j`)).j.find((t) => t.id === L);
-  assert.equal(row.site_count, 2);
+  assert.equal(row.site_count, 1);
 });
 
-test("רשימה שהושבתה יוצאת מהפרופיל; כשכל רשימות הפרופיל מושבתות — ברירת המחדל", { skip }, async () => {
+test("רשימה שהושבתה יוצאת מהבחירה של האתר; כשכל מה שנבחר מושבת — הבסיס", { skip }, async () => {
   const L1 = await createList("תושבת א");
   await saveList([check("ת1")], L1);
   const L2 = await createList("תושבת ב");
   await saveList([check("ת2")], L2);
-  const a = await newSite();
-  const id = await saveProfile(null, "עם רשימה מושבתת", [L1, L2]);
-  await setSites(id, [a]);
+  const a = await newSite(), m = await newShell();
+  await assign(a, [L1, L2]);
+  await assign(m, [L1, L2]);
   await sup(`UPDATE pm_templates SET active = false WHERE id = $1`, [L1]);
-  assert.deepEqual(await listNames(a), ["תושבת ב"]);
+  assert.deepEqual(await listNames(a), ["משותף", "תושבת ב"]);
+  assert.deepEqual(await listNames(m), ["תושבת ב"]);
   await sup(`UPDATE pm_templates SET active = false WHERE id = $1`, [L2]);
   assert.deepEqual(await listNames(a), ["משותף"]);
+  assert.equal((await site(a)).templates_source, "base");
+  assert.deepEqual([await listNames(m), (await site(m)).templates_source], [[], "none"]);
 });
 
 test("אותו פרופיל שוב לאתר — אין רישום, אין אירוע", { skip }, async () => {
@@ -294,9 +292,8 @@ test("פריט ערך: נשמר עם יחידה וסף, מצולם לביקור,
   await fails(sup(`INSERT INTO pm_checklist_items (template_id, seq, label, kind, required, min_photos, updated_at, updated_by)
                    VALUES ($1, 9, 'בדיקה', 'value', true, 1, 'x', 'x')`, [L]), "23514");
   // הביקור מצלם יחידה וסף
-  const a = await newSite();
-  const id = await saveProfile(null, "עם מדידה", [L]);
-  await setSites(id, [a]);
+  const a = await newShell();
+  await assign(a, [L]);
   const v = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
   const draft = (await site(a)).draft;
   const m = draft.items.find((i) => i.kind === "value");
@@ -308,9 +305,8 @@ test("פריט ערך: נשמר עם יחידה וסף, מצולם לביקור,
 test("פריט ערך חובה: הגשה נחסמת עד שנמדד מספר; '2,5' ו-'3' נחשבים, 'תקין' לא", { skip }, async () => {
   const L = await createList("מדידה להגשה");
   await saveList([{ label: "מד שרשרת", kind: "value", required: true, unit: "%", warn_above: 2 }], L);
-  const a = await newSite();
-  const id = await saveProfile(null, "הגשה עם מדידה", [L]);
-  await setSites(id, [a]);
+  const a = await newShell();
+  await assign(a, [L]);
   const { visit_id } = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
   const itemId = (await sup(`SELECT id FROM pm_visit_items WHERE visit_id = $1`, [visit_id]))[0].id;
   const sig = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" };
@@ -370,13 +366,17 @@ test("שמירה עם אתרים — טרנזקציה אחת: קוד שגוי ל
   assert.deepEqual((await prof("שמירה אחת")).sites.map((s) => s.code), [b]);
 });
 
-test("⚠️ הגדלת רשימה שמעבירה פרופיל מעל 40 תמונות — נדחית, עם שם הפרופיל", { skip }, async () => {
+test("⚠️ הגדלת רשימה שמעבירה אתר מעל 40 תמונות — נדחית, עם קוד האתר (20/10/2026: לפי האתרים, לא הפרופילים)", { skip }, async () => {
   const L1 = await createList("ארבעים א");
   await saveList([photo("ק1", 6), photo("ק2", 6), photo("ק3", 6), photo("ק4", 6), photo("ק5", 6)], L1);  // 30
   const L2 = await createList("ארבעים ב");
   await saveList([photo("ל1", 5)], L2);                                                                  // 5
   await saveProfile(null, "פרופיל ארבעים", [L1, L2]);
-  await fails(saveList([photo("ל1", 6), photo("ל2", 6)], L2), "23514", /פרופיל ארבעים/);                 // 42
+  await saveList([photo("ל1", 6), photo("ל2", 6)], L2);                // פרופיל בלבד כבר אינו מגביל — 42 עובר
+  await saveList([photo("ל1", 5)], L2);
+  const a = await newShell();
+  await assign(a, [L1, L2]);                                           // 35
+  await fails(saveList([photo("ל1", 6), photo("ל2", 6)], L2), "23514", new RegExp(`משויכת לאתר ${a}`));   // 42
   assert.equal((await tplItems(L2)).length, 1, "הרשימה לא נשמרה");
   await saveList([photo("ל1", 6), photo("ל2", 4)], L2);                                                  // 40 — מותר
 });
@@ -416,9 +416,8 @@ test("⚠️ מחיקת פרופיל מלוח ישן — PT409; עם הערך ה
 test("⚠️ פריט ערך: אי אפשר לסמן בו וי, ו-items_done סופר מדידה בלבד", { skip }, async () => {
   const L = await createList("מדידה וי");
   await saveList([check("בדיקה רגילה"), { label: "מד שרשרת", kind: "value", required: false, unit: "%" }], L);
-  const a = await newSite();
-  const id = await saveProfile(null, "ערך ו-וי", [L]);
-  await setSites(id, [a]);
+  const a = await newShell();
+  await assign(a, [L]);
   const { visit_id } = await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [a]);
   const items = await sup(`SELECT id, kind FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [visit_id]);
   const chk = items.find((i) => i.kind === "check"), val = items.find((i) => i.kind === "value");
@@ -432,8 +431,8 @@ test("⚠️ פריט ערך: אי אפשר לסמן בו וי, ו-items_done ס
   const v1 = (await site(a)).visits[0];
   assert.deepEqual({ total: v1.items_total, done: v1.items_done }, { total: 2, done: 1 }, "וי על פריט ערך אינו 'בוצע'");
   // ואותו ביקור בדיוק, כשנמדד כהלכה — נספר. (אתר שני: pm_child_guard חוסם כתיבה לביקור שהוגש.)
-  const b = await newSite();
-  await setSites(id, [a, b]);
+  const b = await newShell();
+  await assign(b, [L]);
   const v2id = (await one(OPR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [b])).visit_id;
   const bItems = await sup(`SELECT id, kind FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [v2id]);
   await rpc(OPR, `SELECT public.pm_visit_item_check($1, true)`, [bItems.find((i) => i.kind === "check").id]);

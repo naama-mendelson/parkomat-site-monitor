@@ -779,9 +779,14 @@ select.pm-input { padding-block: 8px; }
 .pm-cover-key { color: var(--text-secondary); min-width: 11em; }
 .pm-cover-val { min-width: 0; overflow-wrap: anywhere; }
 .pm-cover-off { color: var(--status-maint-ink); font-weight: 600; }
-.pm-site-lists-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.pm-site-lists-edit label { display: flex; align-items: center; gap: 8px; }
-.pm-site-lists-edit input[type="checkbox"] { width: 18px; height: 18px; }
+/* מה נבחר לאתר (20/10/2026): שורה לכל קבוצה — תווית ובורר מרובה. שורות ולא קופסאות; בטלפון התווית מעל הבורר */
+.pm-choose-rows { display: flex; flex-direction: column; gap: 8px; }
+.pm-choose-row { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.pm-choose-cap { color: var(--text-secondary); font-weight: 600; }
+.pm-choose-row .cs-btn { width: 100%; max-width: 520px; }
+.pm-choose-base { min-width: 0; overflow-wrap: anywhere; }
+.pm-choose .pm-cover { border-top: 1px solid var(--border-color); margin-top: 10px; padding-top: 10px; }
+@media (max-width: 640px) { .pm-choose-row { grid-template-columns: minmax(0, 1fr); } }
 
 /* פריט "ערך" — מדידה (13/10/2026): שדה מספר קצר + יחידה, במקום תיבת הסימון */
 .pm-value { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
@@ -794,11 +799,7 @@ select.pm-input { padding-block: 8px; }
 .pm-view-value--over { color: var(--pm-amber-ink); font-weight: 600; }
 .pm-tpl-unit { flex: 0 0 110px; }
 
-/* רשימות לפי סוג האתר (15/10/2026): הבחירה המרובה בלשונית האתר, וסיווג הרשימה בעורך */
-.pm-lists-group { margin: 0; padding: 6px 10px 8px; border: 1px solid var(--border-color); border-radius: 10px; }
-.pm-lists-group legend { padding: 0 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); }
-.pm-lists-item { min-height: 36px; font-weight: 500; }
-.pm-lists-item.is-on .pm-lists-item-name { font-weight: 700; }
+/* סיווג הרשימה בעורך (15/10/2026) */
 .pm-tpl-meta { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 10px; }
 .pm-tpl-meta-row { align-items: center; }
 .pm-tpl-meta-row .cs-btn { width: auto; min-width: 180px; }
@@ -812,5 +813,3 @@ select.pm-input { padding-block: 8px; }
 .pm-tpl-meta-note { margin: 4px 0 0; }
 .pm-tpl-pick { display: flex; align-items: center; gap: 8px; }
 .pm-tpl-pick .cs-btn { width: auto; min-width: 260px; }
-.pm-lists-profile { margin-top: 4px; }
-.pm-lists-profile .cs-btn { width: auto; min-width: 220px; }

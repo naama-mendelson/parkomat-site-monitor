@@ -1,10 +1,8 @@
 // components/AddSiteModal/AddSiteModal.jsx — מודל רישום אתר חדש
-import { useEffect, useState } from "react";
+import { useState } from "react";
 // ⚠️ דרך dataSource ולא api: הרישום עובר ל-Supabase ישירות, והמתג הוא זה
 // שקובע. הכלל בפרויקט הוא שקומפוננטה אינה בוחרת מסלול נתונים.
-import { registerSite, fetchPmProfiles, setPmSiteProfile } from "../../services/dataSource";
-import { PM_ENABLED } from "../../utils/compliance";
-import ChoiceSelect from "../ChoiceSelect/ChoiceSelect";
+import { registerSite } from "../../services/dataSource";
 import { copyText } from "../../utils/clipboard";
 // ⚠️ אותה רשימה בדיוק שהשרת אוכף — ראה shared/site-types.mjs.
 import { SITE_TYPE_GROUPS } from "../../../../shared/site-types.mjs";
@@ -28,16 +26,8 @@ function AddSiteModal({ onClose, onSuccess }) {
   // סוג המעלית והקונזול (11/10/2026) — לא חובה מאז 12/10 בערב; הקונזול רק בסוגים שפותחים אותו (1, 2, 6).
   // ומ-12/10 — עד שתי מעליות ("יש אתרים שיש בהם שתי מעליות"); השנייה לא חובה.
   const [lifts, setLifts] = useState([{ type: "", console: "" }]);
-  // פרופיל תחזוקה (13/10/2026) — "כמו ברמזור". לא חובה: בלי פרופיל האתר מקבל את רשימת ברירת המחדל.
-  // ⚠️ רק כשהתחזוקה המונעת גלויה (PM_ENABLED) — באתר החי היא מוסתרת, ושדה על משהו שלא רואים מבלבל.
-  const [profiles, setProfiles] = useState(null);
-  const [profileId, setProfileId] = useState("");
-  useEffect(() => {
-    if (!PM_ENABLED) return undefined;
-    let alive = true;
-    fetchPmProfiles().then((d) => { if (alive) setProfiles(d.profiles); }).catch(() => { if (alive) setProfiles(false); });
-    return () => { alive = false; };
-  }, []);
+  // ⚠️ 20/10/2026: שדה "פרופיל תחזוקה" ירד מכאן. התחזוקה של אתר היא מה שנבחר לו בלשונית "תחזוקה מונעת"
+  // (בעלת המוצר: "עד שלא בוחרים אין כלום"), והפרופיל כבר אינו קובע. אתר חדש מתחיל בבסיס בלבד (רובוטי) או בלי כלום.
 
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -90,15 +80,8 @@ function AddSiteModal({ onClose, onSuccess }) {
       //
       // ⚠️ וגם כשההנפקה **נכשלה** נשארים פתוחים: האתר כבר קיים, ו-onSuccess
       // שסוגר את החלון היה מציג "נרשם בהצלחה" על אתר שלא יוכל לדווח לעולם.
-      // ⚠️ הפרופיל אחרי ההרשמה, וכשל בו אינו מכשיל אותה — האתר כבר קיים (כמו זהות הסוכן).
-      // מסך התוצאה אומר שהפרופיל לא נקבע, ואפשר לקבוע אותו בלשונית התחזוקה של האתר.
-      let profileError = null;
-      if (profileId) {
-        try { await setPmSiteProfile(trimmedCode, Number(profileId)); }
-        catch (pe) { profileError = pe?.message || "שגיאה"; }
-      }
-      if (res?.agent?.password || res?.agentError || profileError) {
-        setIssued({ ...res, profileError });
+      if (res?.agent?.password || res?.agentError) {
+        setIssued(res);
         return;
       }
       onSuccess();
@@ -122,7 +105,7 @@ function AddSiteModal({ onClose, onSuccess }) {
   // ולחיצה מקרית מחוץ לחלון הייתה מוחקת אותה בלי דרך חזרה. היציאה היחידה
   // היא הכפתור, שאומר במפורש מה קורה.
   if (issued) {
-    const { site, agent, agentError, profileError } = issued;
+    const { site, agent, agentError } = issued;
     return (
       <div className="addsite-overlay">
         <div className="addsite-modal" onClick={(e) => e.stopPropagation()}>
@@ -131,12 +114,6 @@ function AddSiteModal({ onClose, onSuccess }) {
           </div>
 
           <div className="addsite-form">
-            {profileError && (
-              <div className="addsite-error" role="alert">
-                <b>האתר נרשם, אך פרופיל התחזוקה לא נקבע.</b>
-                <div style={{ marginTop: 6 }}>{profileError} — אפשר לקבוע אותו בלשונית התחזוקה של האתר.</div>
-              </div>
-            )}
             {agentError ? (
               // ⚠️ מצב אמיתי ולא תיאורטי: `register_site` התחייב, ולכן האתר
               // קיים. מה שנכשל הוא הזהות — כלומר האתר **לא יוכל לדווח** עד
@@ -274,20 +251,6 @@ function AddSiteModal({ onClose, onSuccess }) {
           <div className="addsite-field">
             <LiftFields lifts={lifts} onChange={setLifts} variant="form" />
           </div>
-
-          {/* פרופיל תחזוקה (13/10/2026) — בעלת המוצר: "להבא כל צירוף מתקן תצטרכי לשאול איזו תחזוקה
-              לצרף לו, לרוב התשובה תהיה כמו פרויקט אחר". לא חובה. */}
-          {PM_ENABLED && (
-            <div className="addsite-field">
-              <span>פרופיל תחזוקה</span>
-              <ChoiceSelect label="פרופיל תחזוקה" name="pm_profile" value={profileId} onChange={setProfileId}
-                options={[{ value: "", label: "בלי פרופיל (רשימת ברירת המחדל)" },
-                  ...(profiles || []).map((p) => ({ value: String(p.id), label: `${p.name} · ${p.sites.length} אתרים` }))]} />
-              {profiles === false && (
-                <small className="addsite-hint">הפרופילים לא נטענו — אפשר לרשום עכשיו ולקבוע פרופיל אחר כך בלשונית התחזוקה.</small>
-              )}
-            </div>
-          )}
 
           {/* ⚠️ אתר בלי בקר מחובר (07/10/2026): בעלת המוצר, על מתקני סוטפין — "אתר לא מקושר
               למתקן עצמו… אבל כן קיים, כן נדרש בודק וכן תחזוקה ומשימות". לא מסומן כברירת

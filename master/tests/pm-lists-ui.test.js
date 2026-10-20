@@ -79,16 +79,46 @@ test("coverageRows — מכוסה / ברשימות הכלליות / יש רשי�
   assert.deepEqual(m.coverageRows([{ key: "floor:doli" }]).map((r) => r.state), ["general"], "בלי lists — כללי, לא קריסה");
 });
 
-test("sourceLabel — ארבעת המקורות במילים, ולא מוכר = ברירת המחדל", () => {
-  assert.equal(m.sourceLabel("explicit"), "נבחרו ידנית");
+test("sourceLabel — המקורות של 20/10/2026, הישנים למסד שלא עודכן, ולא מוכר = ברירת המחדל", () => {
+  assert.equal(m.sourceLabel("explicit"), "נבחרו לאתר");
+  assert.equal(m.sourceLabel("base"), "בסיס בלבד — לא נבחר עוד דבר");
+  assert.equal(m.sourceLabel("none"), "לא נבחרה תחזוקה");
   assert.equal(m.sourceLabel("auto"), "אוטומטי לפי סוג האתר");
   assert.equal(m.sourceLabel("profile"), "מפרופיל התחזוקה");
-  assert.equal(m.sourceLabel("default"), "ברירת המחדל");
   assert.equal(m.sourceLabel(undefined), "ברירת המחדל");
 });
 
-test("initialSelection / lockedIds — מסמנים את מה שיש עכשיו; הבסיס נעול", () => {
-  assert.deepEqual([...m.initialSelection([{ id: 1 }, { id: 5 }])], [1, 5]);
-  assert.deepEqual([...m.initialSelection(null)], []);
-  assert.deepEqual([...m.lockedIds([{ id: 1, is_default: true }, { id: 2 }])], [1]);
+// 20/10/2026 — "יש כמובן בסיס… ואז צריך לבחור XY וכו' (בחירה מרובה), ואז מעליות (בחירה מרובה)"
+const ALL = [
+  { id: 1, name: "בסיס", is_default: true, category: "base", seq: 0, item_count: 19 },
+  { id: 4, name: "במת XY", category: "lift", seq: 4, item_count: 8 },
+  { id: 2, name: "הידראולית", category: "lift", seq: 2, item_count: 21 },
+  { id: 5, name: "מיטת XY", category: "floor", seq: 5, item_count: 6 },
+  { id: 11, name: "מכפילים", category: "other", seq: 11, item_count: 23 },
+  { id: 12, name: "ישנה", category: null, seq: 12, item_count: 3 },
+  { id: 13, name: "בסיס נוסף", category: "base", seq: 13, item_count: 2 },
+];
+
+test("choiceGroups — מתקן, מעליות, אחר; בלי הבסיס; לפי seq; בלי קטגוריה או 'base' שאינה ברירת המחדל — ל'אחר'", () => {
+  const g = m.choiceGroups(ALL);
+  assert.deepEqual(g.map((x) => [x.key, x.label, x.templates.map((t) => t.id)]), [
+    ["floor", "מתקן", [5]],
+    ["lift", "מעליות", [2, 4]],
+    ["other", "אחר", [11, 12, 13]],
+  ]);
+  assert.deepEqual(m.choiceGroups([ALL[0], ALL[3]]).map((x) => x.key), ["floor"], "קבוצה ריקה מושמטת");
+  assert.deepEqual(m.choiceGroups(null), []);
+});
+
+test("baseTemplate / chosenIds / visitItemCount — הבסיס אינו 'נבחר'; לרובוטי הוא נספר בביקור, למכפיל לא", () => {
+  assert.equal(m.baseTemplate(ALL).id, 1);
+  assert.equal(m.baseTemplate([]), null);
+  assert.deepEqual(m.chosenIds([{ id: 1 }, { id: 2 }, { id: 5 }], ALL), [2, 5]);
+  assert.deepEqual(m.chosenIds([{ id: 11 }], ALL), [11]);
+  assert.deepEqual(m.chosenIds([{ id: 1 }], null), [], "בלי כל הרשימות אין דרך לדעת מה הבסיס");
+  assert.equal(m.visitItemCount(ALL, [2, 5], true), 19 + 21 + 6);
+  assert.equal(m.visitItemCount(ALL, [11], false), 23);
+  assert.equal(m.visitItemCount(ALL, [], true), 19);
+  assert.equal(m.visitItemCount(ALL, [], false), 0);
+  assert.equal(m.visitItemCount(ALL, [999], false), 0, "רשימה שנעלמה — 0, לא NaN");
 });

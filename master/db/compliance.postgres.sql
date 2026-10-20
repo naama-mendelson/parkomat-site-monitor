@@ -467,7 +467,8 @@ ALTER TABLE pm_checklist_items ADD CONSTRAINT pm_checklist_items_value_shape CHE
   AND (unit IS NULL OR length(btrim(unit)) BETWEEN 1 AND 10)) NOT VALID;
 ALTER TABLE pm_checklist_items VALIDATE CONSTRAINT pm_checklist_items_value_shape;
 
--- אילו רשימות אתר מקבל. אין שורות → רשימת ברירת המחדל (app.pm_site_template_ids).
+-- הרשימות שנבחרו לאתר (מ-20/10/2026: הבחירה היחידה — app.pm_site_template_ids). אין שורות → רובוטי מקבל את הבסיס בלבד,
+-- ומכפיל — כלום.
 CREATE TABLE IF NOT EXISTS pm_site_templates (
   site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
   template_id INTEGER NOT NULL REFERENCES pm_templates(id) ON DELETE CASCADE,
@@ -1996,9 +1997,9 @@ LANGUAGE sql STABLE AS $$
 $$;
 REVOKE ALL ON FUNCTION app.pm_site_type_keys(integer) FROM PUBLIC;
 
--- הרשימות שמגיעות לאתר **מהסוג שלו**: הבסיס + כל רשימה פעילה ש-auto_for שלה חופף למפתחות הסוג.
--- ⚠️ ריק כשאף רשימה לא חלה (אתר בלי סוג, או סוג בלי רשימה): אז הפותר נופל לפרופיל / לברירת המחדל — ולא "בסיס בלבד",
--- אחרת המכפילים (בלי סוג) היו מאבדים את הפרופיל שלהם.
+-- הרשימות שמתאימות לאתר **לפי הסוג שלו**: הבסיס + כל רשימה פעילה ש-auto_for שלה חופף למפתחות הסוג; ריק כשאף רשימה לא חלה.
+-- ⚠️ מ-20/10/2026 זה **רמז בלבד** (pm_site.auto_template_ids) — הפותר כבר אינו קורא אותו: האתר מקבל רק מה שנבחר לו
+-- (app.pm_site_template_ids, למטה).
 CREATE OR REPLACE FUNCTION app.pm_auto_template_ids(p_site_id integer) RETURNS integer[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT CASE WHEN EXISTS (SELECT 1 FROM pm_templates t WHERE t.active AND t.auto_for && app.pm_site_type_keys(p_site_id))
@@ -2008,34 +2009,35 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
 $$;
 REVOKE ALL ON FUNCTION app.pm_auto_template_ids(integer) FROM PUBLIC;
 
--- הרשימות של אתר, לפי הסדר (15/10/2026): שיוך ידני לאתר (pm_site_templates — "אפשר להוסיף ולשנות") → לפי הסוג
--- (pm_auto_template_ids — "מלכתחילה מה שמתאים לו") → פרופיל (מכפילים, סוטפין — אתרים בלי שדות סוג) → ברירת המחדל.
--- ⚠️ עד 15/10 הפרופיל היה ראשון והשיוך הידני אחריו; עכשיו הידני גובר על הכול, כי הוא ההחלטה של אדם על האתר הזה.
+-- הרשימות של אתר (20/10/2026): **מה שנבחר לאתר, ועוד הבסיס לאתר רובוטי — ושום דבר אוטומטי.**
+-- בעלת המוצר: "יש כמובן בסיס — זה נמצא לכל האתרים. ואז צריך לבחור XY וכו' (בחירה מרובה), ואז מעליות (בחירה מרובה).
+-- עד שלא בוחרים אין כלום עדיין". ובתשובותיה: כל האתרים מתחילים מאפס, והבסיס — לרובוטיים בלבד.
+--   - רובוטי (monitored, ברירת המחדל): רשימת ברירת המחדל (הבסיס), ועוד מה שנבחר לו ב-pm_site_templates.
+--   - מכפיל / סוטפין (monitored = false): רק מה שנבחר לו. לא נבחר כלום → ריק, ו-pm_visit_start אומר למה אין ביקור.
+-- ⚠️ שורת בסיס ב-pm_site_templates אינה קובעת כלום: הבסיס נגזר מסוג האתר בלבד (ו-pm_site_templates_set גם אינו שומר אותה),
+-- אחרת מכפיל היה מקבל את הלובי והחשמל דרך שיוך ישן.
+-- ⚠️ עד 20/10 הסדר היה: ידני → לפי הסוג (auto_for) → פרופיל → ברירת המחדל. הסיווג לפי סוג נשאר כרמז (type_coverage בלשונית),
+-- והפרופילים נשארו טבלאות בלבד — הפותר אינו קורא אותם. כל מי שבונה ביקור או מציג "כמה פריטים" עובר כאן.
 CREATE OR REPLACE FUNCTION app.pm_site_template_ids(p_site_id integer) RETURNS integer[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
-  SELECT COALESCE(
-    (SELECT array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id)
-       FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
-      WHERE st.site_id = p_site_id AND t.active),
-    NULLIF(app.pm_auto_template_ids(p_site_id), '{}'),
-    (SELECT array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id)
-       FROM pm_profile_sites ps JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
-       JOIN pm_templates t ON t.id = pt.template_id
-      WHERE ps.site_id = p_site_id AND t.active),
-    (SELECT array_agg(t.id) FROM pm_templates t WHERE t.is_default AND t.active),
-    '{}'::integer[])
+  SELECT COALESCE(array_agg(t.id ORDER BY t.is_default DESC, t.seq, t.id), '{}'::integer[])
+    FROM pm_templates t
+   WHERE t.active
+     AND CASE WHEN t.is_default
+              THEN EXISTS (SELECT 1 FROM sites s WHERE s.id = p_site_id AND s.monitored IS NOT FALSE)
+              ELSE EXISTS (SELECT 1 FROM pm_site_templates st WHERE st.site_id = p_site_id AND st.template_id = t.id) END
 $$;
 REVOKE ALL ON FUNCTION app.pm_site_template_ids(integer) FROM PUBLIC;
 
--- מאיפה הרשימות של האתר: explicit / auto / profile / default — לשורה בלשונית
+-- מאיפה הרשימות של האתר (20/10/2026): explicit — נבחרו לו רשימות; base — רובוטי שלא נבחר לו דבר, רק הבסיס;
+-- none — אין לו כלום (מכפיל שלא נבחר לו). ⚠️ בנייה ישנה מכירה explicit/auto/profile/default — ערך אחר מוצג אצלה כ"ברירת המחדל".
 CREATE OR REPLACE FUNCTION app.pm_site_templates_source(p_site_id integer) RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $$
   SELECT CASE
-    WHEN EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id WHERE st.site_id = p_site_id AND t.active) THEN 'explicit'
-    WHEN cardinality(app.pm_auto_template_ids(p_site_id)) > 0 THEN 'auto'
-    WHEN EXISTS (SELECT 1 FROM pm_profile_sites ps JOIN pm_profile_templates pt ON pt.profile_id = ps.profile_id
-                   JOIN pm_templates t ON t.id = pt.template_id WHERE ps.site_id = p_site_id AND t.active) THEN 'profile'
-    ELSE 'default' END
+    WHEN EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
+                  WHERE st.site_id = p_site_id AND t.active AND NOT t.is_default) THEN 'explicit'
+    WHEN cardinality(app.pm_site_template_ids(p_site_id)) > 0 THEN 'base'
+    ELSE 'none' END
 $$;
 REVOKE ALL ON FUNCTION app.pm_site_templates_source(integer) FROM PUBLIC;
 
@@ -2043,9 +2045,10 @@ CREATE OR REPLACE FUNCTION public.pm_site(p_site_code text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_staff();
-  v_site integer; v_code text; v_name text; v_draft jsonb; v_ids integer[];
+  v_site integer; v_code text; v_name text; v_draft jsonb; v_ids integer[]; v_robotic boolean;
 BEGIN
-  SELECT s.id, s.code, s.site_name INTO v_site, v_code, v_name FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
+  SELECT s.id, s.code, s.site_name, s.monitored IS NOT FALSE INTO v_site, v_code, v_name, v_robotic
+    FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
   v_ids := app.pm_site_template_ids(v_site);
   SELECT jsonb_build_object('id', v.id, 'started_by', v.started_by, 'started_by_user_id', v.started_by_user_id,
@@ -2062,21 +2065,21 @@ BEGIN
     INTO v_draft
     FROM pm_visits v WHERE v.site_id = v_site AND v.status = 'draft';
   RETURN jsonb_build_object(
-    'site', jsonb_build_object('id', v_site, 'code', v_code, 'name', v_name),
+    -- monitored (20/10/2026): רובוטי מקבל את הבסיס מעצמו; מכפיל / סוטפין — רק מה שנבחר לו. הלשונית בונה לפיו את הבחירה.
+    'site', jsonb_build_object('id', v_site, 'code', v_code, 'name', v_name, 'monitored', v_robotic),
     'status', (SELECT to_jsonb(r) FROM app.compliance_rows(ARRAY[v_site], app.compliance_today()) r),
     'template_count', (SELECT count(*)::int FROM pm_checklist_items t
-                        WHERE t.active AND t.template_id = ANY (app.pm_site_template_ids(v_site))),
-    -- הרשימות שהאתר מקבל (07/10/2026), ו-templates_assigned = שויך במפורש (false = ברירת המחדל)
+                        WHERE t.active AND t.template_id = ANY (v_ids)),
+    -- הרשימות שהאתר מקבל (07/10/2026), ו-templates_assigned = נבחרו לו רשימות מעבר לבסיס (20/10/2026)
     'templates', (SELECT COALESCE(jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name) ORDER BY x.o), '[]'::jsonb)
-                    FROM unnest(app.pm_site_template_ids(v_site)) WITH ORDINALITY AS x(tid, o)
+                    FROM unnest(v_ids) WITH ORDINALITY AS x(tid, o)
                     JOIN pm_templates t ON t.id = x.tid),
     'templates_assigned', EXISTS (SELECT 1 FROM pm_site_templates st JOIN pm_templates t ON t.id = st.template_id
-                                   WHERE st.site_id = v_site AND t.active)
-                          OR EXISTS (SELECT 1 FROM pm_profile_sites ps WHERE ps.site_id = v_site),
-    -- הפרופיל של האתר (13/10/2026), או null — ואז הרשימות למעלה הן השיוך הישן או ברירת המחדל
+                                   WHERE st.site_id = v_site AND t.active AND NOT t.is_default),
+    -- הפרופיל שהאתר רשום בו (13/10/2026), או null. ⚠️ מ-20/10/2026 הוא אינו קובע את הרשימות — נשאר לבנייה ישנה בלבד.
     'profile', (SELECT jsonb_build_object('id', p.id, 'name', p.name)
                   FROM pm_profile_sites ps JOIN pm_profiles p ON p.id = ps.profile_id WHERE ps.site_id = v_site),
-    -- לפי סוג האתר (15/10/2026): מאיפה הרשימות, מה האוטומטי היה נותן, ואילו מפתחות סוג יש לאתר
+    -- מאיפה הרשימות (explicit / base / none), מה מתאים לסוג האתר (רמז בלבד), ואילו מפתחות סוג יש לו
     'templates_source', app.pm_site_templates_source(v_site),
     'auto_template_ids', to_jsonb(app.pm_auto_template_ids(v_site)),
     'type_keys', to_jsonb(app.pm_site_type_keys(v_site)),
@@ -2183,9 +2186,8 @@ REVOKE ALL ON FUNCTION public.pm_template(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_template(integer) TO authenticated;
 
 -- כל הרשימות, לבורר בעורך ולשיוך באתר: כמה פריטים, וכמה אתרים מקבלים אותה.
--- ⚠️ site_count = האתרים שמקבלים אותה **בפועל**, לפי הפותר (app.pm_site_template_ids) — ידני, לפי הסוג, פרופיל או ברירת
--- המחדל (19/10/2026). עד אז נספרו רק פרופיל ושיוך ידני, וכך מאז 15/10 (לפי הסוג) "מעלית הידראולית" נספרה רק דרך
--- הפרופילים הישנים. העורך מציג אותו כ"משותפת ל-N אתרים" — מי ששינוי ברשימה הזו נוגע בו. הפותר נקרא פעם אחת לאתר.
+-- ⚠️ site_count = האתרים שמקבלים אותה **בפועל**, לפי הפותר (app.pm_site_template_ids — מ-20/10/2026 מה שנבחר לאתר,
+-- והבסיס לרובוטיים). העורך מציג אותו כ"משותפת ל-N אתרים" — מי ששינוי ברשימה הזו נוגע בו. הפותר נקרא פעם אחת לאתר.
 CREATE OR REPLACE FUNCTION public.pm_templates_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE v_actor text := app.require_staff();
@@ -2260,9 +2262,8 @@ BEGIN
     jsonb_build_object('category', v_cat, 'auto_for', to_jsonb(v_keys)), NULL);
   PERFORM app.record_write_audit('pm.template_meta', v_actor, app.current_app_role(), 'template', v_t.id::text,
     jsonb_build_object('category', v_cat, 'auto_for', to_jsonb(v_keys)));
-  -- ⚠️ אירוע לכל אתר שהרשימות שלו נגזרות מהסוג: הסיווג משנה למי הרשימה מגיעה, והנורה/הלשונית צריכות לדעת
-  PERFORM app.compliance_event(s.code, 'pm', 'template_meta')
-     FROM sites s WHERE app.pm_site_templates_source(s.id) = 'auto';
+  -- ⚠️ בלי אירוע לאתרים (20/10/2026): הסיווג כבר אינו משנה למי הרשימה מגיעה — רק את הרמז "לפי סוג האתר" בלשונית, שנטען
+  -- מחדש עם הלשונית. עד אז נשלח אירוע לכל אתר "אוטומטי" (כ-70), וכל מסך פתוח טען את הנורות פעם לכל אתר.
 END $fn$;
 REVOKE ALL ON FUNCTION public.pm_template_meta_set(integer, text, text[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pm_template_meta_set(integer, text, text[]) TO authenticated;
@@ -2394,20 +2395,17 @@ BEGIN
     RAISE EXCEPTION 'סך התמונות הנדרשות בביקור (%) עולה על 40 — אף ביקור לא יוכל להיות מוגש', v_photos
       USING ERRCODE = 'check_violation';
   END IF;
-  -- ⚠️ ובכל פרופיל שהרשימה בו — הרשימות שלו יחד הן הביקור (סקירה, 13/10/2026). בלי זה, הגדלת רשימה אחת
-  -- עברה, ומאז כל אתר בפרופיל קיבל "יותר מ-40 תמונות" רק כשטכנאי בשטח ניסה לפתוח ביקור.
-  SELECT p.name, x.n INTO v_who, v_photos FROM (
-      SELECT pt.profile_id, sum(i.min_photos)::int n
-        FROM pm_profile_templates pt
-        JOIN pm_profile_templates pt2 ON pt2.profile_id = pt.profile_id
-        JOIN pm_templates t2 ON t2.id = pt2.template_id AND t2.active
-        JOIN pm_checklist_items i ON i.template_id = t2.id AND i.active AND i.required
-       WHERE pt.template_id = v_t.id
-       GROUP BY pt.profile_id) x
-    JOIN pm_profiles p ON p.id = x.profile_id
-   ORDER BY x.n DESC LIMIT 1;
+  -- ⚠️ ובכל אתר שמקבל את הרשימה — הרשימות שלו יחד הן הביקור (סקירה, 13/10/2026). בלי זה, הגדלת רשימה אחת
+  -- עברה, ומאז האתר קיבל "יותר מ-40 תמונות" רק כשטכנאי בשטח ניסה לפתוח ביקור. עד 20/10/2026 נבדקו הפרופילים;
+  -- מאז האתר מקבל מה שנבחר לו (app.pm_site_template_ids), ולכן נבדקים האתרים. ⚠️ MATERIALIZED: הפותר פעם אחת לאתר.
+  WITH r AS MATERIALIZED (SELECT s.code, app.pm_site_template_ids(s.id) AS ids FROM sites s)
+  SELECT r.code, (SELECT COALESCE(sum(i.min_photos), 0)::int FROM pm_checklist_items i
+                   WHERE i.active AND i.required AND i.template_id = ANY (r.ids)) AS n
+    INTO v_who, v_photos
+    FROM r WHERE v_t.id = ANY (r.ids)
+   ORDER BY 2 DESC, 1 LIMIT 1;
   IF v_photos > 40 THEN
-    RAISE EXCEPTION 'הרשימה בפרופיל "%", והפרופיל יחד יידרש ל-% תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש',
+    RAISE EXCEPTION 'הרשימה משויכת לאתר %, והרשימות שלו יחד יידרשו ל-% תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש',
       v_who, v_photos USING ERRCODE = 'check_violation';
   END IF;
 
@@ -2426,23 +2424,29 @@ GRANT EXECUTE ON FUNCTION public.pm_template_save(jsonb, text, integer) TO authe
 -- ------------------------------------------------------------
 -- שיוך רשימות לאתר — "כמו פרויקט אחר" (07/10/2026)
 -- ------------------------------------------------------------
--- מצב יעד: הרשימות שנשלחו הן מה שהאתר מקבל מעכשיו. מערך ריק / NULL = חזרה לברירת
--- המחדל. "כמו אתר אחר" נעשה בדפדפן: קוראים את הרשימות שלו (pm_site) ושולחים לכאן.
+-- מצב יעד: הרשימות שנשלחו הן מה שנבחר לאתר מעכשיו. מערך ריק / NULL = לא נבחר כלום (רובוטי — הבסיס בלבד;
+-- מכפיל — אין תחזוקה עד שבוחרים). "כמו אתר אחר" נעשה בדפדפן: קוראים את הרשימות שלו (pm_site) ושולחים לכאן.
+-- ⚠️ 20/10/2026: הבסיס אינו נשמר כאן גם אם נשלח — הוא נגזר מסוג האתר בלבד (app.pm_site_template_ids). ובתקרת התמונות
+-- הוא נספר לאתר רובוטי, כי הוא חלק מהביקור שלו.
 -- ⚠️ ביקור שכבר נפתח אינו משתנה — הפריטים שלו צולמו ברגע הפתיחה.
 CREATE OR REPLACE FUNCTION public.pm_site_templates_set(p_site_code text, p_template_ids integer[]) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, app, pg_temp AS $fn$
 DECLARE
   v_actor text := app.require_editor();
-  v_site integer; v_code text; v_before integer[]; v_ids integer[] := COALESCE(p_template_ids, '{}');
+  v_site integer; v_code text; v_robotic boolean; v_before integer[]; v_ids integer[] := COALESCE(p_template_ids, '{}');
   v_photos integer;
 BEGIN
-  SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
+  SELECT s.id, s.code, s.monitored IS NOT FALSE INTO v_site, v_code, v_robotic
+    FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
   IF EXISTS (SELECT 1 FROM unnest(v_ids) x(id) WHERE NOT EXISTS
                (SELECT 1 FROM pm_templates t WHERE t.id = x.id AND t.active)) THEN
     RAISE EXCEPTION 'אחת הרשימות לא נמצאה' USING ERRCODE = 'PT404'; END IF;
+  v_ids := ARRAY(SELECT DISTINCT x FROM unnest(v_ids) x
+                  WHERE NOT EXISTS (SELECT 1 FROM pm_templates t WHERE t.id = x AND t.is_default) ORDER BY x);
   SELECT COALESCE(sum(i.min_photos), 0)::int INTO v_photos
-    FROM pm_checklist_items i WHERE i.active AND i.required AND i.template_id = ANY (v_ids);
+    FROM pm_checklist_items i JOIN pm_templates t ON t.id = i.template_id AND t.active
+   WHERE i.active AND i.required AND (i.template_id = ANY (v_ids) OR (t.is_default AND v_robotic));
   IF v_photos > 40 THEN
     RAISE EXCEPTION 'הרשימות יחד דורשות % תמונות — יותר מ-40, ואף ביקור לא יוכל להיות מוגש', v_photos
       USING ERRCODE = 'check_violation'; END IF;
@@ -2729,8 +2733,11 @@ DECLARE
 BEGIN
   SELECT s.id, s.code INTO v_site, v_code FROM sites s WHERE s.code = btrim(COALESCE(p_site_code,''));
   IF v_site IS NULL THEN RAISE EXCEPTION 'אתר לא נמצא: %', p_site_code USING ERRCODE = 'PT404'; END IF;
-  -- הרשימות של **האתר** (07/10/2026) — לא שויך → ברירת המחדל, כמו קודם
+  -- הרשימות של **האתר** (07/10/2026) — מ-20/10/2026: מה שנבחר לו, ועוד הבסיס לאתר רובוטי
   v_tpls := app.pm_site_template_ids(v_site);
+  -- ⚠️ מכפיל שלא נבחרה לו תחזוקה — אין ממה לבנות ביקור. הודעה שאומרת מה לעשות, ולא "רשימת הבדיקה ריקה".
+  IF cardinality(v_tpls) = 0 THEN
+    RAISE EXCEPTION 'לא נבחרה תחזוקה לאתר — יש לבחור רשימות בלשונית "תחזוקה מונעת"' USING ERRCODE = 'check_violation'; END IF;
   IF (SELECT COALESCE(sum(t.min_photos), 0) FROM pm_checklist_items t
        WHERE t.active AND t.required AND t.template_id = ANY (v_tpls)) > 40 THEN
     RAISE EXCEPTION 'רשימות האתר יחד דורשות יותר מ-40 תמונות — אף ביקור לא יוכל להיות מוגש'

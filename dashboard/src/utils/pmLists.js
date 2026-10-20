@@ -85,10 +85,15 @@ export function sharedLabel(t) {
   return `משותפת ל-${n} אתרים — שינוי כאן חל על כולם`;
 }
 
-/** מאיפה הרשימות של האתר (pm_site.templates_source) — במילים */
+/**
+ * מאיפה הרשימות של האתר (pm_site.templates_source) — במילים. מ-20/10/2026: explicit / base / none. הערכים הישנים
+ * (auto / profile / default) נשארו למסד שעוד לא עודכן.
+ */
 export function sourceLabel(source) {
   switch (source) {
-    case "explicit": return "נבחרו ידנית";
+    case "explicit": return "נבחרו לאתר";
+    case "base": return "בסיס בלבד — לא נבחר עוד דבר";
+    case "none": return "לא נבחרה תחזוקה";
     case "auto": return "אוטומטי לפי סוג האתר";
     case "profile": return "מפרופיל התחזוקה";
     default: return "ברירת המחדל";
@@ -96,10 +101,42 @@ export function sourceLabel(source) {
 }
 
 /**
- * מה לסמן כשפותחים את הבחירה: הרשימות שהאתר מקבל עכשיו. ⚠️ לא רק האוטומטי — מי שפותח "שינוי" רוצה להוסיף או
- * להוריד ממה שיש, לא להתחיל מאפס.
+ * הבחירות בלשונית (20/10/2026), בסדר שבעלת המוצר אמרה: "יש כמובן בסיס — זה נמצא לכל האתרים, ואז צריך לבחור XY וכו'
+ * (בחירה מרובה), ואז מעליות (בחירה מרובה)". ועוד "אחר" — רשימות המכפילים וסוטפין, שאינן מתקן ואינן מעלית.
+ * הבסיס אינו כאן: הוא אינו בחירה (קבוע לרובוטי, ואין למכפיל).
  */
-export function initialSelection(templates) { return new Set((templates ?? []).map((t) => t.id)); }
+export const PM_CHOICE_GROUPS = [
+  { key: "floor", label: "מתקן" },
+  { key: "lift", label: "מעליות" },
+  { key: "other", label: "אחר" },
+];
 
-/** הבסיס (ברירת המחדל) נבחר תמיד — בלי בסיס אין לובי וחשמל, ואף ביקור לא יהיה שלם */
-export function lockedIds(allTemplates) { return new Set((allTemplates ?? []).filter((t) => t.is_default).map((t) => t.id)); }
+/** הרשימות לבחירה, לפי הקבוצות שלמעלה ובכל קבוצה לפי seq — בלי הבסיס, וקבוצה ריקה מושמטת */
+export function choiceGroups(allTemplates) {
+  const lists = (allTemplates ?? []).filter((t) => !t.is_default);
+  return PM_CHOICE_GROUPS.map((g) => ({
+    ...g,
+    templates: lists.filter((t) => templateCategory(t) === g.key || (g.key === "other" && templateCategory(t) === "base"))
+      .slice().sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || a.id - b.id),
+  })).filter((g) => g.templates.length > 0);
+}
+
+/** רשימת הבסיס (ברירת המחדל) מתוך כל הרשימות, או null */
+export function baseTemplate(allTemplates) { return (allTemplates ?? []).find((t) => t.is_default) ?? null; }
+
+/**
+ * מה נבחר לאתר: הרשימות שהוא מקבל (pm_site.templates) בלי הבסיס. ⚠️ הבסיס מזוהה מתוך כל הרשימות — ל-pm_site.templates
+ * אין is_default. בלי כל הרשימות אין דרך לדעת, ולכן ריק.
+ */
+export function chosenIds(siteTemplates, allTemplates) {
+  const base = baseTemplate(allTemplates);
+  if (!Array.isArray(allTemplates)) return [];
+  return (siteTemplates ?? []).map((t) => t.id).filter((id) => id !== base?.id);
+}
+
+/** כמה פריטים יהיו בביקור לפי בחירה: הבסיס (לרובוטי) + מה שנבחר */
+export function visitItemCount(allTemplates, chosen, robotic) {
+  const by = new Map((allTemplates ?? []).map((t) => [t.id, Number(t.item_count) || 0]));
+  const base = baseTemplate(allTemplates);
+  return (robotic && base ? by.get(base.id) ?? 0 : 0) + (chosen ?? []).reduce((n, id) => n + (by.get(id) ?? 0), 0);
+}

@@ -1,11 +1,12 @@
-// tests/pm-auto.test.js — רשימות תחזוקה לפי סוג האתר (15/10/2026).
+// tests/pm-auto.test.js — רשימות התחזוקה של אתר: מה שנבחר לו, ובסיס לרובוטי (20/10/2026).
 //
-// בעלת המוצר: "אני רוצה שתסווג לפי מה שמסומן הסוג של האתר. אם יש שתי סוגי מעליות אז שיהיה את התחזוקה גם של זה
-// וגם של זה… אבל מלכתחילה תשים לכל אתר את מה שמתאים לו, ואפשר יהיה להוסיף ולשנות".
-//   - pm_template_meta_set: קטגוריה + auto_for (מפתחות lift:/floor:), מנהל בלבד, ברירת המחדל בלי סיווג.
-//   - app.pm_auto_template_ids: הבסיס + כל רשימה שחלה על אחד ממפתחות הסוג של האתר; שתי מעליות = שתי רשימות.
-//   - הסדר: ידני לאתר → לפי הסוג → פרופיל → ברירת המחדל; pm_site אומר מאיפה (templates_source).
-//   - שינוי סוג האתר (update_site) משנה את הרשימות מיד; שינוי auto_for משנה לכל האתרים שנגזרים מהסוג.
+// בעלת המוצר: "יש כמובן בסיס — זה נמצא לכל האתרים. ואז צריך לבחור XY וכו' (בחירה מרובה), ואז מעליות (בחירה מרובה).
+// עד שלא בוחרים אין כלום עדיין". ובתשובותיה: כל האתרים מתחילים מאפס, והבסיס לרובוטיים בלבד.
+//   - app.pm_site_template_ids: רובוטי = הבסיס + מה שנבחר; מכפיל = רק מה שנבחר. הסוג והפרופיל אינם קובעים.
+//   - pm_site_templates_set: הבסיס אינו נשמר גם אם נשלח; בתקרת התמונות הוא נספר לרובוטי.
+//   - pm_visit_start: מכפיל בלי בחירה — הודעה שאומרת מה לעשות.
+//   - הסיווג לפי סוג (pm_template_meta_set, auto_for) נשאר כרמז: type_coverage, auto_template_ids.
+// ⚠️ עד 20/10 הקובץ בדק "לפי הסוג" (15/10/2026): הרשימות נגזרו מסוג המתקן והמעלית, ואחריהן פרופיל. זה בוטל.
 // רץ מול PGlite עם db.init() האמיתי.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -24,16 +25,21 @@ const createList = (name) => one(MGR, `SELECT public.pm_template_create($1) id`,
 const saveItems = (id, items) => rpc(MGR, `SELECT public.pm_template_save($1::jsonb, NULL, $2)`, [JSON.stringify(items), id]);
 const meta = (id, cat, keys, uid = MGR) => rpc(uid, `SELECT public.pm_template_meta_set($1, $2, $3::text[])`, [id, cat, keys]);
 const lists = () => one(MGR, `SELECT public.pm_templates_list() j`).then((r) => r.j);
+const choose = (code, ids, uid = MGR) => rpc(uid, `SELECT public.pm_site_templates_set($1, $2::int[])`, [code, ids]);
+const start = (code) => one(MGR, `SELECT visit_id::int FROM public.pm_visit_start($1)`, [code]);
+const stored = async (code) => (await h.pg.query(
+  `SELECT st.template_id FROM pm_site_templates st JOIN sites s ON s.id = st.site_id WHERE s.code = $1 ORDER BY 1`, [code])).rows.map((r) => r.template_id);
 // קונזול אוטומטי לסוגים שדורשים אותו (1, 2, 6) — הבדיקה כאן היא על הרשימות, לא על הקונזול
 const CONSOLE = new Set(["hydraulic-piston-1", "hydraulic-piston-2", "electric"]);
 const con = (t) => (t && CONSOLE.has(t) ? "longitudinal" : null);
-const newSite = async (plc = null, lift = null, lift2 = null) => {
+const newSite = async (plc = null, lift = null, lift2 = null, { system = null, monitored = true } = {}) => {
   const code = `PAU${++seq}`;
-  await rpc(MGR, `SELECT public.register_site($1, $2, $3, 'basic', true, NULL, NULL, true, $4, $5, $6, $7)`,
-    [code, `אתר ${code}`, plc, lift, con(lift), lift2, con(lift2)]);
+  await rpc(MGR, `SELECT public.register_site($1, $2, $3, 'basic', true, NULL, $4, $5, $6, $7, $8, $9)`,
+    [code, `אתר ${code}`, plc, system, monitored, lift, con(lift), lift2, con(lift2)]);
   return code;
 };
-let BASE, HYD, ELE, XY, XORY, DOLI;
+const newShell = () => newSite(null, null, null, { monitored: false });   // מכפיל / סוטפין — בלי בקר
+let BASE, HYD, ELE, XY, XORY, DOLI, MX;
 
 before(async () => {
   if (skip) return;
@@ -48,80 +54,83 @@ before(async () => {
   XY = await createList("מיטת XY"); await saveItems(XY, [{ label: "מיטת XY", kind: "check", required: true }]);
   XORY = await createList("מיטת X או Y"); await saveItems(XORY, [{ label: "מיטת X", kind: "check", required: true }]);
   DOLI = await createList("דולי"); await saveItems(DOLI, [{ label: "דולי", kind: "check", required: true }]);
+  MX = await createList("מכפילים"); await saveItems(MX, [{ label: "מכפיל", kind: "check", required: true }]);
   await meta(HYD, "lift", ["lift:hydraulic-piston-1", "lift:hydraulic-piston-2"]);
   await meta(ELE, "lift", ["lift:electric", "lift:four-post-18kw", "lift:four-post-11kw"]);
   await meta(XY, "floor", ["floor:xy"]);
   await meta(XORY, "floor", ["floor:x", "floor:y", "floor:matzbet-x", "floor:matzbet-y"]);
   await meta(DOLI, "floor", ["floor:doli"]);
+  await meta(MX, "other", []);
 });
 after(async () => { if (h) await h.close(); });
 
-test("הרשימות נגזרות מסוג המתקן ומסוג המעלית — הבסיס תמיד, ושתי מעליות = שתי רשימות", { skip }, async () => {
-  assert.deepEqual(await names(await newSite("doli", "hydraulic-piston-1")), ["בסיס פרקומט", "מעלית הידראולית", "דולי"]);
-  assert.deepEqual(await names(await newSite("matzbet-x", "four-post-11kw")), ["בסיס פרקומט", "מעלית חשמלית", "מיטת X או Y"]);
-  assert.deepEqual(await names(await newSite("xy", "electric")), ["בסיס פרקומט", "מעלית חשמלית", "מיטת XY"]);
-  // שתי מעליות מסוגים שונים — שתי הרשימות; מאותו סוג — רשימה אחת, לא כפולה
-  assert.deepEqual(await names(await newSite("xy", "hydraulic-piston-1", "electric", "longitudinal")),
-    ["בסיס פרקומט", "מעלית הידראולית", "מעלית חשמלית", "מיטת XY"]);
-  assert.deepEqual(await names(await newSite("doli", "hydraulic-piston-1", "hydraulic-piston-2", "longitudinal")), ["בסיס פרקומט", "מעלית הידראולית", "דולי"]);
-  const a = await newSite("xy", "hydraulic-piston-1");
-  const j = await site(a);
-  assert.equal(j.templates_source, "auto");
-  // 19/10/2026: גם הקונזול (newSite נותן אורכי למעלית שיש לה קונזול), בסדר התג
-  assert.deepEqual(j.type_keys, ["floor:xy", "lift:hydraulic-piston-1", "console:longitudinal"]);
-  assert.deepEqual(j.auto_template_ids, [BASE, HYD, XY]);
-});
-
-test("אתר בלי סוג, או עם סוג שאין לו רשימה — לא 'אוטומטי': נופל לפרופיל או לברירת המחדל", { skip }, async () => {
-  const none = await newSite();
-  assert.equal((await site(none)).templates_source, "default");
-  assert.deepEqual(await names(none), ["בסיס פרקומט"]);
-  const scissors = await newSite("shuttle-x", "hydraulic-scissors");   // אין רשימה למספריים ולשאטל
-  assert.equal((await site(scissors)).templates_source, "default");
-  assert.deepEqual(await names(scissors), ["בסיס פרקומט"]);
-  // פרופיל לאתר בלי סוג (כמו המכפילים) — הפרופיל, לא "בסיס בלבד"
-  const pid = (await one(MGR, `SELECT public.pm_profile_save(NULL, 'מכפילים (בדיקה)', $1::int[], NULL, $2::text[]) id`, [[BASE, DOLI], [none]])).id;
-  assert.ok(pid);
-  assert.equal((await site(none)).templates_source, "profile");
-  assert.deepEqual(await names(none), ["בסיס פרקומט", "דולי"]);
-});
-
-test("הסדר: ידני → לפי הסוג → פרופיל; ניקוי הידני מחזיר לאוטומטי", { skip }, async () => {
+test("עד שלא בוחרים: רובוטי — הבסיס בלבד, גם עם סוג; מכפיל — כלום, ואין ביקור", { skip }, async () => {
   const a = await newSite("doli", "hydraulic-piston-1");
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "דולי"]);
-  // פרופיל אינו גובר על הסוג (אתר מנוטר עם סוג) — כך 1343 "הידראולית + דולי" נשאר נכון גם בלי הפרופיל
-  const pid = (await one(MGR, `SELECT public.pm_profile_save(NULL, 'פרופיל ישן', $1::int[], NULL, $2::text[]) id`, [[BASE, ELE], [a]])).id;
-  assert.ok(pid);
-  assert.equal((await site(a)).templates_source, "auto");
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "דולי"]);
-  // ידני: הוספת רשימה (1384 — גם במת מעלית XY)
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, HYD, DOLI, XY]]);
-  assert.equal((await site(a)).templates_source, "explicit");
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY", "דולי"]);
-  // ידני: הורדת רשימה שהסוג היה נותן
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, DOLI]]);
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "דולי"]);
-  // ניקוי — חזרה לאוטומטי, לא לפרופיל
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, []]);
-  assert.equal((await site(a)).templates_source, "auto");
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "דולי"]);
+  const j = await site(a);
+  assert.deepEqual(j.templates.map((t) => t.name), ["בסיס פרקומט"], "הסוג אינו מביא רשימות");
+  assert.equal(j.templates_source, "base");
+  assert.equal(j.templates_assigned, false);
+  assert.equal(j.site.monitored, true);
+  assert.equal(j.template_count, 1);
+  // הרמז נשאר: מה שמתאים לסוג, ומפתחות הסוג בסדר התג
+  assert.deepEqual(j.auto_template_ids, [BASE, HYD, DOLI]);
+  assert.deepEqual(j.type_keys, ["floor:doli", "lift:hydraulic-piston-1", "console:longitudinal"]);
+  assert.ok((await start(a)).visit_id, "רובוטי פותח ביקור על הבסיס");
+  const m = await newShell();
+  const jm = await site(m);
+  assert.deepEqual([jm.templates, jm.templates_source, jm.template_count, jm.site.monitored], [[], "none", 0, false]);
+  await assert.rejects(start(m), (e) => e.code === "23514" && /לא נבחרה תחזוקה לאתר/.test(e.message));
 });
 
-test("שינוי סוג האתר משנה את הרשימות מיד; שינוי auto_for של רשימה משנה לכל האתרים שנגזרים מהסוג", { skip }, async () => {
+test("בחירה: רובוטי — הבסיס + מה שנבחר, בסדר הרשימות; הבסיס אינו נשמר ואינו יורד", { skip }, async () => {
+  const a = await newSite("xy", "hydraulic-piston-1", "electric");
+  await choose(a, [XY, ELE, HYD]);   // הסדר שנשלח אינו קובע — סדר הרשימות כן
+  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מעלית חשמלית", "מיטת XY"]);
+  assert.equal((await site(a)).templates_source, "explicit");
+  assert.equal((await site(a)).templates_assigned, true);
+  // הבסיס שנשלח — אינו נשמר, והאתר עדיין מקבל אותו
+  await choose(a, [BASE, DOLI, DOLI]);
+  assert.deepEqual(await stored(a), [DOLI], "בלי הבסיס ובלי כפילות");
+  assert.deepEqual(await names(a), ["בסיס פרקומט", "דולי"]);
+  // "לבטל הכול" — חזרה לבסיס בלבד
+  await choose(a, []);
+  assert.deepEqual([await names(a), (await site(a)).templates_source], [["בסיס פרקומט"], "base"]);
+  // שורת בסיס ישנה (לפני 20/10) אינה קובעת — וגם אינה נספרת כ"נבחר"
+  await h.pg.query(`INSERT INTO pm_site_templates (site_id, template_id) SELECT id, $2 FROM sites WHERE code = $1`, [a, BASE]);
+  assert.equal((await site(a)).templates_source, "base");
+  assert.equal((await site(a)).templates_assigned, false);
+});
+
+test("מכפיל: רק מה שנבחר — הבסיס לא, גם אם נשלח, וגם משורה ישנה", { skip }, async () => {
+  const m = await newShell();
+  await choose(m, [BASE, MX]);
+  assert.deepEqual(await names(m), ["מכפילים"]);
+  assert.deepEqual(await stored(m), [MX]);
+  assert.equal((await site(m)).templates_source, "explicit");
+  const v = await start(m);
+  const labels = (await h.pg.query(`SELECT label FROM pm_visit_items WHERE visit_id = $1 ORDER BY seq`, [v.visit_id])).rows.map((r) => r.label);
+  assert.deepEqual(labels, ["מכפיל"]);
+  // שורת בסיס שנכתבה ידנית (כמו 1206 בייצור) — הפותר מתעלם ממנה
+  await h.pg.query(`INSERT INTO pm_site_templates (site_id, template_id) SELECT id, $2 FROM sites WHERE code = $1`, [m, BASE]);
+  assert.deepEqual(await names(m), ["מכפילים"]);
+  await choose(m, []);
+  assert.deepEqual([await names(m), (await site(m)).templates_source], [[], "none"]);
+});
+
+test("הסוג והפרופיל אינם קובעים עוד: שינוי סוג, שינוי סיווג ופרופיל — הרשימות לא זזות, ואין אירועי סיווג", { skip }, async () => {
   const a = await newSite("doli", "hydraulic-piston-1");
   await rpc(MGR, `SELECT public.update_site($1, NULL, NULL, NULL, 'xy', NULL, NULL, 'electric', 'transverse', NULL, NULL)`, [a]);
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית חשמלית", "מיטת XY"]);
-  // סרפיד מקבל את רשימת החשמלית — מעכשיו
-  const b = await newSite("xy", "serapid");
-  assert.deepEqual(await names(b), ["בסיס פרקומט", "מיטת XY"]);
+  assert.deepEqual(await names(a), ["בסיס פרקומט"]);
+  assert.deepEqual((await site(a)).auto_template_ids, [BASE, ELE, XY], "הרמז עוקב אחרי הסוג");
+  const ev0 = (await h.pg.query(`SELECT count(*)::int n FROM events WHERE type = 'compliance'`)).rows[0].n;
   await meta(ELE, "lift", ["lift:electric", "lift:four-post-18kw", "lift:four-post-11kw", "lift:serapid"]);
-  assert.deepEqual(await names(b), ["בסיס פרקומט", "מעלית חשמלית", "מיטת XY"]);
+  assert.equal((await h.pg.query(`SELECT count(*)::int n FROM events WHERE type = 'compliance'`)).rows[0].n, ev0,
+    "הסיווג כבר אינו משנה למי הרשימה מגיעה — בלי אירוע לכל אתר");
   const l = (await lists()).find((t) => t.id === ELE);
-  assert.equal(l.category, "lift");
   assert.deepEqual(l.auto_for, ["lift:electric", "lift:four-post-11kw", "lift:four-post-18kw", "lift:serapid"], "ממוין וייחודי");
-  // אירוע לאתרים שנגזרים מהסוג
-  const ev = (await h.pg.query(`SELECT count(*)::int n FROM events WHERE type = 'compliance' AND payload::text LIKE '%template_meta%'`)).rows[0].n;
-  assert.ok(ev >= 2, `אירועים: ${ev}`);
+  const pid = (await one(MGR, `SELECT public.pm_profile_save(NULL, 'פרופיל ישן', $1::int[], NULL, $2::text[]) id`, [[BASE, ELE, DOLI], [a]])).id;
+  assert.ok(pid);
+  assert.deepEqual(await names(a), ["בסיס פרקומט"], "פרופיל — לא");
 });
 
 test("pm_template_meta_set — ולידציה: קטגוריה, צורת המפתחות, ברירת המחדל בלי סיווג, בקר לא", { skip }, async () => {
@@ -131,55 +140,44 @@ test("pm_template_meta_set — ולידציה: קטגוריה, צורת המפת
   await assert.rejects(meta(BASE, "lift", []), /ברירת המחדל/);
   await assert.rejects(meta(BASE, "base", ["floor:xy"]), /ברירת המחדל/);
   await rpc(MGR, `SELECT public.pm_template_meta_set($1, 'base', '{}'::text[])`, [BASE]);   // מותר: base בלי מפתחות
-  await assert.rejects(meta(HYD, "lift", ["lift:electric"], OPR), /מנהל/);
+  await assert.rejects(meta(HYD, "lift", ["lift:electric"], OPR), /בקר יכול רק לצפות/);
   await assert.rejects(meta(999999, "lift", []), /לא נמצאה/);
-  // הטיפוס נשאר כמו שהיה
   assert.deepEqual((await lists()).find((t) => t.id === HYD).auto_for, ["lift:hydraulic-piston-1", "lift:hydraulic-piston-2"]);
+  await assert.rejects(choose(await newSite(), [HYD], OPR), /בקר יכול רק לצפות/);
 });
 
 // 19/10/2026: בעלת המוצר, על התג "XY · ביטנקם · הידראולית בוכנה 1 · קונזול אורכי" — "צריך בתחזוקה לראות שיש מענה גם
-// לביטנקם… קונזול אורכי". המערכת והקונזול הם מפתחות סוג; type_coverage אומר לכל מאפיין איזו רשימה מכסה אותו.
-const newSiteSys = async (plc, lift, system, lift2 = null) => {
-  const code = `PAU${++seq}`;
-  await rpc(MGR, `SELECT public.register_site($1, $2, $3, 'basic', true, NULL, $4, true, $5, $6, $7, $8)`,
-    [code, `אתר ${code}`, plc, system, lift, con(lift), lift2, con(lift2)]);
-  return code;
-};
-
-test("מערכת וקונזול: מפתחות סוג בסדר התג, וכיסוי לכל מאפיין (type_coverage)", { skip }, async () => {
-  const a = await newSiteSys("xy", "hydraulic-piston-1", "ביטנקם");
+// לביטנקם… קונזול אורכי". המערכת והקונזול הם מפתחות סוג; type_coverage אומר לכל מאפיין איזו רשימה מתאימה ואם נבחרה.
+test("מערכת וקונזול: מפתחות סוג בסדר התג, וכיסוי לכל מאפיין — assigned לפי מה שנבחר", { skip }, async () => {
+  const a = await newSite("xy", "hydraulic-piston-1", null, { system: "ביטנקם" });
   let j = await site(a);
   assert.deepEqual(j.type_keys, ["floor:xy", "system:ביטנקם", "lift:hydraulic-piston-1", "console:longitudinal"]);
-  // היום אף רשימה אינה מסווגת למערכת או לקונזול — הרשימות לא השתנו
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY"]);
-  assert.deepEqual(j.type_coverage.map((c) => [c.key, c.lists.map((l) => `${l.name}${l.assigned ? "" : "×"}`)]), [
-    ["floor:xy", ["מיטת XY"]],
+  const cover = (x) => x.type_coverage.map((c) => [c.key, c.lists.map((l) => `${l.name}${l.assigned ? "" : "×"}`)]);
+  // לא נבחר כלום — הרשימות המתאימות מוצגות, ולא משויכות
+  assert.deepEqual(cover(j), [
+    ["floor:xy", ["מיטת XY×"]],
     ["system:ביטנקם", []],
-    ["lift:hydraulic-piston-1", ["מעלית הידראולית"]],
+    ["lift:hydraulic-piston-1", ["מעלית הידראולית×"]],
     ["console:longitudinal", []],
   ]);
+  await choose(a, [HYD, XY]);
+  j = await site(a);
+  assert.deepEqual(cover(j)[0], ["floor:xy", ["מיטת XY"]]);
+  assert.deepEqual(cover(j)[2], ["lift:hydraulic-piston-1", ["מעלית הידראולית"]]);
   // שתי מעליות עם אותו קונזול — שורה אחת לקונזול, וסדר המופע הראשון
-  const two = await newSiteSys("doli", "hydraulic-piston-1", "לולק", "electric");
+  const two = await newSite("doli", "hydraulic-piston-1", "electric", { system: "לולק" });
   j = await site(two);
   assert.deepEqual(j.type_keys, ["floor:doli", "system:לולק", "lift:hydraulic-piston-1", "console:longitudinal", "lift:electric", "console:longitudinal"]);
   assert.deepEqual(j.type_coverage.map((c) => c.key), ["floor:doli", "system:לולק", "lift:hydraulic-piston-1", "console:longitudinal", "lift:electric"]);
-  // רשימה שמסווגת למערכת מגיעה מעצמה לאתרי ביטנקם בלבד — כמו כל מפתח סוג
+  // רשימה שמסווגת למערכת מופיעה ברמז — ולא מגיעה מעצמה
   const BIT = await createList("ביטנקם — בקר"); await saveItems(BIT, [{ label: "בקר ביטנקם", kind: "check", required: true }]);
   await meta(BIT, "other", ["system:ביטנקם", "console:longitudinal"]);
-  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY", "ביטנקם — בקר"]);
-  // two הוא לולק, אבל עם קונזול אורכי — די במפתח אחד מהשניים
-  assert.ok((await names(two)).includes("ביטנקם — בקר"), "הקונזול האורכי לבדו מביא את הרשימה");
-  const lulak = await newSiteSys("doli", "electric", "לולק");   // con("electric") בבדיקה = אורכי
-  assert.ok((await names(lulak)).includes("ביטנקם — בקר"), "לולק עם קונזול אורכי — כן, דרך הקונזול");
-  const trans = await newSiteSys("xy", null, "לולק");
-  assert.ok(!(await names(trans)).includes("ביטנקם — בקר"), "בלי ביטנקם ובלי קונזול אורכי — לא");
-  j = await site(a);
-  assert.deepEqual(j.type_coverage.find((c) => c.key === "system:ביטנקם").lists.map((l) => [l.name, l.assigned]), [["ביטנקם — בקר", true]]);
-  // ידני שמוריד את הרשימה: הכיסוי עדיין מראה אותה, assigned=false
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, HYD, XY]]);
+  assert.deepEqual(await names(a), ["בסיס פרקומט", "מעלית הידראולית", "מיטת XY"], "הסיווג אינו מוסיף רשימה");
   j = await site(a);
   assert.deepEqual(j.type_coverage.find((c) => c.key === "system:ביטנקם").lists.map((l) => [l.name, l.assigned]), [["ביטנקם — בקר", false]]);
-  assert.deepEqual(j.type_coverage.find((c) => c.key === "floor:xy").lists.map((l) => [l.name, l.assigned]), [["מיטת XY", true]]);
+  await choose(a, [HYD, XY, BIT]);
+  j = await site(a);
+  assert.deepEqual(j.type_coverage.find((c) => c.key === "system:ביטנקם").lists.map((l) => [l.name, l.assigned]), [["ביטנקם — בקר", true]]);
   // ולידציה: מערכת בעברית מותרת; ריק, רווח, נקודתיים, או קונזול בעברית — לא
   await assert.rejects(meta(BIT, "other", ["system:"]), /מפתח סוג לא תקין/);
   await assert.rejects(meta(BIT, "other", ["system:ביט נקם"]), /מפתח סוג לא תקין/);
@@ -188,24 +186,26 @@ test("מערכת וקונזול: מפתחות סוג בסדר התג, וכיסו
   await assert.rejects(meta(BIT, "other", ["model:xy"]), /מפתח סוג לא תקין/);
   await meta(BIT, "other", ["system:סוטפין-לולק"]);
   assert.deepEqual((await lists()).find((t) => t.id === BIT).auto_for, ["system:סוטפין-לולק"]);
-  await meta(BIT, "other", []);   // לא להשאיר סיווג שמשנה את שאר הבדיקות
+  await meta(BIT, "other", []);
 });
 
-test("pm_templates_list.site_count — האתרים שמקבלים את הרשימה בפועל, גם לפי הסוג (19/10/2026)", { skip }, async () => {
-  const before = Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]));
+test("pm_templates_list.site_count — האתרים שהרשימה נבחרה להם, והבסיס — לכל רובוטי", { skip }, async () => {
+  const count = async () => Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]));
+  const before = await count();
   const a = await newSite("xy", "hydraulic-piston-1");
-  const after = Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]));
-  assert.equal(after[HYD], before[HYD] + 1, "הידראולית: אתר חדש לפי הסוג נספר");
-  assert.equal(after[XY], before[XY] + 1, "מיטת XY: גם");
-  assert.equal(after[BASE], before[BASE] + 1, "הבסיס: גם");
-  assert.equal(after[DOLI], before[DOLI], "דולי: לא");
-  // ידני שמוריד את ההידראולית — כבר לא נספר בה
-  await rpc(MGR, `SELECT public.pm_site_templates_set($1, $2::int[])`, [a, [BASE, XY]]);
-  assert.equal(Object.fromEntries((await lists()).map((t) => [t.id, t.site_count]))[HYD], before[HYD]);
+  const m = await newShell();
+  let now = await count();
+  assert.equal(now[BASE], before[BASE] + 1, "הבסיס: הרובוטי נספר, המכפיל לא");
+  assert.equal(now[HYD], before[HYD], "הידראולית: הסוג לבדו אינו נספר");
+  await choose(a, [HYD]);
+  await choose(m, [MX]);
+  now = await count();
+  assert.equal(now[HYD], before[HYD] + 1);
+  assert.equal(now[MX], before[MX] + 1);
   // ובדיקה מול הפותר עצמו, לכל רשימה
   const real = (await h.pg.query(`SELECT x.tid, count(*)::int n FROM sites s, unnest(app.pm_site_template_ids(s.id)) x(tid) GROUP BY x.tid`)).rows;
   for (const t of await lists()) assert.equal(t.site_count, real.find((r) => r.tid === t.id)?.n ?? 0, t.name);
-  // ⚠️ הפותר רץ פעם אחת לכל אתר — לא לכל אתר × רשימה (בלי MATERIALIZED: 4.0 שניות במקום 0.4 בייצור)
+  // ⚠️ הפותר רץ פעם אחת לכל אתר — לא לכל אתר × רשימה (בלי MATERIALIZED: 4.0 שניות במקום 0.4 בייצור, 19/10/2026)
   const oid = (await h.pg.query(`SELECT 'app.pm_site_template_ids(integer)'::regprocedure::oid o`)).rows[0].o;
   const nSites = (await h.pg.query(`SELECT count(*)::int n FROM sites`)).rows[0].n;
   const nLists = (await lists()).length;
@@ -220,6 +220,28 @@ test("pm_templates_list.site_count — האתרים שמקבלים את הרשי
     assert.ok(nLists > 2 && calls === nSites, `pm_site_template_ids: ${calls} קריאות ל-${nSites} אתרים ו-${nLists} רשימות`);
   } finally {
     await h.pg.exec(`RESET track_functions`);
+  }
+});
+
+test("תקרת 40 התמונות: הבסיס נספר לרובוטי ולא למכפיל — בבחירה ובשמירת הבסיס", { skip }, async () => {
+  const photos = (n, last) => Array.from({ length: n }, (_, i) => ({ label: `צילום ${i + 1}`, kind: "photo", required: true, min_photos: 6 }))
+    .concat(last ? [{ label: "צילום אחרון", kind: "photo", required: true, min_photos: last }] : []);
+  const P = await createList("צילומים 40"); await saveItems(P, photos(6, 4));    // 40
+  const Q = await createList("צילומים 39"); await saveItems(Q, photos(6, 3));    // 39
+  const base = (n) => saveItems(BASE, [{ label: "בסיס", kind: "check", required: true }]
+    .concat(n ? [{ label: "צילום לובי", kind: "photo", required: true, min_photos: n }] : []));
+  await base(1);
+  const m = await newShell(), r = await newSite();
+  try {
+    await assert.rejects(choose(await newSite(), [P]), (e) => e.code === "23514" && /41/.test(e.message), "רובוטי: 40 + הבסיס");
+    await choose(m, [P]);   // מכפיל: 40 בדיוק — מותר, כי אין לו בסיס
+    assert.deepEqual(await names(m), ["צילומים 40"]);
+    await choose(r, [Q]);   // רובוטי: 39 + 1 = 40 — מותר
+    // הגדלת הבסיס מעבירה את r את 40 — השמירה נדחית בשמו; המכפיל, בלי בסיס, אינו נפגע
+    await assert.rejects(base(2), (e) => e.code === "23514" && e.message.includes(`משויכת לאתר ${r}`));
+  } finally {
+    await choose(m, []); await choose(r, []);
+    await base(0);
   }
 });
 

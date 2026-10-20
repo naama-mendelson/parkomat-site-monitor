@@ -34,16 +34,24 @@ const MAX_H = 320;
  *   רשימות, או בלי ממסר)
  * @param {number} [p.menuMinWidth] — רוחב מינימלי לרשימה (ברירת מחדל 200). רשימה עם שמות ארוכים — כמו הסטטוסים
  *   של ויזנט, "לא לבחור את זה (חזל"ש מרחוק ללא SMS)" — מבקשת יותר, כדי שהשורה לא תישבר לשתיים.
+ * @param {boolean} [p.multiple] — בחירה מרובה (20/10/2026, רשימות התחזוקה של אתר: "שתהיה בחירה מרובה"). אז value הוא
+ *   מערך, לחיצה על אפשרות מסמנת או מורידה אותה **והרשימה נשארת פתוחה**, והכפתור מציג את השמות שנבחרו. onChange מקבל
+ *   מערך בסדר האפשרויות, לא בסדר הלחיצות. נסגרת כמו תמיד: לחיצה בחוץ, Esc, Tab.
+ *   אפשרות יכולה לשאת `hint` — טקסט שקט ליד השם ברשימה בלבד (למשל "6 פריטים"), שאינו נכנס לכפתור.
  */
-export default function ChoiceSelect({ value, options, onChange, label, placeholder = "— לבחור —", name, invalid = false, disabled = false, menuMinWidth = 200 }) {
+export default function ChoiceSelect({ value, options, onChange, label, placeholder = "— לבחור —", name, invalid = false, disabled = false, menuMinWidth = 200, multiple = false }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [pos, setPos] = useState(null);
   const btn = useRef(null);
   const menu = useRef(null);
   const listId = useId();
-  const current = options.find((o) => o.value === value) ?? null;
-  const shown = current && current.value !== "" ? current.label : null;
+  const chosen = multiple ? (Array.isArray(value) ? value : []) : null;
+  const isSel = (v) => (multiple ? chosen.includes(v) : v === value);
+  const current = multiple ? null : (options.find((o) => o.value === value) ?? null);
+  const shown = multiple
+    ? (options.filter((o) => chosen.includes(o.value)).map((o) => o.label).join(" · ") || null)
+    : (current && current.value !== "" ? current.label : null);
   // מה שקורא מסך אומר כשאין ערך: שם האפשרות הריקה אם יש כזו ("לא הוגדר"), ולא ה-placeholder ("— לבחור —")
   const emptyName = options.find((o) => o.value === "")?.label ?? "לא נבחר";
 
@@ -69,9 +77,17 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
     setPos(null);
     if (refocus) btn.current?.focus({ preventScroll: true });
   };
-  const pick = (v) => { if (v !== value) onChange(v); close(); };
+  const pick = (v) => {
+    if (multiple) {
+      const next = chosen.includes(v) ? chosen.filter((x) => x !== v) : [...chosen, v];
+      onChange(options.map((o) => o.value).filter((x) => next.includes(x)));
+      return;   // ⚠️ בחירה מרובה: הרשימה נשארת פתוחה לבחירה הבאה
+    }
+    if (v !== value) onChange(v);
+    close();
+  };
   const openMenu = () => {
-    setActive(Math.max(0, options.findIndex((o) => o.value === value)));
+    setActive(Math.max(0, options.findIndex((o) => isSel(o.value))));
     setOpen(true);
   };
 
@@ -129,7 +145,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
         className={`cs-btn${open ? " is-open" : ""}${invalid ? " is-invalid" : ""}${shown ? "" : " is-empty"}`}
         disabled={disabled || undefined}
         data-name={name}
-        data-value={value || ""}
+        data-value={multiple ? chosen.join(",") : (value || "")}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
@@ -158,6 +174,7 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
           className={`cs-menu${pos?.up ? " is-up" : ""}`}
           role="listbox"
           aria-label={label}
+          aria-multiselectable={multiple || undefined}
           dir="rtl"
           style={pos ? { left: pos.left, width: pos.width, top: pos.top ?? undefined, bottom: pos.bottom ?? undefined, maxHeight: pos.maxH }
             : { visibility: "hidden", left: 0, top: 0 }}
@@ -171,14 +188,14 @@ export default function ChoiceSelect({ value, options, onChange, label, placehol
             <div
               role="option"
               tabIndex={-1}
-              aria-selected={o.value === value}
+              aria-selected={isSel(o.value)}
               data-value={o.value}
-              className={`cs-item${o.value === value ? " is-selected" : ""}${o.value === "" ? " is-none" : ""}`}
+              className={`cs-item${isSel(o.value) ? " is-selected" : ""}${o.value === "" ? " is-none" : ""}`}
               onClick={() => pick(o.value)}
               onMouseEnter={() => setActive(i)}
             >
-              <span className="cs-item-label">{o.label}</span>
-              <span className="cs-item-check" aria-hidden="true">{o.value === value ? "✓" : ""}</span>
+              <span className="cs-item-label">{o.label}{o.hint && <span className="cs-item-hint"> · {o.hint}</span>}</span>
+              <span className="cs-item-check" aria-hidden="true">{isSel(o.value) ? "✓" : ""}</span>
             </div>
             </div>
           ))}

@@ -2169,6 +2169,9 @@ specific to the type of facility"*.
 
 ## Maintenance profiles — "like the traffic light" (built 13/10/2026; PM ON on the live site since 13/10/2026)
 
+⚠️ **Since 20/10/2026 a profile no longer decides a site's lists** — see *A site's maintenance is what was chosen for
+it* below. The tables and RPCs stay as data; the board and the profile pickers are gone from the UI.
+
 The owner: *"כיון שיש תחזוקה שמתאימה להרבה אתרים אותו דבר — שנקשר את האתר לתחזוקה שמתאימה לו כמו ברמזור"*,
 and for the lamp: *"ירוק תקין, צהוב צריך להתכונן לתחזוקה, אדום לא תקין"*. Her choices: a profiles board,
 green for PM only (the inspector keeps the black frame), Sotefin sites wait for codes, and PM is turned on
@@ -2248,6 +2251,10 @@ on the live site only after she reviews it.
   run with `VITE_COMPLIANCE_PM=true`, 10 UI mutations caught).
 
 ## Maintenance lists by site type — auto, two lifts = two lists, multi-select per site (built 15/10/2026)
+
+⚠️ **Superseded on 20/10/2026: nothing reaches a site by its type any more** — see *A site's maintenance is what was
+chosen for it* below. The classification (`category`, `auto_for`) stays: the category places a list in the site's
+selects, and `auto_for` feeds the "לפי סוג האתר" hint.
 
 The owner, back on the robotic sites: *"אני רוצה שתסווג לפי מה שמסומן הסוג של האתר. אם יש שתי סוגי מעליות אז שיהיה את
 התחזוקה גם של זה וגם של זה. אני רוצה אופציה לערוך את התחזוקה — תסדר את זה לפי סוגים: XY, X או Y, מעלית כזו, מעלית כזו,
@@ -2370,6 +2377,69 @@ lists one under another**, over a button per list.
   before the list loads) follow the new shape; `probe-pm-profiles` 133/133, `probe-pm-cover` 17/17, `pm/run` 141/142.
 - ⚠️ **Deploy order: SQL first.** Before it, `site_count` keeps its old meaning and the headings would show the wrong
   number of sites.
+- **From the independent review of these commits (20/10/2026), fixed in the next change:**
+  - A list that leaves the site's set while it has unsaved edits, or a save in flight, stays on screen, marked "כבר לא
+    נבחרה לאתר — לשמור או לבטל את השינויים". Before, its `PmListEditor` unmounted, the edits were lost silently, and the
+    close guard stopped asking. Removing a list in the selects above makes this easy to hit. The held ids come from
+    `states` (dirty || busy), names from a ref of the last seen.
+  - A rename draft closes on any view switch (`pick`). Before, "שינוי שם" left open on list A renamed list B after a
+    switch, and in the site view (no `current`) crashed on `null.id`. "יצירה" / "שמירת השם" are disabled while dirty.
+  - The classification save calls `onSaved` too, so the tab reloads its "לפי סוג האתר" hint. Create and rename do the
+    same, and `PmTab` bumps `rev` on `PmSiteLists`, so a new list appears in the selects without closing the window.
+
+### A site's maintenance is what was chosen for it — base for robotic, multi-selects, nothing automatic (20/10/2026)
+
+The owner: *"אני רוצה שתעשה רשימה ויצטרכו לבחור מה אנו רוצים. יש כמובן בסיס — זה נמצא לכל האתרים. ואז צריך לבחור XY וכו'
+(בחירה מרובה). ואז צריך לבחור מעליות (בחירה מרובה). עד שלא בוחרים אין כלום עדיין. יש כמה SELECTS, שם בוחרים בכל אחד מה
+שצריך ולפי זה נוצרת התחזוקה המונעת"*. Her answers to three questions: **everyone starts from zero** (over keeping today's
+lists as a choice, or keeping the type as a suggestion), **the selects live in the site's PM tab** (not in add-site or
+the admin row), and **the base is for robotic sites only**.
+
+- **`app.pm_site_template_ids` is now one rule:** a robotic site (`monitored IS NOT FALSE`) gets the default list (the
+  base) plus its rows in `pm_site_templates`. A site without a controller gets only its rows. The type (`auto_for`) and
+  the profile are not read. ⚠️ A stored row for the base decides nothing (a multiplier never gets the base through an old
+  row, e.g. 1206), and `pm_site_templates_set` no longer stores it.
+- **`templates_source`:** `explicit` (something beyond the base was chosen), `base` (robotic, nothing chosen), `none`
+  (a multiplier with nothing chosen). `pm_site` adds `site.monitored`. `templates_assigned` ignores a base row.
+  `auto_template_ids` and `type_coverage` stay, as hints; `assigned` in `type_coverage` = chosen.
+- **`pm_visit_start` on a site with nothing** says "לא נבחרה תחזוקה לאתר — יש לבחור רשימות בלשונית "תחזוקה מונעת""
+  instead of "רשימת הבדיקה ריקה".
+- **The 40-photo cap:** at choice (`pm_site_templates_set`) it counts the base for a robotic site. On saving a list
+  (`pm_template_save`), the profile check became a per-site check: every site whose lists include this one, its lists
+  together, naming the site ("הרשימה משויכת לאתר X…"). A materialized CTE calls the resolver once per site.
+- **`pm_template_meta_set` sends no events any more:** the classification no longer changes who gets a list. Until then
+  it sent one `compliance` event per "auto" site (~70), and every open screen reloaded the lamps once per site.
+- **The PM tab** (`PmSiteLists.jsx`, rewritten): "רשימות התחזוקה של האתר" with a fixed "בסיס" row (robotic only), then a
+  row per group, **מתקן / מעליות / אחר** (`PM_CHOICE_GROUPS` in `utils/pmLists.js`, by the list's category; a list with
+  no category, or a non-default `base`, goes to "אחר"). Each row is a `ChoiceSelect` with **`multiple`** (new: the value
+  is an array, a pick toggles and the menu stays open, `aria-multiselectable`, and an option may carry a quiet `hint`,
+  here the item count). Under the rows: "בביקור: N פריטים" from the draft, or for a multiplier with nothing, "לא נבחרה
+  תחזוקה לאתר — עד שבוחרים, אין ממה לפתוח ביקור". A change shows "שמירה" / "ביטול" and is written only on "שמירה". An
+  unsaved choice reaches the window's close guard ("בחירת רשימות התחזוקה של האתר לא נשמרה."). A בקר sees text. The
+  "לפי סוג האתר" rows stay underneath, now reading "יש רשימה (X) — לא נבחרה לאתר".
+- **The start button** on a site with no lists is disabled and says "לא נבחרה תחזוקה לאתר — יש לבחור רשימות למעלה".
+- **Removed from the UI:** the profiles board (`PmProfilesBoard.jsx` / `.css`, deleted — `git show 61ba9f4:dashboard/src/components/Compliance/PmProfilesBoard.jsx`),
+  the profile picker in the tab, and "פרופיל תחזוקה" in add-site. A new site starts with the base (robotic) or nothing.
+  The editor's classification now reads "מתאימה ל", not "חלה אוטומטית על".
+- Pure rules in `utils/pmLists.js`: `choiceGroups`, `baseTemplate`, `chosenIds`, `visitItemCount`, `sourceLabel` (new values).
+- Tests: `pm-auto.test.js` rewritten (9: nothing chosen, choosing on a robotic site, a multiplier, type and profile no
+  longer decide, validation, system/console hints, `site_count`, the photo cap with the base, idempotency),
+  `pm-profiles.test.js` (the profile tests now assert that a profile decides nothing; the value-item tests use a
+  multiplier and a choice), `pm-templates.test.js` (like another site, the cap at save), `pm-lists-ui.test.js` (+2).
+  Full suite 1238/1238. **SQL mutations (isolated copy, `mut1910/run-mut8.cjs`): 12 of 12 caught** (base for every
+  site, no base for a robotic site, a stored base row, lists by type back, the base stored, the cap ignoring the base,
+  no per-site cap on save, source/assigned counting a base row, every site "robotic", the old empty message, events per
+  site on classification). Browser:
+  `e2e/probe-pm-choose.mjs` 39/39 (robotic, multiplier, read-only, 390 dark, the held section and the rename draft);
+  `probe-lists` 15/15, `probe-pm-cover` 17/17, `probe-pm-sitelists` 15/15 and `probe-groups` 28/28 follow the new
+  shape; `probe-pm-types` and `probe-pm-profiles` are retired (`.obsolete.mjs`); `pm/run` 141/142 (the calendar one).
+  The harness PM mock resolves lists like the new SQL and takes `?monitored=0` for a multiplier.
+- **What it does in production (read-only preview, 20/10/2026):** of 86 robotic sites, 85 drop to the base alone (the
+  lists they got by type are gone until chosen); 1384 keeps its stored choice. Of 130 sites without a controller, 88
+  lose "מכפילים סמויים — Max2/Max3" (it came from profile 12) and 41 lose the base: all have nothing until chosen; 1206
+  keeps Max2/Max3 (its stored choice), without the base. The four open drafts (1326, 1342, 1297, 1079) do not change.
+- ⚠️ **Deploy order: SQL first.** The dry run shows exactly seven function bodies. A new bundle against the old SQL would
+  show every site's type lists as "chosen" (they come back in `templates`).
 
 ## PM visit form: a photo on every item, and a larger detail line (18/10/2026)
 
