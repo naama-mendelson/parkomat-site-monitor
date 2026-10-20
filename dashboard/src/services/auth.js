@@ -182,6 +182,7 @@ export async function currentUser() {
  */
 export function onAuthChange(callback) {
   if (!isSupabaseConfigured) return () => {};
+  listeners.add(callback);
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
     if (!session) { dbRole = null; return callback(null); }
 
@@ -199,7 +200,23 @@ export function onAuthChange(callback) {
     callback(withKnownRole(mapUser(session.user)));
     setTimeout(() => { withDbRole(session.user).then(callback).catch(() => {}); }, 0);
   });
-  return () => data.subscription.unsubscribe();
+  return () => { listeners.delete(callback); data.subscription.unsubscribe(); };
+}
+
+// ============================================================
+// קריאה מחדש של התפקיד — אחרי שהקוד מהמייל אומת (20/10/2026)
+// ============================================================
+// לפני הקוד my_role() עונה 'unverified' (security.postgres.sql, app.session_ok), והתשובה הזו נשמרת ב-dbRole. אחרי
+// האימות האסימון אינו משתנה, ולכן שום אירוע של Supabase לא יקרא שוב ל-my_role — בלי הקריאה כאן המסך היה נשאר עם
+// 'unverified' (כלומר בלי שום הרשאה) עד חידוש האסימון, כשעה.
+const listeners = new Set();
+export async function reloadRole() {
+  if (!isSupabaseConfigured) return null;
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+  const u = await withDbRole(data.session.user);
+  for (const cb of listeners) cb(u);
+  return u;
 }
 
 // ============================================================

@@ -21,9 +21,9 @@ import { useAuth } from "../../hooks/useAuth";
 import { isSupabaseConfigured } from "../../services/supabase";
 import Login from "./Login";
 import ResetPassword from "./ResetPassword";
-import { onPasswordRecovery } from "../../services/auth";
-import { challengeRequired } from "../../services/mfaDirect";
-import MfaChallenge from "./MfaChallenge";
+import { onPasswordRecovery, reloadRole } from "../../services/auth";
+import { loginCodeStatus } from "../../services/loginCodeDirect";
+import LoginCode, { LoginCodeCheckFailed } from "./LoginCode";
 import { useEffect, useState } from "react";
 
 function AuthGate({ children }) {
@@ -43,27 +43,40 @@ function AuthGate({ children }) {
   useEffect(() => onPasswordRecovery(() => setRecovering(true)), []);
 
   // ============================================================
-  // ⚠️ הבדיקה כאן היא **חוויה, לא אכיפה** — וההבחנה חשובה
+  // קוד כניסה במייל (20/10/2026) — במקום האימות באפליקציה (TOTP), שהוסר
   // ============================================================
-  // מסך שנחסם בדפדפן נפתח מחדש בכלי פיתוח בשלוש שניות. מה שבאמת מגן הוא
-  // `app.require_manager()` ב-Postgres, שדורש aal2 לפעולות ההרסניות; המסך
-  // הזה קיים כדי שהמשתמש יעבור את האתגר **לפני** שילחץ על כפתור שייכשל,
-  // ולא אחרי.
+  // ⚠️ **הבדיקה כאן היא חוויה, לא אכיפה.** התחברות שלא הקלידה קוד אינה קוראת ואינה כותבת דבר במסד
+  // (app.session_ok); המסך הזה קיים כדי שהיא תקליד את הקוד **לפני** שהדשבורד ייטען לתוך שגיאות הרשאה.
   //
-  // ⚠️ ולכן `challengeRequired` נכשלת פתוח: קריאה שנכשלה ברשת אינה עילה
-  // לנעול משתמש מחוץ למסך שלו, כשהצד שאוכף ממילא אינו כאן.
-  const [needsMfa, setNeedsMfa] = useState(false);
-  const [mfaChecked, setMfaChecked] = useState(false);
+  // ⚠️ נבדק מחדש כשהמשתמש משתנה, וגם כשהתפקיד מהמסד נהיה 'unverified' — זה מה שקורה אחרי החלפת סיסמה:
+  // changePassword מתחבר מחדש כדי לאמת את הסיסמה הנוכחית, כלומר session חדש, שעוד לא הקליד קוד.
+  //
+  // ⚠️ כשל בבדיקה עצמה אינו "אין צורך בקוד" (אז הדשבורד היה נטען ריק) ואינו "נעול": מסך עם "נסו שוב", שמנסה
+  // לבד כל 15 שניות — מסך קיר שאיבד רשת לרגע חוזר בלי שמישהו ייגש אליו.
+  const uid = user?.id ?? null;
+  const unverified = user?.role === "unverified";
+  const [code, setCode] = useState({ uid: null, checked: false, need: false, email: null, error: null });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
-    if (!user) { setNeedsMfa(false); setMfaChecked(false); return; }
-    challengeRequired().then((need) => {
+    if (!uid) { setCode({ uid: null, checked: false, need: false, email: null, error: null }); return undefined; }
+    loginCodeStatus().then((s) => {
       if (!alive) return;
-      setNeedsMfa(need);
-      setMfaChecked(true);
+      setCode({ uid, checked: true, need: !s.error && s.required && !s.verified, email: s.email ?? null, error: s.error ?? null });
     });
     return () => { alive = false; };
-  }, [user]);
+  }, [uid, unverified, attempt]);
+  useEffect(() => {
+    if (!code.error) return undefined;
+    const t = setTimeout(() => setAttempt((n) => n + 1), 15000);
+    return () => clearTimeout(t);
+  }, [code.error, attempt]);
+
+  // ⚠️ התפקיד נקרא מחדש מהמסד לפני שהדשבורד עולה: עד הקוד my_role() ענה 'unverified', והאסימון לא משתנה באימות
+  async function codeVerified() {
+    await reloadRole().catch(() => null);
+    setCode((c) => ({ ...c, need: false }));
+  }
 
   // הגדרה חסרה — אומרים מה חסר, ולא נותנים טופס שלא יכול לעבוד.
   if (!isSupabaseConfigured) {
@@ -86,11 +99,14 @@ function AuthGate({ children }) {
 
   if (!user) return <Login />;
 
-  // לפני שהבדיקה חזרה לא מציגים כלום — הבהוב של הדשבורד ואז מסך אתגר
-  // קורא כמו תקלה.
-  if (!mfaChecked) return <div className="app-loading">בודק אימות…</div>;
+  // לפני שהבדיקה חזרה לא מציגים כלום — הבהוב של הדשבורד ואז מסך קוד קורא כמו תקלה.
+  if (!code.checked || code.uid !== uid) return <div className="app-loading">בודק התחברות…</div>;
 
-  if (needsMfa) return <MfaChallenge onVerified={() => setNeedsMfa(false)} />;
+  if (code.error) {
+    return <LoginCodeCheckFailed message={code.error} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
+
+  if (code.need) return <LoginCode key={uid} email={code.email} onVerified={codeVerified} />;
 
   // אחרי user ולפני children: הגעה מקישור איפוס חוסמת את הדשבורד עד
   // שנקבעת סיסמה.

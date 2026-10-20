@@ -33,13 +33,15 @@ CREATE SCHEMA IF NOT EXISTS app;
 -- ה-true בפרמטר השני של current_setting הוא missing_ok: בלעדיו הקריאה
 -- *זורקת* כשההגדרה אינה קיימת, וזה קורה בכל שאילתה שלא עברה דרך PostgREST
 -- — כלומר כל הקליטה. STABLE ולא IMMUTABLE: הערך תלוי בהקשר החיבור.
+-- ⚠️ NULLIF לפני ההמרה ל-json (20/10/2026): אחרי SET LOCAL שנגמר ההגדרה נשארת '' ולא NULL, ו-''::json זורק —
+-- כלומר חיבור שפעם נשא אסימון (ב-pooler, או בבדיקה) היה נכשל בכל שאילתה אחרי זה.
 CREATE OR REPLACE FUNCTION app.current_actor()
 RETURNS text
 LANGUAGE sql
 STABLE
 AS $$
   SELECT COALESCE(
-    NULLIF(current_setting('request.jwt.claims', true)::json ->> 'sub', ''),
+    NULLIF(NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'sub', ''),
     NULLIF(current_setting('app.user_id', true), '')
   );
 $$;
@@ -74,9 +76,9 @@ LANGUAGE sql
 STABLE
 AS $$
   SELECT COALESCE(
-    NULLIF(current_setting('request.jwt.claims', true)::json
+    NULLIF(NULLIF(current_setting('request.jwt.claims', true), '')::json
              -> 'app_metadata' ->> 'parkomat_role', ''),
-    NULLIF(current_setting('request.jwt.claims', true)::json ->> 'parkomat_role', ''),
+    NULLIF(NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'parkomat_role', ''),
     NULLIF(current_setting('app.role', true), ''),
     'anonymous'
   );
@@ -389,6 +391,102 @@ $$;
 -- השרת שעוקף RLS, ולכן שום דבר קיים לא נשבר.
 
 -- ============================================================
+-- קוד כניסה במייל — אימות דו-שלבי (20/10/2026)
+-- ============================================================
+-- בעלת המוצר: "כל פעם כשמישהו רוצה להיכנס לדשבורד נשלח לו מהדשבורד למייל שהוא חיבר כשהוא נרשם מייל עם קוד בן 4
+-- ספרות". ההחלטות שלה: בכל התחברות חדשה (לא בכל רענון), לכל המשתמשים, שליחה מ-dashboard@parkomat.co.il דרך
+-- Microsoft 365, והקוד במייל מחליף את האימות באפליקציה (TOTP), שמסכיו הוסרו מהדשבורד.
+--
+-- ⚠️ **היחידה היא ההתחברות, לא המשתמש.** כל כניסה בסיסמה יוצרת session ב-GoTrue, והמזהה שלו נוסע בכל אסימון
+-- (התביעה session_id) ונשאר זהה גם אחרי חידוש האסימון. קוד שאומת מסמן את ה-session הזה: מסך קיר שפתוח ימים נשאר
+-- מאומת, וכניסה חדשה — או session שנגרף אחרי יממה בלי שימוש (cron.postgres.sql) — מבקשת קוד שוב.
+--
+-- ⚠️ **האכיפה כאן, לא במסך.** app.session_ok() יושב בארבע הפונקציות שכל הרשאה עוברת בהן: current_app_role (מנהל,
+-- עורך, my_role — שמחזירה 'unverified'), is_active_user (כל מדיניות הקריאה), current_app_user, ו-is_staff
+-- (compliance.postgres.sql). מי שיודע סיסמה ולא הקליד קוד אינו קורא ואינו כותב דבר, גם דרך PostgREST בלי דשבורד.
+--
+-- ⚠️ **פטורים:** קריאה בלי אסימון (השרת והשערים), סוכן באתר (מכונה אינה קוראת מייל, ואתר שמחכה לקוד הוא אתר שהפסיק
+-- לדווח — אותו שיקול כמו ב-require_mfa), וזהות הקליטה מוויזנט. הקוד חל על אדם: manager / editor / operator.
+--
+-- ⚠️ **מאחורי מתג:** settings.login_code_required — 'all' לכולם, או רשימת מיילים מופרדת בפסיקים (פיילוט). בלי
+-- המפתח — כבוי. מייל שלא יוצא נועל בחוץ את כל מי שהקוד חל עליו, ולכן מתחילים בחשבון אחד.
+CREATE TABLE IF NOT EXISTS login_codes (
+  session_id   uuid PRIMARY KEY,           -- התביעה session_id = auth.sessions.id. בלי FK (כלל 1)
+  user_id      uuid NOT NULL,              -- supabase_uid
+  code_hash    text,                       -- sha256 של session:קוד. NULL אחרי אימות, או כשהשליחה נכשלה
+  expires_at   timestamptz,
+  attempts     integer NOT NULL DEFAULT 0,
+  last_sent_at timestamptz,
+  verified_at  timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+-- כל שליחה, לתקרה לשעה וליום. ⚠️ לפי משתמש ולא לפי session: אחרת כניסה מחדש בסיסמה הייתה מאפסת את התקרה.
+CREATE TABLE IF NOT EXISTS login_code_sends (
+  id      bigserial PRIMARY KEY,
+  user_id uuid NOT NULL,
+  sent_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS login_code_sends_user ON login_code_sends (user_id, sent_at);
+-- סגורות: RLS בלי מדיניות ובלי הרשאות. הגישה רק דרך הפונקציות למטה (ו-REVOKE מפורש: ברירת המחדל של Supabase
+-- מעניקה ALL על כל טבלה חדשה ל-anon ול-authenticated).
+ALTER TABLE login_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE login_code_sends ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON login_codes, login_code_sends FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON SEQUENCE login_code_sends_id_seq FROM PUBLIC, anon, authenticated;
+
+-- מזהה ההתחברות מהאסימון, או NULL. ⚠️ NULLIF לפני ההמרה ל-json: אחרי SET LOCAL ההגדרה נשארת '' ולא NULL, ו-''::json
+-- זורק.
+CREATE OR REPLACE FUNCTION app.jwt_session_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT CASE WHEN s ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN s::uuid END
+    FROM (SELECT NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'session_id' AS s) x
+$$;
+
+-- האם הקוד חל על המשתמש הזה. ⚠️ זהות הקליטה כתובה כאן ולא דרך app.is_intake_client() — מאותה סיבה כמו
+-- ב-current_app_role למטה (מוגדרת בקובץ שנטען אחרי זה). והמזהה מגיע כפרמטר ולא מ-current_actor: login_code_issue
+-- נקראת בזהות השירות, שאין לה sub.
+CREATE OR REPLACE FUNCTION app.login_code_applies(p_uid text, p_role text, p_email text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT COALESCE(p_role IN ('manager', 'editor', 'operator'), false)
+     AND NOT EXISTS (SELECT 1 FROM settings s
+                      WHERE s.key = 'intake_user_id' AND nullif(trim(s.value), '') = p_uid)
+     AND COALESCE((SELECT lower(btrim(s.value)) = 'all'
+                          OR lower(btrim(p_email)) = ANY (SELECT lower(btrim(x)) FROM unnest(string_to_array(s.value, ',')) x)
+                     FROM settings s WHERE s.key = 'login_code_required'), false)
+$$;
+REVOKE ALL ON FUNCTION app.login_code_applies(text, text, text) FROM PUBLIC;
+
+-- האם הבקשה הזו רשאית להשתמש בזהות שלה. true = בלי אסימון, הקוד אינו חל, או שה-session הזה אומת.
+-- ⚠️ "בלי אסימון" כתוב כאן ולא דרך app.came_from_token(), שמוגדרת בהמשך הקובץ — אותו תנאי בדיוק.
+CREATE OR REPLACE FUNCTION app.session_ok()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT CASE
+    WHEN COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '') = '' THEN true
+    WHEN NOT COALESCE((SELECT app.login_code_applies(u.supabase_uid::text, u.role, u.email)
+                         FROM app_users u
+                        WHERE u.supabase_uid::text = app.current_actor() AND u.is_active
+                        LIMIT 1), false) THEN true
+    ELSE EXISTS (SELECT 1 FROM login_codes c
+                  WHERE c.session_id = app.jwt_session_id()
+                    AND c.user_id::text = app.current_actor()
+                    AND c.verified_at IS NOT NULL)
+  END
+$$;
+
+-- ============================================================
 -- מי אני, ומה מותר לי לראות
 -- ============================================================
 -- ⚠️ **שלוש פונקציות, ולא תנאי משוכפל בכל מדיניות.** אותו שיקול בדיוק כמו
@@ -412,6 +510,7 @@ AS $$
     FROM app_users u
    WHERE u.supabase_uid::text = app.current_actor()
      AND u.is_active
+     AND app.session_ok()   -- קוד כניסה (20/10/2026): התחברות שלא אומתה אינה "אני"
    LIMIT 1
 $$;
 
@@ -445,6 +544,8 @@ AS $$
                   WHERE s.key = 'intake_user_id'
                     AND nullif(trim(s.value), '') = app.current_actor())
       THEN 'intake'
+    -- ⚠️ קוד כניסה (20/10/2026): התחברות שלא הקלידה את הקוד מהמייל אינה מנהל, עורך או בקר — ומכאן גם my_role()
+    WHEN NOT app.session_ok() THEN 'unverified'
     ELSE COALESCE(
       (SELECT u.role FROM app_users u
         WHERE u.supabase_uid::text = app.current_actor() AND u.is_active LIMIT 1),
@@ -529,7 +630,7 @@ AS $$
     SELECT 1 FROM app_users u
      WHERE u.supabase_uid::text = app.current_actor()
        AND u.is_active
-  );
+  ) AND app.session_ok();   -- קוד כניסה (20/10/2026): כל מדיניות הקריאה עוברת כאן
 $$;
 
 GRANT EXECUTE ON FUNCTION app.is_active_user() TO authenticated;
@@ -894,7 +995,7 @@ RETURNS text
 LANGUAGE sql
 STABLE
 AS $fn$
-  SELECT NULLIF(current_setting('request.jwt.claims', true)::json ->> 'aal', '');
+  SELECT NULLIF(NULLIF(current_setting('request.jwt.claims', true), '')::json ->> 'aal', '');
 $fn$;
 
 -- ============================================================
@@ -975,6 +1076,199 @@ $fn$;
 
 COMMENT ON FUNCTION app.require_mfa() IS
   'דורש aal2 לפעולות מנהל, אם הדגל mfa_required_for_manager דלוק. פטור לקריאות שלא הגיעו מאסימון.';
+
+-- ============================================================
+-- קוד כניסה במייל — הדלתות (20/10/2026). הטבלאות והבדיקה עצמה (app.session_ok) — למעלה, לפני current_app_role.
+-- ============================================================
+-- הזרימה: הדשבורד שואל login_code_status; אם צריך קוד, הוא קורא ל-Edge Function ‏send-login-code עם האסימון של
+-- המשתמש. הפונקציה קוראת ל-login_code_issue בזהות השירות (עם sub ו-session_id מהאסימון שאומת) ושולחת את הקוד
+-- מ-dashboard@parkomat.co.il. המשתמש מקליד, והדשבורד קורא ל-login_code_verify.
+--
+-- ⚠️ **login_code_issue מחזירה את הקוד עצמו, ולכן היא לשירות בלבד.** אילו הדפדפן היה יכול לקרוא לה, הוא היה מקבל את
+-- הקוד בלי המייל — כלומר בלי גורם שני. כל ההחלטות כאן ולא ב-Edge Function (כלל 3): מתי לשלוח, מה התקרות, מה התוקף,
+-- ולאיזו כתובת (app_users.email, לא האסימון). הפונקציה ב-Deno רק מעבירה את המייל.
+--
+-- ⚠️ 4 ספרות הן 10,000 אפשרויות, כמו שביקשה. מה ששומר עליהן: 5 ניסיונות לקוד, תוקף 10 דקות, קוד חדש לכל היותר פעם
+-- בדקה, 5 בשעה ו-20 ביממה לכל משתמש — כלומר עד 100 ניחושים ביממה (1%) למי **שכבר יודע את הסיסמה**.
+-- ⚠️ אין שורת audit_log לכניסה: בעלת המוצר (18/10) — "זה לא מעניין אותי בכלל מה התחבר". השורות כאן נגרפות.
+CREATE OR REPLACE FUNCTION app.login_code_ttl() RETURNS interval LANGUAGE sql IMMUTABLE AS $$ SELECT interval '10 minutes' $$;
+
+CREATE OR REPLACE FUNCTION app.login_code_hash(p_session uuid, p_code text)
+RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT encode(sha256(convert_to(p_session::text || ':' || p_code, 'UTF8')), 'hex')
+$$;
+REVOKE ALL ON FUNCTION app.login_code_hash(uuid, text) FROM PUBLIC;
+
+-- האם ההתחברות הזו צריכה קוד, והאם כבר אומתה. המייל — כדי שהמסך יגיד לאן נשלח.
+CREATE OR REPLACE FUNCTION public.login_code_status()
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'required', app.came_from_token()
+                AND COALESCE(app.login_code_applies(u.supabase_uid::text, u.role, u.email), false),
+    'verified', app.session_ok(),
+    'email',    u.email)
+    FROM (SELECT 1) one
+    LEFT JOIN app_users u ON u.supabase_uid::text = app.current_actor() AND u.is_active
+   LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION public.login_code_status() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.login_code_status() TO authenticated;
+
+-- בדיקת הקוד שהוקלד. מחזירה {ok} — לעולם לא זורקת על קוד שגוי, כדי שספירת הניסיונות תישמר (חריגה הייתה מגלגלת
+-- אותה אחורה, וניחושים היו בלי הגבלה).
+CREATE OR REPLACE FUNCTION public.login_code_verify(p_code text)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.current_actor();
+  v_sess  uuid := app.jwt_session_id();
+  v_code  text := regexp_replace(COALESCE(p_code, ''), '[^0-9]', '', 'g');
+  r       login_codes%ROWTYPE;
+BEGIN
+  IF v_actor IS NULL OR v_sess IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'no_session');
+  END IF;
+  SELECT * INTO r FROM login_codes WHERE session_id = v_sess AND user_id::text = v_actor FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'error', 'none'); END IF;
+  IF r.verified_at IS NOT NULL THEN RETURN jsonb_build_object('ok', true); END IF;
+  IF r.code_hash IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'none'); END IF;
+  IF r.attempts >= 5 THEN RETURN jsonb_build_object('ok', false, 'error', 'locked'); END IF;
+  IF r.expires_at <= now() THEN RETURN jsonb_build_object('ok', false, 'error', 'expired'); END IF;
+  -- ⚠️ קלט שאינו 4 ספרות אינו ניסיון: טעות הקלדה של המסך לא תשרוף את חמשת הניסיונות
+  IF length(v_code) <> 4 THEN RETURN jsonb_build_object('ok', false, 'error', 'format'); END IF;
+
+  IF app.login_code_hash(v_sess, v_code) = r.code_hash THEN
+    UPDATE login_codes SET verified_at = now(), code_hash = NULL WHERE session_id = v_sess;
+    RETURN jsonb_build_object('ok', true);
+  END IF;
+
+  UPDATE login_codes SET attempts = attempts + 1 WHERE session_id = v_sess;
+  RETURN jsonb_build_object('ok', false,
+                            'error', CASE WHEN r.attempts + 1 >= 5 THEN 'locked' ELSE 'wrong' END,
+                            'left',  greatest(0, 5 - (r.attempts + 1)));
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.login_code_verify(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.login_code_verify(text) TO authenticated;
+
+-- הנפקה — לשירות בלבד (ראו למעלה). p_force = "שלח קוד חדש" מפורש; בלעדיו, קוד שעוד בתוקף אינו נשלח שוב (רענון,
+-- לשונית שנייה), והמסך מבקש להקליד את מה שכבר הגיע.
+-- סטטוסים: send (עם code — לשליחה), pending / wait (עם resend_in בשניות), limit (per = hour / day), verified,
+-- not_required, no_user.
+CREATE OR REPLACE FUNCTION public.login_code_issue(p_user uuid, p_session uuid, p_force boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  u      app_users%ROWTYPE;
+  r      login_codes%ROWTYPE;
+  v_has  boolean;
+  v_since numeric;
+  v_hour integer;
+  v_day  integer;
+  v_code text;
+BEGIN
+  IF p_user IS NULL OR p_session IS NULL THEN
+    RAISE EXCEPTION 'חסרים פרטי ההתחברות' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO u FROM app_users WHERE supabase_uid = p_user AND is_active LIMIT 1;
+  IF NOT FOUND THEN RETURN jsonb_build_object('status', 'no_user'); END IF;
+  IF NOT app.login_code_applies(p_user::text, u.role, u.email) THEN
+    RETURN jsonb_build_object('status', 'not_required');
+  END IF;
+
+  -- שתי לשוניות שנפתחו יחד לא ינפיקו שני קודים לאותה התחברות (השני היה דורס את הראשון שכבר נשלח)
+  PERFORM pg_advisory_xact_lock(hashtext('login_code:' || p_session::text));
+  SELECT * INTO r FROM login_codes WHERE session_id = p_session;
+  v_has := FOUND;
+  IF v_has AND r.user_id <> p_user THEN
+    RAISE EXCEPTION 'ההתחברות אינה של המשתמש הזה' USING ERRCODE = '42501';
+  END IF;
+  IF v_has AND r.verified_at IS NOT NULL THEN RETURN jsonb_build_object('status', 'verified'); END IF;
+
+  v_since := extract(epoch FROM now() - r.last_sent_at);   -- NULL כשלא נשלח
+  IF v_has AND r.code_hash IS NOT NULL AND r.expires_at > now() AND r.attempts < 5 AND NOT p_force THEN
+    RETURN jsonb_build_object('status', 'pending', 'email', u.email,
+                              'resend_in', greatest(0, ceil(60 - COALESCE(v_since, 60)))::int);
+  END IF;
+  IF v_since IS NOT NULL AND v_since < 60 THEN
+    RETURN jsonb_build_object('status', 'wait', 'email', u.email, 'resend_in', ceil(60 - v_since)::int);
+  END IF;
+
+  SELECT count(*) FILTER (WHERE sent_at > now() - interval '1 hour'), count(*)
+    INTO v_hour, v_day
+    FROM login_code_sends WHERE user_id = p_user AND sent_at > now() - interval '24 hours';
+  IF v_hour >= 5 OR v_day >= 20 THEN
+    RETURN jsonb_build_object('status', 'limit', 'email', u.email,
+                              'per', CASE WHEN v_day >= 20 THEN 'day' ELSE 'hour' END);
+  END IF;
+
+  -- 32 ביטים אקראיים חזקים: 8 התווים הראשונים של gen_random_uuid (גרסה 4, pg_strong_random). random() אינו קריפטוגרפי.
+  v_code := lpad(((('x' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))::bit(32)::bigint) % 10000)::text, 4, '0');
+
+  INSERT INTO login_codes (session_id, user_id, code_hash, expires_at, attempts, last_sent_at)
+  VALUES (p_session, p_user, app.login_code_hash(p_session, v_code), now() + app.login_code_ttl(), 0, now())
+  ON CONFLICT (session_id) DO UPDATE
+     SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, attempts = 0,
+         last_sent_at = EXCLUDED.last_sent_at;
+  INSERT INTO login_code_sends (user_id) VALUES (p_user);
+
+  RETURN jsonb_build_object('status', 'send', 'code', v_code, 'email', u.email,
+                            'name', COALESCE(NULLIF(btrim(u.full_name), ''), u.email),
+                            'ttl_min', (extract(epoch FROM app.login_code_ttl()) / 60)::int);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.login_code_issue(uuid, uuid, boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.login_code_issue(uuid, uuid, boolean) TO service_role;
+
+-- המייל לא יצא: הקוד נמחק וההמתנה של דקה מתבטלת, כדי ש"שלח שוב" יעבוד מיד. ⚠️ השליחה נשארת בספירה לשעה וליום —
+-- אחרת תקלה ב-365 הייתה הופכת כל לחיצה לפנייה נוספת לשם, בלי תקרה.
+CREATE OR REPLACE FUNCTION public.login_code_unsend(p_session uuid)
+RETURNS void
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $$
+  UPDATE login_codes SET code_hash = NULL, expires_at = NULL, last_sent_at = NULL
+   WHERE session_id = p_session AND verified_at IS NULL
+$$;
+REVOKE ALL ON FUNCTION public.login_code_unsend(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.login_code_unsend(uuid) TO service_role;
+
+-- גריפה — נקראת מ-app.prune_auth_sessions (cron.postgres.sql), אחרי שה-sessions הישנים נמחקו: שורה של session שכבר
+-- אינו קיים אינה מאמתת דבר. ⚠️ שעה של חסד: session חדש לגמרי כבר קיים ב-auth.sessions לפני הקוד, אבל אין טעם לסמוך על
+-- הסדר הזה בגריפה לילית.
+CREATE OR REPLACE FUNCTION app.prune_login_codes()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_n integer;
+BEGIN
+  DELETE FROM login_codes c
+   WHERE c.created_at < now() - interval '1 hour'
+     AND NOT EXISTS (SELECT 1 FROM auth.sessions s WHERE s.id = c.session_id);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  DELETE FROM login_code_sends WHERE sent_at < now() - interval '2 days';
+  RETURN v_n;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.prune_login_codes() FROM PUBLIC;
 
 -- ============================================================
 -- field_reports — קריאה למנהלת, ולמי שכתב את שלו

@@ -218,6 +218,8 @@ BEGIN
   m AS (DELETE FROM auth.mfa_amr_claims  WHERE session_id IN (SELECT id FROM old)),
   d AS (DELETE FROM auth.sessions        WHERE id         IN (SELECT id FROM old) RETURNING 1)
   SELECT count(*)::integer INTO v_n FROM d;
+  -- קודי הכניסה של התחברויות שכבר אינן (security.postgres.sql) — באותה משימה, אחרי המחיקה
+  PERFORM app.prune_login_codes();
   RETURN v_n;
 END;
 $$;
@@ -1168,3 +1170,11 @@ SELECT app.ensure_cron_job('parkomat-wizenet-daily', '7 4 * * *',
 -- הכרטיס נמחק על כל שורותיו ושינוייו. בעלת המוצר: "אין צורך שישמרו".
 SELECT app.ensure_cron_job('parkomat-prune-service-calls', '17 4 * * *',
                            'SELECT app.prune_service_calls(interval ''30 days'')');
+
+-- ============================================================
+-- רכבי הטכנאים — סנכרון מאיתוראן כל דקה (20/10/2026)
+-- ============================================================
+-- ראה vehicles.postgres.sql. ⚠️ עד שמוגדר settings.ituran_caller_secret הפונקציה מחזירה NULL ולא שולחת כלום — כלומר
+-- המשימה קיימת מהרגע שה-SQL מוחל, והסנכרון מתחיל כשהסוד נכתב (אחרי פריסת ituran-sync עם אותו סוד).
+SELECT app.ensure_cron_job('parkomat-ituran-sync', '* * * * *',
+                           'SELECT app.ituran_sync_request()');

@@ -3896,6 +3896,166 @@ then "הייצור זהה לקוד"; `provision-agent` redeployed (`verify_jwt` 
 gateway's 401). Checked in rolled-back transactions: intake → `my_role = intake`, not manager / editor / staff; a manager,
 an editor and an agent unchanged. 80 of 84 agents beating.
 
+## Login code by email — two-step sign-in (built 20/10/2026, behind a flag, NOT live)
+
+The owner: *"כל פעם כשמישהו רוצה להיכנס לדשבורד נשלח לו מהדשבורד למייל שהוא חיבר כשהוא נרשם מייל עם קוד בן 4 ספרות.
+המייל של הדשבורד הוא dashboard@parkomat.co.il"*. Her four answers, all as recommended: **on every new sign-in** (not on
+every page load), **all users**, **sent through Microsoft 365 with Graph** (the company's mail is Exchange Online — MX
+`parkomat-co-il.mail.protection.outlook.com`, SPF `include:spf.protection.outlook.com … -all`), and **the email code
+replaces the TOTP app**, whose screens were deleted (nobody had enrolled; `auth.mfa_factors` was empty).
+
+- **The unit is the sign-in, not the user.** Every password sign-in is a GoTrue session; its id rides in every access
+  token as `session_id` and survives token refresh. A verified code marks that session (`login_codes.session_id`), so a
+  wall screen stays verified for days, and a new sign-in — or a session pruned after a day unused — asks again.
+  ⚠️ `changePassword` re-signs-in to check the current password, which is a new session: after a password change the
+  person is asked for a code again. Accepted.
+- **Enforced in SQL, in the four functions every permission goes through** (`security.postgres.sql`): `app.session_ok()`
+  is added to `current_app_role` (returns **`'unverified'`**, so `is_manager`, `can_edit`, `my_role()` and every Edge
+  Function check see no role), `is_active_user` (every RLS read policy), `current_app_user`, and `is_staff`
+  (`compliance.postgres.sql`). A password without the code reads and writes nothing, through PostgREST too.
+- **Exempt:** calls with no token (the server, the gates' GUC identity), agents (`role = 'agent'` — a machine reads no
+  mail, and a site waiting for a code is a site that stopped reporting), and the Wizenet intake identity. The code applies
+  to manager / editor / operator.
+- **The flag:** `settings.login_code_required` — `'all'`, or a comma list of emails for a pilot (case and spaces ignored).
+  Absent = off; `''` = nobody.
+- **The doors** (all SQL; the Edge Function only carries the mail, rule 3):
+  - `public.login_code_status()` → `{required, verified, email}` (authenticated).
+  - `public.login_code_verify(code)` → `{ok}` or `{ok:false, error: wrong|locked|expired|none|format|no_session, left}`.
+    It never raises on a wrong code, so the attempt count commits.
+  - `public.login_code_issue(user, session, force)` — **service_role only**, because it returns the code itself. Statuses:
+    `send` (with `code`, `email` from `app_users`, `name`, `ttl_min`), `pending` (a valid code exists and `force` is false —
+    reopening the screen sends nothing), `wait` (`resend_in`), `limit` (`per: hour|day`), `verified`, `not_required`,
+    `no_user`. An advisory lock per session stops two tabs from issuing two codes.
+  - `public.login_code_unsend(session)` — service_role; the mail failed, so the code is cleared and "שלח קוד חדש" works
+    at once. ⚠️ The send still counts toward the caps, or a broken M365 would turn every click into another call there.
+- **The numbers:** 4 digits from 32 strong random bits (`gen_random_uuid`, not `random()`), stored as sha256(session:code),
+  10 minutes, 5 attempts per code, a new code at most once a minute, 5 an hour and 20 a day per user (per user, not per
+  session — a new sign-in does not reset it). At most ~100 guesses a day (1%) for someone who **already has the password**.
+- **No sign-in history:** no `audit_log` row (the owner, 18/10: *"זה לא מעניין אותי בכלל מה התחבר"*).
+  `app.prune_login_codes()` runs inside `app.prune_auth_sessions` (03:57 UTC): rows of sessions that no longer exist (after
+  an hour's grace), and sends older than two days.
+- **`app.current_actor` / `current_role` / `current_aal` cast with `NULLIF(…, '')::json` now.** After a `SET LOCAL` ends
+  the setting is `''`, not NULL, and `''::json` throws — a connection that once carried a token (the pooler, or a test)
+  failed every later query. The new `session_ok` depends on it, so it was fixed at the root.
+- **Edge Function `send-login-code`** (`handler.ts` tested in Node + `index.ts`): checks the caller with GoTrue
+  (`/auth/v1/user`, and the token's `sub` must match), reads `sub` / `session_id` from the token the gateway already
+  verified, calls `login_code_issue` with the service key, gets a Graph token (client credentials, cached about an hour,
+  one retry on 401) and sends from `dashboard@parkomat.co.il` (`saveToSentItems: false`). The response never carries the
+  code. Missing Graph settings → 503 **before** issuing a code. Secrets: `MS_TENANT_ID`, `MS_CLIENT_ID`,
+  `MS_CLIENT_SECRET` (and `LOGIN_CODE_FROM`, default `dashboard@parkomat.co.il`); every value is trimmed. Deployed
+  without `--no-verify-jwt`.
+- **The dashboard:** `AuthGate` asks `login_code_status` after sign-in, and again when the user changes or the role from
+  the database becomes `'unverified'`. `LoginCode.jsx` sends the code on open, auto-submits at 4 digits (paste of the
+  subject line works), counts the resend down from a deadline (a background tab throttles timers), and has "יציאה". A
+  failed status check is neither "no code" nor "locked": a retry screen that retries every 15 seconds. After the code,
+  `reloadRole()` (`services/auth.js`) re-reads `my_role()` — the token does not change on verification, so nothing else
+  would. `check-switch` allows the three `loginCodeDirect` names (no server arm, like the TOTP ones before).
+- **Tests:** `login-code.test.js` 11 (PGlite with Supabase's default grants; off, on, issue/verify, randomness, attempts and
+  expiry, caps, unsend, exemptions, pilot, grants, prune) — **30 of 30 SQL mutations caught** (`mut1910/run-mut9.cjs`);
+  `login-code-fn.test.js` 7 (the Edge Function with a fake fetch: what goes where, the code never returns, secrets stay on
+  their hosts, Graph failures unsend); `login-code-ui.test.js` 3; `roles.test.js` census (+4). Full suite 1259/1259.
+  Browser: `scratchpad/lc/probe-lc.mjs` 39/39 — a separate mini harness (the real `AuthGate` + `LoginCode`, mocked
+  `loginCodeDirect` / `auth` / `useAuth`), 1280 light and 390 dark. It found two real defects before any user did: a
+  `maxLength` that cut a pasted subject line before its digits, and the "יציאה" link at 3.7:1 in dark.
+
+**To go live, in this order** (nothing is applied or deployed yet):
+1. SQL (`apply-sql` dry run: 21 gaps — 10 new functions, 8 bodies, 3 indexes; the two tables do not show, `--apply` creates
+   them). With the flag absent nothing changes for anyone.
+2. The M365 admin: a mailbox `dashboard@parkomat.co.il` (a shared mailbox is enough), an Entra app registration with the
+   **application** permission `Mail.Send` and admin consent, a client secret, and an Application Access Policy that limits
+   the app to that one mailbox (`New-ApplicationAccessPolicy -AppId <client id> -PolicyScopeGroupId
+   dashboard@parkomat.co.il -AccessRight RestrictAccess`). The three values go into Supabase → Edge Functions → Secrets.
+   ⚠️ **The client secret expires** (up to 24 months): on that day no code is sent, and everyone the flag covers is locked
+   out until the secret is renewed or the flag is removed.
+3. `npx supabase functions deploy send-login-code --project-ref xvfsikwaaaohnmldjbtv --use-api`.
+4. The dashboard (push). With the flag absent the screen never appears.
+5. Pilot: `login_code_required` = one person's email. Then `'all'`.
+- ⚠️ **Turning on `'all'` signs everyone out of the data at once:** existing sessions are unverified, so open dashboards
+  get empty reads and, at the next token refresh (≤ an hour), the code screen. Every wall screen needs someone to type a
+  code once. Pick the time.
+- ⚠️ **Every covered account needs a mailbox someone reads**, the shared ones included (`sherut@`, `moked@`, `sales@` —
+  measured 20/10: 17 active human accounts).
+- ⚠️ **Gates that sign in with a real token** (`check-security`, `check-mfa`, `check-writes`… through `lib/gate-user`)
+  will see `'unverified'` once the flag covers their throwaway user. Not handled yet.
+
+## Technicians' vehicles from Ituran — a live map (built 20/10/2026, NOT live yet)
+
+The owner: *"יש לפרקומט רכבים של אנשי תחזוקה, על כל רכב יש איתוראן"* → asked what she wants, *"כל מידע אפשרי הכלל"* →
+phase 1 is a live map, and **everyone signed in sees it** (her choice over "managers and editors"). Ituran opened API access
+for the account after a signed form, and created an API user (its name and password are in the Edge Function secrets,
+never in the repo — it is public); the docs are a Stoplight project
+(`docs.ituran.com`, behind bot protection — the OpenAPI JSON comes from
+`ituran.stoplight.io/api/v1/projects/ituran/ituran-api-v2/nodes/reference/Ituran-API-V2.json`, 142 operations, server
+`https://api.ituran.com`).
+
+**Measured against the real API (read-only, 20/10/2026):** `POST /api/v1/oauth/token` with
+`{grant_type: "password", username, password}` → a token for 1440 minutes plus a refresh token. `GET /api/v2/vehicles`
+returns **38 vehicles**, but **no location unless asked**: `realtime_fields=LastLocation&realtime_fields=Driver&
+realtime_fields=Places`. Then each vehicle has `last_location.location.point {lat, lon}`, `address.location` ("street,
+city"), speed, heading, odometer, `timestamp`, `motion_status` (parking / idle / driving) and `places` (Ituran geofences —
+only two exist: משרד, מחסן). ⚠️ **The timestamps are Israel wall-clock time with no zone** (the Wizenet trap again): read
+as Israel time the newest was 22 s old. ⚠️ `current_driver` is useless (16 vehicles say "scooter4all", the rest empty); the
+technician is in the vehicle's `nickname` (with the plate appended, and "ישן" / "חדש" / "זמני" in some). One unit has
+not reported since 08/09. The API answered from Israel and from abroad (no country block like Wizenet's), so Supabase
+calls it directly — no relay.
+
+- **SQL** (`master/db/vehicles.postgres.sql`, loaded after `wizenet-relay`): `vehicles_live` — **one row per vehicle,
+  updated in place, no history** (Ituran keeps it; storing it would be ~55,000 rows a day with no reader). `vehicles_sync`
+  — one row: last success, last error, vehicle count, and `token_fetches` (how often a cold function had to sign in — to
+  measure, not guess). Both closed (RLS, no policies, REVOKE from anon/authenticated).
+  - `app.ituran_ts(text)` — no zone = `Asia/Jerusalem` (not a fixed −3: 25/10 goes back to +2); `Z` / offset as is;
+    unparsable → NULL, never an exception. `app.ituran_num(text)` — the same for numbers.
+  - `public.ituran_ingest(vehicles, meta)` — **service_role only**. Parses Ituran's array as it came. The position moves
+    only when a position arrived, and only forward in time (a reply without `LastLocation` or a late older one changes
+    nothing). 0,0 is "no position". A vehicle missing from the reply is deleted **only** when `meta.complete` and the reply
+    was not empty, so a partial or empty answer cannot wipe the fleet.
+  - `public.ituran_sync_failed(error)` — service_role; the screen says so instead of showing old positions as current.
+  - `public.vehicles_live_list()` — `require_staff` (manager, editor, operator; not agents, not the intake, not an
+    unverified login-code session). One jsonb.
+  - `app.ituran_sync_request()` + cron `parkomat-ituran-sync` every minute: `net.http_post` to the Edge Function with the
+    anon key and a shared secret from `settings.ituran_caller_secret` (the `push_request` pattern). **No secret = not
+    enabled: returns NULL and sends nothing** (the screen says "not enabled yet"); a secret without `push_anon_key` is
+    recorded as a failure.
+  - ⚠️ **No `events` row**, on purpose: an old bundle treats an unknown event type as "reload everything" (the 07/10
+    overload), and 1,440 syncs a day would be 1,440 full reloads on every screen. The map polls instead.
+- **Edge Function `ituran-sync`** (`handler.ts`, tested in Node + `index.ts`): checks `x-parkomat-ituran-secret`
+  (constant time; no secret configured = closed), keeps the Ituran token **in memory only** (not the database, not a file),
+  renews it with the refresh token five minutes before it expires, falls back to the password if the refresh fails, and
+  on a 401 from the vehicles signs in again once. Pages through the vehicles (100 a page) and passes the raw array to
+  `ituran_ingest` with `{complete, token_fresh, pages, ms}`. Failures go to `ituran_sync_failed`. Secrets:
+  `ITURAN_USERNAME`, `ITURAN_PASSWORD`, `ITURAN_CALLER_SECRET` (and `ITURAN_BASE`, default `https://api.ituran.com`);
+  all trimmed. Deployed **without** `--no-verify-jwt` (the cron sends the anon key).
+- **Dashboard:** a floating "🚐 רכבים" button in the corner opposite "רמזור" (where the AI assistant was), only in direct
+  mode. It opens `components/Vehicles/VehiclesMap.jsx` full screen, **lazy-loaded** (Leaflet 1.9.4, the only new
+  dependency, 47 KB gz in its own chunk; the main bundle is unchanged). OpenStreetMap tiles with attribution; in the dark
+  theme the tiles are inverted (the markers are not). Markers are coloured by state (green driving with a heading arrow,
+  amber engine on, blue parked, grey hollow "not reporting" = no report for 24 h or never); permanent name labels only for
+  vehicles that move (38 labels — 12 at the office — would hide the map). A side list (below the map on a phone) sorted
+  driving → idle → parked → not reporting, with search (name, plate, address, place); a row flies to the vehicle and opens
+  its popup (name, plate, state and speed, address, place, "עודכן לפני X", a Google Maps link). It polls
+  `vehicles_live_list` every minute **only while open and visible**; Esc closes. The sync line says "עודכן לפני X", or a
+  warning: not enabled yet / no success for 5 minutes / the last sync failed (with Ituran's reason). Leaflet is used
+  without a React wrapper: the map is built once and markers update in place, so an open popup and the user's zoom
+  survive each poll. Pure rules in `utils/vehicles.js`.
+- **Tests:** `vehicles.test.js` 7 (PGlite: the clock in summer and winter and around 25/10, every field from Ituran's shape,
+  forward-only position, 0,0, broken fields, delete only on a complete non-empty reply, sync status and token count, grants,
+  the cron request with and without the secret) — **15 of 15 SQL mutations caught** (`mut1910/run-mut10.cjs`; a 16th was
+  skipped, its anchor lost a backslash in the shell); `ituran-sync-fn.test.js` 6 (fake fetch: the secret, the token cached /
+  refreshed / re-issued on 401, paging, what reaches the database, failures, secrets never leave their hosts);
+  `vehicles-ui.test.js` 6. Full suite 1278/1278. Browser `e2e/probe-vehicles.mjs` 55/55 (1371 light, 390 dark; tiles served
+  as a blank image): it caught the heading arrow rotating around a point above the marker's centre. **Live:** the real
+  `handler.ts` against the real Ituran API into a throwaway PGlite — 38 vehicles, all with position, time and address, the
+  newest 22 s old, the token reused on the second run.
+- `check-bundle` now looks for `veh-row-name`; three stale markers there (removed screens) were replaced.
+
+**To go live, in this order:** (1) SQL — it carries the login-code functions too (they stay off without their flag);
+(2) `supabase secrets set ITURAN_USERNAME=… ITURAN_PASSWORD=… ITURAN_CALLER_SECRET=<random>` and
+`npx supabase functions deploy ituran-sync --project-ref xvfsikwaaaohnmldjbtv --use-api`; (3) the same random value into
+`settings.ituran_caller_secret` — the cron starts within a minute; check `vehicles_sync.last_ok_at`; (4) push the dashboard.
+⚠️ The Ituran password was pasted into the chat on 20/10/2026: change it at Ituran once this works, and keep the new one
+only in the Edge Function secrets. Later phases (not built): nearest technician to a site in fault, visits to sites (needs
+coordinates for the sites — none are stored today — and a geofence per site at Ituran), reports from Ituran's full report.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

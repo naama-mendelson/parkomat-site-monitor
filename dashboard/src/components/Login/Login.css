@@ -124,6 +124,51 @@
   cursor: default;
 }
 
+/* קוד הכניסה מהמייל (LoginCode.jsx) */
+.login-code-info {
+  margin: -6px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.login-field .login-code-input {
+  text-align: center;
+  letter-spacing: 0.5em;
+  font-size: 1.6rem;
+  font-weight: 700;
+  padding: 10px 12px 10px calc(12px + 0.5em);   /* letter-spacing מוסיף רווח אחרי הספרה האחרונה */
+}
+
+.login-code-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.login-link {
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  min-height: 32px;
+  font: inherit;
+  font-size: 0.88rem;
+  /* ⚠️ לא var(--accent): בערכה הכהה הוא 3.7:1 על הכרטיס (נמדד). הקו התחתון אומר "קישור" */
+  color: var(--text-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.login-link:disabled {
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: default;
+}
+
+.login-link.is-strong:not(:disabled) {
+  font-weight: 700;
+}
+
 /* ההבטחה שמתחת לכפתור — הערה, לא כותרת */
 .login-note {
   margin: 12px 0 0;

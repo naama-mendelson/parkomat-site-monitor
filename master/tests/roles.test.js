@@ -62,6 +62,8 @@ const MANAGER = [
 const OTHER = [
   "activity_rows", "claim_service_command", "complete_service_command", "compliance_file", "compliance_history_list",
   "compliance_thumbs", "executive_series", "executive_series_json", "ingest_batch", "insights_rows", "inspection_site",
+  "login_code_issue", "login_code_status", "login_code_unsend", "login_code_verify",
+  "ituran_ingest", "ituran_sync_failed", "vehicles_live_list",
   "mark_announcement_seen", "my_role", "my_seen_announcements", "pending_announcement", "pm_profiles_list", "pm_site",
   "pm_template", "pm_templates_list", "pm_visit_detail", "recent_errors", "report_by_site", "report_monthly",
   "report_site_months", "server_heartbeat", "service_call_counts", "service_calls_board", "service_calls_history",

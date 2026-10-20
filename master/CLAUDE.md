@@ -1001,6 +1001,11 @@ Three conclusions worth holding:
 
 Written in English like the rest of this file; the code comments stay Hebrew.
 
+⚠️ **Superseded on 20/10/2026 by the email login code** (root `CLAUDE.md`, *Login code by email*). The TOTP screens
+(`MfaSetup.jsx`, `MfaChallenge.jsx`, `services/mfaDirect.js`) were deleted at the owner's choice ("להחליף אותו בקוד
+במייל"); nobody had enrolled a factor (measured: `auth.mfa_factors` empty). The SQL below (`app.require_mfa`, the
+`mfa_required_for_manager` flag, off) is still there and dormant, and `check-mfa` still exercises it.
+
 **The threat this closes.** RLS is `USING (true)` for `authenticated` — a documented product
 decision ("every user sees every site"). So a single stolen password reads every business
 table. Measured at the time of writing: **all 8 users are `manager`**, tokens arrive as

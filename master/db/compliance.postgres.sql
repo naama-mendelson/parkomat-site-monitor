@@ -60,7 +60,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, app, pg_temp AS $
   SELECT EXISTS (SELECT 1 FROM app_users u
                   WHERE u.supabase_uid::text = app.current_actor()
                     AND u.is_active AND u.role IN ('manager','editor','operator'))
-     AND NOT app.is_intake_client();
+     AND NOT app.is_intake_client()
+     AND app.session_ok();   -- קוד כניסה במייל (20/10/2026, security.postgres.sql)
 $$;
 REVOKE ALL ON FUNCTION app.is_staff() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.is_staff() TO authenticated;
