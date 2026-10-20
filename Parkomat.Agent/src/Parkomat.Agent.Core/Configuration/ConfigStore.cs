@@ -326,6 +326,13 @@ public static class ConfigStore
             // PlcReader.ReadFaultText), ולכן הוא נשמר כמו כל ערך אחר.
             if (old.Plc.FaultTextRegister >= 0)
                 fresh.Plc.FaultTextRegister = old.Plc.FaultTextRegister;
+
+            // ⚠️ **והפורט הטורי, מאותו נימוק כמו התעבורה** (1.0.61): באתר RTU הפורט וההגדרות הם הכתובת של
+            // הבקר. שדרוג שמאפס אותם משאיר "rtu" עם פורט ריק — אתר שאינו קורא, וכל ההגדרה נמחקה.
+            fresh.Plc.ComPort = Keep(old.Plc.ComPort, fresh.Plc.ComPort);
+            if (old.Plc.BaudRate > 0) fresh.Plc.BaudRate = old.Plc.BaudRate;
+            fresh.Plc.Parity = Keep(old.Plc.Parity, fresh.Plc.Parity);
+            if (old.Plc.StopBits > 0) fresh.Plc.StopBits = old.Plc.StopBits;
         }
 
         fresh.Mqtt.Username = Keep(old.Mqtt?.Username, fresh.Mqtt.Username);

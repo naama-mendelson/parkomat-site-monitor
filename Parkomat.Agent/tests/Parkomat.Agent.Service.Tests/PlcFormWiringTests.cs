@@ -210,8 +210,20 @@ public class PlcFormWiringTests
         // ⚠️ נגזר מ-`UseUdp` ולא מהמחרוזת הגולמית. קובץ עם "UDP " היה
         // מוצג כ-UDP בזמן שהסוכן קורא TCP — הממשק מאשר את הטעות במקום
         // לחשוף אותה, וזה גרוע יותר מלא להציג כלום.
+        // 1.0.61: גם RTU — נגזר מ-UseRtu, ואחריו UseUdp, ולא מ-Transport הגולמי
         Assert.Matches(
-            new Regex(@"_transport\.SelectedItem\s*=\s*current\.UseUdp"),
+            new Regex(@"_transport\.SelectedItem\s*=\s*current\.UseRtu\s*\?\s*RTU\s*:\s*current\.UseUdp\s*\?"),
             Source("RegistersForm.cs"));
+        Assert.DoesNotMatch(new Regex(@"SelectedItem\s*=\s*current\.Transport"), Source("RegistersForm.cs"));
+    }
+
+    // 1.0.61: אישור החלונית שומר "rtu" כש-RTU נבחר, ואת הפורט — רק אחרי בדיקה שהוא COM<מספר>
+    [Fact]
+    public void TheDialogSavesRtuAndAValidatedComPort()
+    {
+        string src = Source("RegistersForm.cs");
+        Assert.Matches(new Regex(@"Result\.Transport\s*=\s*RtuChosen\s*\?\s*""rtu"""), src);
+        Assert.Matches(new Regex(@"\^COM\[0-9\]\{1,3\}\$"), src);
+        Assert.Matches(new Regex(@"Result\.ComPort\s*=\s*com;"), src);
     }
 }

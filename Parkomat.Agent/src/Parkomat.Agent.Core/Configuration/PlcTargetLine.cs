@@ -49,8 +49,12 @@ public static class PlcTargetLine
     /// <summary>מתאר את יעד הקריאה — תעבורה, כתובת, פקודה ושלושת הרגיסטרים.</summary>
     public static string Describe(PlcConfig plc)
     {
-        string transport = plc.UseUdp ? "UDP" : "TCP";
         string fc = plc.UseHoldingRegisters ? "03" : "04";
+        // ⚠️ RTU (1.0.61): הפורט והגדרות התקשורת במקום IP:פורט — שהם אינם בשימוש באתר כזה, ושורה שמציגה
+        // אותם הייתה מטעה בדיוק את מי שמנסה להבין למה הבקר לא עונה.
+        string where = plc.UseRtu
+            ? (string.IsNullOrEmpty(plc.Rtu.PortName) ? "RTU (לא הוגדר פורט COM)" : plc.Rtu.Describe())
+            : $"{(plc.UseUdp ? "UDP" : "TCP")} {plc.IpAddress}:{plc.Port}";
 
         // ⚠️ **המערכת השנייה מופיעה רק כשהיא מוגדרת, ואז תמיד.** בלעדיה
         // אין בלוג שום דבר שמבדיל אתר דו-מערכתי שהוגדר נכון מאתר
@@ -59,7 +63,7 @@ public static class PlcTargetLine
             ? $" | system2 MODE={plc.ModeRegister2} Card={plc.CardRegister2}"
             : "";
 
-        return $"{transport} {plc.IpAddress}:{plc.Port} | FC=0x{fc} | "
+        return $"{where} | FC=0x{fc} | "
              + $"registers MODE={plc.ModeRegister} Card={plc.CardRegister} "
              + $"Cycle={plc.CycleRegister}{second}";
     }

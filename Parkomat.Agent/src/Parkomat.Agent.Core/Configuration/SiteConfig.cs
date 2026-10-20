@@ -82,7 +82,7 @@ public class SiteConfig
     public int NtpSyncIntervalMinutes { get; set; } = 60;
 }
 
-/// <summary>הגדרות החיבור והכתובות ב-PLC (Modbus, מעל TCP או UDP).</summary>
+/// <summary>הגדרות החיבור והכתובות ב-PLC (Modbus, מעל TCP, UDP או RTU טורי).</summary>
 public class PlcConfig
 {
     /// <summary>כתובת ה-IP של ה-PLC.</summary>
@@ -100,7 +100,7 @@ public class PlcConfig
     // ⚠️ **מחרוזת ולא bool, ובכוונה.** ‏`UseUdp=false` היה קורא "לא UDP"
     // ולא אומר מה כן; ‏`Transport="tcp"` הוא מה שכתוב בקובץ וגם מה
     // שהטכנאי רואה. וכשיתווסף RTU טורי, לא צריך bool שני שסותר את הראשון.
-    /// <summary>‏"tcp" (ברירת מחדל) או "udp".</summary>
+    /// <summary>‏"tcp" (ברירת מחדל), "udp", או "rtu" — טורי דרך פורט COM (1.0.61).</summary>
     public string Transport { get; set; } = "tcp";
 
     /// <summary>
@@ -118,12 +118,51 @@ public class PlcConfig
     [System.Text.Json.Serialization.JsonIgnore]
     public bool UseUdp => NormalizedTransport == "udp";
 
+    /// <summary>
+    /// האם לדבר Modbus RTU טורי דרך פורט COM (1.0.61). <b>נגזר</b>, כמו <c>UseUdp</c>. כשזה true, כתובת ה-IP
+    /// והפורט אינם בשימוש — הבקר מחובר בכבל למחשב האתר.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UseRtu => NormalizedTransport == "rtu";
+
     /// <summary>האם הערך שבקובץ הוא אחד מהערכים המוכרים (או ריק).</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool TransportIsKnown =>
-        NormalizedTransport is "" or "tcp" or "udp";
+        NormalizedTransport is "" or "tcp" or "udp" or "rtu";
 
     private string NormalizedTransport => (Transport ?? "").Trim().ToLowerInvariant();
+
+    // ============================================================
+    // RTU טורי — הפורט והגדרות התקשורת (1.0.61, 20/10/2026)
+    // ============================================================
+    // הבקר הראשון בלי Ethernet: פורט RS232 שלו בכבל USB-Serial למחשב האתר, שבו הוא COM6, 9600 8N1.
+    // ⚠️ **ריק כברירת מחדל, ולא "COM1".** מספר הפורט תלוי במחשב ובשקע ה-USB, וערך מנוחש היה פותח פורט
+    // אחר — אולי של מכשיר אחר. אתר RTU בלי פורט נכשל בהודעה ברורה ("לא הוגדר פורט COM").
+    // 9600 / ללא זוגיות / ביט עצירה 1 הם ברירות המחדל הנפוצות בבקרים, והן של המסמך. ביטי הנתונים קבועים ב-8:
+    // RTU מחייב אותם, וזה לא כוונון.
+    /// <summary>פורט ה-COM שהבקר מחובר אליו, למשל "COM6". ריק = לא הוגדר.</summary>
+    public string ComPort { get; set; } = "";
+
+    /// <summary>מהירות הפורט (baud). ברירת מחדל 9600.</summary>
+    public int BaudRate { get; set; } = 9600;
+
+    /// <summary>זוגיות: "none" (ברירת מחדל), "even" או "odd".</summary>
+    public string Parity { get; set; } = "none";
+
+    /// <summary>ביטי עצירה: 1 (ברירת מחדל) או 2.</summary>
+    public int StopBits { get; set; } = 1;
+
+    /// <summary>
+    /// ההגדרות כפי שהערוץ צריך אותן — מנורמלות: פורט באותיות גדולות בלי רווחים, מהירות לא-חיובית → 9600,
+    /// זוגיות לא מוכרת → none, ביטי עצירה שאינם 2 → 1. אותו עיקרון כמו <c>UseUdp</c>: ערך שגוי נופל לברירת
+    /// המחדל הנפוצה, ולא לקריסה.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Parkomat.Agent.Core.Modbus.RtuSettings Rtu => new(
+        (ComPort ?? "").Trim().ToUpperInvariant(),
+        BaudRate > 0 ? BaudRate : 9600,
+        (Parity ?? "").Trim().ToLowerInvariant() is "even" or "odd" ? (Parity ?? "").Trim().ToLowerInvariant() : "none",
+        StopBits == 2 ? 2 : 1);
 
     /// <summary>
     /// פקודת ה-Modbus לקריאה: <b>4</b> = Input Registers (ברירת מחדל),

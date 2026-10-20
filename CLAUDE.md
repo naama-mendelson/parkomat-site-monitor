@@ -4005,6 +4005,29 @@ snapshots; the cumulative table since July is dominated by the pre-07/10 card lo
   07/10. The script pattern is two snapshots of `(queryid, total_exec_time, calls)` and a subtraction; `queryid` is
   stable across the window. ⚠️ A regex in a Bash heredoc loses its backslashes here; use `[.]`, `[(]`, `[[:space:]]`.
 
+## Agent 1.0.61 — Modbus RTU over a COM port, for a controller with no Ethernet (20/10/2026)
+
+Two new sites came with their controller documents the same day, and the owner asked of each whether the agent fits.
+
+- **יהודה הלוי 16 — Modbus UDP, port 502, FC 03, 105..107: the existing agent (1.0.48+) fits, no code change.** Its
+  request is byte for byte the one already sent to גרוזנברג 7 (2222). The only difference is that this controller, by
+  its document, echoes the transaction id and fills the length field; our UDP channel ignores both, so it reads either.
+  Proven with a test that answers in the document's exact shape (`ModbusUdpChannelTests.PlcReaderReadsAStandardUdpControllerExactlyAsItsDocumentDescribes`).
+  Setup: Transport UDP, FC 3, Cycle 105 / MODE 106 / Card 107.
+- **עוזיאל 122 — Modbus RTU over RS232 → USB-Serial, COM6, 9600 8N1, FC 03, 405..407: a third transport in the same
+  agent, 1.0.61** (*"צריך לבנות לזה AGENT חדש?"* — no). Details in [`Parkomat.Agent/CLAUDE.md`](Parkomat.Agent/CLAUDE.md),
+  *Modbus RTU over a COM port*: our own channel tested against the document's bytes, the port opened for each read and
+  closed right after (the technician programs over the same cable), and a busy port is a failed read — ten of them
+  report "PLC unreachable", **the owner's choice** (*"תקלה, כמו נתק בכל אתר"*). Agent tests 710/710; **mutations 15 of
+  15 caught** (isolated copy, failing test *names* compared with the baseline — five baseline tests fail in a copy
+  without git and the shared contract, and the relay soak tests fail under load, so a count alone proves nothing; the
+  first run's "survivor" M15 exposed a test that passed for the wrong reason, now tightened).
+  Installer: `Parkomat.Agent/installer-output/ParkomatAgentSetup-1.0.61.exe`.
+- ⚠️ **What the dashboard will show at עוזיאל 122, by its document:** MODE 2/3 stays while the machine waits for the
+  driver (the operation stays open; the card may mark "תקוע" after 30 minutes); power-on shows 5 for a moment and then
+  4, so a fault is recorded until auto is chosen; technician test cycles raise only the counter. The site is not
+  registered yet; the "אקסטרקטור" maintenance list exists for it.
+
 ## Wizenet relay — status changes go out through site PCs (built 15/10/2026)
 
 WIZEAPI answers only from Israel (Alex, Wizenet, 14/10: *"מוגבלת לפניות מישראל… לחלופין, ניתן לבצע את הפניות דרך שרת

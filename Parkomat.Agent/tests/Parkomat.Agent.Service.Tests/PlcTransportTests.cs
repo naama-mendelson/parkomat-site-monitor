@@ -264,7 +264,7 @@ public class PlcTransportTests
     [Theory]
     [InlineData("udp4")]
     [InlineData("tcp/udp")]
-    [InlineData("rtu")]
+    [InlineData("serial")]   // ⚠️ עד 1.0.61 "rtu" היה כאן — מאז הוא תעבורה מוכרת (ModbusRtuChannelTests)
     [InlineData("garbage")]
     public void AnUnknownValueFallsBackToTcpButIsReportedAsUnknown(string value)
     {

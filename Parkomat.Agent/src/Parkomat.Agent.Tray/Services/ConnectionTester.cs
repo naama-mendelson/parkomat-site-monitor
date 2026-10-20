@@ -80,6 +80,40 @@ public static class ConnectionTester
         // NModbus סינכרוני — מריצים על thread רקע כדי לא לתקוע את ה-UI.
         return Task.Run(() =>
         {
+            // ============================================================
+            // RTU טורי (1.0.61) — אותו ערוץ שהסוכן משתמש בו, ובלי IP
+            // ============================================================
+            // הבדיקה חייבת לדבר את מה שהסוכן מדבר (ראה למעלה). והיא פותחת את הפורט וסוגרת אותו, כמו הסוכן —
+            // ⚠️ כלומר בזמן שהסוכן רץ, הבדיקה והסוכן מתחרים על הפורט. ניסיונות הפתיחה הנוספים בערוץ מכסים את
+            // רוב ההתנגשויות; כישלון "הפורט תפוס" כאן יכול להיות הסוכן עצמו, וההודעה אומרת לבדוק שוב.
+            if (plc.UseRtu)
+            {
+                RtuSettings s = plc.Rtu;
+                if (string.IsNullOrEmpty(s.PortName))
+                    return new TestResult { Success = false, Message = "לא הוגדר פורט COM — יש לבחור אותו בהגדרות → רגיסטרים." };
+                string rtuHow = $"{s.Describe()}, FC=0x{(plc.UseHoldingRegisters ? "03" : "04")}, register {plc.ModeRegister}";
+                try
+                {
+                    var channel = new ModbusRtuChannel(s, PlcTimeoutSeconds * 1000);
+                    channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.ModeRegister, 1);
+                    if (plc.HasSecondSystem)
+                    {
+                        channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.ModeRegister2, 1);
+                        channel.ReadRegisters(1, plc.UseHoldingRegisters, plc.CardRegister2, 1);
+                    }
+                    return new TestResult { Success = true, Message = $"מחובר ל-PLC — {rtuHow}. הקריאה הצליחה." };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        Success = false,
+                        Message = $"החיבור ל-PLC נכשל ({rtuHow}): {Describe(ex)}"
+                                + " אם הפורט תפוס — ייתכן שזה הסוכן עצמו באמצע קריאה; לבדוק שוב."
+                    };
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(plc.IpAddress))
                 return new TestResult { Success = false, Message = "לא הוגדרה כתובת IP ל-PLC בהגדרות." };
 

@@ -109,7 +109,10 @@ Console.WriteLine(new string('=', 64));
 // ⚠️ התעבורה מוצגת תמיד, גם ב-TCP. מי שמריץ את הכלי כדי לברר למה
 // אתר לא קורא מהבקר חייב לראות **על מה הסוכן באמת מדבר**, ולא להסיק
 // זאת מהיעדר המילה UDP.
-Console.WriteLine($"  אתר {siteId}   בקר {(plc.UseUdp ? "UDP" : "TCP")} {plc.IpAddress}:{plc.Port}");
+// RTU (1.0.61): הפורט והגדרות התקשורת — IP:פורט אינם בשימוש באתר כזה
+Console.WriteLine(plc.UseRtu
+    ? $"  אתר {siteId}   בקר {plc.Rtu.Describe()}"
+    : $"  אתר {siteId}   בקר {(plc.UseUdp ? "UDP" : "TCP")} {plc.IpAddress}:{plc.Port}");
 if (!plc.TransportIsKnown)
     Console.WriteLine($"  ⚠️ הערך '{plc.Transport}' אינו מוכר — נופל ל-TCP");
 Console.WriteLine($"  רגיסטרים: MODE={plc.ModeRegister}  כרטיס={plc.CardRegister}  מונה={plc.CycleRegister}");

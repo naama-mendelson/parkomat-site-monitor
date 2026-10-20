@@ -6,7 +6,7 @@ using System.Net.Sockets;
 namespace Parkomat.Agent.Service.Modbus;
 
 /// <summary>
-/// קורא נתונים מה-PLC דרך Modbus-TCP.
+/// קורא נתונים מה-PLC דרך Modbus — TCP, UDP, או RTU טורי דרך פורט COM (1.0.61).
 /// אחראי רק על הקריאה הגולמית — פותח חיבור, קורא את שלושת ה-registers,
 /// ומחזיר PlcReading. לא מפרש ולא מחליט כלום.
 /// מיישם IDisposable כדי לסגור את החיבור בצורה מסודרת.
@@ -18,15 +18,27 @@ public class PlcReader : IDisposable
     private const int ConnectTimeoutMs = 3000;
     private const int IoTimeoutMs = 3000;
 
+    // ============================================================
+    // RTU — 500 מילישניות לתשובה, כמו במסמך הבקר
+    // ============================================================
+    // בכבל אין רשת באמצע: 8 בתים של בקשה ו-11 של תשובה ב-9600 הם כ-20 מילישניות, וטקסט תקלה של 80
+    // רגיסטרים כ-170. כלומר 500 נדיב גם לטקסט, ולא מקרב את הסבב לסף ה-watchdog (30 שניות) — גם לא עם
+    // שני ניסיונות הפתיחה הנוספים של פורט תפוס (ModbusRtuChannel).
+    private const int RtuTimeoutMs = 500;
+
     private readonly PlcConfig _config;
+    private readonly Func<IRtuPort>? _rtuPort;
 
     private TcpClient? _tcpClient;
     private ModbusUdpChannel? _udpChannel;
+    private ModbusRtuChannel? _rtuChannel;
     private IModbusMaster? _master;
 
-    public PlcReader(PlcConfig config)
+    /// <param name="rtuPort">לבדיקות בלבד: פורט טורי מדומה במקום פורט COM אמיתי.</param>
+    public PlcReader(PlcConfig config, Func<IRtuPort>? rtuPort = null)
     {
         _config = config;
+        _rtuPort = rtuPort;
     }
 
     // ============================================================
@@ -40,9 +52,13 @@ public class PlcReader : IDisposable
     // זה בסדר, כי הלולאה ב-Worker ממילא סופרת קריאות שנכשלו ולא בודקת
     // את הדגל הזה — אבל מי שיסתמך עליו כדי לענות "האם ה-PLC חי" יקבל
     // תשובה נכונה ב-TCP ושגויה ב-UDP.
-    public bool IsConnected => _config.UseUdp
-        ? _udpChannel is not null
-        : _tcpClient?.Connected ?? false;
+    // ⚠️ וב-RTU אין חיבור מתמשך בכלל: הפורט נפתח לכל קריאה ונסגר אחריה (ModbusRtuChannel), כדי שהטכנאי
+    // יוכל לחבר את תוכנת התכנות לאותו כבל. גם כאן הדגל אומר רק "הכנתי ערוץ".
+    public bool IsConnected => _config.UseRtu
+        ? _rtuChannel is not null
+        : _config.UseUdp
+            ? _udpChannel is not null
+            : _tcpClient?.Connected ?? false;
 
     /// <summary>
     /// מוודא שיש חיבור פתוח ל-PLC. אם אין — פותח אחד חדש.
@@ -55,6 +71,18 @@ public class PlcReader : IDisposable
 
         // סוגרים שאריות של חיבור קודם, אם יש.
         Dispose();
+
+        if (_config.UseRtu)
+        {
+            RtuSettings s = _config.Rtu;
+            // ⚠️ הודעה ולא ניסיון לפתוח "": SerialPort עם שם ריק זורק ArgumentException שאינה אומרת מה חסר
+            if (string.IsNullOrEmpty(s.PortName))
+                throw new InvalidOperationException("לא הוגדר פורט COM — יש לבחור אותו בהגדרות → רגיסטרים.");
+            _rtuChannel = _rtuPort is not null
+                ? new ModbusRtuChannel(_rtuPort, RtuTimeoutMs, s.Describe())
+                : new ModbusRtuChannel(s, RtuTimeoutMs);
+            return;
+        }
 
         if (_config.UseUdp)
         {
@@ -382,6 +410,10 @@ public class PlcReader : IDisposable
         if (_udpChannel is not null)
             return _udpChannel.ReadRegisters(slaveId, _config.UseHoldingRegisters, address, count);
 
+        // RTU טורי (1.0.61) — גם הוא לא דרך NModbus: ערוץ משלנו שפותח את הפורט לכל קריאה וסוגר אחריה
+        if (_rtuChannel is not null)
+            return _rtuChannel.ReadRegisters(slaveId, _config.UseHoldingRegisters, address, count);
+
         return _config.UseHoldingRegisters
             ? _master!.ReadHoldingRegisters(slaveId, (ushort)address, (ushort)count)   // FC 03
             : _master!.ReadInputRegisters(slaveId, (ushort)address, (ushort)count);    // FC 04
@@ -421,5 +453,8 @@ public class PlcReader : IDisposable
         // ה-socket של התעבורה הקודמת פתוח לנצח. שדה null זול לשחרר.
         _udpChannel?.Dispose();
         _udpChannel = null;
+
+        // ערוץ ה-RTU אינו מחזיק פורט בין קריאות — אין מה לסגור, רק לשכוח
+        _rtuChannel = null;
     }
 }

@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <!--
+  פורט טורי (1.0.61, 20/10/2026) — Modbus RTU דרך COM, לבקר שאין בו Ethernet (ModbusRtuChannel).
+  חבילה של Microsoft, באותה גרסה כמו Microsoft.Extensions.Hosting בשירות. ב-Core ולא בשירות: גם בדיקת
+  החיבור במגש משתמשת באותו ערוץ, כמו בערוץ ה-UDP.
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="10.0.9" />
+  </ItemGroup>
+
+  <!--
   ==========================================================
   צריבת סיסמת ה-HiveMQ לבינארי — בלי שהיא תיכנס לגיט
   ==========================================================

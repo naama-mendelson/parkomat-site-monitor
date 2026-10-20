@@ -1,4 +1,5 @@
 ﻿using Parkomat.Agent.Core.Configuration;
+using Parkomat.Agent.Core.Modbus;
 using System.Windows.Forms;
 
 namespace Parkomat.Agent.Tray.Forms;
@@ -35,9 +36,24 @@ public class RegistersForm : Form
     private readonly ComboBox _transport = new();
     private readonly ComboBox _funcCode = new();
 
+    // ============================================================
+    // RTU טורי (1.0.61, 20/10/2026) — הפורט והגדרות התקשורת
+    // ============================================================
+    // בקר בלי Ethernet, בכבל USB-Serial למחשב האתר. השורות מוצגות רק כש-"RTU טורי" נבחר, וכתובת ה-IP
+    // שבטופס הראשי אינה בשימוש אז. הפורט הוא רשימה **שאפשר להקליד בה**: היא מציעה את הפורטים שקיימים
+    // במחשב עכשיו, אבל טכנאי שמגדיר לפני שחיבר את הכבל צריך להקליד COM6 בעצמו. הערך נבדק באישור.
+    private readonly ComboBox _comPort = new();
+    private readonly ComboBox _baud = new();
+    private readonly ComboBox _parity = new();
+    private readonly ComboBox _stopBits = new();
+    private readonly List<Control> _rtuRow = new();
+
     // הכיתוב בדיוק כפי שהוא בתקן ובתיעוד של יצרן הבקר.
     private const string FC04 = "0x04 — Input Registers";
     private const string FC03 = "0x03 — Holding Registers";
+    private const string RTU = "RTU טורי";
+    private static readonly string[] Bauds = { "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200" };
+    private static readonly string[] Parities = { "None", "Even", "Odd" };
 
     // ה-PlcConfig שאנחנו עורכים. נחשף למי שקורא אחרי סגירה.
     public PlcConfig Result { get; private set; }
@@ -56,7 +72,7 @@ public class RegistersForm : Form
         AutoScaleMode = AutoScaleMode.Font;
         // ⚠️ רחב מספיק לכיתוב המלא של פקודת הקריאה. רשימה שחותכת
         // את הטקסט מאלצת לנחש מה נבחר, וזו הטעות שהרשימה הסגורה באה למנוע.
-        ClientSize = new Size(430, 430);
+        ClientSize = new Size(430, 540);
 
         // אזור גלילה — כאן ייכנסו כל הכתובות. כשנוסיף עוד, הגלילה תופיע לבד.
         var scroll = new Panel
@@ -85,7 +101,20 @@ public class RegistersForm : Form
         // מוגדר ל-UDP וקורא ב-TCP. פקד שלא מאפשר להקליד מונע את זה מראש.
         _transport.DropDownStyle = ComboBoxStyle.DropDownList;
         _transport.Width = 120;
-        _transport.Items.AddRange(new object[] { "TCP", "UDP" });
+        _transport.Items.AddRange(new object[] { "TCP", "UDP", RTU });
+
+        _comPort.DropDownStyle = ComboBoxStyle.DropDown;
+        _comPort.Width = 120;
+        _comPort.Items.AddRange(SerialRtuPort.PresentPorts());
+        _baud.DropDownStyle = ComboBoxStyle.DropDownList;
+        _baud.Width = 120;
+        _baud.Items.AddRange(Bauds);
+        _parity.DropDownStyle = ComboBoxStyle.DropDownList;
+        _parity.Width = 120;
+        _parity.Items.AddRange(Parities);
+        _stopBits.DropDownStyle = ComboBoxStyle.DropDownList;
+        _stopBits.Width = 120;
+        _stopBits.Items.AddRange(new object[] { "1", "2" });
 
         // ⚠️ **פקודת הקריאה, ולא "סוג רגיסטר".** מה שכתוב כאן חייב להיות
         // מה שכתוב בתיעוד של יצרן הבקר ובתקן — 0x04 / 0x03 — כי זה מה
@@ -100,16 +129,22 @@ public class RegistersForm : Form
         _funcCode.Items.AddRange(new object[] { FC04, FC03 });
 
         AddRow(table, 0, "תעבורה:", _transport);
-        AddRow(table, 1, "פקודת קריאה:", _funcCode);
-        AddRow(table, 2, "כתובת MODE:", _modeReg);
-        AddRow(table, 3, "כתובת כרטיס:", _cardReg);
-        AddRow(table, 4, "כתובת Cycle Counter:", _cycleReg);
+        // שורות ה-RTU מיד אחרי התעבורה — מוסתרות כש-TCP/UDP נבחר (ToggleRtuRows)
+        _rtuRow.Add(AddRow(table, 1, "פורט COM:", _comPort));
+        _rtuRow.Add(AddRow(table, 2, "מהירות (baud):", _baud));
+        _rtuRow.Add(AddRow(table, 3, "זוגיות:", _parity));
+        _rtuRow.Add(AddRow(table, 4, "ביטי עצירה:", _stopBits));
+        _rtuRow.AddRange(new Control[] { _comPort, _baud, _parity, _stopBits });
+        AddRow(table, 5, "פקודת קריאה:", _funcCode);
+        AddRow(table, 6, "כתובת MODE:", _modeReg);
+        AddRow(table, 7, "כתובת כרטיס:", _cardReg);
+        AddRow(table, 8, "כתובת Cycle Counter:", _cycleReg);
 
         // ⚠️ **הכיתוב אומר במפורש ש-0 מכבה.** שדה מספרי בלי הסבר היה
         // מזמין להקליד בו משהו "ליתר ביטחון", ואתר חד-מערכתי שמדווח
         // מערכת שנייה מדומה הוא בדיוק סוג הכשל השקט שאין לו מסך.
-        AddRow(table, 5, "כתובת MODE 2 (0 = אין):", _modeReg2);
-        AddRow(table, 6, "כתובת כרטיס 2 (0 = אין):", _cardReg2);
+        AddRow(table, 9, "כתובת MODE 2 (0 = אין):", _modeReg2);
+        AddRow(table, 10, "כתובת כרטיס 2 (0 = אין):", _cardReg2);
         // כשנוסיף registers בעתיד — פשוט נוסיף כאן עוד שורות, והגלילה תטפל.
 
         scroll.Controls.Add(table);
@@ -143,15 +178,42 @@ public class RegistersForm : Form
         // ⚠️ נגזר מ-UseUdp ולא מהמחרוזת הגולמית, כדי שהחלונית תראה את מה
         // שהסוכן **באמת יעשה**. קובץ עם "UDP " היה מציג UDP בזמן שהסוכן
         // קורא TCP — כלומר הממשק היה מאשר את הטעות במקום לחשוף אותה.
-        _transport.SelectedItem = current.UseUdp ? "UDP" : "TCP";
+        _transport.SelectedItem = current.UseRtu ? RTU : current.UseUdp ? "UDP" : "TCP";
 
         // ⚠️ נגזר מ-UseHoldingRegisters ולא מהמספר הגולמי, מאותה סיבה:
         // קובץ עם FunctionCode=7 היה מציג 7 בזמן שהסוכן קורא ב-0x04.
         _funcCode.SelectedItem = current.UseHoldingRegisters ? FC03 : FC04;
+
+        // RTU — מהערכים המנורמלים (current.Rtu), מאותה סיבה: מה שמוצג הוא מה שהסוכן יעשה
+        var rtu = current.Rtu;
+        _comPort.Text = rtu.PortName;
+        if (!_baud.Items.Contains(rtu.BaudRate.ToString())) _baud.Items.Add(rtu.BaudRate.ToString());
+        _baud.SelectedItem = rtu.BaudRate.ToString();
+        _parity.SelectedItem = rtu.Parity == "even" ? "Even" : rtu.Parity == "odd" ? "Odd" : "None";
+        _stopBits.SelectedItem = rtu.StopBits.ToString();
+        _transport.SelectedIndexChanged += (s, e) => ToggleRtuRows();
+        ToggleRtuRows();
+    }
+
+    private bool RtuChosen => (_transport.SelectedItem as string) == RTU;
+
+    private void ToggleRtuRows()
+    {
+        foreach (var c in _rtuRow) c.Visible = RtuChosen;
     }
 
     private void OnOk()
     {
+        // ⚠️ RTU בלי פורט תקין — לא נשמר. "rtu" עם פורט ריק או "com 6" היה אתר שנראה מוגדר ואינו קורא כלל.
+        string com = (_comPort.Text ?? "").Trim().ToUpperInvariant().Replace(" ", "");
+        if (RtuChosen && !System.Text.RegularExpressions.Regex.IsMatch(com, "^COM[0-9]{1,3}$"))
+        {
+            MessageBox.Show(this, "יש לבחור פורט COM תקין, למשל COM6.", "פורט COM",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1,
+                MessageBoxOptions.RtlReading | MessageBoxOptions.RightAlign);
+            return;
+        }
+
         // ⚠️ **עריכה במקום, לא בנייה מחדש.** כאן עמד `new PlcConfig { ... }`
         // עם חמישה שדות מתוך שמונה, ולכן אישור החלונית **מחק את
         // FaultTextRegister ו-FaultTextMaxChars** והחזיר אותם לברירת המחדל.
@@ -173,22 +235,35 @@ public class RegistersForm : Form
 
         Result.ModeRegister2 = bothGiven ? m2 : 0;
         Result.CardRegister2 = bothGiven ? c2 : 0;
-        Result.Transport = (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp";
+        Result.Transport = RtuChosen ? "rtu" : (_transport.SelectedItem as string) == "UDP" ? "udp" : "tcp";
         Result.FunctionCode = (_funcCode.SelectedItem as string) == FC03 ? 3 : 4;
+
+        // ⚠️ הגדרות הפורט נשמרות רק כש-RTU נבחר. מעבר ל-TCP משאיר אותן כפי שהיו (עריכה במקום) — חזרה
+        // ל-RTU לא תדרוש להקליד הכול מחדש.
+        if (RtuChosen)
+        {
+            Result.ComPort = com;
+            Result.BaudRate = int.TryParse(_baud.SelectedItem as string, out int baud) ? baud : 9600;
+            Result.Parity = ((_parity.SelectedItem as string) ?? "None").ToLowerInvariant();
+            Result.StopBits = (_stopBits.SelectedItem as string) == "2" ? 2 : 1;
+        }
 
         DialogResult = DialogResult.OK;
         Close();
     }
 
-    private static void AddRow(TableLayoutPanel t, int row, string label, Control input)
+    /// <returns>התווית — כדי שאפשר יהיה להסתיר שורה שלמה (שורות ה-RTU).</returns>
+    private static Label AddRow(TableLayoutPanel t, int row, string label, Control input)
     {
-        t.Controls.Add(new Label
+        var l = new Label
         {
             Text = label,
             AutoSize = true,
             Anchor = AnchorStyles.Right,
             Padding = new Padding(0, 6, 0, 0)
-        }, 0, row);
+        };
+        t.Controls.Add(l, 0, row);
         t.Controls.Add(input, 1, row);
+        return l;
     }
 }

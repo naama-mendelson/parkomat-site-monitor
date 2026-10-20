@@ -172,6 +172,66 @@ public class ModbusUdpChannelTests
     }
 
     // ============================================================
+    // בקר UDP תקני — מסמך הבקר של אתר חדש (20/10/2026)
+    // ============================================================
+    // המסמך: "בקשה: 00 01 00 00 00 06 01 03 00 69 00 03; תשובה לדוגמה (מונה 500, MODE 1, כרטיס 7):
+    // 00 01 00 00 00 09 01 03 06 01 F4 00 01 00 07" — כלומר הבקר הזה **מחזיר** את מזהה הטרנזקציה, ושדה האורך
+    // נכון (9), בניגוד לבקר של 2222. הבקשה זהה בית-בבית לזו שכבר נבדקת למעלה. כאן — אותו מסלול מלא
+    // (PlcReader, הערוץ, ה-socket) מול משיב שעונה בדיוק בצורת המסמך: הכותרת התקנית אינה מפריעה לפענוח
+    // שמתעלם ממנה, והסידור Cycle=105, MODE=106, Card=107 נקרא נכון.
+    [Fact]
+    public void PlcReaderReadsAStandardUdpControllerExactlyAsItsDocumentDescribes()
+    {
+        int port = FreePort();
+        using var responder = new UdpClient(port);
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        byte[]? seen = null;
+
+        Task server = Task.Run(() =>
+        {
+            var ep = new IPEndPoint(IPAddress.Any, 0);
+            while (!cts.IsCancellationRequested)
+            {
+                byte[] req;
+                try { req = responder.Receive(ref ep); }
+                catch { return; }
+                seen ??= req;
+                // התשובה מהמסמך, עם מזהה הטרנזקציה של הבקשה (שני הבתים הראשונים) — כפי שהמסמך אומר שהבקר עושה
+                byte[] answer = { req[0], req[1], 0x00, 0x00, 0x00, 0x09, 0x01, 0x03, 0x06, 0x01, 0xF4, 0x00, 0x01, 0x00, 0x07 };
+                responder.Send(answer, answer.Length, ep);
+            }
+        });
+
+        try
+        {
+            using var reader = new PlcReader(new PlcConfig
+            {
+                IpAddress = "127.0.0.1",
+                Port = port,
+                Transport = "udp",
+                FunctionCode = 3,
+                CycleRegister = 105,
+                ModeRegister = 106,
+                CardRegister = 107,
+            });
+
+            PlcReading r = reader.Read()!;
+
+            Assert.Equal(500, r.CycleCounter);
+            Assert.Equal(1, r.Mode);
+            Assert.Equal("7", r.CardNumber);
+            // הבקשה שיצאה לרשת — כמו במסמך, פרט למזהה הטרנזקציה שהסוכן בוחר: unit 1, FC 03, מ-105, כמות 3
+            Assert.NotNull(seen);
+            Assert.Equal(new byte[] { 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x69, 0x00, 0x03 }, seen![2..]);
+        }
+        finally
+        {
+            cts.Cancel();
+            responder.Dispose();
+        }
+    }
+
+    // ============================================================
     // ⚠️ תשובה מאוחרת לבקשה קודמת — הסכנה האמיתית של UDP
     // ============================================================
     // ב-UDP אין הבטחת סדר, ותשובה כפולה או מאוחרת מגיעה כשהבקשה הבאה

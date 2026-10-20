@@ -9,7 +9,8 @@ Guidance for Claude Code when working in this repository.
 
 Parkomat.Agent is a **Windows-only .NET 10 / C#** agent that runs on a PC at a parking
 site. It reads a PLC over **Modbus** — TCP by default, UDP where the controller only
-speaks that (see *Modbus over UDP* below) — and relays the site's state to the cloud
+speaks that (see *Modbus over UDP* below), or **RTU over a COM port** where the controller has
+no Ethernet at all (since 1.0.61, see *Modbus RTU over a COM port*) — and relays the site's state to the cloud
 (**HiveMQ**) over **MQTT**, through a local **Mosquitto** bridge.
 
 End-to-end data flow:
@@ -454,6 +455,49 @@ had no behavioural test at all before this**, and it is the path all 21 sites ru
 pass against a reader that ignored `Transport` entirely; that one would not. All seven
 mutations (ignore the choice, wipe it on reset, rebuild the config in either form, make the
 box typeable, disable the UDP branch, report a bad value as known) fail the suite.
+
+## Modbus RTU over a COM port (1.0.61, 20/10/2026)
+
+The first controller with **no Ethernet**: its RS232 port goes over a USB-Serial cable (Prolific) to the site PC,
+where it is COM6. The controller's document: 9600, 8 data bits, no parity, 1 stop bit; unit 1; FC 03; one request
+from 405, count 3; one read a second, 500 ms to answer. The owner's question was whether this needs a new agent —
+it does not: `PlcConfig.Transport = "rtu"` is a third transport, and everything after the read (MODE translation,
+operations, Supabase, the beat, the queue) is shared. `SiteConfig` had anticipated it ("כשיתווסף RTU טורי").
+
+- **Our own channel, `ModbusRtuChannel` (Core), not NModbus** — same reasoning as the UDP channel: an RTU frame is
+  eight bytes and a CRC, and pure `BuildRequest` / `Parse` / `Crc16` are tested against the document's exact bytes
+  (`01 03 01 95 00 03 14 1B` → `01 03 06 00 3E 00 01 00 00 59 70` = counter 62, MODE 1, card 0). `Parse` checks the
+  CRC first (line noise reads as a plausible number otherwise), then the unit, an exception frame (`0x83` + code),
+  the function, the byte count and the frame length. `ReadFrame` assembles the answer from pieces — a serial port
+  hands back whatever arrived — and knows after two bytes whether it is a 5-byte exception frame or `3 + count + 2`.
+  One deadline for the whole frame.
+- ⚠️ **The port is opened for each read and closed right after.** The technician programs the controller over the
+  same cable, and only one program can hold the port. An agent that kept it open would lock them out. While the
+  technician is connected a read fails, and after ten failures the agent reports the usual "PLC unreachable" fault
+  — **the owner's choice** (*"תקלה, כמו נתק בכל אתר"*), over showing maintenance or holding the last state.
+- **Opening right after our own close** (the fault text is read in the same loop iteration) can fail with the same
+  `UnauthorizedAccessException` as a busy port — `SerialPort` documents that a closed port is not always released at
+  once. So two more attempts, 100 ms apart; a port the technician really holds still fails, 200 ms later.
+- **Messages say what to do:** a busy port says so (not "Access to the port is denied", which reads like a
+  permissions problem); a missing port lists the ports that exist (`SerialPort.GetPortNames`), because a cable moved
+  to another USB socket changes the COM number.
+- **Settings** (`ComPort`, `BaudRate`, `Parity`, `StopBits`; data bits fixed at 8, RTU requires it): `ComPort` is
+  **empty by default**, not "COM1" — a guessed port could be another device. `PlcConfig.Rtu` normalises them (upper
+  case, an unknown parity → none, stop bits ≠ 2 → 1). `BuildResetConfig` carries all four, like the transport: an RTU
+  site that lost its port after an upgrade reads nothing.
+- **The registers dialog** gets "RTU טורי" and four rows that show only when it is chosen; the port is an editable
+  list of the ports present now (a technician may configure before plugging the cable in), validated as
+  `COM<number>` on OK. The IP and port in the main form are unused for RTU, and `PlcTargetLine` / the Probe tool /
+  the connection test show `RTU COM6 9600 8N1` instead of an address. The connection test opens and closes the port
+  like the agent, so it can collide with the agent's own read; its failure message says to test again.
+- **Timeout 500 ms** (`RtuTimeoutMs`), the document's. At 9600 baud the frames take ~20 ms, a fault text of 80
+  registers ~170 ms.
+- Package: `System.IO.Ports` 10.0.9 in Core (Microsoft's, same version line as `Microsoft.Extensions.Hosting`).
+- Tests: `ModbusRtuChannelTests` (21: the document's bytes both ways, CRC, exception, unit, byte count, short frame,
+  pieces, open/close per read, busy with and without the retry, an exception frame over the port, silence, a missing
+  port, end to end through `PlcReader`, no COM port, normalisation, the upgrade, the target line);
+  `PlcFormWiringTests` (the dialog derives RTU from `UseRtu` and saves `"rtu"` and a validated port);
+  `PlcTransportTests` (`"rtu"` is no longer an unknown value). See the mutation result in the root `CLAUDE.md`.
 
 ## MQTT / server contract (non-obvious — easy to break)
 
