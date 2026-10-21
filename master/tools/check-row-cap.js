@@ -128,6 +128,16 @@ const BOUNDED = {
   tech_dispatch: "כתיבה",
   tech_dispatch_mark: "כתיבה",
   tech_dispatch_end: "כתיבה",
+  // קוד כניסה במייל (20/10/2026) — נמצאו לא מוכרזות בבדיקה המקיפה של 21/10
+  login_code_status: "jsonb יחיד — {required, verified, email} של המשתמש עצמו",
+  login_code_verify: "jsonb יחיד — {ok, error, left}",
+  // הטלפון של הטכנאי והצפצוף (21/10/2026, שלבים 2 ו-4)
+  tech_phone_unpair: "כתיבה",
+  tech_me: "jsonb יחיד — הטכנאי עצמו והמשימה הפתוחה שלו (אחת לכל היותר)",
+  tech_push_subscribe: "כתיבה",
+  tech_self_ack: "כתיבה",
+  // "טכנאי באתר" בלוח (21/10/2026): ביקור פתוח אחד לכל רכב (אינדקס ייחודי), כלומר עד מספר הרכבים בצי (38)
+  tech_on_site: "jsonb יחיד — הביקורים הפתוחים, אחד לכל רכב לכל היותר",
 
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
