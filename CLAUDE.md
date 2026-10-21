@@ -4808,7 +4808,24 @@ publishing, and leave the small ones for a later round.
 - SQL first, though either order is safe. A new bundle against the old SQL: `tech_self_unpair` returns 404, and the phone
   still cancels the subscription and signs out (tested). `push_devices` is already in production.
 
-### Only the service technicians' vehicles are shown — "רכבים ברשימה" (built 21/10/2026, NOT deployed)
+### Only the service technicians' vehicles are shown — "רכבים ברשימה" (built and deployed 21/10/2026, 0e100e2)
+
+✅ **Deployed at the owner's word ("YES"), in this order:**
+1. **SQL:** 7 gaps, 12 s, then "הייצור זהה לקוד".
+2. **The list:** 14 vehicles, each matched to its Ituran nickname, loaded right after the SQL. The audit row is
+   `fleet.set`, by "Claude — רשימת טכנאי השירות לבקשת הבעלים".
+3. **Push:** live bundle `index-DuLl7RRs.js`.
+
+**Checked as a manager in a read-only transaction:**
+- `vehicles_live_list` returns 14 vehicles, all from the list (418 ms).
+- The 12 sites that need a technician reference only listed vehicles.
+- `tech_on_site` has 3 rows.
+- `fleet_list` returns 38 vehicles and 14 shown.
+- The table and `fleet_shown_set` are closed to anon and to users.
+- 86 of 89 agents are beating, and the Ituran sync runs.
+
+⚠️ **A real name had been committed earlier, in `vehicles-ui.test.js` (20/10).** It is replaced with an invented one;
+the git history still holds it.
 
 From the service team, pasted by the owner: no need to show the vehicles of named office staff and installers (names left out here: the repo is public), and if
 everyone must appear, *"אפשרות לבצע סינון על מנת שלמוקד יהיה ברשימה רק את הטכנאים הרלוונטים"*. Then a list of service
