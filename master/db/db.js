@@ -732,6 +732,10 @@ function init() {
         "wizenet-relay.postgres.sql",
         // רכבי הטכנאים מאיתוראן (20/10/2026) — אחרי compliance (app.require_staff)
         "vehicles.postgres.sql",
+        // מה הטכנאים עשו היום (21/10/2026) — אחרי vehicles (site_at, vehicle_state) ואחרי board (service_calls_current)
+        "vehicle-stats.postgres.sql",
+        // לוח טכנאי השטח (20/10/2026) — אחרי vehicles (app.vehicle_json, vehicles_live) ואחרי writes (require_editor, audit)
+        "technicians.postgres.sql",
         // ⚠️ אחרון: מריץ את site_stats / site_uptime / site_uptime_service (חישוב ראשון),
         // ו-app.is_active_user למדיניות. ה-cron שמרענן אותו — ב-cron.postgres.sql למטה.
         "card-metrics.postgres.sql"]) {

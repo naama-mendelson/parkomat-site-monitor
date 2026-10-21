@@ -74,6 +74,19 @@ export function clockText(iso, nowIso) {
   return a.year === n.year ? `${a.day}/${a.month} ${hm}` : `${a.day}/${a.month}/${a.year} ${hm}`;
 }
 
+/** משך בין שני זמנים: "פחות מדקה", "35 דק׳", "1:05 שע׳", "יום", "3 ימים"; בלי אחד מהם — "". */
+export function durationLabel(fromIso, toIso) {
+  const a = ms(fromIso), b = ms(toIso);
+  if (a == null || b == null) return "";
+  const m = Math.max(0, Math.floor((b - a) / 60_000));
+  if (m < 1) return "פחות מדקה";
+  if (m < 60) return `${m} דק׳`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}:${String(m % 60).padStart(2, "0")} שע׳`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "יום" : `${d} ימים`;
+}
+
 /** שורת המצב עם הזמן שלה: "חונה מאז 17:45", "לא מתעדכן מאז 13:02", "לא מדווח מאז 13/10 08:00"; אחרת — רק המצב. */
 export function stateText(v, nowIso) {
   const s = stateOf(v, nowIso);

@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS vehicles_sync (
   token_fetches bigint NOT NULL DEFAULT 0,   -- כמה פעמים הונפק טוקן חדש (מופע קר של הפונקציה) — כדי למדוד, לא לנחש
   last_token_at timestamptz
 );
+-- ⚠️ ADD COLUMN ולא בתוך ה-CREATE — בייצור הטבלה כבר קיימת. תקלה בסיכום היומי (vehicle-stats), שלא עוצרת את הסנכרון.
+ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS stats_error text;
+ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS stats_error_at timestamptz;
 
 -- סגורות: RLS בלי מדיניות ובלי הרשאות (ברירת המחדל של Supabase מעניקה ALL לכל טבלה חדשה). קריאה רק דרך
 -- vehicles_live_list, כתיבה רק דרך ituran_ingest / ituran_sync_failed.
@@ -333,6 +336,15 @@ BEGIN
     token_fetches = s.token_fetches + CASE WHEN v_fresh THEN 1 ELSE 0 END,
     last_token_at = CASE WHEN v_fresh THEN now() ELSE s.last_token_at END;
 
+  -- הסיכום היומי והביקורים באתרים (vehicle-stats.postgres.sql). ⚠️ בבלוק משלו: תקלה בסטטיסטיקה לעולם לא מפילה את
+  -- סנכרון הצי — היא נרשמת ב-stats_error, והמסך אומר שהסטטיסטיקה לא התעדכנה.
+  BEGIN
+    PERFORM app.vehicles_track(now());
+    UPDATE vehicles_sync SET stats_error = NULL, stats_error_at = NULL WHERE id = 1 AND stats_error IS NOT NULL;
+  EXCEPTION WHEN others THEN
+    UPDATE vehicles_sync SET stats_error = left(SQLERRM, 300), stats_error_at = now() WHERE id = 1;
+  END;
+
   RETURN cardinality(v_plates);
 END
 $fn$;
@@ -384,6 +396,55 @@ AS $$
    WHERE n.m <= p_max_m
 $$;
 REVOKE ALL ON FUNCTION app.near_sites(double precision, double precision, double precision, integer) FROM PUBLIC;
+
+-- ============================================================
+-- "באתר" (21/10/2026) — בעלת המוצר: "האם הוא נמצא באתר (אם הרכב שלו חונה ליד אתר שלנו)"
+-- ============================================================
+-- הרדיוס לפי דיוק מיקום האתר: אתר שמיקומו בבניין או מאושר ביד — 150 מ' (רחוב רחב ורכב שחונה מעבר לפינה); אתר שמיקומו
+-- משוער לפי רחוב או אזור — 300 מ', ומסומן approx, כי הנקודה עצמה עלולה לזוז כמה מאות מטרים לאורך הרחוב.
+-- נמדד בבוקר 21/10: 7 רכבים חונים בטווח 115–324 מ' מאתר; 6 מהם ליד אתר משוער.
+CREATE OR REPLACE FUNCTION app.site_radius_m(p_precision text)
+RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+AS $$ SELECT CASE WHEN p_precision IN ('street', 'area') THEN 300 ELSE 150 END $$;
+
+-- האתר שהנקודה בתוכו (הקרוב, אם יש כמה), או NULL: {site_id, code, name, m, approx}.
+CREATE OR REPLACE FUNCTION app.site_at(p_lat double precision, p_lon double precision)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT jsonb_build_object('site_id', n.id, 'code', n.code, 'name', n.site_name, 'm', round(n.m)::integer,
+                            'approx', n.geo_precision IN ('street', 'area'))
+    FROM (SELECT s.id, s.code, s.site_name, s.geo_precision, app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) AS m
+            FROM sites s
+           WHERE p_lat IS NOT NULL AND p_lon IS NOT NULL AND s.lat IS NOT NULL
+             AND s.lat BETWEEN p_lat - 300 / 111195.0 AND p_lat + 300 / 111195.0
+             AND s.lon BETWEEN p_lon - 300 / (111195.0 * cos(radians(p_lat)))
+                           AND p_lon + 300 / (111195.0 * cos(radians(p_lat)))) n
+   WHERE n.m <= app.site_radius_m(n.geo_precision)
+   ORDER BY n.m
+   LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION app.site_at(double precision, double precision) FROM PUBLIC;
+
+-- מה הרכב עושה, במילה אחת לציר היום ולסטטיסטיקה: drive (נוסע, או מנוע דולק שלא באתר — רמזור), site (עומד ליד אתר: חונה,
+-- מנוע דולק, או שהשתתק שם — חניון תת-קרקעי), park (חונה במקום אחר), silent (השתתק במקום אחר), none (לא מדווח / לא ידוע).
+CREATE OR REPLACE FUNCTION app.vehicle_kind(p_state text, p_at_site boolean)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+           WHEN p_state = 'driving' THEN 'drive'
+           WHEN p_state IN ('parking', 'idle', 'silent') AND COALESCE(p_at_site, false) THEN 'site'
+           WHEN p_state = 'idle' THEN 'drive'
+           WHEN p_state = 'parking' THEN 'park'
+           WHEN p_state = 'silent' THEN 'silent'
+           ELSE 'none'
+         END
+$$;
 
 -- כל האתרים עם המיקום שלהם (או בלעדיו) — לשכבת האתרים במפה ולרשימת "דורשים בדיקה". כל מי שמחובר; jsonb אחד.
 CREATE OR REPLACE FUNCTION public.site_locations_list()
@@ -516,6 +577,48 @@ REVOKE ALL ON FUNCTION public.site_geo_import(jsonb) FROM PUBLIC, anon, authenti
 GRANT EXECUTE ON FUNCTION public.site_geo_import(jsonb) TO service_role;
 
 -- ============================================================
+-- רכב אחד כמו שהוא מוצג — המפה (vehicles_live_list) ולוח הטכנאים (technicians.postgres.sql, app.tech_json) קוראים מכאן,
+-- כדי שכללי המצב ("בנסיעה", "לא מתעדכן", "חונה מאז", ניתוק מתח, האתרים הקרובים) לא יתפצלו בין שני מסכים.
+-- ============================================================
+CREATE OR REPLACE FUNCTION app.vehicle_json(v vehicles_live)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  -- ⚠️ plpgsql ולא sql: פונקציית sql עם FROM מתוכננת מחדש בכל קריאה, ו-38 קריאות בכל שאילתה של המסך עלו ~250 מ"ש (נמדד
+  -- מקומית, 21/10/2026); plpgsql שומרת את התוכנית בין קריאות באותו חיבור.
+  RETURN (  SELECT jsonb_build_object(
+           'plate', v.license_plate, 'name', v.nickname, 'make', v.make_name, 'model', v.model_name,
+           -- motion = מה שאיתוראן אמרו; state = מה שמוצג (app.vehicle_state). המסך מתרגם את state ולא מחליט.
+           'motion', v.motion, 'state', s.state,
+           -- חונה → מתי כובה (NULL כשלא ידוע); לא מתעדכן / לא מדווח → הדיווח האחרון; בנסיעה / מנוע דולק → NULL
+           'state_since', to_char(CASE s.state
+                                    WHEN 'parking' THEN app.vehicle_parked_since(v.events, v.lat, v.lon)
+                                    WHEN 'silent' THEN v.located_at
+                                    WHEN 'no_report' THEN v.located_at
+                                  END AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+           'power_alert', CASE WHEN pa.at IS NOT NULL
+                               THEN jsonb_build_object('at', to_char(pa.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                                                       'name', pa.name) END,
+           -- עד 3 אתרים בטווח 1.5 ק"מ מהמיקום (האחרון שידוע), הקרוב ראשון: [{code, name, m, approx}]
+           'near', app.near_sites(v.lat, v.lon),
+           -- עומד ליד אתר שלנו (חונה, מנוע דולק, או השתתק שם): {site_id, code, name, m, approx}; בנסיעה — NULL
+           'at_site', CASE WHEN s.state IN ('parking', 'idle', 'silent') THEN app.site_at(v.lat, v.lon) END,
+           'lat', v.lat, 'lon', v.lon, 'address', v.address, 'speed', v.speed,
+           'heading', v.heading, 'odometer', v.odometer,
+           'located_at', to_char(v.located_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+           'places', v.places, 'driver', v.driver,
+           'synced_at', to_char(v.synced_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+    FROM (SELECT app.vehicle_state(v.motion, v.located_at, v.synced_at) AS state) s
+    LEFT JOIN LATERAL app.vehicle_power_alert(v.events) pa ON true
+  );
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.vehicle_json(vehicles_live) FROM PUBLIC;
+
+-- ============================================================
 -- הקריאה של המפה — כל מי שמחובר (בעלת המוצר, 20/10/2026: "כל מי שמחובר"), כלומר require_staff: מנהל, עורך, בקר.
 -- jsonb אחד — בלי תקרת 1,000 השורות של PostgREST.
 -- ============================================================
@@ -531,35 +634,18 @@ DECLARE
 BEGIN
   PERFORM app.require_staff();
   RETURN jsonb_build_object(
-    'vehicles', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-               'plate', v.license_plate, 'name', v.nickname, 'make', v.make_name, 'model', v.model_name,
-               -- motion = מה שאיתוראן אמרו; state = מה שמוצג (app.vehicle_state). המסך מתרגם את state ולא מחליט.
-               'motion', v.motion, 'state', s.state,
-               -- חונה → מתי כובה (NULL כשלא ידוע); לא מתעדכן / לא מדווח → הדיווח האחרון; בנסיעה / מנוע דולק → NULL
-               'state_since', to_char(CASE s.state
-                                        WHEN 'parking' THEN app.vehicle_parked_since(v.events, v.lat, v.lon)
-                                        WHEN 'silent' THEN v.located_at
-                                        WHEN 'no_report' THEN v.located_at
-                                      END AT TIME ZONE 'UTC', iso),
-               'power_alert', CASE WHEN pa.at IS NOT NULL
-                                   THEN jsonb_build_object('at', to_char(pa.at AT TIME ZONE 'UTC', iso), 'name', pa.name) END,
-               -- עד 3 אתרים בטווח 1.5 ק"מ מהמיקום (האחרון שידוע), הקרוב ראשון: [{code, name, m, approx}]
-               'near', app.near_sites(v.lat, v.lon),
-               'lat', v.lat, 'lon', v.lon, 'address', v.address, 'speed', v.speed,
-               'heading', v.heading, 'odometer', v.odometer,
-               'located_at', to_char(v.located_at AT TIME ZONE 'UTC', iso),
-               'places', v.places, 'driver', v.driver,
-               'synced_at', to_char(v.synced_at AT TIME ZONE 'UTC', iso))
-             ORDER BY v.license_plate)
-        FROM vehicles_live v
-        CROSS JOIN LATERAL (SELECT app.vehicle_state(v.motion, v.located_at, v.synced_at) AS state) s
-        LEFT JOIN LATERAL app.vehicle_power_alert(v.events) pa ON true), '[]'::jsonb),
+    -- stats = מה הרכב עשה היום ובשבוע (vehicle-stats.postgres.sql): הביקור הנוכחי באתר, ק"מ, זמן נסיעה, ציר היום
+    'vehicles', COALESCE((SELECT jsonb_agg(app.vehicle_json(v) || jsonb_build_object('stats', app.vehicle_stats_json(v.license_plate))
+                                           ORDER BY v.license_plate)
+                            FROM vehicles_live v), '[]'::jsonb),
+    -- האתרים שצריכים טכנאי עכשיו (תקלה / קריאה פתוחה) — ומי הכי קרוב לכל אחד
+    'alerts', app.vehicle_alerts_json(),
     'sync', (SELECT jsonb_build_object(
                       'last_ok_at', to_char(s.last_ok_at AT TIME ZONE 'UTC', iso),
                       'vehicles', s.vehicles,
                       'last_error', s.last_error,
-                      'last_error_at', to_char(s.last_error_at AT TIME ZONE 'UTC', iso))
+                      'last_error_at', to_char(s.last_error_at AT TIME ZONE 'UTC', iso),
+                      'stats_error', s.stats_error)
                FROM vehicles_sync s WHERE s.id = 1),
     'now', to_char(now() AT TIME ZONE 'UTC', iso));
 END

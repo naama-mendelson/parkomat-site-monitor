@@ -4193,6 +4193,267 @@ address, confirmed or corrected on the map; and then *"אני רוצה שהרכ�
 - ⚠️ **Deploy:** SQL first (the dry run shows 11 gaps: 6 new functions, 5 bodies; the six `sites` columns and
   `sites_geo_shape` do **not** show — check `information_schema.columns` after `--apply`), then
   `node --env-file=.env tools/geocode-sites.js --csv=<project list> --apply`, then push. An old bundle ignores `near`.
+  ✅ Deployed 20/10/2026 (c8b6348): SQL applied, 200 locations written, pushed.
+
+### A card per technician, a quiet map, and what each one did today (21/10/2026)
+
+The owner: *"כשלוחצים על טכנאים יש אופציה לראות מפה של מיקומים אבל בלי מפה אמיתית מבלבלת מתחת, וכן אופציה לראות כרטיס
+לכל טכנאי. לכל טכנאי רואים איפה הוא נמצא, האם הוא נמצא באתר (אם הרכב שלו חונה ליד אתר שלנו), ועוד כל פרט וסטטיסטיקה —
+תהיה יצירתי ותחשוב גדול, חזק ויפה"*; and, looking at the first quiet map: *"שלא יהיו אחד על השני — שיהיה ברור מה קורה"*.
+
+- **"טכנאים" has two views, "כרטיסים" (default) and "מפה"** (`TechniciansView.jsx`: the header, the segmented switch, the
+  team line, the sync and stats warnings). The choice is remembered per user per device (`parkomat.techView:<uid>`). One
+  query feeds both views: `vehicles_live_list`, once a minute while open and visible.
+- ⚠️ **"טכנאי" here is a vehicle in Ituran** (the name from its nickname). The coordinator's board, with a technician ↔
+  plate mapping and statuses, is built in SQL and dormant (*The coordinator's board* below).
+- **"באתר" = stopped near one of our sites**, decided in SQL: `app.site_at(lat, lon)` — the nearest site within
+  `app.site_radius_m`: **150 m** for a site located at the building or confirmed by hand, **300 m** for an approximate
+  (street / area) site, marked `approx`. Only when the state is parking, idle or silent (a unit that went quiet next to a
+  site — an underground car park — is "באתר, אין קליטה"; decision 14 of the technicians plan). Driving past a site is
+  never "at the site". `vehicle_json` returns it as `at_site` (shared with the dispatch board). Measured the morning of
+  21/10: 7 parked vehicles within 115–324 m of a site, 6 of them by an approximate site — hence the "מיקום האתר משוער —
+  ייתכן שהוא חונה ליד, לא בו" note on such a card.
+- **What is stored for the statistics — summaries, not tracks** (`master/db/vehicle-stats.postgres.sql`):
+  - `vehicle_days` — one row per vehicle per Israel day: km (Ituran's odometer: start of day → last), seconds driving and
+    at sites, stops, max speed, first and last movement, and the **day timeline** — segments `[kind, from minute, to
+    minute, site code]`, minutes from the Israel midnight (`day_minutes` is 1380 / 1440 / 1500 on DST days).
+  - `vehicle_visits` — one row per visit to a site: arrived (the ignition-off time when the vehicle parked there within the
+    last 12 hours, else the sample), last seen, ended, `no_signal`. A visit under 2 minutes is deleted on close (a traffic
+    light next to a site is not a visit). One open visit per vehicle (partial unique index).
+  - **No coordinates in either table.** ~38 day rows and a few hundred visits a day. Both closed (RLS, no grants).
+  - Retention (`app.prune_vehicle_stats`, cron `parkomat-prune-vehicle-stats` 04:47 UTC): visits 90 days, day summaries
+    13 months, their timelines 90 days. An open visit is never pruned.
+- **The sample is every sync.** `ituran_ingest` calls `app.vehicles_track(now())` at its end, **in its own block**: a
+  failure there is caught and written to `vehicles_sync.stats_error` (the screen says "הסטטיסטיקה של היום לא התעדכנה —
+  המיקומים כן"); the fleet sync never fails because of statistics. The time between two samples belongs to the **previous**
+  state, capped at 5 minutes — a longer gap (a sync outage) is a `none` segment, not two hours of driving. `kind` =
+  `app.vehicle_kind`: drive (driving, or engine on away from a site — a traffic light), site, park, silent, none. Only
+  vehicles that came in this sync are counted; a sample older than the last one is ignored; a day caps at 400 segments.
+  A vehicle that left the Ituran account has its open visit closed.
+- ⚠️ **Found by the tests, fixed before anyone saw it:** closing and deleting a short visit in one statement (`WITH c AS
+  (UPDATE …) DELETE … USING c`) never deleted anything — the two parts of one statement do not see each other's changes,
+  so every traffic light stayed a visit. Two statements now.
+- **`vehicles_live_list` adds** `stats` per vehicle (`app.vehicle_stats_json`: the open visit, today, today's visits, seven
+  days) and `alerts` (`app.vehicle_alerts_json`): every site in fault (`status = 'error'`, with a controller) or with an
+  open Wizenet call (`app.service_calls_current`, the one definition), with the vehicles already there (open visit) and the
+  three nearest that are not "לא מדווח" — "מי הכי קרוב".
+- **The cards** (`TechCards.jsx`, `TechCards.css`, pure rules in `utils/techStats.js`):
+  - On top, **"צריכים טכנאי עכשיו"**: each site in fault or with a call — the controller's fault text, "טכנאי באתר: X",
+    or "הכי קרוב: X · 1.2 ק״מ · חונה"; a name scrolls to and highlights that card; "לקריאות" opens the calls dialog.
+  - **"הצוות היום"**: km, hours driving, visits, distinct sites, the first departure, how many moved today.
+  - Filters by group (הכול / באתרים / בתנועה / חונים / לא מתעדכנים, singular for one) and a search (name, plate, address,
+    the site he is at, the sites he visited today).
+  - **Each card**: a stripe and an initials circle in the group's colour, the state chip, **where now** ("באתר הרצל 50 ·
+    1227 · מ-10:42 · 35 דק׳", "בנסיעה · 54 קמ"ש · ליד …", "חונה מאז 09:30 · 640 מ׳ מהרצל 50", "לא מתעדכן מאז … · ליד …"),
+    and when at a site: the site in fault (with the text), in maintenance, its open calls and tasks as buttons that open
+    the existing dialogs. Then four numbers (km, hours driving, visits, departed at), the day timeline (06:00–22:00,
+    widened to the hour of any activity; parking from midnight does not stretch it), today's visits, seven bars for the
+    week, max speed, "במפה" and "ניווט".
+  - "לא מדווחים" (no report for a day) are folded at the bottom.
+- **The map is quiet** (`FleetMap.jsx`, the old map moved out of the view): **no street tiles by default** — a dotted
+  background, our sites as small grey reference dots, city names at the centre of their sites, sites that need a technician
+  in a red (fault) or amber (call) ring. "רחובות" brings OpenStreetMap back; "אתרים במפה" turns it on by itself (a site
+  cannot be pinned without streets). "כולם" fits every vehicle; the first view fits the core of the fleet
+  (`corePoints`: within 3× the median distance from the median centre, at least ~3 km) so Gush Dan fills the screen, not
+  Ashkelon and Jerusalem.
+- ⚠️ **"שלא יהיו אחד על השני"** (`utils/declutter.js`): every technician is a label (a dot in the state colour, the name,
+  the site code when at a site). After every zoom, refresh or resize the labels are placed one at a time — moving and at-site
+  first — each at the free spot nearest its true point (rows the label's height, columns of 16 px), and a thin line leads
+  from the label to a small dot at the true point when it moved. A label of a vehicle on screen stays inside the map; one
+  off screen is not pulled in. City names that collide with a label or a bigger city are hidden. ⚠️ The first version
+  pushed overlapping pairs apart and did **not** converge: 38 labels still overlapped after 160 rounds (the unit test).
+  Greedy placement has no overlap by construction. ⚠️ The relayout after a resize runs in the next frame — inside the
+  ResizeObserver callback it fired "ResizeObserver loop completed".
+- **Tests:** `vehicle-stats.test.js` 11 (radius by precision, kinds, a whole day minute by minute — drive, a visit, a traffic
+  light next to a site, km, speed, stops, the timeline — a sync gap, a repeated / late sample, midnight and DST day
+  lengths, silent at a site, arrival by ignition-off, a removed vehicle, the 400 cap, the ingest hook and its failure,
+  "מי הכי קרוב", permissions, prune), `vehicles.test.js` and `technicians.test.js` updated, `tech-stats-ui.test.js` 9,
+  `declutter.test.js` 6. Full suite 1350/1350. Browser (scratchpad harness): `probe-techcards.mjs` 66 (cards, alerts, team,
+  filters, the calls dialog from a card, the map with 30 vehicles in one block: no label overlaps at three zooms, lines to
+  the true points, no tiles until "רחובות", "במפה" from a card; 1371 light, 390 dark) and `probe-vehicles.mjs` 109
+  (rewritten for the switch and the labels). Mock: `mock-vehicles.js` (`?veh=dense|statsfail|old`), `?techsites=1`.
+- ⚠️ **Privacy, the owner's call:** visits and day summaries are a record of where each vehicle stopped and when it
+  started its day. Decision 6 of the technicians plan (store, delete coordinates after 30 days, **tell the technicians in
+  writing first**) covers it — the written notice is still to be sent.
+- ⚠️ **Deploy:** SQL first. The dry run lists the new and changed functions; the two tables, the `vehicles_sync` columns and
+  the dispatch board's tables do **not** show — check `information_schema` after `--apply`. Until the SQL is applied the
+  cards show "—" (an old database has no `stats`) and the map works as before.
+
+### The coordinator's board — built in SQL, dormant (20/10/2026)
+
+Phase 1 of the technicians plan (the owner approved decisions 1–8 as recommended): `master/db/technicians.postgres.sql`
+— `technicians` (name, the Ituran plate, the current status, `rev` for stale screens), `tech_dispatches` (a site or a free
+place, details, a Wizenet ticket, arrived / entered / ended as times, `end_kind` done / cancelled / moved, one open per
+technician) and `tech_log` (one row per change, `source`, a vehicle snapshot on dispatch milestones only; coordinates
+cleared after 30 days, everything after 90 — `app.prune_technicians`, cron 04:37 UTC). RPCs: `tech_board`, `tech_day`
+(read, staff), `tech_save`, `tech_set_status`, `tech_dispatch`, `tech_dispatch_mark`, `tech_dispatch_end` (editor). The 8
+statuses are in four copies (`app.tech_statuses()`, two CHECKs, `TECH_STATUSES` in `utils/technicians.js`), compared by a
+test. "בדרך" / "באתר" come only from a dispatch, and no status changes while a dispatch is open (ending it sets the next
+status) — so they hold exactly while a dispatch is open. Explicit times are bounded (`app.tech_when`): not in the future,
+≤ 12 hours back, not before the dispatch / arrival, not after entering; a time on an existing mark is a correction row.
+**Pilot gate:** `settings.technicians_board` = `'all'` or a list of emails; absent = off for everyone (the board returns
+`{enabled: false}` and every write is refused). `technicians.test.js` 17; `services/techniciansDirect.js` is the data
+layer. ~~**No UI yet**~~ — since 21/10/2026 the cards use it for "צא ל:" (below); the statuses and the day log still have no
+UI.
+
+### "צא ל:" on every technician card — step 1 of 4 (built 21/10/2026, not deployed)
+
+The owner: *"שכל כרטיס יהיה סוג של ניהול הטכנאי: כפתור משימה 'צא ל:', ואז SELECT עם כל שמות האתרים — שמתחילים להקליד
+פחות או יותר — ואז זה שואל מה המשימה, טקסט חופשי, ובסופו של דבר שזה יצפצף לאותו טכנאי בצורה של APK"*, *"צעד צעד"*.
+
+**The plan has four steps.** Her answers:
+- The phone connects by scanning a QR from the card.
+- On the phone: קיבלתי / הגעתי / סיימתי, plus navigation.
+- The beep repeats every 2 minutes, up to 3 times, until "קיבלתי".
+- **First install from Chrome (Web Push).** A native APK with its own ringtone comes only if the beep is not heard in the
+  field. Her choice, after the trade-offs: a Firebase project, Android Studio on the dev PC (none installed now), a signing
+  key kept forever, and a manual reinstall on every phone for every update.
+
+**Step 1 (this):** the dashboard on the existing SQL. Steps 2–4: a `technician` role with a paired phone, the phone screen,
+and the push through a `notify-tech` Edge Function.
+
+- **The button and who sees it.**
+  - "צא ל:" is in every card's footer (`TechCards.jsx`).
+  - It shows only when `tech_board()` is `enabled` (the pilot `settings.technicians_board`) and `can_edit`. A בקר sees the
+    open task without buttons.
+  - The cards are per **vehicle**. `techByPlate` maps the board's technicians onto them, and a mapped card shows the
+    technician's name instead of the Ituran nickname.
+- **`DispatchDialog.jsx`, a combobox inside the dialog** (not a portal).
+  - Focus stays in the field; the arrows, Enter and Esc work (Esc clears the field, it does not close the dialog).
+  - With no typing it lists the sites in fault and with open calls (`dispatchSites`).
+  - The last row is "מקום אחר: …" (`p_place`).
+  - Then "מה המשימה?", free text up to 500 characters (`p_details`).
+  - A technician with an open task gets "יש לו משימה פתוחה: X" and the button "החלפה ושליחה" (`tech_dispatch` closes the
+    old one as `moved`).
+  - **A vehicle with no technician** is asked "מי הטכנאי ברכב הזה?" (suggested from the nickname) → `tech_save`, then the
+    dispatch. A technician created in a failed attempt is reused on retry.
+  - `client_id` per draft, renewed on any change to the draft.
+  - The backdrop does not close a draft.
+- **"פחות או יותר" — `utils/siteSearch.js`.**
+  - Every typed word, in any order.
+  - Quotes dropped (ת"א = תא), final letters folded, hyphens = spaces.
+  - A city abbreviation matches the city both ways (the official city from `shared/site-address.mjs` is added to each
+    site's key).
+  - A skeleton without י/ו and final א/ה (the same rule as `tools/geocode-sites.js`, which was **not** changed to import
+    it; it is a CJS tool).
+  - One typo (Damerau) in a word of 4+ letters.
+  - Digits match a code or a house number that **starts** with them, never "contains" (5 ≠ 65).
+  - Ranking: exact code > code prefix > name prefix > words as typed > skeleton > typo. Ties by name.
+  - The keys are built once per site list (`siteKey`).
+- **On the card:** "משימה: <dest>", the text, and "נשלח 10:42 ע״י X · הגיע 10:58" (`dispatchLine`), in a quiet block above
+  "איפה עכשיו". An editor gets "סיום משימה" (`tech_dispatch_end` done) and "ביטול" in two clicks (4 s). A failure is shown
+  in the card.
+- **Loading:** `TechniciansView` fetches `vehicles_live_list` and `tech_board` together (`allSettled`): one failing does not
+  hide the other, and a failed board keeps the previous one with a line. ⚠️ That is a second per-minute query while the
+  view is open. `tech_board` builds `vehicle_json` per technician, which the cards do not use. Measure after deploy; a
+  lighter board call is the fix if it shows.
+- Tests:
+  - `technicians-ui.test.js` (8: normalization, codes, words, cities, spelling and typos, ranking, the list with no query,
+    the card line). **Mutations: 25 of 26 caught** (`mut2110/run-mut13.cjs`). The survivor, the city alias read after
+    folding final letters, is equivalent: the only alias with a final letter is "ים", and "ימ" is a substring of
+    "ירושלימ" anyway.
+  - Browser `e2e/probe-dispatch.mjs` 71/71 (who sees it; search by name, typo + city, order, code; keyboard; send; replace;
+    another place; a vehicle with no technician; end and cancel; the backdrop; the phone at 44px; network failure and
+    retry with the same id; a stale screen; a failed end). The harness mock is `?tboard=edit|view|off&tfail=…` in
+    `mock-vehicles.js`. `probe-techcards` 70/70 and `probe-vehicles` 109/109 are unchanged (`tboard` defaults to off).
+- **Deploy:** nothing new in SQL. It needs the pending SQL apply (technicians / vehicle-stats) and the pilot setting, then
+  the push.
+
+### The technician's phone — a QR from the card — step 2 of 4 (built 21/10/2026, not deployed)
+
+The owner chose "סריקת QR מהכרטיס". Each technician gets a user of his own, in a new role, **`technician`**, that sees
+only his own task.
+
+- **What that role sees** (all decided in SQL):
+  - It is not staff (`is_staff`), so it gets no board, no vehicles and no closed tables.
+  - It is not an "active user" for the RLS read policies: `app.is_active_user` excludes it, so it reads no sites,
+    operations or anything else.
+  - It is not an editor.
+  - It reaches exactly one RPC, **`tech_me()`**: its name and plate, and its open dispatch (destination, details, who
+    sent it and when, and the site's `lat`/`lon` for navigation). `tech_me` also writes `phone_seen_at`, at most once a
+    minute.
+  - The login code by email does not apply to it (`login_code_applies` covers manager / editor / operator only).
+  - It is hidden from `list_users`, like the agents, and `set_user_role` refuses an agent or technician row ("זו זהות של
+    סוכן או של טלפון").
+  - `app_users_role_check` gains `technician`. ⚠️ The constraint has two copies in `schema.postgres.sql`. The `DO` block
+    that updates an existing database is the one production runs, and a fresh test database never runs it. A test now
+    rebuilds the old constraint and re-applies the file.
+- **The flow:**
+  1. `tech_phone_begin(tech)` runs as the caller: editor, pilot gate. It bumps `technicians.phone_gen` and returns the
+     email `tech-<id>-<gen>@parkomat.co.il`, the old user's id and the actor. It writes the `tech.phone_qr` audit row.
+  2. Edge Function **`provision-technician`** (`handler.ts` tested in Node, `index.ts`) creates the user with the Secret
+     key: 32 random bytes, `parkomat_role: technician` in `app_metadata`, and `email_confirm`.
+  3. `tech_phone_link(tech, gen, uid, actor)` is **service_role only**. It accepts only the user of the current `gen`, so
+     a QR made in parallel wins and the older one gets PT409. It sets the new row to `technician` / active, deactivates
+     the previous phone user, and links `technicians.app_user_id`.
+  4. The function deletes the old user from GoTrue, which also kills its refresh token. A failed delete is a warning, not
+     a failure, since the row is already inactive.
+  5. If link fails, the function deletes the user it just created.
+- ⚠️ **A new user for every QR, not a new password for the same user.** An access token stays valid for up to an hour
+  after a password change. Only an inactive user is closed immediately, because `current_app_user` requires `is_active`.
+  So a lost phone, or a photo of an old QR, opens nothing from the moment a new QR is made or "ניתוק טלפון" is pressed.
+- **More functions:**
+  - `tech_phone_unpair(tech)` (editor, pilot) deactivates the user and unlinks it.
+  - `tech_save` deactivating a technician deactivates his phone too.
+  - `app.technician_id()` is NULL unless the caller is an active `technician` linked to an active technician. Callers
+    treat NULL as a failure, like `agent_site_id`.
+  - `tech_json` adds `phone {paired, paired_at, paired_by, seen_at}`.
+- **The card:**
+  - A "טלפון" button opens `TechPhoneDialog.jsx`. It shows "טלפון ✓" with a green frame once the phone has opened the
+    app, and an amber frame for a QR that was not scanned yet. The title says when it was last opened.
+  - The dialog shows the status, then "יצירת QR לטלפון", "QR חדש" (two clicks, with a warning that the current phone is
+    cut off) and "ניתוק טלפון" (two clicks). A vehicle with no technician is first asked for the name.
+  - The QR is drawn in the browser with **`qrcode-generator` 1.4.4** (MIT, no dependencies, its own lazy chunk, 7.6 KB
+    gz), black on white in both themes, so the link never goes to any service.
+  - While the QR is open, the dialog polls `tech_board` every 4 s and says "✓ הטלפון התחבר" as soon as `seen_at` fills.
+  - The password lives only in the dialog's memory. Closing it loses it.
+- **The link:** `<origin>/#pair=<base64url {e, p}>` (`pairLink` / `parsePairHash` in `utils/techPhone.js`). The
+  credentials sit after `#`, so they are never sent to any server. `parsePairHash` accepts only a `tech-<n>-<n>@` email
+  and a base64url password.
+- **The phone** (`services/techDevice.js`, `components/TechPhone/`):
+  - `AuthGate` routes the `#pair=` link to `PairScreen` before anything else. A browser signed in as a person is asked
+    first, because pairing signs it out.
+  - `pairThisDevice` signs in, then at once **replaces the password** with one only the phone knows. That makes the QR
+    one-time. If the replacement fails, the phone keeps the QR password and pairing still succeeds.
+  - It stores the credentials in `localStorage` (`parkomat.techDevice`) and clears the hash from the URL.
+  - A phone whose session was pruned (`auth.sessions` after a day unused) signs in again silently from the stored
+    credentials. If that fails, it tries once and then shows the login screen; it does not loop.
+  - A `technician` user, or a `tech-…@` email whose role came back `anonymous` (an unpaired phone), gets `TechPhone`,
+    never the dashboard.
+  - `TechPhone`:
+    - shows the name and plate, the task in large type, and a Waze button (`navLink`, only when the site has a location);
+    - otherwise shows "אין משימה כרגע";
+    - polls `tech_me` every 30 s while visible, and when the screen returns;
+    - keeps the task on a network error and says it is retrying;
+    - when unpaired, says "לבקש מהרכז QR חדש";
+    - offers "ניתוק הטלפון הזה" in two taps, which clears the device and signs out.
+- **Tests:**
+  - `technicians.test.js` +3 (20). The QR is for an editor in the pilot only. The phone sees only its own task, and no
+    board, vehicles or site rows: RLS on `sites` is switched on inside the test, because PGlite does not have it and
+    Supabase does. A parallel QR is refused, a foreign user is refused, and link is service-only. A new QR closes the
+    old phone at once. Unpair and deactivation also close it. The test checks rows changed by hand, the users list, the
+    role guard, the login code, and the old-constraint path.
+  - **SQL mutations: 19 of 19 caught** (`mut2110/run-mut14.cjs`); 6 survived at first and got cases.
+  - `provision-technician-fn.test.js` 6: what goes where, begin as the caller, the service key only to GoTrue and link,
+    cleanup, warnings and failures. **8 of 8 mutations caught** (`run-mut15.cjs`).
+  - `tech-phone-ui.test.js` 6; roles census (+4).
+  - Full suite 1374/1374.
+  - Browser:
+    - `e2e/probe-techphone.mjs` 50/50 (who sees it; QR; scanned; the card; QR again; unpair; a vehicle with no
+      technician; failure). **Q0** rebuilds the expected QR in Node from the returned credentials and compares it module
+      by module with the one on screen, since there is no `BarcodeDetector` in the harness Chromium.
+    - `tp/probe-tp.mjs` 27/27: a new mini harness with the real `AuthGate`, `PairScreen` and `TechPhone`. It covers
+      pairing, the replaced password, the cleaned URL, a used QR, a signed-in person, silent resume and its single
+      failure, unpaired, no network, and a failed password replacement.
+    - `probe-dispatch` 71 and `probe-techcards` 70 are unchanged.
+- **Deploy, each step with the owner's yes:**
+  1. SQL. The dry run will show the new functions and the bodies of `is_active_user`, `list_users`, `set_user_role`,
+     `tech_save` and `tech_json`. The `technicians` columns and the role constraint do not show.
+  2. `npx supabase functions deploy provision-technician --project-ref xvfsikwaaaohnmldjbtv --use-api`. It needs no
+     secrets of its own, and is deployed **without** `--no-verify-jwt`.
+  3. Push.
+- ⚠️ **What the phone does not do yet:** beep (step 4), and the קיבלתי / הגעתי / סיימתי buttons (step 3). It does not take
+  the phone's location. Location comes only from the vehicle.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

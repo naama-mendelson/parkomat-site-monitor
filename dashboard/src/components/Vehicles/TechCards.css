@@ -1,0 +1,235 @@
+/* components/Vehicles/TechCards.css — "טכנאים": המעטפת, הכרטיסים, "צריכים טכנאי עכשיו" והצוות היום (21/10/2026).
+   כרטיסים כמו אצל הרכז — פס צבע לפי המצב בראש הכרטיס, עיגול עם ראשי תיבות, תג מצב — וצבע רק לסימן המצב (גוון ולא
+   מילוי). ⚠️ עברית במשקל 700 לכל היותר: ל-Segoe UI אין 800, והאותיות נופלות לגופן אחר (13/10). */
+
+/* ── צבעי הקבוצות: אותם בפס, בעיגול, בתג, בציר היום ובמספרים ── */
+:root {
+  --tc-site: #0f766e; --tc-move: #15803d; --tc-park: #1d4ed8; --tc-silent: #4b5563; --tc-unknown: #5b6472; --tc-stale: #5b6472;
+  --tc-fault: #b91c1c; --tc-call: #b45309;
+}
+[data-theme="dark"] {
+  --tc-site: #2dd4bf; --tc-move: #4ade80; --tc-park: #93b4f5; --tc-silent: #cbd5e1; --tc-unknown: #9ca3af; --tc-stale: #9ca3af;
+  --tc-fault: #fca5a5; --tc-call: #fbbf24;
+}
+
+/* ── המעטפת ── */
+.tv { margin: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; color: var(--text-primary); min-width: 0; }
+.tv .veh-panel { margin: 0; }
+.tv-head { display: flex; flex-direction: column; gap: 4px; }
+.tv-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.tv-title-row h2 { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.tv-seg { display: inline-flex; border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; background: var(--bg-card); }
+.tv-seg button {
+  border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.92rem; font-weight: 600;
+  padding: 7px 16px; min-height: 36px; cursor: pointer;
+}
+.tv-seg button + button { border-inline-start: 1px solid var(--border-color); }
+.tv-seg button.is-on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text-primary); font-weight: 700; }
+.tv-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.tv-summary { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-size: 0.92rem; color: var(--text-secondary); }
+.tv-sum-item { white-space: nowrap; }
+.tv-summary b { font-weight: 700; color: var(--text-primary); }
+.tv-summary b.tv-tone--site { color: var(--tc-site); }
+.tv-summary b.tv-tone--move { color: var(--tc-move); }
+.tv-summary b.tv-tone--park { color: var(--tc-park); }
+.tv-summary b.tv-tone--silent, .tv-summary b.tv-tone--stale, .tv-summary b.tv-tone--unknown { color: var(--tc-silent); }
+.tv .veh-warn { border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.4); }
+
+.tc { display: flex; flex-direction: column; gap: 14px; }
+.tc-muted { color: var(--text-secondary); }
+.tc-code { color: var(--text-secondary); font-weight: 400; font-size: 0.9em; }
+
+/* ── צריכים טכנאי עכשיו ── */
+.tc-alerts { display: flex; flex-direction: column; gap: 8px; }
+.tc-alerts h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.tc-alerts h3 span { color: var(--text-secondary); font-weight: 400; }
+.tc-alerts ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; }
+.tc-alert {
+  position: relative; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg-card); border: 1px solid var(--border-color); border-inline-start: 4px solid var(--tc-fault); min-width: 0;
+}
+.tc-alert.is-call { border-inline-start-color: var(--tc-call); }
+.tc-alert p { margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.tc-alert-site { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 0.98rem !important; }
+.tc-alert-text { color: var(--text-secondary); }
+.tc-alert-btn { align-self: flex-start; margin-top: 2px; }
+.tc-badge { font-size: 0.78rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.tc-badge--fault { color: var(--tc-fault); background: color-mix(in srgb, var(--tc-fault) 13%, transparent); }
+.tc-badge--call { color: var(--tc-call); background: color-mix(in srgb, var(--tc-call) 14%, transparent); }
+.tc-ok { color: var(--tc-site); font-weight: 700; }
+.tc-link {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--accent); cursor: pointer;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px;
+}
+.tc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ── הצוות היום ── */
+.tc-team {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; border-radius: 12px; overflow: hidden;
+  background: var(--border-color); border: 1px solid var(--border-color);
+}
+.tc-team-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; background: var(--bg-card); min-width: 0; }
+.tc-team-stat b { font-size: 1.45rem; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.tc-team-stat span { font-size: 0.78rem; color: var(--text-secondary); text-align: center; }
+
+/* ── סינון וחיפוש ── */
+.tc-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.tc-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.tc-filter {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.88rem;
+  font-weight: 600; cursor: pointer;
+}
+.tc-filter b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tc-filter.tc-f--site b { color: var(--tc-site); }
+.tc-filter.tc-f--move b { color: var(--tc-move); }
+.tc-filter.tc-f--park b { color: var(--tc-park); }
+.tc-filter.tc-f--silent b { color: var(--tc-silent); }
+.tc-filter.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tc-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tc-search {
+  min-width: 220px; flex: 0 1 280px; padding: 8px 11px; border-radius: 8px; border: 1px solid var(--border-color);
+  background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.92rem;
+}
+
+/* ── הכרטיסים ── */
+.tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; align-items: start; }
+.tc-card {
+  --tc-c: var(--tc-unknown);
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px 10px; border-radius: 12px;
+  background: var(--bg-card); border: 1px solid var(--border-color); border-top: 4px solid var(--tc-c);
+  box-shadow: 0 1px 2px var(--shadow); transition: box-shadow 0.25s, transform 0.25s;
+}
+.tc-card.tc-g--site { --tc-c: var(--tc-site); }
+.tc-card.tc-g--move { --tc-c: var(--tc-move); }
+.tc-card.tc-g--park { --tc-c: var(--tc-park); }
+.tc-card.tc-g--silent { --tc-c: var(--tc-silent); }
+.tc-card.tc-g--stale { --tc-c: var(--tc-stale); opacity: 0.88; }
+.tc-card.is-flash { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 24px var(--shadow); transform: translateY(-2px); }
+@media (prefers-reduced-motion: reduce) { .tc-card { transition: none; } .tc-card.is-flash { transform: none; } }
+
+.tc-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tc-ava {
+  flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 0.95rem;
+  color: var(--tc-c); background: color-mix(in srgb, var(--tc-c) 14%, var(--bg-card)); border: 2px solid color-mix(in srgb, var(--tc-c) 55%, transparent);
+}
+.tc-id { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.tc-name { margin: 0; font-size: 1.05rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-plate { font-size: 0.8rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-chip {
+  flex: 0 0 auto; font-size: 0.8rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+  color: var(--tc-c); background: color-mix(in srgb, var(--tc-c) 13%, transparent);
+}
+
+.tc-where { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tc-where p { margin: 0; overflow-wrap: anywhere; }
+.tc-where-title { font-size: 1.02rem; font-weight: 700; }
+.tc-where-sub { font-size: 0.88rem; color: var(--text-secondary); }
+.tc-note { font-size: 0.8rem; color: var(--text-secondary); font-style: italic; }
+.tc-power { font-size: 0.86rem; font-weight: 700; color: var(--tc-fault); }
+.tc-site { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg-secondary); }
+.tc-site p { margin: 0; font-size: 0.88rem; }
+.tc-site-fault b { color: var(--tc-fault); font-weight: 700; }
+.tc-site-maint b { color: var(--status-maint-ink, #92400e); font-weight: 700; }
+.tc-site-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.tc-pill {
+  min-height: 32px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border-color); background: var(--bg-card);
+  color: var(--text-primary); font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+}
+.tc-pill--call { border-color: color-mix(in srgb, var(--tc-call) 60%, transparent); color: var(--tc-call); }
+.tc-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tc-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.tc-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 4px; border-radius: 8px; min-width: 0;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+}
+.tc-stat b { font-size: 1.12rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc-stat span { font-size: 0.72rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
+
+/* ציר היום: משמאל לימין (שעות), כמו כל הגרפים בדשבורד */
+.tc-tl { display: flex; flex-direction: column; gap: 3px; padding: 0 14px; }
+.tc-tl-bar { position: relative; height: 14px; border-radius: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); overflow: hidden; }
+.tc-tl-b { position: absolute; top: 0; bottom: 0; }
+.tc-k--drive { background: var(--tc-move); }
+.tc-k--site { background: var(--tc-site); }
+.tc-k--park { background: color-mix(in srgb, var(--tc-park) 32%, transparent); }
+.tc-k--silent { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--tc-silent) 45%, transparent) 0 3px, transparent 3px 6px); }
+.tc-k--none { background: transparent; }
+.tc-tl-now { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text-primary); }
+.tc-tl-ticks { position: relative; height: 13px; font-size: 0.68rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.tc-tl-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+
+.tc-visits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tc-visits li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; font-size: 0.84rem;
+  padding: 3px 0; border-bottom: 1px dashed var(--border-color);
+}
+.tc-visits li:last-child { border-bottom: 0; }
+.tc-visits li b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-visits li span { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc-visits li.is-open b { color: var(--tc-site); font-weight: 700; }
+
+.tc-week { display: flex; align-items: flex-end; gap: 10px; }
+.tc-week-bars { display: grid; grid-template-columns: repeat(7, 14px); gap: 4px; align-items: end; height: 42px; flex: 0 0 auto; }
+.tc-wb { position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+.tc-wb i { display: block; width: 100%; border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--tc-move) 55%, transparent); min-height: 0; }
+.tc-wb.is-today i { background: var(--tc-move); }
+.tc-wb.is-empty i { height: 3px !important; background: var(--border-color); }
+.tc-wb em { font-style: normal; font-size: 0.62rem; color: var(--text-secondary); line-height: 1.3; }
+.tc-week-bars .tc-wb { padding-bottom: 0; }
+.tc-week-sum { margin: 0; font-size: 0.82rem; color: var(--text-secondary); }
+.tc-week-sum b { color: var(--text-primary); font-weight: 700; }
+
+.tc-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);
+  font-size: 0.78rem; color: var(--text-secondary);
+}
+.tc-foot-btns { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+/* עם "צא ל:" שלושה כפתורים: כשאין מקום, השורה נשברת (הטקסט מעל הכפתורים) במקום שהטקסט יימעך לשלוש שורות */
+.tc-foot { flex-wrap: wrap; }
+.tc-foot > span:first-child { flex: 1 1 150px; min-width: 0; }
+.tc-foot-btns button, .tc-foot-btns a {
+  min-height: 30px; display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border-color);
+  background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.8rem; font-weight: 600; text-decoration: none; cursor: pointer;
+}
+.tc-foot-btns button:focus-visible, .tc-foot-btns a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "צא ל:" — הפעולה הראשית בכרטיס (21/10/2026) */
+.tc-foot-btns button.tc-go {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-card)); color: var(--text-primary); font-weight: 700;
+}
+/* המשימה הפתוחה — שורה שקטה מעל "איפה עכשיו": פס בצבע הקריאה, גוון ולא מילוי */
+.tc-task {
+  display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; min-width: 0;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-card)); border-inline-start: 3px solid var(--accent);
+}
+.tc-task p { margin: 0; overflow-wrap: anywhere; }
+.tc-task-dest { font-weight: 700; font-size: 0.95rem; }
+.tc-task-k { color: var(--text-secondary); font-weight: 600; }
+.tc-task-text { font-size: 0.9rem; white-space: pre-line; }
+.tc-task-meta { font-size: 0.8rem; color: var(--text-secondary); }
+.tc-task-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.tc-task-btns button {
+  min-height: 30px; padding: 3px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card);
+  color: var(--text-primary); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+}
+.tc-task-btns button.is-armed { border-color: var(--tc-fault); color: var(--tc-fault); }
+.tc-task-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tc-task-err { font-size: 0.82rem; color: var(--tc-fault); }
+/* "טלפון" (שלב 2): מחובר — מסגרת ירוקה; QR שעוד לא נסרק — כתומה */
+.tc-foot-btns button.tc-phone--ok { border-color: var(--tc-site); color: var(--tc-site); }
+.tc-foot-btns button.tc-phone--qr { border-color: var(--tc-call); }
+
+.tc-stale { border: 1px dashed var(--border-color); border-radius: 12px; padding: 8px 12px; }
+.tc-stale summary { cursor: pointer; font-weight: 700; font-size: 0.92rem; padding: 4px 0; }
+.tc-stale .tc-grid { margin-top: 10px; }
+
+@media (max-width: 1100px) { .tc-team { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .tv { margin: 8px; }
+  .tc-team { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tc-grid, .tc-alerts ul { grid-template-columns: minmax(0, 1fr); }
+  .tc-search { flex: 1 1 100%; min-width: 0; }
+  .tc-pill, .tc-filter, .tc-foot-btns button, .tc-foot-btns a, .tc-task-btns button { min-height: 44px; }
+}

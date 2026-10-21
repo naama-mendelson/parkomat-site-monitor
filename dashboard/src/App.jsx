@@ -560,7 +560,7 @@ function App() {
     if (techMode && useDirect) {
       return (
         <Suspense fallback={<div className="app-loading">טוען את הטכנאים…</div>}>
-          <TechniciansView />
+          <TechniciansView sites={sites} />
         </Suspense>
       );
     }

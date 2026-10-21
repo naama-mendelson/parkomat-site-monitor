@@ -1,0 +1,89 @@
+/* components/Vehicles/DispatchDialog.css — "צא ל:" (21/10/2026). כמו חלון המשימות: שכבה כהה, כרטיס מרכזי, ובטלפון מסך מלא.
+   ⚠️ עברית במשקל 700 לכל היותר (Segoe UI בלי 800). */
+.dp-overlay {
+  position: fixed; inset: 0; z-index: 1200; background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: flex-start; justify-content: center; padding: 7vh 16px 16px; overflow-y: auto;
+}
+.dp {
+  width: 100%; max-width: 560px; background: var(--bg-secondary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 14px; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  display: flex; flex-direction: column; gap: 14px; padding: 16px 18px 18px;
+}
+.dp-head { display: flex; align-items: center; gap: 10px; }
+.dp-head h3 { margin: 0; flex: 1 1 auto; min-width: 0; font-size: 1.15rem; font-weight: 700; overflow-wrap: anywhere; }
+.dp-who { color: var(--text-secondary); font-weight: 600; }
+.dp-x {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-card);
+  color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.dp-open {
+  margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem;
+  background: color-mix(in srgb, var(--tc-call, #b45309) 10%, var(--bg-card)); border: 1px solid color-mix(in srgb, var(--tc-call, #b45309) 35%, transparent);
+}
+.dp-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dp-label { font-weight: 700; font-size: 0.95rem; }
+.dp-hint { margin: 0; font-size: 0.82rem; color: var(--text-secondary); }
+.dp-muted { color: var(--text-secondary); font-weight: 400; }
+.dp-code { color: var(--text-secondary); font-size: 0.86em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dp-input {
+  width: 100%; box-sizing: border-box; min-height: 42px; padding: 8px 12px; border-radius: 10px; font: inherit; font-size: 1rem;
+  border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);
+}
+.dp-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.dp-text { resize: vertical; min-height: 96px; line-height: 1.45; }
+
+/* הרשימה מתחת לשדה — חלק מהטופס, גוללת בתוכה */
+.dp-list {
+  list-style: none; margin: 0; padding: 4px; max-height: 300px; overflow-y: auto; border-radius: 10px;
+  border: 1px solid var(--border-color); background: var(--bg-card);
+}
+.dp-opt {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 9px 10px; border-radius: 7px; cursor: pointer; min-height: 22px;
+}
+.dp-opt.is-active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.dp-opt-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.dp-opt--place { border-top: 1px dashed var(--border-color); border-radius: 0 0 7px 7px; margin-top: 2px; }
+.dp-badge { font-size: 0.74rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.dp-badge--fault { color: var(--tc-fault, #b91c1c); background: color-mix(in srgb, var(--tc-fault, #b91c1c) 13%, transparent); }
+.dp-badge--call { color: var(--tc-call, #b45309); background: color-mix(in srgb, var(--tc-call, #b45309) 14%, transparent); }
+
+.dp-chosen {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; padding: 6px 12px; box-sizing: border-box;
+  border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+  overflow-wrap: anywhere;
+}
+.dp-link {
+  flex: 0 0 auto; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 6px 4px;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.dp-err { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; color: var(--tc-fault, #b91c1c);
+  background: color-mix(in srgb, var(--tc-fault, #b91c1c) 9%, var(--bg-card)); }
+.dp-foot { display: flex; gap: 8px; }
+.dp-send, .dp-cancel {
+  min-height: 42px; padding: 8px 20px; border-radius: 10px; font: inherit; font-size: 1rem; font-weight: 700; cursor: pointer;
+}
+.dp-send { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+.dp-send:disabled { opacity: 0.5; cursor: default; }
+.dp-cancel { border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600; }
+.dp-x:focus-visible, .dp-link:focus-visible, .dp-send:focus-visible, .dp-cancel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "טלפון" — ה-QR לחיבור הטלפון של הטכנאי (TechPhoneDialog, 21/10/2026). לבן תמיד, גם בתצוגה כהה: מצלמה קוראת שחור על לבן. */
+.dp--phone { max-width: 440px; }
+.dp-qr-box { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.dp-qr { width: min(280px, 80vw); height: auto; aspect-ratio: 1; border-radius: 10px; background: #fff; border: 1px solid var(--border-color); }
+.dp-qr--wait { display: grid; place-items: center; color: #475569; }
+.dp-steps { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 0.95rem; line-height: 1.5; align-self: stretch; }
+.dp-ok { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--tc-site, #0f766e); }
+.dp-phone-st { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--bg-card); border: 1px solid var(--border-color); font-size: 0.95rem; }
+.dp-phone-st--ok { border-inline-start: 3px solid var(--tc-site, #0f766e); }
+.dp-phone-st--qr { border-inline-start: 3px solid var(--tc-call, #b45309); }
+.dp-cancel.is-armed { border-color: var(--tc-fault, #b91c1c); color: var(--tc-fault, #b91c1c); }
+.dp-foot { flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .dp-overlay { padding: 0; align-items: stretch; }
+  .dp { border-radius: 0; min-height: 100%; max-width: none; padding: 12px; }
+  .dp-send, .dp-cancel, .dp-input, .dp-x { min-height: 44px; }
+  .dp-send { flex: 1 1 auto; }
+  .dp-opt { padding: 12px 10px; }
+}

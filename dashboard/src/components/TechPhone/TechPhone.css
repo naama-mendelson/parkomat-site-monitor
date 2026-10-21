@@ -1,0 +1,42 @@
+/* components/TechPhone/TechPhone.css — מסך הטכנאי בטלפון (21/10/2026). מסך אחד, גדול למגע, בלי הכותרת של הדשבורד.
+   ⚠️ עברית במשקל 700 לכל היותר (Segoe UI בלי 800). */
+.tp {
+  min-height: 100vh; min-height: 100dvh; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--bg-primary, #f1f5f9); color: var(--text-primary, #0f172a); font-size: 16px;
+}
+.tp--center { align-items: center; justify-content: center; text-align: center; }
+.tp-head { display: flex; align-items: center; gap: 12px; }
+.tp-logo { height: 32px; width: auto; }
+.tp-logo--big { height: 48px; }
+.tp-who { display: flex; flex-direction: column; min-width: 0; }
+.tp-who h1 { margin: 0; font-size: 1.3rem; font-weight: 700; overflow-wrap: anywhere; }
+.tp-who span { color: var(--text-secondary, #475569); font-size: 0.9rem; }
+
+.tp-task {
+  display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 14px;
+  background: var(--bg-card, #fff); border: 1px solid var(--border-color, #cbd5e1); border-inline-start: 5px solid var(--accent, #1d4ed8);
+}
+.tp-task p { margin: 0; overflow-wrap: anywhere; }
+.tp-task-k { font-size: 0.85rem; font-weight: 700; color: var(--text-secondary, #475569); }
+.tp-task-dest { margin: 0; font-size: 1.45rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.tp-task-text { font-size: 1.1rem; line-height: 1.5; white-space: pre-line; }
+.tp-task-meta { font-size: 0.9rem; color: var(--text-secondary, #475569); }
+.tp-nav {
+  display: flex; align-items: center; justify-content: center; min-height: 52px; margin-top: 6px; border-radius: 12px;
+  background: var(--accent, #1d4ed8); color: #fff; font-weight: 700; font-size: 1.05rem; text-decoration: none;
+}
+.tp-idle { margin: 24px 0; text-align: center; font-size: 1.15rem; color: var(--text-secondary, #475569); }
+.tp-warn { margin: 0; padding: 8px 12px; border-radius: 10px; font-size: 0.95rem; background: rgba(245, 158, 11, 0.14); color: #92400e; }
+.tp-off { display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: 14px; background: var(--bg-card, #fff);
+  border: 1px solid var(--border-color, #cbd5e1); max-width: 520px; }
+.tp-off p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.tp-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.tp-row button, .tp-foot button {
+  min-height: 48px; padding: 8px 18px; border-radius: 12px; border: 1px solid var(--border-color, #cbd5e1);
+  background: var(--bg-card, #fff); color: var(--text-primary, #0f172a); font: inherit; font-weight: 600; cursor: pointer;
+}
+.tp-row .tp-primary { background: var(--accent, #1d4ed8); border-color: var(--accent, #1d4ed8); color: #fff; font-weight: 700; }
+.tp-foot { margin-top: auto; display: flex; justify-content: center; }
+.tp-foot button { font-size: 0.9rem; color: var(--text-secondary, #475569); }
+.tp-foot button.is-armed { color: #b91c1c; border-color: #b91c1c; }
+.tp a:focus-visible, .tp button:focus-visible { outline: 3px solid var(--accent, #1d4ed8); outline-offset: 2px; }

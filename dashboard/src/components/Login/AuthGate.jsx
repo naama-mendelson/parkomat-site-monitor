@@ -24,10 +24,36 @@ import ResetPassword from "./ResetPassword";
 import { onPasswordRecovery, reloadRole } from "../../services/auth";
 import { loginCodeStatus } from "../../services/loginCodeDirect";
 import LoginCode, { LoginCodeCheckFailed } from "./LoginCode";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { isTechPhoneEmail, parsePairHash } from "../../utils/techPhone";
+import { readDevice, resumeDevice } from "../../services/techDevice";
+
+// הטלפון של הטכנאי (21/10/2026) — נטען רק בטלפון כזה, לא בחבילה של הדשבורד
+const TechPhone = lazy(() => import("../TechPhone/TechPhone"));
+const PairScreen = lazy(() => import("../TechPhone/PairScreen"));
 
 function AuthGate({ children }) {
   const { user, loading } = useAuth();
+
+  // ============================================================
+  // הטלפון של הטכנאי (21/10/2026, שלב 2 של "צא ל:")
+  // ============================================================
+  // • קישור מה-QR שבכרטיס (#pair=…) — מסך החיבור, לפני הכול. אחריו הכתובת מתנקה (הפרטים לא נשארים בהיסטוריה).
+  // • טלפון שה-session שלו אבד (נגרף אחרי יממה בלי שימוש) — מתחבר שוב לבד מהפרטים ששמר, ולא מציג טופס התחברות.
+  // • משתמש של טלפון — מסך המשימה בלבד, ולא הדשבורד (שהמסד ממילא לא נותן לו לקרוא).
+  const [pair, setPair] = useState(() => parsePairHash(typeof window !== "undefined" ? window.location.hash : ""));
+  const [resume, setResume] = useState("idle");      // idle | trying | done
+  useEffect(() => {
+    if (loading || user || pair || resume !== "idle" || !readDevice()) return;
+    setResume("trying");
+    resumeDevice().finally(() => setResume("done"));
+  }, [loading, user, pair, resume]);
+  // מחובר שוב — ניסיון שקט נוסף מותר בפעם הבאה שה-session יאבד (ולא לולאה: ניסיון שנכשל נשאר "done")
+  useEffect(() => { if (user) setResume("idle"); }, [user]);
+  const pairDone = () => {
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* */ }
+    setPair(null);
+  };
 
   // ============================================================
   // מצב שחזור — נקבע פעם אחת ואינו מתאפס לבד
@@ -92,12 +118,30 @@ function AuthGate({ children }) {
     );
   }
 
+  if (pair) {
+    return (
+      <Suspense fallback={<div className="app-loading">מחבר את הטלפון…</div>}>
+        <PairScreen cred={pair} user={user} loading={loading} onDone={pairDone} />
+      </Suspense>
+    );
+  }
+
   // בודקים session שמור. בלי השלב הזה טופס ההתחברות היה מבליח בכל רענון.
   if (loading) {
     return <div className="app-loading">בודק התחברות…</div>;
   }
 
+  if (!user && resume === "trying") return <div className="app-loading">מתחבר…</div>;
   if (!user) return <Login />;
+
+  // ⚠️ גם לפי האימייל: טלפון שנותק מקבל מהמסד 'anonymous', ובלי זה היה נופל לדשבורד ריק במקום להסביר מה לעשות
+  if (user.role === "technician" || isTechPhoneEmail(user.email)) {
+    return (
+      <Suspense fallback={<div className="app-loading">טוען…</div>}>
+        <TechPhone />
+      </Suspense>
+    );
+  }
 
   // לפני שהבדיקה חזרה לא מציגים כלום — הבהוב של הדשבורד ואז מסך קוד קורא כמו תקלה.
   if (!code.checked || code.uid !== uid) return <div className="app-loading">בודק התחברות…</div>;

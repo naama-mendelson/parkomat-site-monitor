@@ -120,6 +120,15 @@ const BOUNDED = {
   site_locations_list: "jsonb יחיד — כל האתרים (219) עם המיקום שלהם",
   site_geo_set: "כתיבה",
 
+  // ---- לוח הטכנאים (techniciansDirect.js, 20/10/2026) — הטבלאות סגורות, הכול דרך RPC ----
+  tech_board: "jsonb יחיד — הטכנאים הפעילים (עשרות) + הצי + המקומות האחרונים",
+  tech_day: "jsonb יחיד — היומן של יום אחד (כ-300 שורות)",
+  tech_save: "כתיבה",
+  tech_set_status: "כתיבה",
+  tech_dispatch: "כתיבה",
+  tech_dispatch_mark: "כתיבה",
+  tech_dispatch_end: "כתיבה",
+
   // ---- משימות (tasksDirect.js) — הטבלה סגורה, הכול דרך RPC ----
   tasks_list: "jsonb יחיד — הפתוחות + p_done_limit אחרונות שבוצעו (200; NULL = כולן, של אתר אחד) + done_total",
   task_counts: "שורה לאתר×סוג (עד 4: שלושת הסוגים — app.task_kinds() — ו-'none' למשימה בלי סוג) — רק אתרים עם משימה פתוחה",

@@ -1178,3 +1178,17 @@ SELECT app.ensure_cron_job('parkomat-prune-service-calls', '17 4 * * *',
 -- המשימה קיימת מהרגע שה-SQL מוחל, והסנכרון מתחיל כשהסוד נכתב (אחרי פריסת ituran-sync עם אותו סוד).
 SELECT app.ensure_cron_job('parkomat-ituran-sync', '* * * * *',
                            'SELECT app.ituran_sync_request()');
+
+-- ============================================================
+-- לוח הטכנאים — יומן ושליחויות 90 יום, מיקום הרכב ביומן 30 יום (20/10/2026)
+-- ============================================================
+-- ראה app.prune_technicians ב-technicians.postgres.sql (החלטות 6 ו-7 של בעלת המוצר). שליחה פתוחה לא נמחקת בשום גיל.
+SELECT app.ensure_cron_job('parkomat-prune-technicians', '37 4 * * *',
+                           'SELECT app.prune_technicians()');
+
+-- ============================================================
+-- סיכום היום של הרכבים — ביקורים 90 יום, סיכומים יומיים 13 חודשים, ציר היום 90 יום (21/10/2026)
+-- ============================================================
+-- ראה app.prune_vehicle_stats ב-vehicle-stats.postgres.sql. ביקור פתוח לא נמחק.
+SELECT app.ensure_cron_job('parkomat-prune-vehicle-stats', '47 4 * * *',
+                           'SELECT app.prune_vehicle_stats()');

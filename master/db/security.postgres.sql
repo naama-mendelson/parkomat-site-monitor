@@ -630,6 +630,8 @@ AS $$
     SELECT 1 FROM app_users u
      WHERE u.supabase_uid::text = app.current_actor()
        AND u.is_active
+       -- ⚠️ 21/10/2026: הטלפון של טכנאי אינו קורא את טבלות האתרים. הוא רואה רק את המשימה שלו, דרך tech_me.
+       AND u.role <> 'technician'
   ) AND app.session_ok();   -- קוד כניסה (20/10/2026): כל מדיניות הקריאה עוברת כאן
 $$;
 
