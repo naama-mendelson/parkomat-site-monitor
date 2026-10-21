@@ -4637,6 +4637,10 @@ was first put on the technician card only (above). Looking at the board, she sai
   - A site without a controller has the icon beside "ללא בקר מחובר".
 - **The icon** is `components/TechIcon/TechIcon.jsx`, shared with the technician card. It is an inline SVG of a figure in
   a work helmet, coloured `currentColor`.
+- ⚠️ **On the board it sits in a bright yellow circle with a glow** (`.tech-onsite`: `#facc15`, a `#ca8a04` frame, two
+  glow shadows, a `#3b2600` icon at 9.4:1). The owner, after seeing the plain icon in the chip: *"זה לא מספיק בולט,
+  תעשה את זה צהוב זורח"*. Deployed 219444e. It does not blink, since she asked to stop blinking on cards (19/10). The
+  same circle sits on the expanded card's line.
 - Tests: `vehicle-stats.test.js` (the 2-minute and 15-minute rules, an ended visit, a deleted site, an inactive
   technician, order, anon and non-staff refused), `technicians-ui.test.js` (`techOnSiteBySite` / `techOnSiteText`), roles
   census (`tech_on_site` in OTHER). Browser: `e2e/probe-onsite.mjs` 32 (the chip, two technicians in order, the colour,
