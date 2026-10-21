@@ -280,12 +280,17 @@
 
 /* "טכנאי באתר" (21/10/2026): איקון בתוך תג המצב, בצבע התג (currentColor). בכרטיס מכווץ — תצוגה בלבד, והלחיצה עוברת
    לכרטיס; בכרטיס המורחב — שורה במילים (.exp-tech-onsite). */
-.tech-onsite { display: inline-flex; align-items: center; flex: 0 0 auto; line-height: 0; }
+/* ⚠️ צהוב זורח (הבעלת, 21/10/2026: "זה לא מספיק בולט, תעשה את זה צהוב זורח"): עיגול צהוב עם הילה, ואיקון כהה עליו.
+   בלי הבהוב — הבעלת ביקשה להפסיק הבהובים בכרטיסים (19/10). המסגרת הכהה יותר מבדילה את הצהוב גם על כרטיס לבן. */
+.tech-onsite {
+  display: inline-grid; place-items: center; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; line-height: 0;
+  background: #facc15; color: #3b2600; border: 1px solid #ca8a04;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.35), 0 0 10px 2px rgba(250, 204, 21, 0.75);
+}
 .exp-tech-onsite {
-  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
   font-size: 0.84rem; font-weight: 600; color: var(--text-primary);
 }
-.exp-tech-onsite .tech-ico { flex: 0 0 auto; color: var(--status-maint-ink, #92400e); }
 
 /* ===== שורת המצב: תג המצב + רמזורי בודק/תחזוקה =====
    ⚠️ לעולם לא בתוך .card-header: שם השם מתכווץ לפי מה שלידו (useFitName),

@@ -150,7 +150,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
   const onSite = useTechOnSite(site.id);
   const onSiteText = onSite ? techOnSiteText(onSite, new Date().toISOString()) : "";
   const techMark = onSite ? (
-    <span className="tech-onsite" role="img" aria-label={onSiteText} title={onSiteText}><TechIcon size={15} /></span>
+    <span className="tech-onsite" role="img" aria-label={onSiteText} title={onSiteText}><TechIcon size={14} /></span>
   ) : null;
   // ⚠️ **הצ'יפ מציג את המערכת הגרועה, המדד מחשב את הטובה.** באתר
   // דו-מערכתי אלה שני דברים שונים במכוון: "במה לטפל עכשיו" מול "האם
@@ -861,7 +861,11 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               {label}
             </span>
             {/* בכרטיס המורחב — במילים: מי ומאיזו שעה */}
-            {onSite && <span className="exp-tech-onsite"><TechIcon size={17} />{onSiteText}</span>}
+            {onSite && (
+              <span className="exp-tech-onsite">
+                <span className="tech-onsite" aria-hidden="true"><TechIcon size={14} /></span>{onSiteText}
+              </span>
+            )}
             {/* רמזורי בודק/תחזוקה — לחיצה פותחת את הלשונית שלהם בחלון האתר */}
             <ComplianceLights compliance={site.compliance} density="expanded" onOpen={openTab} />
             {stuckBadge}
