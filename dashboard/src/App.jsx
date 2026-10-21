@@ -12,7 +12,9 @@ import Header from "./components/Header/Header";
 import InsightsModal from "./components/InsightsModal/InsightsModal";
 import AdminPanel from "./components/AdminPanel/AdminPanel";
 import TrafficLight from "./components/TrafficLight/TrafficLight";
-import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallBoard } from "./services/dataSource";
+import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallBoard, fetchTechOnSite } from "./services/dataSource";
+import { TechOnSiteContext } from "./components/TechIcon/TechOnSiteContext";
+import { techOnSiteBySite } from "./utils/technicians";
 import TasksDialog from "./components/Tasks/TasksDialog";
 import { TasksContext } from "./components/Tasks/TasksContext";
 import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
@@ -253,6 +255,19 @@ function App() {
   const callsRefresh = useMemo(() => makeCoalesced(loadCallCounts), [loadCallCounts]);
   const tasksRefresh = useMemo(() => makeCoalesced(loadTaskCounts), [loadTaskCounts]);
   useEffect(() => () => { callsRefresh.cancel(); tasksRefresh.cancel(); }, [callsRefresh, tasksRefresh]);
+  // ⚠️ "טכנאי באתר" (21/10/2026): מי עומד עכשיו באתר — האיקון בכרטיסי האתרים. אין אירוע לזה (הסנכרון מאיתוראן לא
+  // כותב events — ראה vehicles.postgres.sql), ולכן כל 2 דקות, ולא בלשונית מוסתרת. שאילתה קלה (≈38 שורות לכל היותר).
+  // כשל משאיר את הקודם; מסד בלי הפונקציה — אין איקונים.
+  const [techOnSite, setTechOnSite] = useState(null);
+  const loadTechOnSite = useCallback(() => {
+    if (!useDirect) return;
+    fetchTechOnSite().then((rows) => setTechOnSite(techOnSiteBySite(rows))).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadTechOnSite();
+    const id = setInterval(unlessHidden(loadTechOnSite), 2 * 60_000);
+    return () => clearInterval(id);
+  }, [loadTechOnSite]);
   const callsCtx = useDirect && SERVICE_CALLS_ENABLED && callCounts
     ? { bySite: callCounts.bySite, openSite: (site) => setCallsOpen({ site }), show: showOpenCalls }
     : null;
@@ -389,7 +404,9 @@ function App() {
     return () => clearInterval(id);
   }, [syncNow, refreshComplianceIfDue]);
   // why: "reconnect" (הערוץ חזר אחרי נתק — אירועים אולי אבדו, ולכן נדחה אם אינה בזמנה) או "visible" (חזרה ללשונית)
-  const onRecover = useCallback((why) => { syncNow({ allowFull: true, defer: why === "reconnect" }); loadCallCounts(); loadTaskCounts(); }, [syncNow, loadCallCounts, loadTaskCounts]);
+  const onRecover = useCallback((why) => {
+    syncNow({ allowFull: true, defer: why === "reconnect" }); loadCallCounts(); loadTaskCounts(); loadTechOnSite();
+  }, [syncNow, loadCallCounts, loadTaskCounts, loadTechOnSite]);
 
   useSSE(
     useCallback((data) => {
@@ -631,7 +648,9 @@ function App() {
         <StaleBanner />
         <TasksContext.Provider value={tasksCtx}>
           <ServiceCallsContext.Provider value={callsCtx}>
-            {renderView()}
+            <TechOnSiteContext.Provider value={techOnSite}>
+              {renderView()}
+            </TechOnSiteContext.Provider>
           </ServiceCallsContext.Provider>
         </TasksContext.Provider>
       </main>

@@ -4584,12 +4584,55 @@ and a caption ("תעשה"), saw them, and then said: *"זה ממש לא מובן
   - "7 הימים האחרונים: X ק״מ · N ביקורים", once there is more than one tracked day;
   - "עדכון אחרון מהרכב לפני X";
   - "מהירות שיא היום".
-- **Stays on the closed card:** where he is now, the site's state, and the four numbers. "האתר בתחזוקה" now reads
-  "האתר במצב תחזוקה בדשבורד", from the approved wording.
+- **Stays on the closed card:** where he is now, the site's state, and the four numbers.
+  - **A site in maintenance:** a technician icon followed by **"האתר בתחזוקה — טכנאי באתר"**. The owner: *"שיהיה כתוב
+    האתר בתחזוקה טכנאי באתר או שיהיה כזה סמל"*, then *"תשים איקון טכנאי באתר"*.
+  - **The icon:** `TechIcon`, an inline SVG of a figure in a work helmet, 18px, `currentColor` (the maintenance ink).
+    It is SVG rather than 🧑‍🔧 because that emoji is drawn differently on every system, and older Windows splits it into
+    two glyphs. A 🔧 was there for an hour before it.
+  - **Earlier wording:** "האתר במצב תחזוקה בדשבורד" for a few hours, and before that "האתר בתחזוקה".
+  - The site's state shows only when the vehicle stands at that site (`site` = `at_site`), so "טכנאי באתר" is always true
+    there.
+  - Browser: `e2e/probe-tcmaint.mjs` 18.
 - ⚠️ Today's numbers count only from 11:09 on 21/10, when the tracking started.
 - Browser: `e2e/probe-tcmore.mjs` 38 (closed by default, opened by a click, a button inside does not toggle, the keyboard,
   a text selection, "צא ל:" from an open card, 1371 light and 390 dark). `probe-techcards` C4 was updated (74).
   `probe-tclegend` is retired.
+
+### "טכנאי באתר" on the site cards of the main board (21/10/2026)
+
+The owner had asked for "האתר בתחזוקה טכנאי באתר, או שיהיה כזה סמל שטכנאי באתר" and then "תשים איקון טכנאי באתר". It
+was first put on the technician card only (above). Looking at the board, she said: *"אני לא רואה שום איקון שטכנאי
+טיפל"*. She meant the site cards.
+
+- **The data:** `public.tech_on_site()` (`vehicle-stats.postgres.sql`, staff only, one jsonb). It returns the open
+  visits that `vehicles_track` already records every minute: `{site_id, code, plate, nickname, tech, since, no_signal}`.
+  - A visit counts only when it started at least 2 minutes ago. Shorter is a traffic light next to a site, the same
+    rule as deleting a short visit.
+  - A visit counts only when its `last_at` is within 15 minutes. Older means the sync stopped, and the technician may
+    have left.
+  - A visit whose site was deleted (`site_id` NULL) does not count.
+  - `tech` is the active technician mapped to the plate on the coordinator's board. Without a mapping, the dashboard uses
+    the Ituran nickname without the plate (`vehicleName`).
+- ⚠️ **Display only.** It never changes the site's status. The automatic move to maintenance when a technician is on site
+  is still paused (18/10: no reliable end signal).
+- **The board:** `App` loads it every 2 minutes, skips hidden tabs, and reloads on return to the tab (`onRecover`). There
+  is no event for it: the Ituran sync writes no `events`, on purpose. A failure keeps the last answer. A database without
+  the function shows no icons. `TechOnSiteContext` provides `Map site_id → [{name, since, noSignal}]`, built by
+  `techOnSiteBySite` (`utils/technicians.js`).
+- **The card** (`SiteCard.jsx`):
+  - The collapsed card has the icon **inside the status chip**, in the chip's colour ("בתחזוקה" + a technician). It is
+    display only, so a click expands the card. Its `aria-label` / `title`: "טכנאי באתר: אבי לוי · מ-10:42", or "2 טכנאים
+    באתר: …" (`techOnSiteText`).
+  - The expanded card has a line in words with the icon (`.exp-tech-onsite`).
+  - A site without a controller has the icon beside "ללא בקר מחובר".
+- **The icon** is `components/TechIcon/TechIcon.jsx`, shared with the technician card. It is an inline SVG of a figure in
+  a work helmet, coloured `currentColor`.
+- Tests: `vehicle-stats.test.js` (the 2-minute and 15-minute rules, an ended visit, a deleted site, an inactive
+  technician, order, anon and non-staff refused), `technicians-ui.test.js` (`techOnSiteBySite` / `techOnSiteText`), roles
+  census (`tech_on_site` in OTHER). Browser: `e2e/probe-onsite.mjs` 32 (the chip, two technicians in order, the colour,
+  none elsewhere, a click expands, the line on the expanded card, a multiplier, leaving, a failed load, every 2 minutes
+  with a fake clock; 1371 light and 390 dark). Mock: `?onsite=1` / `?onsitefail=1`.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

@@ -324,6 +324,43 @@ $$;
 REVOKE ALL ON FUNCTION app.vehicle_alerts_json() FROM PUBLIC;
 
 -- ============================================================
+-- "טכנאי באתר" על כרטיסי האתרים בלוח (21/10/2026)
+-- ============================================================
+-- הבעלת, על לוח האתרים: "שיהיה כזה סמל שטכנאי באתר", ואז "תשים איקון טכנאי באתר". המקור: הביקורים הפתוחים, שנרשמים
+-- כבר כל דקה (vehicles_track). אין כאן חישוב מחדש.
+-- ⚠️ ביקור שנפתח לפני פחות מ-2 דקות לא נספר (רמזור ליד אתר; אותו כלל כמו מחיקת ביקור קצר בסגירה). ביקור שלא עודכן
+-- 15 דקות לא נספר (הסנכרון נעצר; לא להראות טכנאי שאולי כבר עזב).
+-- ⚠️ תצוגה בלבד: לא משנה את מצב האתר (ההעברה האוטומטית לתחזוקה כשטכנאי באתר הושהתה, 18/10).
+-- קל: שורה לכל רכב שעומד באתר (≈38 לכל היותר). כל מסך גלוי שואל כל 2 דקות.
+CREATE OR REPLACE FUNCTION public.tech_on_site()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  PERFORM app.require_staff();
+  RETURN COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+             'site_id', vv.site_id, 'code', vv.site_code, 'plate', vv.license_plate,
+             'nickname', vl.nickname, 'tech', t.display_name,
+             'since', app.iso_z(vv.started_at), 'no_signal', vv.no_signal)
+           ORDER BY vv.site_code, vv.started_at)
+      FROM vehicle_visits vv
+      JOIN vehicles_live vl ON vl.license_plate = vv.license_plate
+      LEFT JOIN LATERAL (SELECT x.display_name FROM technicians x
+                          WHERE x.plate = vv.license_plate AND x.is_active ORDER BY x.id LIMIT 1) t ON true
+     WHERE vv.ended_at IS NULL
+       AND vv.site_id IS NOT NULL
+       AND vv.started_at <= now() - interval '2 minutes'
+       AND vv.last_at > now() - interval '15 minutes'), '[]'::jsonb);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_on_site() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_on_site() TO authenticated;
+
+-- ============================================================
 -- הגריפה — מ-pg_cron (cron.postgres.sql), פעם ביום
 -- ============================================================
 CREATE OR REPLACE FUNCTION app.prune_vehicle_stats(p_visits interval DEFAULT interval '90 days',

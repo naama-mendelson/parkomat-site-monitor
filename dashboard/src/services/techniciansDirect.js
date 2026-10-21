@@ -136,6 +136,12 @@ export async function fetchTechMe() {
   return rpc("tech_me", {});
 }
 
+/** מי עומד עכשיו באתר — לאיקון "טכנאי באתר" בלוח האתרים (21/10/2026). כל הצוות.
+ *  [{ site_id, code, plate, nickname, tech, since, no_signal }] — ההחלטה (2 דקות לפחות, עדכני ב-15 דקות) במסד. */
+export async function fetchTechOnSite() {
+  return rpc("tech_on_site", {});
+}
+
 // ============================================================
 // הצפצוף (21/10/2026, שלב 4)
 // ============================================================

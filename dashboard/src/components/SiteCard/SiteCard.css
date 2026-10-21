@@ -278,6 +278,15 @@
   align-self: flex-start;
 }
 
+/* "טכנאי באתר" (21/10/2026): איקון בתוך תג המצב, בצבע התג (currentColor). בכרטיס מכווץ — תצוגה בלבד, והלחיצה עוברת
+   לכרטיס; בכרטיס המורחב — שורה במילים (.exp-tech-onsite). */
+.tech-onsite { display: inline-flex; align-items: center; flex: 0 0 auto; line-height: 0; }
+.exp-tech-onsite {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 0.84rem; font-weight: 600; color: var(--text-primary);
+}
+.exp-tech-onsite .tech-ico { flex: 0 0 auto; color: var(--status-maint-ink, #92400e); }
+
 /* ===== שורת המצב: תג המצב + רמזורי בודק/תחזוקה =====
    ⚠️ לעולם לא בתוך .card-header: שם השם מתכווץ לפי מה שלידו (useFitName),
    ושתי מנורות נוספות היו מקצרות אותו לשתי אותיות — בדיוק התקלה שתועדה

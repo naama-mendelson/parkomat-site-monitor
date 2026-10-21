@@ -264,3 +264,30 @@ export function dispatchSites(sites, query, callsBySite, keys = null) {
   }
   return searchSites(list, keys, query, 30).map((r) => r.site);
 }
+
+// ============================================================
+// "טכנאי באתר" בלוח האתרים (21/10/2026, הבעלת: "תשים איקון טכנאי באתר")
+// ============================================================
+
+/** Map site_id → [{ name, since, noSignal }] מתוך tech_on_site; מי שהגיע ראשון — ראשון. השם: של הטכנאי בלוח,
+ *  ובלי שיוך — הכינוי באיתוראן בלי מספר הרכב (vehicleName, כמו בכרטיס הטכנאי). */
+export function techOnSiteBySite(rows) {
+  const map = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (r?.site_id == null) continue;
+    const name = (r.tech && String(r.tech).trim()) || vehicleName({ name: r.nickname, plate: r.plate });
+    const list = map.get(r.site_id) ?? [];
+    list.push({ name, since: r.since ?? null, noSignal: r.no_signal === true });
+    map.set(r.site_id, list);
+  }
+  for (const list of map.values()) list.sort((a, b) => String(a.since ?? "").localeCompare(String(b.since ?? "")));
+  return map;
+}
+
+/** הטקסט של האיקון: "טכנאי באתר: אבי לוי · מ-10:42" / "2 טכנאים באתר: אבי לוי, דני · מ-10:42" (מתי הגיע הראשון). */
+export function techOnSiteText(list, nowIso) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const head = list.length === 1 ? "טכנאי באתר" : `${list.length} טכנאים באתר`;
+  const since = list[0].since ? ` · מ-${clockText(list[0].since, nowIso)}` : "";
+  return `${head}: ${list.map((x) => x.name).join(", ")}${since}`;
+}

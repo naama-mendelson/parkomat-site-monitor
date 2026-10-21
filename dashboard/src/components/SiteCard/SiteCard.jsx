@@ -19,6 +19,9 @@ import { useTasks } from "../Tasks/TasksContext";
 import { DEFAULT_TASKS_VIEW, tasksPillsShown } from "../../utils/tasks";
 import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import { callAgeClass, callAgeText } from "../../utils/serviceCalls";
+import TechIcon from "../TechIcon/TechIcon";
+import { useTechOnSite } from "../TechIcon/TechOnSiteContext";
+import { techOnSiteText } from "../../utils/technicians";
 import "../Tasks/Tasks.css";
 
 // ==========================================================
@@ -142,6 +145,13 @@ function TypeBadge({ type, system, lifts = [] }) {
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
   const tasks = useTasks();          // null — אין משימות במצב הזה
   const calls = useServiceCalls();   // null — הקריאות כבויות (VITE_SERVICE_CALLS) או לא נטענו
+  // "טכנאי באתר" (21/10/2026, הבעלת על הלוח: "אני לא רואה שום איקון שטכנאי טיפל"): רכב של טכנאי עומד עכשיו באתר.
+  // תצוגה בלבד — המצב של האתר לא משתנה בגלל זה. ההחלטה מי "באתר" במסד (tech_on_site).
+  const onSite = useTechOnSite(site.id);
+  const onSiteText = onSite ? techOnSiteText(onSite, new Date().toISOString()) : "";
+  const techMark = onSite ? (
+    <span className="tech-onsite" role="img" aria-label={onSiteText} title={onSiteText}><TechIcon size={15} /></span>
+  ) : null;
   // ⚠️ **הצ'יפ מציג את המערכת הגרועה, המדד מחשב את הטובה.** באתר
   // דו-מערכתי אלה שני דברים שונים במכוון: "במה לטפל עכשיו" מול "האם
   // עמדנו בהתחייבות". באתר חד-מערכתי `displayStatus` שווה ל-`status`,
@@ -319,6 +329,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
     <span className="card-status" style={{ background: colors.bg, color: colors.text }}>
       <span className="status-dot" style={{ background: colors.dot }} />
       {label}
+      {techMark}
       {showTimer && <FaultTimer since={site.statusSince} tone={status} />}
     </span>
   );
@@ -792,6 +803,7 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
         ) : (
           <div className="card-status-row">
             <span className="unmonitored-tag">ללא בקר מחובר</span>
+            {techMark}
             {site.compliance !== undefined &&
               <ComplianceLights compliance={site.compliance} density={density} onOpen={openTab} />}
             {rowEnd}
@@ -848,6 +860,8 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
               <span className="status-dot" style={{ background: colors.dot }} />
               {label}
             </span>
+            {/* בכרטיס המורחב — במילים: מי ומאיזו שעה */}
+            {onSite && <span className="exp-tech-onsite"><TechIcon size={17} />{onSiteText}</span>}
             {/* רמזורי בודק/תחזוקה — לחיצה פותחת את הלשונית שלהם בחלון האתר */}
             <ComplianceLights compliance={site.compliance} density="expanded" onOpen={openTab} />
             {stuckBadge}

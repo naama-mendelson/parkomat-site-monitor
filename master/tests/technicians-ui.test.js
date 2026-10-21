@@ -2,7 +2,7 @@
 // והרשימה בלי חיפוש (dispatchSites). ההחלטות על השליחה עצמה — במסד (technicians.test.js); כאן רק מה שהמסך מציע.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchSites, dispatchLine, pushLine, techByPlate } from "../../dashboard/src/utils/technicians.js";
+import { dispatchSites, dispatchLine, pushLine, techByPlate, techOnSiteBySite, techOnSiteText } from "../../dashboard/src/utils/technicians.js";
 import { editDistance, looseText, matchScore, searchSites, siteKey, skel } from "../../dashboard/src/utils/siteSearch.js";
 
 // שמות בצורה של הייצור (קיצורים, גרשיים כפולים, טווחים) — רחובות ציבוריים, לא נתונים מסמך
@@ -128,4 +128,24 @@ test("הצפצוף בכרטיס: קיבל / לא אישר אחרי 3 / למה ל
   assert.deepEqual(pushLine({ ...d, push_count: 0, push_last_at: null }, now), { tone: "wait", text: "שולח צפצוף לטלפון…" });
   assert.equal(pushLine({ created_at: d.created_at }, now), null, "מסד ישן");
   assert.equal(pushLine(null, now), null);
+});
+
+test("טכנאי באתר בלוח: לפי אתר, השם מהלוח או מהכינוי, מי שהגיע ראשון ראשון; והטקסט של האיקון", () => {
+  const rows = [
+    { site_id: 9, code: "1227", plate: "1110002", nickname: "דני כהן 1110002", tech: null, since: "2026-10-21T08:20:00Z", no_signal: false },
+    { site_id: 9, code: "1227", plate: "1110001", nickname: "אבי 1110001", tech: "אבי לוי", since: "2026-10-21T07:42:00Z", no_signal: false },
+    { site_id: 4, code: "1047", plate: "1110003", nickname: "1110003", tech: "  ", since: null, no_signal: true },
+    { site_id: null, code: "GONE", plate: "1110004", nickname: "x", tech: "y", since: null },
+  ];
+  const m = techOnSiteBySite(rows);
+  assert.deepEqual([...m.keys()].sort(), [4, 9], "אתר שנמחק (site_id ריק) — לא");
+  assert.deepEqual(m.get(9).map((x) => x.name), ["אבי לוי", "דני כהן"], "הראשון שהגיע — ראשון; בלי שיוך — הכינוי בלי המספר");
+  assert.deepEqual(m.get(4), [{ name: "1110003", since: null, noSignal: true }], "שם ריק בלוח וכינוי שהוא רק מספר — המספר");
+  const NOW = "2026-10-21T09:00:00Z";
+  assert.equal(techOnSiteText(m.get(9), NOW), "2 טכנאים באתר: אבי לוי, דני כהן · מ-10:42");
+  assert.equal(techOnSiteText([{ name: "אבי לוי", since: "2026-10-21T07:42:00Z" }], NOW), "טכנאי באתר: אבי לוי · מ-10:42");
+  assert.equal(techOnSiteText(m.get(4), NOW), "טכנאי באתר: 1110003", "בלי שעה — בלי 'מ-'");
+  assert.equal(techOnSiteText([], NOW), "");
+  assert.equal(techOnSiteText(null, NOW), "");
+  assert.equal(techOnSiteBySite(null).size, 0);
 });

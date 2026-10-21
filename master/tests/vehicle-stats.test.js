@@ -361,3 +361,43 @@ test("הגריפה: ביקורים אחרי 90 יום, ציר היום אחרי 
   const job = (await sup(`SELECT command FROM cron.job WHERE jobname = 'parkomat-prune-vehicle-stats'`))[0];
   assert.equal(job.command, "SELECT app.prune_vehicle_stats()");
 });
+
+test("טכנאי באתר (לוח האתרים): ביקור פתוח של 2 דקות ומעלה ועדכני; שם הטכנאי מהלוח; רק צוות", { skip }, async () => {
+  const sid = async (code) => (await sup(`SELECT id FROM sites WHERE code = $1`, [code]))[0].id;
+  const s1 = await sid("VS1"), s2 = await sid("VS2");
+  const plates = ["TOS1", "TOS2", "TOS3", "TOS4", "TOS5", "TOS6"];
+  for (const p of plates) {
+    await sup(`INSERT INTO vehicles_live (license_plate, nickname, motion, synced_at) VALUES ($1, $2, 'parking', now())
+               ON CONFLICT (license_plate) DO NOTHING`, [p, `כינוי ${p}`]);
+  }
+  const visit = (plate, siteId, code, startMin, lastMin, ended = false) => sup(
+    `INSERT INTO vehicle_visits (license_plate, site_id, site_code, site_name, started_at, last_at, ended_at)
+     VALUES ($1, $2, $3, 'x', now() - make_interval(mins => $4), now() - make_interval(mins => $5),
+             CASE WHEN $6 THEN now() - interval '30 seconds' END)`, [plate, siteId, code, startMin, lastMin, ended]);
+  await visit("TOS1", s1, "VS1", 40, 1);         // באתר 40 דקות — כן, עם שם מהלוח
+  await visit("TOS2", s1, "VS1", 10, 0);         // באתר 10 דקות — כן; הטכנאי שלו מושבת, ולכן בלי שם
+  await visit("TOS3", s2, "VS2", 1, 0);          // דקה אחת — רמזור ליד אתר, לא
+  await visit("TOS4", s2, "VS2", 60, 20);        // לא עודכן 20 דקות — הסנכרון נעצר, לא
+  await visit("TOS5", s2, "VS2", 30, 5, true);   // הביקור נגמר — לא
+  await visit("TOS6", null, "GONE", 30, 0);      // האתר נמחק — לא
+  await sup(`INSERT INTO technicians (display_name, plate, is_active, created_by) VALUES
+             ('אבי לוי', 'TOS1', true, 'בדיקה'), ('דני ישן', 'TOS2', false, 'בדיקה')`);
+  try {
+    const j = (await user(RO, `SELECT public.tech_on_site() j`))[0].j;
+    assert.deepEqual(j.map((r) => r.plate), ["TOS1", "TOS2"], "רק שני הביקורים שבאמת באתר, לפי הסדר");
+    assert.equal(j[0].site_id, s1);
+    assert.equal(j[0].code, "VS1");
+    assert.equal(j[0].tech, "אבי לוי");
+    assert.equal(j[0].nickname, "כינוי TOS1");
+    assert.match(j[0].since, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.ok(Date.now() - Date.parse(j[0].since) >= 39 * 60_000, "since = מתי הגיע");
+    assert.equal(j[1].tech, null, "טכנאי מושבת לא נותן שם");
+    assert.equal(j[1].no_signal, false);
+    await fails(as("anon", {}, `SELECT public.tech_on_site()`), "42501");
+    await fails(user("f3000000-0000-0000-0000-0000000000ff", `SELECT public.tech_on_site()`), "42501");
+  } finally {
+    await sup(`DELETE FROM technicians WHERE plate LIKE 'TOS%'`);
+    await sup(`DELETE FROM vehicle_visits WHERE license_plate LIKE 'TOS%'`);
+    await sup(`DELETE FROM vehicles_live WHERE license_plate LIKE 'TOS%'`);
+  }
+});

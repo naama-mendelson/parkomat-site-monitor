@@ -908,7 +908,7 @@ export { fetchVehicles, fetchSiteLocations, saveSiteLocation } from "./vehiclesD
 // לוח טכנאי השטח (20/10/2026) — אותו כלל
 export {
   fetchTechBoard, fetchTechDay, saveTechnician, setTechStatus, dispatchTech, markDispatch, endDispatch,
-  provisionTechPhone, unpairTechPhone, fetchTechMe, subscribeTechPush, ackDispatch,
+  provisionTechPhone, unpairTechPhone, fetchTechMe, subscribeTechPush, ackDispatch, fetchTechOnSite,
 } from "./techniciansDirect";
 
 // קריאות ויזנט (13/10/2026) — בלי זרוע שרת, כמו המשימות

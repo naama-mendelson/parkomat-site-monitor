@@ -134,6 +134,8 @@
 .tc-site p { margin: 0; font-size: 0.88rem; }
 .tc-site-fault b { color: var(--tc-fault); font-weight: 700; }
 .tc-site-maint b { color: var(--status-maint-ink, #92400e); font-weight: 700; }
+.tc-site-maint { display: flex; align-items: center; gap: 6px; }
+.tc-tech-ico { flex: 0 0 auto; color: var(--status-maint-ink, #92400e); }
 .tc-site-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .tc-pill {
   min-height: 32px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border-color); background: var(--bg-card);

@@ -24,6 +24,7 @@ import {
 import { destText, dispatchLine, pushLine, techByPlate } from "../../utils/technicians";
 import { siteKey } from "../../utils/siteSearch";
 import DispatchDialog from "./DispatchDialog";
+import TechIcon from "../TechIcon/TechIcon";
 import TechPhoneDialog from "./TechPhoneDialog";
 import { phoneStatus } from "../../utils/techPhone";
 
@@ -45,7 +46,8 @@ function SiteState({ site, tasks, calls }) {
           <b>האתר בתקלה</b>{site.currentFaultText ? <>: <span>{site.currentFaultText}</span></> : null}
         </p>
       )}
-      {maint && <p className="tc-site-maint"><b>האתר במצב תחזוקה בדשבורד</b></p>}
+      {/* רק כשהרכב עומד באתר (site = at_site), ולכן "טכנאי באתר" תמיד נכון כאן. הבעלת: "שיהיה כתוב האתר בתחזוקה טכנאי באתר" */}
+      {maint && <p className="tc-site-maint"><TechIcon className="tc-tech-ico" /><b>האתר בתחזוקה — טכנאי באתר</b></p>}
       {(open > 0 || tk > 0) && (
         <p className="tc-site-btns">
           {open > 0 && calls?.openSite && (
