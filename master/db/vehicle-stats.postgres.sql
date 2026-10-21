@@ -335,15 +335,17 @@ AS $$
       FROM sites s LEFT JOIN calls c ON c.site_id = s.id
      WHERE (s.status = 'error' AND s.monitored IS NOT FALSE) OR c.n > 0
   ), veh AS (
+    -- ⚠️ רק רכבי השירות (fleet_shown, 21/10/2026) — רכב משרד שעובר ליד אתר בתקלה אינו "הכי קרוב"
     SELECT v.license_plate, v.lat, v.lon, app.vehicle_state(v.motion, v.located_at, v.synced_at) AS state
-      FROM vehicles_live v WHERE v.lat IS NOT NULL
+      FROM vehicles_live v WHERE v.lat IS NOT NULL AND app.fleet_shown(v.license_plate)
   )
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
            'code', n.code, 'name', n.site_name, 'fault', n.fault, 'calls', n.calls,
            'located', n.lat IS NOT NULL, 'approx', COALESCE(n.geo_precision IN ('street', 'area'), false),
            'on_site', (SELECT COALESCE(jsonb_agg(o.license_plate ORDER BY o.started_at), '[]'::jsonb)
                          FROM vehicle_visits o
-                        WHERE o.ended_at IS NULL AND o.site_id = n.id AND app.visit_current(o.started_at, o.last_at)),
+                        WHERE o.ended_at IS NULL AND o.site_id = n.id AND app.visit_current(o.started_at, o.last_at)
+                          AND app.fleet_shown(o.license_plate)),
            -- ⚠️ בלי מי שכבר באתר הזה — לפני ה-LIMIT, אחרת רכב שעומד באתר תפס מקום מתוך שלושת "הקרובים" (21/10/2026)
            'nearest', (SELECT COALESCE(jsonb_agg(jsonb_build_object('plate', q.license_plate, 'm', q.m, 'state', q.state)
                                                  ORDER BY q.m), '[]'::jsonb)
@@ -391,7 +393,9 @@ BEGIN
                           WHERE x.plate = vv.license_plate AND x.is_active ORDER BY x.id LIMIT 1) t ON true
      WHERE vv.ended_at IS NULL
        AND vv.site_id IS NOT NULL
-       AND app.visit_current(vv.started_at, vv.last_at)), '[]'::jsonb);
+       AND app.visit_current(vv.started_at, vv.last_at)
+       -- ⚠️ רק רכבי השירות (21/10/2026): רכב משרד שחונה ליד אתר אינו "טכנאי באתר"
+       AND app.fleet_shown(vv.license_plate)), '[]'::jsonb);
 END
 $fn$;
 REVOKE ALL ON FUNCTION public.tech_on_site() FROM PUBLIC, anon;

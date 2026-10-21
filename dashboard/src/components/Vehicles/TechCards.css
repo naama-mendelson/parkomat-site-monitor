@@ -41,28 +41,6 @@
 .tc-code { color: var(--text-secondary); font-weight: 400; font-size: 0.9em; }
 
 /* ── צריכים טכנאי עכשיו ── */
-.tc-alerts { display: flex; flex-direction: column; gap: 8px; }
-.tc-alerts h3 { margin: 0; font-size: 1rem; font-weight: 700; }
-.tc-alerts h3 span { color: var(--text-secondary); font-weight: 400; }
-.tc-alerts ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; }
-.tc-alert {
-  position: relative; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px;
-  background: var(--bg-card); border: 1px solid var(--border-color); border-inline-start: 4px solid var(--tc-fault); min-width: 0;
-}
-.tc-alert.is-call { border-inline-start-color: var(--tc-call); }
-.tc-alert p { margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
-.tc-alert-site { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 0.98rem !important; }
-.tc-alert-text { color: var(--text-secondary); }
-.tc-alert-btn { align-self: flex-start; margin-top: 2px; }
-.tc-badge { font-size: 0.78rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
-.tc-badge--fault { color: var(--tc-fault); background: color-mix(in srgb, var(--tc-fault) 13%, transparent); }
-.tc-badge--call { color: var(--tc-call); background: color-mix(in srgb, var(--tc-call) 14%, transparent); }
-.tc-ok { color: var(--tc-site); font-weight: 700; }
-.tc-link {
-  border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--accent); cursor: pointer;
-  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px;
-}
-.tc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 /* ── הצוות היום ── */
 .tc-team {
@@ -108,8 +86,7 @@
 .tc-card.tc-g--park { --tc-c: var(--tc-park); }
 .tc-card.tc-g--silent { --tc-c: var(--tc-silent); }
 .tc-card.tc-g--stale { --tc-c: var(--tc-stale); opacity: 0.88; }
-.tc-card.is-flash { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 24px var(--shadow); transform: translateY(-2px); }
-@media (prefers-reduced-motion: reduce) { .tc-card { transition: none; } .tc-card.is-flash { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tc-card { transition: none; } }
 
 .tc-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tc-ava {
@@ -221,7 +198,16 @@
 @media (max-width: 640px) {
   .tv { margin: 8px; }
   .tc-team { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .tc-grid, .tc-alerts ul { grid-template-columns: minmax(0, 1fr); }
+  .tc-grid { grid-template-columns: minmax(0, 1fr); }
   .tc-search { flex: 1 1 100%; min-width: 0; }
   .tc-pill, .tc-filter, .tc-foot-btns button, .tc-foot-btns a, .tc-task-btns button { min-height: 44px; }
 }
+
+/* "רכבים ברשימה" (21/10/2026) — לעורך ולמנהל, בקצה שורת הכותרת */
+.tv-fleet-btn {
+  margin-inline-start: auto; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card);
+  color: var(--text-secondary); font: inherit; font-size: 0.92rem; font-weight: 600; padding: 7px 14px; min-height: 36px; cursor: pointer;
+}
+.tv-fleet-btn:hover { color: var(--text-primary); }
+.tv-fleet-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) { .tv-fleet-btn { min-height: 44px; } }

@@ -29,7 +29,10 @@ async function as(role, claims, sql, params = []) {
     return (await tx.query(sql, params)).rows;
   });
 }
-const user = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000bb" }, sql, params);
+// 21/10/2026: הדשבורד מציג רק רכבים שב-fleet_shown. הבדיקות שנכתבו לפני כן מצפות לכל הרכבים — אז לפני כל קריאה כל רכבי
+// הבדיקה מסומנים כמוצגים. בדיקת ההסתרה עצמה עוברת דרך userRaw, בלי הסימון.
+const userRaw = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000bb" }, sql, params);
+const user = async (uid, sql, params) => { await h.pg.query(`INSERT INTO fleet_shown (license_plate) SELECT license_plate FROM vehicles_live ON CONFLICT DO NOTHING`); return userRaw(uid, sql, params); };
 const fn = async (uid, name, ...args) =>
   (await user(uid, `SELECT public.${name}(${args.map((_, i) => `$${i + 1}`).join(", ")}) r`, args))[0].r;
 const board = (uid = ED) => fn(uid, "tech_board");

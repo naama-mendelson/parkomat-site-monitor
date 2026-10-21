@@ -142,7 +142,7 @@ function TaskBlock({ d, now, canSend, onChanged }) {
   );
 }
 
-function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canSend, onSend, onPhone, onBoardChanged }) {
+function TechCard({ v, now, site, tasks, calls, onMap, tech, canSend, onSend, onPhone, onBoardChanged }) {
   const name = tech?.name || vehicleName(v);
   const w = whereInfo(v, now);
   const power = powerAlert(v, now);
@@ -162,7 +162,7 @@ function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canS
   };
   const showFoot = canSend || hasPosition(v);
   return (
-    <article ref={setRef} className={`tc-card tc-g--${w.group}${flash ? " is-flash" : ""}${open ? " is-open" : ""}`}
+    <article className={`tc-card tc-g--${w.group}${open ? " is-open" : ""}`}
       aria-label={`${name} — ${w.title}`} onClick={onCardClick}>
       <header className="tc-head" role="button" tabIndex={0} aria-expanded={open} aria-controls={moreId}
         title={open ? "סגירת הפירוט" : "לפירוט מלא"} onKeyDown={onHeadKey}>
@@ -216,54 +216,11 @@ function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canS
   );
 }
 
-function AlertStrip({ alerts, siteByCode, calls, goTo }) {
-  return (
-    <section className="tc-alerts" aria-labelledby="tc-alerts-title">
-      <h3 id="tc-alerts-title">צריכים טכנאי עכשיו <span>· {alerts.length}</span></h3>
-      <ul>
-        {alerts.map((a) => {
-          const site = siteByCode.get(a.code);
-          const faultText = a.fault ? site?.currentFaultText : null;
-          return (
-            <li key={a.code} className={`tc-alert ${a.fault ? "is-fault" : "is-call"}`}>
-              <p className="tc-alert-site">
-                <b>{a.label}</b> <span className="tc-code">{a.code}</span>
-                {a.fault && <span className="tc-badge tc-badge--fault">בתקלה</span>}
-                {a.calls > 0 && <span className="tc-badge tc-badge--call">{a.calls === 1 ? "קריאה פתוחה" : `${a.calls} קריאות`}</span>}
-              </p>
-              {faultText && <p className="tc-alert-text">{faultText}</p>}
-              {a.onSite.length > 0 ? (
-                <p className="tc-alert-who">
-                  <span className="tc-ok">טכנאי באתר:</span>{" "}
-                  {a.onSite.map((n) => <button key={n.plate} type="button" className="tc-link" onClick={() => goTo(n.plate)}>{n.name}</button>)}
-                </p>
-              ) : !a.located ? (
-                <p className="tc-alert-who tc-muted">לאתר אין מיקום במפה</p>
-              ) : a.nearest.length ? (
-                <p className="tc-alert-who">
-                  הכי קרוב:{" "}
-                  {a.nearest.map((n, i) => (
-                    <span key={n.plate}>
-                      <button type="button" className="tc-link" onClick={() => goTo(n.plate)}>{n.name}</button>
-                      {NBSP}<span className="tc-muted">{n.dist}{n.state ? ` · ${n.state}` : ""}</span>{i < a.nearest.length - 1 ? " · " : ""}
-                    </span>
-                  ))}
-                </p>
-              ) : (
-                <p className="tc-alert-who tc-muted">אין טכנאי עם מיקום</p>
-              )}
-              {a.calls > 0 && site && calls?.openSite && (
-                <button type="button" className="tc-pill tc-pill--call tc-alert-btn" onClick={() => calls.openSite(site)}>לקריאות</button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
+// "צריכים טכנאי עכשיו" הוסר (הבעלת, 21/10/2026: "לא רוצה את זה"). הנתונים (alerts) נשארים — המפה מסמנת בהם את האתרים
+// שצריכים טכנאי. לשחזור: git show 12d689a:dashboard/src/components/Vehicles/TechCards.jsx (AlertStrip).
 
-export default function TechCards({ data, error, sites, alerts, onMap, board, onBoardChanged }) {
+
+export default function TechCards({ data, error, sites, onMap, board, onBoardChanged }) {
   const tasks = useTasks();
   const calls = useServiceCalls();
   // "צא ל:" (21/10/2026): רק בפיילוט של לוח הטכנאים, ורק לעורך / מנהל (המסד מחליט — tech_board.can_edit)
@@ -274,9 +231,6 @@ export default function TechCards({ data, error, sites, alerts, onMap, board, on
   const [phoneFor, setPhoneFor] = useState(null);     // הרכב שחלון הטלפון שלו פתוח (שלב 2)
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const [flash, setFlash] = useState(null);
-  const refs = useRef(new Map());
-  const timer = useRef(null);
   const now = data?.now;
   const vehicles = useMemo(() => data?.vehicles ?? [], [data]);
   const siteByCode = useMemo(() => new Map((sites || []).map((s) => [s.code, s])), [sites]);
@@ -287,26 +241,14 @@ export default function TechCards({ data, error, sites, alerts, onMap, board, on
   const stale = sorted.filter((v) => cardGroup(v, now) === "stale");
   const shown = filter === "all" ? active : active.filter((v) => cardGroup(v, now) === filter);
 
-  const goTo = (plate) => {
-    setFilter("all");
-    setQuery("");
-    setFlash(plate);
-    requestAnimationFrame(() => refs.current.get(plate)?.scrollIntoView({ block: "center", behavior: "smooth" }));
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setFlash(null), 2400);
-  };
-
   const card = (v) => (
     <TechCard key={v.plate} v={v} now={now} site={v.at_site ? siteByCode.get(v.at_site.code) : null}
-      tasks={tasks} calls={calls} onMap={onMap} flash={flash === v.plate}
-      tech={techs.get(v.plate) ?? null} canSend={canSend} onSend={setSending} onPhone={setPhoneFor} onBoardChanged={onBoardChanged}
-      setRef={(el) => { if (el) refs.current.set(v.plate, el); else refs.current.delete(v.plate); }} />
+      tasks={tasks} calls={calls} onMap={onMap}
+      tech={techs.get(v.plate) ?? null} canSend={canSend} onSend={setSending} onPhone={setPhoneFor} onBoardChanged={onBoardChanged} />
   );
 
   return (
     <div className="tc">
-      {alerts.length > 0 && <AlertStrip alerts={alerts} siteByCode={siteByCode} calls={calls} goTo={goTo} />}
-
       {data && (
         <section className="tc-team" aria-label="הצוות היום">
           <div className="tc-team-stat"><b>{kmText(team.km)}</b><span>ק״מ היום</span></div>

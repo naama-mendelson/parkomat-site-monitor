@@ -12,8 +12,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTechBoard, fetchVehicles } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
+import { canEdit } from "../../utils/roles";
 import { ageText, syncState } from "../../utils/vehicles";
 import { alertRows, groupCounts, groupLabel, GROUPS } from "../../utils/techStats";
+import FleetListDialog from "./FleetListDialog";
 import FleetMap from "./FleetMap";
 import TechCards from "./TechCards";
 import "./Vehicles.css";
@@ -54,6 +56,8 @@ export default function TechniciansView({ sites }) {
   const [board, setBoard] = useState(null);          // לוח הטכנאים: מי משויך לאיזה רכב והמשימה הפתוחה ("צא ל:")
   const [boardError, setBoardError] = useState(null);
   const [focusPlate, setFocusPlate] = useState(null);
+  const [fleetOpen, setFleetOpen] = useState(false);   // "רכבים ברשימה" — עורך ומנהל (21/10/2026)
+  const editable = canEdit(user?.role);
 
   useEffect(() => { setViewState(readView(uid)); }, [uid]);
   const setView = useCallback((v) => { setViewState(v); writeView(uid, v); }, [uid]);
@@ -92,6 +96,9 @@ export default function TechniciansView({ sites }) {
             <button type="button" className={view === "cards" ? "is-on" : ""} aria-pressed={view === "cards"} onClick={() => setView("cards")}>כרטיסים</button>
             <button type="button" className={view === "map" ? "is-on" : ""} aria-pressed={view === "map"} onClick={() => setView("map")}>מפה</button>
           </div>
+          {editable && (
+            <button type="button" className="tv-fleet-btn" onClick={() => setFleetOpen(true)} aria-haspopup="dialog">רכבים ברשימה</button>
+          )}
         </div>
         {data && (
           <p className="tv-summary">
@@ -119,8 +126,9 @@ export default function TechniciansView({ sites }) {
       )}
 
       {view === "cards"
-        ? <TechCards data={data} error={error} sites={sites} alerts={alerts} onMap={onMap} board={board} onBoardChanged={load} />
+        ? <TechCards data={data} error={error} sites={sites} onMap={onMap} board={board} onBoardChanged={load} />
         : <FleetMap data={data} error={error} onReload={load} focusPlate={focusPlate} onFocused={onFocused} alerts={alerts} />}
+      {fleetOpen && <FleetListDialog onClose={() => setFleetOpen(false)} onSaved={load} />}
     </section>
   );
 }

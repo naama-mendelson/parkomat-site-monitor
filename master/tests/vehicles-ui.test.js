@@ -16,7 +16,7 @@ test("vehicleName: בלי מספר הרכב שאיתוראן מצרפים, גם 
   assert.equal(vehicleName(v()), "ישראל ישראלי");
   assert.equal(vehicleName(v({ name: "דנה חדש1234567" })), "דנה חדש");
   assert.equal(vehicleName(v({ name: "זמני (משה ישן) 1234567" })), "זמני (משה ישן)");
-  assert.equal(vehicleName(v({ name: "  רז   כהן  " })), "רז כהן");
+  assert.equal(vehicleName(v({ name: "  טכנאי   בדיקה  " })), "טכנאי בדיקה");
   assert.equal(vehicleName(v({ name: "" })), "1234567");
   assert.equal(vehicleName({}), "רכב");
   // השם מלוח הרכז קודם לכינוי (21/10/2026); ריק או רווחים — הכינוי

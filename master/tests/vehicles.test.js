@@ -23,7 +23,10 @@ async function as(role, claims, sql, params = []) {
   });
 }
 const svc = (sql, params) => as("service_role", {}, sql, params);
-const user = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000aa" }, sql, params);
+// 21/10/2026: הדשבורד מציג רק רכבים שב-fleet_shown. הבדיקות שנכתבו לפני כן מצפות לכל הרכבים — אז לפני כל קריאה כל רכבי
+// הבדיקה מסומנים כמוצגים. בדיקת ההסתרה עצמה עוברת דרך userRaw, בלי הסימון.
+const userRaw = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000aa" }, sql, params);
+const user = async (uid, sql, params) => { await h.pg.query(`INSERT INTO fleet_shown (license_plate) SELECT license_plate FROM vehicles_live ON CONFLICT DO NOTHING`); return userRaw(uid, sql, params); };
 const ingest = async (vehicles, meta = { complete: true }) =>
   (await svc(`SELECT public.ituran_ingest($1::jsonb, $2::jsonb) n`, [JSON.stringify(vehicles), JSON.stringify(meta)]))[0].n;
 const list = async (uid = MGR) => (await user(uid, `SELECT public.vehicles_live_list() j`))[0].j;
@@ -478,4 +481,71 @@ test("pg_cron → Edge Function: בלי סוד — לא נשלח כלום; עם 
   assert.deepEqual(job, { schedule: "* * * * *", command: "SELECT app.ituran_sync_request()" });
   await fails(user(MGR, `SELECT app.ituran_sync_request()`), "42501");
   await sup(`DELETE FROM settings WHERE key IN ('ituran_caller_secret', 'push_anon_key')`);
+});
+
+// 21/10/2026 — רק רכבי טכנאי השירות מוצגים (fleet_shown). הבעלת: "אל תציג אותם" — בלי "כל הרכבים".
+// ⚠️ כאן userRaw ולא user: user מסמן לפני כל קריאה את כל הרכבים כמוצגים (בשביל הבדיקות שנכתבו לפני הרשימה).
+test("רק רכבי השירות מוצגים: רשימה ריקה = אף רכב; עורך שומר, בקר וסוכן לא; מסך ישן; רכב שלא באיתוראן; יומן", { skip }, async () => {
+  await sup(`DELETE FROM fleet_shown`);
+  await sup(`DELETE FROM vehicles_live`);
+  await ingest([car("8600001"), car("8600002"), car("8600003")]);
+  const shown = async () => (await userRaw(MGR, `SELECT public.vehicles_live_list() j`))[0].j.vehicles.map((v) => v.plate);
+  const set = async (uid, plates, seen) => (await userRaw(uid,
+    `SELECT public.fleet_shown_set(ARRAY(SELECT jsonb_array_elements_text($1::jsonb)),
+                                   CASE WHEN $2::jsonb IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text($2::jsonb)) END) j`,
+    [JSON.stringify(plates), seen === null ? null : JSON.stringify(seen)]))[0].j;
+  const lastAudit = async () => (await sup(`SELECT details FROM audit_log WHERE action = 'fleet.set' ORDER BY id DESC LIMIT 1`))[0]?.details;
+  const audits = async () => (await sup(`SELECT count(*)::int n FROM audit_log WHERE action = 'fleet.set'`))[0].n;
+
+  assert.deepEqual(await shown(), [], "רשימה ריקה — אף רכב לא מוצג");
+
+  // הרשימה המלאה (כולל רכבי משרד) — עורך ומנהל בלבד
+  await fails(userRaw(RO, `SELECT public.fleet_list()`), "42501");
+  await fails(userRaw(AG, `SELECT public.fleet_list()`), "42501");
+  await fails(as("anon", {}, `SELECT public.fleet_list()`), "42501");
+  const fl = (await userRaw(MGR, `SELECT public.fleet_list() j`))[0].j;
+  assert.deepEqual(fl.vehicles.map((v) => [v.plate, v.shown]), [["8600001", false], ["8600002", false], ["8600003", false]]);
+  assert.deepEqual(fl.shown, []);
+
+  // שמירה: רווחים, כפילויות וריקים מתאחדים; רק מה שנבחר מוצג; היומן — מספרים בלבד
+  await fails(set(RO, ["8600001"], []), "42501");
+  await fails(set(AG, ["8600001"], []), "42501");
+  const r1 = await set(MGR, [" 8600001 ", "8600002", "8600002", ""], []);
+  assert.equal(r1.changed, true);
+  assert.deepEqual(r1.shown, ["8600001", "8600002"]);
+  assert.deepEqual(await shown(), ["8600001", "8600002"]);
+  assert.deepEqual(await lastAudit(), { added: ["8600001", "8600002"], removed: [] });
+  assert.deepEqual((await userRaw(MGR, `SELECT public.fleet_list() j`))[0].j.vehicles.map((v) => v.shown), [true, true, false]);
+
+  // מסך ישן (ראה רשימה ריקה) — PT409, לא דריסה של מה שעורך אחר שמר
+  await fails(set(MGR, ["8600003"], []), "PT409");
+  assert.deepEqual(await shown(), ["8600001", "8600002"]);
+  // רכב חדש ברשימה שאינו באיתוראן — PT404, ושום דבר לא נשמר
+  await fails(set(MGR, ["8600001", "8600002", "9999999"], ["8600001", "8600002"]), "PT404");
+  assert.deepEqual(await shown(), ["8600001", "8600002"]);
+  // בלי שינוי (סדר אחר) — לא נכתב ולא נרשם
+  const n0 = await audits();
+  assert.equal((await set(MGR, ["8600002", "8600001"], ["8600002", "8600001"])).changed, false);
+  assert.equal(await audits(), n0);
+  // הוספה והסרה יחד
+  assert.deepEqual((await set(MGR, ["8600002", "8600003"], ["8600001", "8600002"])).shown, ["8600002", "8600003"]);
+  assert.deepEqual(await lastAudit(), { added: ["8600003"], removed: ["8600001"] });
+  assert.deepEqual(await shown(), ["8600002", "8600003"]);
+
+  // רכב שברשימה ונעלם מאיתוראן (תשובה מלאה בלעדיו): לא מוצג, נשאר ברשימה, שמירה איתו לא נכשלת — וכשחוזר, מוצג
+  await ingest([car("8600001"), car("8600002")]);
+  assert.deepEqual(await shown(), ["8600002"]);
+  const fl2 = (await userRaw(MGR, `SELECT public.fleet_list() j`))[0].j;
+  assert.deepEqual(fl2.shown, ["8600002", "8600003"], "הרשימה עצמה — כולל רכב שנעלם");
+  assert.equal((await set(MGR, ["8600002", "8600003"], fl2.shown)).changed, false);
+  await ingest([car("8600001"), car("8600002"), car("8600003")]);
+  assert.deepEqual(await shown(), ["8600002", "8600003"]);
+  // p_seen NULL = בלי בדיקה (כלי / SQL ידני)
+  assert.deepEqual((await set(MGR, ["8600001"], null)).shown, ["8600001"]);
+  // רשימה ריקה = אף רכב
+  assert.deepEqual((await set(MGR, [], ["8600001"])).shown, []);
+  assert.deepEqual(await shown(), []);
+  // הטבלה סגורה
+  await fails(userRaw(MGR, `SELECT * FROM fleet_shown`), "42501");
+  await fails(userRaw(MGR, `INSERT INTO fleet_shown (license_plate) VALUES ('8600001')`), "42501");
 });

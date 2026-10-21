@@ -904,7 +904,7 @@ export {
 } from "./tasksDirect";
 
 // רכבי הטכנאים מאיתוראן (20/10/2026) — בלי זרוע שרת: הסנכרון רץ ב-Supabase, ול-master מעולם לא היה מסלול כזה
-export { fetchVehicles, fetchSiteLocations, saveSiteLocation } from "./vehiclesDirect";
+export { fetchVehicles, fetchSiteLocations, saveSiteLocation, fetchFleet, saveFleet } from "./vehiclesDirect";
 // לוח טכנאי השטח (20/10/2026) — אותו כלל
 export {
   fetchTechBoard, fetchTechDay, saveTechnician, setTechStatus, dispatchTech, markDispatch, endDispatch,

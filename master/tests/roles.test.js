@@ -52,6 +52,8 @@ const EDITOR = [
   "tl_add_column", "tl_add_row", "tl_delete_column", "tl_delete_row", "tl_move_column", "tl_move_row", "tl_paste_rows",
   "tl_set_cell", "tl_update_column", "unmark_test", "update_site", "wizenet_request_lookups", "wizenet_request_update",
   "tech_dispatch", "tech_dispatch_end", "tech_dispatch_mark", "tech_save", "tech_set_status", "tech_phone_begin", "tech_phone_unpair",
+  // רשימת רכבי השירות (21/10/2026): השמירה, וגם הקריאה של הרשימה המלאה — היא כוללת את רכבי המשרד, שבקר לא אמור לראות
+  "fleet_shown_set", "fleet_list",
 ];
 // מנהל בלבד: מחיקת אתר וכלי השאריות שלו, ניהול משתמשים, קוד הניהול, תיבת הדיווחים, ופעולות השרת המת
 const MANAGER = [

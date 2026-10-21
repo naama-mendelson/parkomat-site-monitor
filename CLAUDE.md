@@ -4808,6 +4808,90 @@ publishing, and leave the small ones for a later round.
 - SQL first, though either order is safe. A new bundle against the old SQL: `tech_self_unpair` returns 404, and the phone
   still cancels the subscription and signs out (tested). `push_devices` is already in production.
 
+### Only the service technicians' vehicles are shown — "רכבים ברשימה" (built 21/10/2026, NOT deployed)
+
+From the service team, pasted by the owner: no need to show the vehicles of named office staff and installers (names left out here: the repo is public), and if
+everyone must appear, *"אפשרות לבצע סינון על מנת שלמוקד יהיה ברשימה רק את הטכנאים הרלוונטים"*. Then a list of service
+technicians, and three who work with Parkomat sometimes.
+
+**Her answers:**
+- **"אל תציג אותם":** the other vehicles disappear entirely. There is no "all vehicles" switch.
+- The occasional technicians appear **like everyone else**, with no mark.
+- Where one name matched several Ituran vehicles, she picked which one. A technician's old vehicle, and another's
+  temporary one, are shown too.
+- 14 vehicles in all. One technician on the list has no vehicle in Ituran.
+
+**How it works:**
+- **A list in the database, not in the code.** `fleet_shown` (`vehicles.postgres.sql`) is one row per plate. It is closed
+  (RLS, no grants), with **no FK** to `vehicles_live`: a vehicle that drops out of an Ituran reply is deleted there, and its
+  row here stays, so it is shown again when it comes back.
+  ⚠️ Names and plates never go to git, since the repo is public. The list was loaded by a script in the scratchpad, and
+  is kept up to date from the dashboard.
+- **One rule:** `app.fleet_shown(plate)`, plain SQL so it is inlined. It applies in:
+  - `vehicles_live_list` (the cards, the map, the team line);
+  - `vehicle_alerts_json`, in both `on_site` and `nearest` (an office car passing a site in fault is not "הכי קרוב";
+    the fourth in line takes its place);
+  - `tech_on_site` (an office car parked near a site does not light the yellow icon on the board).
+- **Hidden vehicles are still synced and tracked** (`vehicles_track`), so a vehicle added to the list comes with today's
+  numbers.
+- ⚠️ **An empty list shows no vehicle at all.** A new vehicle in Ituran (a technician gets a new car) does not appear until
+  it is added.
+- **`public.fleet_list()`** (editor; one jsonb): every vehicle from Ituran with `shown`, and `shown` = the list itself,
+  including a vehicle that left Ituran. A בקר does not get it: the full list includes the office cars.
+- **`public.fleet_shown_set(plates, seen)`** (editor) saves the whole list:
+  - `seen` is the list the screen saw. Another editor who saved in between means PT409, not a silent overwrite.
+    `NULL` skips the check.
+  - Spaces, duplicates and empty values collapse.
+  - A plate **new** to the list must exist in Ituran (PT404). One already on it that left Ituran stays as is.
+  - A save that changes nothing writes nothing and logs nothing.
+  - `LOCK TABLE … SHARE ROW EXCLUSIVE`, so two saves go one after the other.
+  - The audit row is `fleet.set` with `{added, removed}`, plates only.
+- **The dashboard:** a "רכבים ברשימה" button at the end of the technicians header, for editors and managers only
+  (`canEdit`). It opens `FleetListDialog.jsx`:
+  - checkboxes, names without the plate, the plate beside each, and a search by name or plate;
+  - "מסומנים N מתוך M", with a warning when nothing is ticked;
+  - a vehicle on the list that left Ituran, listed at the bottom so it can be removed;
+  - one "שמירה". A draft does not close on the backdrop or Esc. A stale screen gets a message and a reload.
+  - After a save the view reloads.
+- ⚠️ **A real bug found on the way: the "צריכים טכנאי עכשיו" strip and the map's rings never reached production.**
+  `fetchVehicles` (`services/vehiclesDirect.js`) returned `vehicles`, `sync` and `now`, and dropped `alerts`. The browser
+  probes replace this layer with a mock that returns `alerts` directly, so they never saw it.
+  - It is passed through now (`undefined` on an old database).
+  - `tests/vehicles-direct.test.js` runs the real file against a fake Supabase, and the mutation that drops the line
+    fails it.
+- ⚠️ **The strip is removed from the cards** (owner, 21/10/2026). She saw it for the first time on her local dashboard
+  (localhost:5173 runs the working tree), as 12 boxes over most of the screen. She first chose "a row per site", then,
+  seeing it: *"לא רוצה את זה"*.
+  - `alerts` stays in the data: the map rings the sites that need a technician with it (red fault / amber call), and
+    those rings appear now too.
+  - To restore the strip: `git show 12d689a:dashboard/src/components/Vehicles/TechCards.jsx` (`AlertStrip`).
+  - The jump-to-card highlight (`is-flash`) existed only for the strip and went with it.
+  - `probe-techcards` C2 now asserts there is no strip.
+- **Tests:**
+  - `vehicles.test.js` (+1):
+    - an empty list shows nothing;
+    - `fleet_list` and `fleet_shown_set` for a manager, refused to a בקר, an agent and anon;
+    - collapsing; a stale screen; an unknown plate; a no-op is not logged; add and remove together;
+    - a vehicle that left Ituran and came back; `seen` NULL; an empty list; the table closed.
+  - `vehicle-stats.test.js`: a vehicle off the list is neither "באתר" nor "הכי קרוב", and not on the board.
+  - Roles census: both functions under EDITOR. `check-row-cap` declares both.
+  - ⚠️ The older tests insert vehicles without a list. Their `user` helper now marks every test vehicle shown before each
+    call, which is how they behaved until now. The hiding tests use `userRaw`.
+  - **SQL mutations (isolated copy, `mut2110/run-mut18.cjs`): 14 of 14 caught.**
+  - Full suite: 1398/1398. Probes after removing the strip: techcards 66, techfix 23, tcmore 38, fleet 24, vehicles 109, dispatch 71.
+  - Browser `e2e/probe-fleet.mjs` 24:
+    - who sees the button;
+    - the window; unticking two vehicles; the count; a draft that stays open;
+    - the save (the whole list plus what was seen), the cards without the two, and reopening;
+    - the search; a stale screen; a vehicle that left Ituran; none ticked; 390 dark.
+  - The harness mock takes `window.__fleetShown` (a Set; null = all, as before), `__fleetGone` and `?fleetstale=1`.
+- **Deploy, each step with the owner's yes:**
+  1. SQL. The dry run shows 7 gaps: the table's key, three new functions and three bodies.
+  2. Load the list right after it: `scratchpad/tech/load-fleet.cjs`, a dry run and then `--apply`. Until then the
+     technicians view is empty.
+  3. Push.
+  - An old bundle against the new SQL simply shows the 14. The new bundle needs `fleet_list` only for the window.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

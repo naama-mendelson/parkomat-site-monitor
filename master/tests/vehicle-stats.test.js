@@ -20,7 +20,10 @@ async function as(role, claims, sql, params = []) {
     return (await tx.query(sql, params)).rows;
   });
 }
-const user = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000cc" }, sql, params);
+// 21/10/2026: הדשבורד מציג רק רכבים שב-fleet_shown. הבדיקות שנכתבו לפני כן מצפות לכל הרכבים — אז לפני כל קריאה כל רכבי
+// הבדיקה מסומנים כמוצגים. בדיקת ההסתרה עצמה עוברת דרך userRaw, בלי הסימון.
+const userRaw = (uid, sql, params) => as("authenticated", { sub: uid, session_id: "5e550000-0000-0000-0000-0000000000cc" }, sql, params);
+const user = async (uid, sql, params) => { await h.pg.query(`INSERT INTO fleet_shown (license_plate) SELECT license_plate FROM vehicles_live ON CONFLICT DO NOTHING`); return userRaw(uid, sql, params); };
 async function fails(p, code) {
   await assert.rejects(p, (e) => { assert.equal(e.code, code, `ציפיתי ל-${code}, התקבל ${e.code}: ${e.message}`); return true; });
 }
@@ -343,6 +346,14 @@ test("מי הכי קרוב: אתר בתקלה ואתר עם קריאה פתוח�
   by = await alerts();
   assert.deepEqual(by.VS1.on_site, [], "ביקור שלא עודכן 15 דקות — לא 'באתר'");
   assert.equal(by.VS1.nearest[0].plate, "8300004");
+  // 21/10/2026: רכב שאינו ברשימת רכבי השירות (fleet_shown) לא "באתר" ולא "הכי קרוב" — userRaw, בלי הסימון של user
+  await sup(`UPDATE vehicle_visits SET started_at = now() - interval '10 minutes', last_at = now() WHERE license_plate = '8300004'`);
+  await sup(`DELETE FROM fleet_shown WHERE license_plate IN ('8300004', '8300002')`);
+  by = Object.fromEntries((await userRaw(RO, `SELECT public.vehicles_live_list() j`))[0].j.alerts.map((a) => [a.code, a]));
+  assert.deepEqual(by.VS1.on_site, [], "רכב שאינו ברשימה — לא 'באתר'");
+  assert.deepEqual(by.VS1.nearest.map((x) => x.plate), ["8300001", "8300005", "8300006"],
+    "ולא 'הכי קרוב' — גם בלי ביקור (8300002); השלישי בתור נכנס במקומם");
+  await sup(`UPDATE vehicle_visits SET started_at = now() - interval '40 minutes', last_at = now() - interval '20 minutes' WHERE license_plate = '8300004'`);
   await sup(`UPDATE sites SET status = 'ready' WHERE code IN ('VS1', 'VS3')`);
 });
 
@@ -406,6 +417,10 @@ test("טכנאי באתר (לוח האתרים): ביקור פתוח של 2 דק
     assert.ok(Date.now() - Date.parse(j[0].since) >= 39 * 60_000, "since = מתי הגיע");
     assert.equal(j[1].tech, null, "טכנאי מושבת לא נותן שם");
     assert.equal(j[1].no_signal, false);
+    // 21/10/2026: רכב שאינו ברשימת רכבי השירות (רכב משרד שחונה ליד אתר) — אין "טכנאי באתר"
+    await sup(`DELETE FROM fleet_shown WHERE license_plate = 'TOS1'`);
+    const j2 = (await userRaw(RO, `SELECT public.tech_on_site() j`))[0].j;
+    assert.deepEqual(j2.map((r) => r.plate), ["TOS2"], "רכב שאינו ברשימה — לא בלוח");
     await fails(as("anon", {}, `SELECT public.tech_on_site()`), "42501");
     await fails(user("f3000000-0000-0000-0000-0000000000ff", `SELECT public.tech_on_site()`), "42501");
   } finally {
