@@ -8,10 +8,14 @@ import { clockText, distanceText, durationLabel, nearList, placeText, stateOf, s
 
 const ms = (iso) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? t : null; };
 
-/** הקבוצות בכרטיסים, בסדר שלהן. "באתר" ראשונה: זה מה ששואלים עליו. */
+/**
+ * הקבוצות בכרטיסים, בסדר שלהן. "באתר" ראשונה: זה מה ששואלים עליו.
+ * ⚠️ "מנוע דולק" קבוצה משלו (21/10/2026, בעלת המוצר: "מנוע דולק זה לא נקרא בתנועה") — עד אז נספר ב"בתנועה".
+ */
 export const GROUPS = [
   { key: "site", label: "באתר", plural: "באתרים" },
   { key: "move", label: "בתנועה", plural: "בתנועה" },
+  { key: "idle", label: "מנוע דולק", plural: "עם מנוע דולק" },
   { key: "park", label: "חונה", plural: "חונים" },
   { key: "silent", label: "לא מתעדכן", plural: "לא מתעדכנים" },
   { key: "unknown", label: "לא ידוע", plural: "לא ידוע" },
@@ -23,7 +27,8 @@ const RANK = Object.fromEntries(GROUPS.map((g, i) => [g.key, i]));
 export function cardGroup(v, nowIso) {
   const tone = stateOf(v, nowIso).tone;
   if (v?.at_site && (tone === "parking" || tone === "idle" || tone === "silent")) return "site";
-  if (tone === "driving" || tone === "idle") return "move";
+  if (tone === "driving") return "move";
+  if (tone === "idle") return "idle";
   if (tone === "parking") return "park";
   if (tone === "silent") return "silent";
   if (tone === "stale") return "stale";
@@ -36,7 +41,7 @@ export function groupCounts(list, nowIso) {
   return c;
 }
 
-/** הסדר: באתר, בתנועה, חונים, לא מתעדכנים, לא ידוע, לא מדווחים — ובתוך כל קבוצה לפי שם. */
+/** הסדר: באתר, בתנועה, מנוע דולק, חונים, לא מתעדכנים, לא ידוע, לא מדווחים — ובתוך כל קבוצה לפי שם. */
 export function sortCards(list, nowIso) {
   return [...(list || [])].sort((a, b) =>
     RANK[cardGroup(a, nowIso)] - RANK[cardGroup(b, nowIso)] || vehicleName(a).localeCompare(vehicleName(b), "he"));
@@ -93,7 +98,7 @@ export function whereInfo(v, nowIso) {
     else if (s.tone === "idle") sub.push("מנוע דולק");
     return { group, title: `באתר ${siteLabel(site)}`, code: site.code, sub, site, since, approx: site.approx === true, noSignal: s.tone === "silent" };
   }
-  if (group === "move") {
+  if (group === "move" || group === "idle") {
     const speed = s.tone === "driving" && Number.isFinite(v?.speed) && v.speed > 0 ? ` · ${v.speed} קמ"ש` : "";
     const sub = [place, near ? `ליד ${near.label} · ${near.dist}` : ""].filter(Boolean);
     return { group, title: `${s.label}${speed}`, sub, site: null };

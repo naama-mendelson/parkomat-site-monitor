@@ -28,7 +28,7 @@ import TechPhoneDialog from "./TechPhoneDialog";
 import { phoneStatus } from "../../utils/techPhone";
 
 const NBSP = " ";
-const FILTERS = ["all", "site", "move", "park", "silent"];
+const FILTERS = ["all", "site", "move", "idle", "park", "silent"];
 const LABEL = Object.fromEntries(GROUPS.map((g) => [g.key, g]));
 
 function SiteState({ site, tasks, calls }) {

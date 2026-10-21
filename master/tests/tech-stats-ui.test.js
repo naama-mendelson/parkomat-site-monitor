@@ -14,20 +14,22 @@ const ago = (min) => new Date(Date.parse(NOW) - min * 60_000).toISOString();
 const SITE = { site_id: 9, code: "1227", name: "הרצל 50, ת\"א", m: 40, approx: false };
 const veh = (over = {}) => ({ plate: "1", name: "דני לוי 1", state: "parking", located_at: ago(2), lat: 32.07, lon: 34.79, near: [], ...over });
 
-test("הקבוצה: עומד ליד אתר (חונה / מנוע דולק / השתתק) = באתר; נוסע ליד אתר — בתנועה; השאר לפי המצב", () => {
+test("הקבוצה: עומד ליד אתר (חונה / מנוע דולק / השתתק) = באתר; נוסע — בתנועה; מנוע דולק — קבוצה משלו; השאר לפי המצב", () => {
   assert.equal(cardGroup(veh({ at_site: SITE }), NOW), "site");
   assert.equal(cardGroup(veh({ state: "idle", at_site: SITE }), NOW), "site");
   assert.equal(cardGroup(veh({ state: "silent", at_site: SITE }), NOW), "site");
   assert.equal(cardGroup(veh({ state: "driving", at_site: SITE }), NOW), "move", "המסד לא שולח at_site לנוסע — וגם אם כן, נוסע אינו באתר");
-  assert.equal(cardGroup(veh({ state: "idle" }), NOW), "move");
+  assert.equal(cardGroup(veh({ state: "idle" }), NOW), "idle", "מנוע דולק אינו 'בתנועה' (בעלת המוצר, 21/10)");
   assert.equal(cardGroup(veh(), NOW), "park");
   assert.equal(cardGroup(veh({ state: "silent" }), NOW), "silent");
   assert.equal(cardGroup(veh({ state: "no_report" }), NOW), "stale");
   assert.equal(cardGroup(veh({ state: "weird" }), NOW), "unknown");
   const list = [veh({ plate: "a", name: "בני", state: "driving" }), veh({ plate: "b", name: "אבי", at_site: SITE }),
-    veh({ plate: "c", name: "גל", state: "no_report" }), veh({ plate: "d", name: "דנה" }), veh({ plate: "e", name: "אורי", state: "driving" })];
-  assert.deepEqual(sortCards(list, NOW).map((v) => v.name), ["אבי", "אורי", "בני", "דנה", "גל"]);
-  assert.deepEqual(groupCounts(list, NOW), { site: 1, move: 2, park: 1, silent: 0, unknown: 0, stale: 1 });
+    veh({ plate: "c", name: "גל", state: "no_report" }), veh({ plate: "d", name: "דנה" }), veh({ plate: "e", name: "אורי", state: "driving" }),
+    veh({ plate: "f", name: "זיו", state: "idle" })];
+  assert.deepEqual(sortCards(list, NOW).map((v) => v.name), ["אבי", "אורי", "בני", "זיו", "דנה", "גל"], "מנוע דולק אחרי בתנועה, לפני חונים");
+  assert.deepEqual(groupCounts(list, NOW), { site: 1, move: 2, idle: 1, park: 1, silent: 0, unknown: 0, stale: 1 });
+  assert.deepEqual([groupLabel("idle", 1), groupLabel("idle", 3)], ["מנוע דולק", "עם מנוע דולק"]);
   assert.deepEqual([groupLabel("park", 1), groupLabel("park", 3), groupLabel("silent", 1), groupLabel("x", 2)], ["חונה", "חונים", "לא מתעדכן", ""]);
 });
 

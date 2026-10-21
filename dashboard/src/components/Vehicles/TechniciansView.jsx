@@ -110,8 +110,12 @@ export default function TechniciansView({ sites }) {
         <p className="veh-warn" role="status">הסטטיסטיקה של היום לא התעדכנה בסנכרון האחרון — המיקומים כן. ({data.sync.stats_error})</p>
       )}
 
-      {boardError && board?.enabled && (
-        <p className="veh-warn" role="status">המשימות של הטכנאים לא התעדכנו — מוצג המצב מהטעינה הקודמת. ({boardError})</p>
+      {/* ⚠️ גם כשהטעינה הראשונה נכשלה (board עדיין null): בלי השורה, "צא ל:" פשוט לא מופיע, בלי שום סימן למה.
+          מי שלא בפיילוט אינו "כשל" — הוא מקבל {enabled: false} ואין שורה. */}
+      {boardError && board?.enabled !== false && (
+        <p className="veh-warn" role="status">
+          {board ? "המשימות של הטכנאים לא התעדכנו — מוצג המצב מהטעינה הקודמת." : "המשימות של הטכנאים לא נטענו — מנסה שוב בעוד דקה."} ({boardError})
+        </p>
       )}
 
       {view === "cards"

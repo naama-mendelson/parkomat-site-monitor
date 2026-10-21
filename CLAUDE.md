@@ -4296,7 +4296,32 @@ status) — so they hold exactly while a dispatch is open. Explicit times are bo
 layer. ~~**No UI yet**~~ — since 21/10/2026 the cards use it for "צא ל:" (below); the statuses and the day log still have no
 UI.
 
-### "צא ל:" on every technician card — step 1 of 4 (built 21/10/2026, not deployed)
+### "צא ל:" on every technician card — step 1 of 4 (built and deployed 21/10/2026, d56b1b2; pilot: one account)
+
+✅ **Deployed 21/10/2026, at the owner's word ("מאשרת לפרוס"), together with step 2 and the cards below.**
+- **SQL:** 60 gaps, 11 s, "הייצור זהה לקוד".
+- **Function:** `provision-technician` deployed. A call with no token gets the gateway's 401.
+- **Pilot:** `settings.technicians_board` = the owner's account only.
+- **Push:** live bundle `index-B3BlDTeD.js`.
+- **Checked right after:**
+  - The five new tables are closed (RLS, no grants).
+  - The role constraint includes `technician`.
+  - Both prune jobs are scheduled.
+  - The Ituran sync runs with `stats_error` NULL.
+  - There were 38 `vehicle_days` rows and 7 visits after the first syncs.
+  - 86 of 89 agents were beating.
+- ⚠️ To open it to the coordinator, add his email to `technicians_board` (a comma list), or set it to `all`.
+- ⚠️ **The pilot first named the wrong account.** It got the email the session runs under, not the one the owner signs in
+  to the dashboard with, so she saw no "צא ל:". Measured from `auth.sessions` and moved to her dashboard account the same
+  morning. Check who actually signs in before setting a pilot.
+- **The same morning, from her screenshot:** *"מנוע דולק זה לא נקרא בתנועה"*. On the cards "מנוע דולק" is now a group of
+  its own (`idle` in `GROUPS`, `utils/techStats.js`, the map's amber), between בתנועה and חונים. It has a filter chip and a
+  place in the summary ("N עם מנוע דולק").
+  - Until then idle was counted as "בתנועה" (move).
+  - Idle at a site is still "באתר".
+  - Tests: `tech-stats-ui.test.js`, `probe-techcards` 74, `probe-vehicles` 109.
+- A failed first load of `tech_board` now shows a line ("המשימות של הטכנאים לא נטענו"). Before, "צא ל:" simply did
+  not appear, with no sign why.
 
 The owner: *"שכל כרטיס יהיה סוג של ניהול הטכנאי: כפתור משימה 'צא ל:', ואז SELECT עם כל שמות האתרים — שמתחילים להקליד
 פחות או יותר — ואז זה שואל מה המשימה, טקסט חופשי, ובסופו של דבר שזה יצפצף לאותו טכנאי בצורה של APK"*, *"צעד צעד"*.
@@ -4359,7 +4384,7 @@ and the push through a `notify-tech` Edge Function.
 - **Deploy:** nothing new in SQL. It needs the pending SQL apply (technicians / vehicle-stats) and the pilot setting, then
   the push.
 
-### The technician's phone — a QR from the card — step 2 of 4 (built 21/10/2026, not deployed)
+### The technician's phone — a QR from the card — step 2 of 4 (built and deployed 21/10/2026, d56b1b2)
 
 The owner chose "סריקת QR מהכרטיס". Each technician gets a user of his own, in a new role, **`technician`**, that sees
 only his own task.

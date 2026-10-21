@@ -294,7 +294,7 @@ export default function FleetMap({ data, error, onReload, focusPlate, onFocused,
       }
       const html = popupHtml(v, m, data.now);
       if (mk.getPopup()) mk.setPopupContent(html); else mk.bindPopup(html, { maxWidth: 280 });
-      mk.setZIndexOffset(group === "site" || group === "move" ? 1000 : group === "stale" ? -500 : 0);
+      mk.setZIndexOffset(group === "site" || group === "move" || group === "idle" ? 1000 : group === "stale" ? -500 : 0);
     }
     for (const [plate, mk] of markers.current) {
       if (!seen.has(plate)) { mk.remove(); markers.current.delete(plate); truePos.current.delete(plate); meta.current.delete(plate); }

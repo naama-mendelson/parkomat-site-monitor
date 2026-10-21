@@ -4,11 +4,11 @@
 
 /* ── צבעי הקבוצות: אותם בפס, בעיגול, בתג, בציר היום ובמספרים ── */
 :root {
-  --tc-site: #0f766e; --tc-move: #15803d; --tc-park: #1d4ed8; --tc-silent: #4b5563; --tc-unknown: #5b6472; --tc-stale: #5b6472;
+  --tc-site: #0f766e; --tc-move: #15803d; --tc-idle: #b45309; --tc-park: #1d4ed8; --tc-silent: #4b5563; --tc-unknown: #5b6472; --tc-stale: #5b6472;
   --tc-fault: #b91c1c; --tc-call: #b45309;
 }
 [data-theme="dark"] {
-  --tc-site: #2dd4bf; --tc-move: #4ade80; --tc-park: #93b4f5; --tc-silent: #cbd5e1; --tc-unknown: #9ca3af; --tc-stale: #9ca3af;
+  --tc-site: #2dd4bf; --tc-move: #4ade80; --tc-idle: #fbbf24; --tc-park: #93b4f5; --tc-silent: #cbd5e1; --tc-unknown: #9ca3af; --tc-stale: #9ca3af;
   --tc-fault: #fca5a5; --tc-call: #fbbf24;
 }
 
@@ -31,6 +31,7 @@
 .tv-summary b { font-weight: 700; color: var(--text-primary); }
 .tv-summary b.tv-tone--site { color: var(--tc-site); }
 .tv-summary b.tv-tone--move { color: var(--tc-move); }
+.tv-summary b.tv-tone--idle { color: var(--tc-idle); }
 .tv-summary b.tv-tone--park { color: var(--tc-park); }
 .tv-summary b.tv-tone--silent, .tv-summary b.tv-tone--stale, .tv-summary b.tv-tone--unknown { color: var(--tc-silent); }
 .tv .veh-warn { border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.4); }
@@ -83,6 +84,7 @@
 .tc-filter b { font-weight: 700; font-variant-numeric: tabular-nums; }
 .tc-filter.tc-f--site b { color: var(--tc-site); }
 .tc-filter.tc-f--move b { color: var(--tc-move); }
+.tc-filter.tc-f--idle b { color: var(--tc-idle); }
 .tc-filter.tc-f--park b { color: var(--tc-park); }
 .tc-filter.tc-f--silent b { color: var(--tc-silent); }
 .tc-filter.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -102,6 +104,7 @@
 }
 .tc-card.tc-g--site { --tc-c: var(--tc-site); }
 .tc-card.tc-g--move { --tc-c: var(--tc-move); }
+.tc-card.tc-g--idle { --tc-c: var(--tc-idle); }
 .tc-card.tc-g--park { --tc-c: var(--tc-park); }
 .tc-card.tc-g--silent { --tc-c: var(--tc-silent); }
 .tc-card.tc-g--stale { --tc-c: var(--tc-stale); opacity: 0.88; }
