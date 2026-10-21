@@ -4599,7 +4599,16 @@ and a caption ("תעשה"), saw them, and then said: *"זה ממש לא מובן
   a text selection, "צא ל:" from an open card, 1371 light and 390 dark). `probe-techcards` C4 was updated (74).
   `probe-tclegend` is retired.
 
-### "טכנאי באתר" on the site cards of the main board (21/10/2026)
+### "טכנאי באתר" on the site cards of the main board (built and deployed 21/10/2026, 74187ee)
+
+✅ **Deployed** after the owner's *"לא רואה שום אייקון למה אתה לא שם"*.
+- **SQL:** one new function.
+- **Push:** live bundle `index-LZCB2LFl.js`.
+- **Checked in production, as a manager in a rolled-back read-only transaction:** 13 vehicles at 9 sites (204 ms over the
+  network); anon cannot execute it.
+- ⚠️ **Watch:** four vehicles stood for about two hours at one multiplier (3488), and one stood five hours at another
+  (1186). If such a place is where technicians park (office, warehouse, home), the icon there is noise and that site
+  needs excluding. The owner was told; there is no answer yet.
 
 The owner had asked for "האתר בתחזוקה טכנאי באתר, או שיהיה כזה סמל שטכנאי באתר" and then "תשים איקון טכנאי באתר". It
 was first put on the technician card only (above). Looking at the board, she said: *"אני לא רואה שום איקון שטכנאי
