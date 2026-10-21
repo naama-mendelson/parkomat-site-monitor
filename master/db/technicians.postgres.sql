@@ -931,6 +931,35 @@ $fn$;
 REVOKE ALL ON FUNCTION public.tech_me() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.tech_me() TO authenticated;
 
+-- "ניתוק הטלפון הזה" — מהטלפון עצמו (21/10/2026, בדיקת הבאגים). עד אז הטלפון רק מחק את הפרטים ויצא: המשתמש נשאר פעיל
+-- ומקושר, המנוי לצפצוף נשאר, והטלפון המשיך לצפצף על כל משימה — והכרטיס אמר "צפצוף מופעל". עכשיו כמו "ניתוק טלפון" בכרטיס:
+-- המנויים נמחקים, הקישור נמחק, והמשתמש מושבת. ⚠️ בלי שער הפיילוט (כמו tech_me) — ניתוק אסור שייחסם. טלפון שכבר מנותק — לא שגיאה.
+CREATE OR REPLACE FUNCTION public.tech_self_unpair()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_tech bigint := app.technician_id();
+  v_user integer := app.current_app_user();
+BEGIN
+  IF v_tech IS NULL OR v_user IS NULL THEN RETURN jsonb_build_object('changed', false); END IF;
+  PERFORM 1 FROM technicians WHERE id = v_tech FOR UPDATE;
+  DELETE FROM tech_push_subs WHERE app_user_id = v_user;
+  UPDATE technicians SET app_user_id = NULL, phone_paired_at = NULL, phone_paired_by = NULL, phone_seen_at = NULL, rev = rev + 1
+   WHERE id = v_tech AND app_user_id = v_user;
+  UPDATE app_users SET is_active = false,
+         disabled_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+         disabled_by = v_user
+   WHERE id = v_user AND is_active;
+  PERFORM app.record_write_audit('tech.phone_self_unpair', 'טלפון של טכנאי', 'technician', 'technician', v_tech::text, NULL);
+  RETURN jsonb_build_object('changed', true);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_self_unpair() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_self_unpair() TO authenticated;
+
 -- ============================================================
 -- הצפצוף — שלב 4 של "צא ל:" (21/10/2026)
 -- ============================================================
@@ -951,6 +980,10 @@ ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_count integer NOT NULL
 ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_last_at timestamptz;      -- מתי נשלח הצפצוף האחרון
 ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_sent integer;             -- לכמה מכשירים הוא הגיע
 ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_error text;               -- למה לא (מוצג לרכז)
+-- ⚠️ 21/10/2026 (בדיקת הבאגים): כמה בקשות יצאו ל-notify-tech, ומתי האחרונה. push_count נספר רק אחרי claim — פונקציה שלא
+-- ענתה (סוד שגוי, לא פרוסה, נפלה) השאירה אותו 0, והתזכורת שלחה בקשה כל דקה בלי סוף, בלי שגיאה בכרטיס.
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS push_requested_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS tech_push_subs (
   id          bigserial PRIMARY KEY,
@@ -978,6 +1011,8 @@ END $$;
 
 CREATE OR REPLACE FUNCTION app.tech_push_max() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 3 $$;
 CREATE OR REPLACE FUNCTION app.tech_push_every() RETURNS interval LANGUAGE sql IMMUTABLE AS $$ SELECT interval '2 minutes' $$;
+-- תקרת בקשות לשליחה אחת: 3 צפצופים ועוד 2 ניסיונות לפונקציה שלא ענתה
+CREATE OR REPLACE FUNCTION app.tech_push_attempts_max() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 5 $$;
 
 -- הבקשה ל-notify-tech. ⚠️ net.http_post נשלח רק אחרי ה-commit (pg_net), כך שהפונקציה רואה את השליחה. בלי סוד או מפתח —
 -- הצפצוף לא נשלח, והכרטיס אומר למה (לא שקט).
@@ -991,6 +1026,8 @@ DECLARE
   v_secret text := (SELECT value FROM settings WHERE key = 'push_caller_secret');
   v_key    text := (SELECT value FROM settings WHERE key = 'push_anon_key');
 BEGIN
+  -- כל בקשה נספרת (גם כשהצפצוף אינו מוגדר) — כך לתזכורת יש תקרה גם כשהפונקציה לא עונה
+  UPDATE tech_dispatches SET push_attempts = push_attempts + 1, push_requested_at = now() WHERE id = p_dispatch;
   IF COALESCE(btrim(v_secret), '') = '' OR COALESCE(btrim(v_key), '') = '' THEN
     UPDATE tech_dispatches SET push_error = 'הצפצוף אינו מוגדר במערכת' WHERE id = p_dispatch;
     RETURN NULL;
@@ -1055,6 +1092,8 @@ BEGIN
   IF NOT FOUND THEN RETURN jsonb_build_object('send', false, 'reason', 'gone'); END IF;
   IF d.ended_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'ended'); END IF;
   IF d.acked_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'acked'); END IF;
+  -- הרכז סימן "הגיע" — הטכנאי כבר באתר, אין על מה לצפצף (21/10/2026, בדיקת הבאגים)
+  IF d.arrived_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'arrived'); END IF;
   IF d.push_count >= app.tech_push_max() THEN RETURN jsonb_build_object('send', false, 'reason', 'max'); END IF;
   IF d.push_last_at IS NOT NULL AND d.push_last_at > now() - interval '90 seconds' THEN
     RETURN jsonb_build_object('send', false, 'reason', 'recent');
@@ -1127,12 +1166,21 @@ DECLARE
   r   record;
   v_n integer := 0;
 BEGIN
+  -- בקשה שיצאה לפני 90 שניות ואף claim לא בא אחריה — הפונקציה לא ענתה. הכרטיס אומר זאת (עד 21/10 נשאר "שולח צפצוף…").
+  UPDATE tech_dispatches d SET push_error = 'שירות הצפצוף לא ענה — הצפצוף לא נשלח'
+   WHERE d.ended_at IS NULL AND d.push_error IS NULL
+     AND d.push_requested_at IS NOT NULL AND d.push_requested_at <= now() - interval '90 seconds'
+     AND (d.push_last_at IS NULL OR d.push_last_at < d.push_requested_at);
   FOR r IN
     SELECT d.id FROM tech_dispatches d
       JOIN technicians t ON t.id = d.technician_id AND t.is_active
-     WHERE d.ended_at IS NULL AND d.acked_at IS NULL
+     WHERE d.ended_at IS NULL AND d.acked_at IS NULL AND d.arrived_at IS NULL
        AND d.push_count < app.tech_push_max()
-       AND COALESCE(d.push_last_at, d.created_at) <= now() - app.tech_push_every()
+       AND d.push_attempts < app.tech_push_attempts_max()
+       -- ⚠️ ה-claim חותם את push_last_at שנייה-שתיים אחרי תחילת הדקה, ולכן "2 דקות" בדיוק יצאו 118 שניות ונדחו לדקה
+       -- הבאה (צפצופים ב-0, 2.5, 5.5 דקות). 20 שניות סובלנות; כפילות עוצר ה-claim (90 שניות).
+       AND COALESCE(GREATEST(d.push_last_at, d.push_requested_at), d.created_at)
+           <= now() - app.tech_push_every() + interval '20 seconds'
        AND EXISTS (SELECT 1 FROM tech_push_subs s JOIN app_users u ON u.id = s.app_user_id AND u.is_active
                     WHERE s.app_user_id = t.app_user_id)
   LOOP
@@ -1158,11 +1206,13 @@ AS $fn$
 DECLARE
   v_tech bigint := app.technician_id();
   d      tech_dispatches;
-  v_name text;
 BEGIN
   IF v_tech IS NULL THEN
     RAISE EXCEPTION 'הטלפון אינו מחובר לטכנאי — יש לסרוק QR חדש מהכרטיס' USING ERRCODE = '42501';
   END IF;
+  -- ⚠️ קודם הטכנאי, אחר כך השליחה — הסדר של כל הכותבים (ראה למעלה). בסדר ההפוך, "קיבלתי" ברגע שהרכז לוחץ "סיום" או
+  -- "הגיע" נתקעו זה בזה, ואחד מהם קיבל 40P01 (נמצא בבדיקת הבאגים, 21/10/2026).
+  PERFORM 1 FROM technicians WHERE id = v_tech FOR UPDATE;
   SELECT * INTO d FROM tech_dispatches WHERE id = p_dispatch AND technician_id = v_tech FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'המשימה לא נמצאה' USING ERRCODE = 'PT404'; END IF;
   IF d.ended_at IS NOT NULL THEN RAISE EXCEPTION 'המשימה כבר הסתיימה' USING ERRCODE = 'PT409'; END IF;
@@ -1171,8 +1221,8 @@ BEGIN
   END IF;
   UPDATE tech_dispatches SET acked_at = now() WHERE id = d.id;
   UPDATE technicians SET rev = rev + 1 WHERE id = v_tech;
-  SELECT display_name INTO v_name FROM technicians WHERE id = v_tech;
-  PERFORM app.record_write_audit('tech.ack', v_name, 'technician', 'technician', v_tech::text,
+  -- ⚠️ שם קבוע ולא שם הטכנאי: היומן — מזהים בלבד (ראה למעלה)
+  PERFORM app.record_write_audit('tech.ack', 'טלפון של טכנאי', 'technician', 'technician', v_tech::text,
                                  jsonb_build_object('dispatch_id', d.id));
   RETURN jsonb_build_object('changed', true, 'acked_at', app.tech_iso(now()));
 END

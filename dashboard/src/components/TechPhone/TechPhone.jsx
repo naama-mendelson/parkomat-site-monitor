@@ -42,6 +42,17 @@ function Task({ d, now, onAck, acking, ackError }) {
 // הצפצוף: מה המצב בטלפון הזה, ומה לעשות
 function PushBar({ state, busy, error, onEnable }) {
   if (state === "granted") return <p className="tp-push tp-push--on">✓ צפצוף מופעל — הטלפון יצפצף כשתגיע משימה</p>;
+  // ⚠️ יש הרשאה, אבל המסד לא מכיר את הטלפון (ההרשמה נכשלה, או נמחקה כי שירות ההתראות אמר שהיא כבר לא קיימת). עד 21/10
+  // המסך אמר כאן "צפצוף מופעל" ושום צפצוף לא הגיע. הטלפון מנסה להירשם מחדש לבד; אם לא הצליח — כפתור.
+  if (state === "missing") {
+    return (
+      <div className="tp-push tp-push--ask">
+        <p>⚠ הצפצוף לא פעיל בטלפון הזה — המערכת לא מכירה אותו.</p>
+        <button type="button" className="tp-primary" onClick={onEnable} disabled={busy}>{busy ? "מפעיל…" : "הפעלת צפצוף מחדש"}</button>
+        {error && <p className="tp-warn" role="alert">{error}</p>}
+      </div>
+    );
+  }
   if (state === "denied") {
     return (
       <p className="tp-push tp-push--off" role="alert">
@@ -50,7 +61,8 @@ function PushBar({ state, busy, error, onEnable }) {
     );
   }
   if (state === "unsupported") {
-    return <p className="tp-push tp-push--off">הטלפון הזה לא תומך בצפצוף מהדפדפן. כדאי להתקין את האפליקציה מתפריט Chrome (⋮ ← התקנה).</p>;
+    // ⚠️ לא "להתקין מתפריט Chrome": באייפון אין תפריט כזה, וההתקנה שם יוצרת אפליקציה נפרדת מהדפדפן — בלי החיבור (21/10)
+    return <p className="tp-push tp-push--off">הטלפון הזה לא תומך בצפצוף מהדפדפן. הצפצוף עובד בטלפון אנדרואיד, בדפדפן Chrome.</p>;
   }
   return (
     <div className="tp-push tp-push--ask">
@@ -71,7 +83,7 @@ export default function TechPhone() {
   const [acking, setAcking] = useState(false);
   const [ackError, setAckError] = useState(null);
   const armTimer = useRef(null);
-  const synced = useRef(false);
+  const synced = useRef(0);   // מתי ניסינו לאחרונה להירשם מחדש לבד
 
   const load = useCallback(async () => {
     try { setMe(await fetchTechMe()); setError(null); }
@@ -93,17 +105,21 @@ export default function TechPhone() {
     };
   }, [load]);
 
-  // הרשאה שכבר ניתנה — לוודא פעם אחת שהמסד מכיר את המנוי (אחרי QR חדש המנויים הקודמים נמחקו)
+  // ⚠️ הרשאה שכבר ניתנה, אבל המסד לא מכיר את הטלפון (push_devices = 0): אחרי QR חדש המנויים הקודמים נמחקו, ומנוי ששירות
+  // ההתראות אמר עליו "לא קיים" נמחק ב-tech_push_result. הטלפון נרשם מחדש לבד — מנוי חדש, לא אותו אחד מת — לכל היותר פעם
+  // ב-5 דקות, ובכל טעינה (לא רק פעם אחת בפתיחה: אפליקציה מותקנת נשארת פתוחה ימים). 21/10/2026, בדיקת הבאגים.
+  const devices = me?.push_devices;
+  const missing = push === "granted" && devices === 0;
   useEffect(() => {
-    if (!me || synced.current || push !== "granted") return;
-    synced.current = true;
-    syncTechPush().catch(() => { synced.current = false; });
-  }, [me, push]);
+    if (!missing || Date.now() - synced.current < 5 * 60_000) return;
+    synced.current = Date.now();
+    syncTechPush({ fresh: true }).then((sent) => { if (sent) load(); }).catch(() => { /* הכפתור "הפעלת צפצוף מחדש" נשאר */ });
+  }, [missing, load]);
 
   const enable = async () => {
     setPushBusy(true);
     setPushError(null);
-    try { setPush(await enableTechPush()); load(); }
+    try { setPush(await enableTechPush({ fresh: missing })); load(); }
     catch (e) { setPushError(e?.message || "ההפעלה נכשלה — נסו שוב"); }
     finally { setPushBusy(false); }
   };
@@ -118,14 +134,18 @@ export default function TechPhone() {
   };
 
   const unpaired = error?.code === "42501";
+  const [leaving, setLeaving] = useState(false);
   const forget = () => {
+    if (leaving) return;
     if (!armed) {
       setArmed(true);
       clearTimeout(armTimer.current);
       armTimer.current = setTimeout(() => setArmed(false), 4000);
       return;
     }
-    forgetDevice();
+    clearTimeout(armTimer.current);
+    setLeaving(true);
+    forgetDevice();   // מנתק במסד, מבטל את הצפצוף, ויוצא — המסך הבא הוא "הטלפון נותק"
   };
 
   return (
@@ -146,7 +166,7 @@ export default function TechPhone() {
       ) : (
         <>
           {error && <p className="tp-warn" role="status">אין חיבור כרגע — מנסה שוב…</p>}
-          {me && <PushBar state={push} busy={pushBusy} error={pushError} onEnable={enable} />}
+          {me && <PushBar state={missing ? "missing" : push} busy={pushBusy} error={pushError} onEnable={enable} />}
           {me && (me.dispatch
             ? <Task d={me.dispatch} now={me.now} onAck={ack} acking={acking} ackError={ackError} />
             : <p className="tp-idle">אין משימה כרגע</p>)}
@@ -154,9 +174,26 @@ export default function TechPhone() {
       )}
 
       <footer className="tp-foot">
-        <button type="button" className={armed ? "is-armed" : ""} onClick={forget}>
-          {armed ? "לנתק את הטלפון הזה? לחיצה נוספת" : "ניתוק הטלפון הזה"}
+        <button type="button" className={armed ? "is-armed" : ""} onClick={forget} disabled={leaving}>
+          {leaving ? "מנתק…" : armed ? "לנתק את הטלפון הזה? לחיצה נוספת" : "ניתוק הטלפון הזה"}
         </button>
+      </footer>
+    </div>
+  );
+}
+
+// טלפון שנותק — הפרטים שבו כבר לא עובדים (נוצר QR חדש, נותק מהכרטיס, או מהטלפון עצמו). ⚠️ עד 21/10/2026 הטלפון נפל כאן
+// לטופס "אימייל וסיסמה" של הדשבורד, שהטכנאי לא יודע מה לכתוב בו. "כניסה עם מייל וסיסמה" — לאדם שרוצה להשתמש בדפדפן הזה.
+export function PhoneOff({ onPersonLogin }) {
+  return (
+    <div className="tp tp--center" dir="rtl">
+      <img className="tp-logo tp-logo--big" src="/parkomat-logo.png" alt="Parkomat" />
+      <section className="tp-off" role="alert">
+        <p><b>הטלפון אינו מחובר לטכנאי.</b></p>
+        <p>כדי לחבר אותו — לבקש מהרכז QR חדש, ולסרוק אותו במצלמה של הטלפון.</p>
+      </section>
+      <footer className="tp-foot">
+        <button type="button" onClick={onPersonLogin}>כניסה עם מייל וסיסמה</button>
       </footer>
     </div>
   );

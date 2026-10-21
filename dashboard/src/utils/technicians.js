@@ -117,6 +117,8 @@ export function dispatchLine(d, nowIso) {
 export function pushLine(d, nowIso) {
   if (!d || d.push_count === undefined) return null;
   if (d.acked_at) return { tone: "ok", text: `✓ קיבל ${clockText(d.acked_at, nowIso)}` };
+  // הגיע (הרכז סימן) — הצפצוף נעצר במסד (21/10/2026), ו"מחכה ל'קיבלתי'" כבר לא נכון. "הגיע" כתוב בשורת השליחה.
+  if (d.arrived_at) return null;
   const max = Number(d.push_max) || 3;
   const n = Number(d.push_count) || 0;
   if (n >= max) return { tone: "bad", text: `לא אישר קבלה — צפצף ${n} פעמים` };

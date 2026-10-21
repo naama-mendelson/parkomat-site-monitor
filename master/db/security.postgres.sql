@@ -821,9 +821,12 @@ ALTER TABLE audit_log  ENABLE ROW LEVEL SECURITY;
 -- ⚠️ אין כאן מדיניות כתיבה, כלומר כתיבה **אסורה** לכל מי שאינו עוקף RLS.
 -- ניהול המשתמשים עובר דרך השרת בלבד, שם יושבת גם בדיקת הדרגה. מדיניות
 -- כתיבה כאן הייתה נותנת לדפדפן לשנות דרגות ישירות מול PostgREST.
+-- ⚠️ 21/10/2026 (בדיקת הבאגים): רק אדם בתפקיד צוות — מנהל, עורך או בקר. עד אז is_active_user, וזה כלל גם את הסוכנים:
+-- הסיסמה של סוכן שמורה בכל מחשב אתר, ובה אפשר היה לקרוא את רשימת העובדים עם המיילים. current_app_role מחזיר ערך נפרד
+-- לכל זהות שאינה אדם (agent / technician / intake / unverified / anonymous למושבת), ולכן הרשימה כאן מפורשת.
 DROP POLICY IF EXISTS app_users_read_authenticated ON app_users;
 CREATE POLICY app_users_read_authenticated ON app_users
-  FOR SELECT TO authenticated USING ((SELECT app.is_active_user()));
+  FOR SELECT TO authenticated USING ((SELECT app.current_app_role()) IN ('manager', 'editor', 'operator'));
 
 -- ============================================================
 -- audit_log — בקר רואה הכול, חוץ מניהול המשתמשים
@@ -850,9 +853,13 @@ CREATE POLICY app_users_read_authenticated ON app_users
 -- ⚠️ הסינון הוא על **הפעולה**, לא על דרגת הפועל. מנהל שמעביר אתר
 -- לתחזוקה מופיע אצל כולם, כי זה מה שקרה באתר.
 DROP POLICY IF EXISTS audit_log_read_authenticated ON audit_log;
+-- ⚠️ 21/10/2026 (בדיקת הבאגים): עד אז USING היה רק "מנהל, או פעולה שאינה user.*" — בלי לבדוק מי שואל. כל חשבון מחובר קרא
+-- את היומן: הסוכנים במחשבי האתרים, טלפון של טכנאי (גם אחרי שנותק), משתמש מושבת עד שהטוקן פג, והתחברות שלא הקלידה את קוד
+-- הכניסה. עכשיו — רק אדם בתפקיד צוות, כמו רשימת העובדים למעלה.
 CREATE POLICY audit_log_read_authenticated ON audit_log
   FOR SELECT TO authenticated
-  USING ((SELECT app.is_manager()) OR action NOT LIKE 'user.%');
+  USING ((SELECT app.current_app_role()) IN ('manager', 'editor', 'operator')
+         AND ((SELECT app.is_manager()) OR action NOT LIKE 'user.%'));
 
 GRANT SELECT ON app_users, audit_log TO authenticated;
 

@@ -19,6 +19,10 @@ test("vehicleName: בלי מספר הרכב שאיתוראן מצרפים, גם 
   assert.equal(vehicleName(v({ name: "  רז   כהן  " })), "רז כהן");
   assert.equal(vehicleName(v({ name: "" })), "1234567");
   assert.equal(vehicleName({}), "רכב");
+  // השם מלוח הרכז קודם לכינוי (21/10/2026); ריק או רווחים — הכינוי
+  assert.equal(vehicleName(v({ tech: "  דני   כהן " })), "דני כהן");
+  assert.equal(vehicleName(v({ tech: "  " })), "ישראל ישראלי");
+  assert.equal(vehicleName(v({ tech: null })), "ישראל ישראלי");
 });
 
 test("מצב: מה שהמסד החליט (state) — לא ה-motion של איתוראן; מצב לא מוכר — 'לא ידוע'", () => {

@@ -314,7 +314,15 @@ export default function FleetMap({ data, error, onReload, focusPlate, onFocused,
       mapRef.current.flyTo(ll, Math.max(mapRef.current.getZoom(), 15), { duration: 0.6 });
       mapRef.current.once("moveend", () => mk.openPopup());
     }
-    rowRefs.current.get(selected)?.scrollIntoView({ block: "nearest" });
+    // ⚠️ רק כשהרשימה גוללת בתוך עצמה (מחשב — לצד המפה). בטלפון היא מתחת למפה, בלי גלילה משלה, ו-scrollIntoView גלל את
+    // כל הדף: לחיצה על רכב במפה זרקה את המפה מהמסך, יחד עם החלונית שנפתחה (21/10/2026, בדיקת הבאגים).
+    const row = rowRefs.current.get(selected);
+    const box = row?.closest(".veh-side");
+    if (row && box && box.scrollHeight > box.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(box).overflowY)) {
+      const r = row.getBoundingClientRect(), b = box.getBoundingClientRect();
+      if (r.top < b.top) box.scrollTop -= b.top - r.top;
+      else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+    }
   }, [selected]);
 
   // "במפה" מכרטיס טכנאי — בוחרים אותו כשהסמן שלו כבר קיים

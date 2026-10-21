@@ -320,16 +320,29 @@ test("מי הכי קרוב: אתר בתקלה ואתר עם קריאה פתוח�
   await put("8300005", off(S1, 2000), "parking");
   await put("8300006", off(S1, 3000), "parking");
   await sup(`SELECT app.vehicles_track(now())`);
+  const alerts = async () => Object.fromEntries((await user(RO, `SELECT public.vehicles_live_list() j`))[0].j.alerts.map((a) => [a.code, a]));
   const j = (await user(RO, `SELECT public.vehicles_live_list() j`))[0].j;
-  const by = Object.fromEntries(j.alerts.map((a) => [a.code, a]));
+  let by = Object.fromEntries(j.alerts.map((a) => [a.code, a]));
   assert.deepEqual(j.alerts.map((a) => a.code), ["VS1", "VS3", "VS2"], "תקלות קודם, ואז קריאות");
   assert.deepEqual([by.VS1.fault, by.VS1.calls, by.VS1.located, by.VS1.approx], [true, 0, true, false]);
+  // ⚠️ 21/10/2026 (בדיקת הבאגים): "באתר" כאן — אותו כלל כמו האיקון בלוח (app.visit_current). ביקור שנפתח עכשיו — עוד לא
+  // (רמזור ליד אתר), ולכן 8300004 עדיין "הכי קרוב".
+  assert.deepEqual(by.VS1.on_site, [], "ביקור של פחות מ-2 דקות — לא 'באתר'");
   assert.deepEqual(by.VS1.nearest.map((x) => [x.plate, x.state]), [["8300004", "parking"], ["8300001", "parking"], ["8300002", "driving"]]);
   assert.ok(Math.abs(by.VS1.nearest[1].m - 400) <= 2);
-  assert.deepEqual(by.VS1.on_site, ["8300004"]);
   assert.deepEqual([by.VS2.fault, by.VS2.calls, by.VS2.approx, by.VS2.on_site], [false, 1, true, []]);
   assert.equal(by.VS4, undefined, "אתר בלי בקר אינו 'בתקלה'");
   assert.deepEqual([by.VS3.located, by.VS3.nearest], [false, []]);
+  // באתר כבר 10 דקות — "באתר", ויוצא מ"הכי קרוב" לפני ה-LIMIT (נכנס הרביעי בתור)
+  await sup(`UPDATE vehicle_visits SET started_at = now() - interval '10 minutes' WHERE license_plate = '8300004'`);
+  by = await alerts();
+  assert.deepEqual(by.VS1.on_site, ["8300004"]);
+  assert.deepEqual(by.VS1.nearest.map((x) => x.plate), ["8300001", "8300002", "8300005"], "מי שבאתר אינו בין 'הכי קרובים'");
+  // הביקור לא עודכן 20 דקות (הסנכרון נעצר) — כבר לא "באתר"
+  await sup(`UPDATE vehicle_visits SET started_at = now() - interval '40 minutes', last_at = now() - interval '20 minutes' WHERE license_plate = '8300004'`);
+  by = await alerts();
+  assert.deepEqual(by.VS1.on_site, [], "ביקור שלא עודכן 15 דקות — לא 'באתר'");
+  assert.equal(by.VS1.nearest[0].plate, "8300004");
   await sup(`UPDATE sites SET status = 'ready' WHERE code IN ('VS1', 'VS3')`);
 });
 
@@ -399,5 +412,96 @@ test("טכנאי באתר (לוח האתרים): ביקור פתוח של 2 דק
     await sup(`DELETE FROM technicians WHERE plate LIKE 'TOS%'`);
     await sup(`DELETE FROM vehicle_visits WHERE license_plate LIKE 'TOS%'`);
     await sup(`DELETE FROM vehicles_live WHERE license_plate LIKE 'TOS%'`);
+  }
+});
+
+test("בדיקת הבאגים (21/10): השתתק באמצע נסיעה — לא 'באתר'; קפיצה על גבול הטווח — ביקור אחד; ביקור חדש לא חופף לקודם", { skip }, async () => {
+  await sup(`DELETE FROM vehicle_visits`);
+  await sup(`DELETE FROM vehicles_live`);
+  const ilText = (m) => new Date(BASE + m * 60_000 + 2 * 3_600_000).toISOString().slice(0, 19);   // שעון ישראל בחורף, בלי אזור
+
+  // A — יחידה שהפסיקה לשדר ב-60 קמ"ש, 80 מ' מאתר: לא ביקור, ובמסך לא "באתר" (עד 21/10: באתר שעות, עם האיקון בלוח)
+  const A = "8400001";
+  await car(A, { motion: "driving", at: off(S1, 80), m: 600, speed: 60 });
+  await track(600);
+  for (const m of [607, 608]) { await car(A, { motion: "driving", at: off(S1, 80), m, fixM: 600, speed: 60 }); await track(m); }
+  assert.equal((await visits(A)).length, 0, "השתתק במהירות — לא ביקור");
+  assert.equal((await dayRow(A)).segments.at(-1)[0], "silent");
+  const va = (await user(MGR, `SELECT public.vehicles_live_list() j`))[0].j.vehicles.find((x) => x.plate === A);
+  assert.equal(va.state, "silent");
+  assert.equal(va.at_site, null, "השתתק במהירות — המסך לא אומר 'באתר'");
+  // ואותו דבר ב-15 קמ"ש — כן (חניון תת-קרקעי: נכנס לאט ואיבד קליטה)
+  const A2 = "8400004";
+  await car(A2, { motion: "driving", at: off(S1, 80), m: 600, speed: 15 });
+  await track(600);
+  for (const m of [607, 608]) { await car(A2, { motion: "driving", at: off(S1, 80), m, fixM: 600, speed: 15 }); await track(m); }
+  assert.equal((await visits(A2)).length, 1, "השתתק לאט ליד אתר — ביקור (אין קליטה)");
+
+  // B — חונה 140 מ' מאתר שהרדיוס שלו 150; דקה אחת המיקום קופץ ל-160 מ', וחוזר: ביקור אחד, פתוח (עד 21/10: שניים, חופפים)
+  const B = "8400002";
+  for (let m = 620; m <= 626; m++) { await car(B, { motion: "parking", at: off(S1, 140), m }); await track(m); }
+  await car(B, { motion: "parking", at: off(S1, 160), m: 627 });
+  await track(627);
+  for (let m = 628; m <= 630; m++) { await car(B, { motion: "parking", at: off(S1, 140), m }); await track(m); }
+  const vb = await visits(B);
+  assert.equal(vb.length, 1, "ביקור אחד — לא שניים");
+  assert.equal(vb[0].ended_at, null, "והוא עדיין פתוח");
+  assert.equal(iso(vb[0].started_at), iso(T(620)));
+  assert.equal((await stats(B, 630)).visits.length, 1, "בכרטיס: ביקור אחד");
+
+  // C — באתר S1 בדקות 640–650, ואז חונה ב-S2 עם כיבוי הצתה ישן (דקה 600, לפני הביקור הקודם): הביקור החדש מתחיל
+  // בסוף הקודם, לא לפניו (עד 21/10: התחיל בדקה 600 — שני ביקורים חופפים, ונספרו שניהם)
+  const C = "8400003";
+  for (let m = 640; m <= 650; m++) { await car(C, { motion: "parking", at: off(S1, 30), m }); await track(m); }
+  const offEv = { event_id: "10181704", event_name: "כיבוי סוויץ'", time_start: ilText(600), point: off(S2, 40) };
+  await car(C, { motion: "parking", at: off(S2, 40), m: 651, events: [offEv] });
+  await track(651);
+  const vc = await visits(C);
+  assert.deepEqual(vc.map((x) => x.site_code), ["VS1", "VS2"]);
+  assert.ok(Date.parse(vc[1].started_at) >= Date.parse(vc[0].ended_at), `לא חופף: ${iso(vc[0].ended_at)} → ${iso(vc[1].started_at)}`);
+  // ובלי ביקור קודם — כיבוי ההצתה כן קובע את שעת ההגעה (GREATEST/LEAST מתעלמים מ-NULL)
+  const D = "8400005";
+  await car(D, { motion: "parking", at: off(S2, 40), m: 651, events: [{ ...offEv, time_start: ilText(645) }] });
+  await track(651);
+  assert.equal(iso((await visits(D))[0].started_at), iso(T(645)), "בלי ביקור קודם — ההגעה היא כיבוי ההצתה");
+
+  // E — חזרה לאותו אתר אחרי 20 דקות: ביקור חדש, לא פתיחה מחדש (הפתיחה מחדש — רק בתוך 15 דקות; נוסף אחרי שמוטציה שרדה)
+  const E = "8400006";
+  for (let m = 700; m <= 705; m++) { await car(E, { motion: "parking", at: off(S1, 30), m }); await track(m); }
+  for (let m = 706; m <= 725; m++) { await car(E, { motion: "driving", at: off(S1, 3000), m, speed: 40 }); await track(m); }
+  for (let m = 726; m <= 730; m++) { await car(E, { motion: "parking", at: off(S1, 30), m }); await track(m); }
+  const ve = await visits(E);
+  assert.equal(ve.length, 2, "חזרה אחרי 20 דקות — שני ביקורים");
+  assert.equal(iso(ve[1].started_at), iso(T(726)));
+
+  // F — S1, אחר כך S2, וחזרה ל-S1 בתוך 15 דקות: שלושה ביקורים, בסדר. פתיחה מחדש של הראשון הייתה חופפת לביקור ב-S2
+  const F = "8400007";
+  for (let m = 760; m <= 765; m++) { await car(F, { motion: "parking", at: off(S1, 30), m }); await track(m); }
+  await car(F, { motion: "driving", at: off(S1, 3000), m: 766, speed: 40 });
+  await track(766);
+  for (let m = 767; m <= 771; m++) { await car(F, { motion: "parking", at: off(S2, 30), m }); await track(m); }
+  await car(F, { motion: "driving", at: off(S1, 3000), m: 772, speed: 40 });
+  await track(772);
+  for (let m = 773; m <= 776; m++) { await car(F, { motion: "parking", at: off(S1, 30), m }); await track(m); }
+  const vf = await visits(F);
+  assert.deepEqual(vf.map((x) => x.site_code), ["VS1", "VS2", "VS1"], "ביקור באמצע — לא פותחים מחדש את הראשון");
+  for (let i = 1; i < vf.length; i++) {
+    assert.ok(Date.parse(vf[i].started_at) >= Date.parse(vf[i - 1].ended_at), `לא חופף: ${iso(vf[i - 1].ended_at)} → ${iso(vf[i].started_at)}`);
+  }
+});
+
+test("בדיקת הבאגים (21/10): שם הטכנאי מלוח הרכז מגיע עם הרכב — לחיפוש, ל'צריכים טכנאי' ולמפה", { skip }, async () => {
+  await sup(`INSERT INTO vehicles_live (license_plate, nickname, motion, synced_at) VALUES ('8500001', 'כינוי 8500001', 'parking', now()),
+                                                                                       ('8500002', 'כינוי 8500002', 'parking', now())`);
+  await sup(`INSERT INTO technicians (display_name, plate, is_active, created_by) VALUES ('דני כהן', '8500001', true, 'בדיקה'),
+                                                                                      ('ישן', '8500002', false, 'בדיקה')`);
+  try {
+    const list = (await user(RO, `SELECT public.vehicles_live_list() j`))[0].j.vehicles;
+    assert.equal(list.find((x) => x.plate === "8500001").tech, "דני כהן");
+    assert.equal(list.find((x) => x.plate === "8500001").name, "כינוי 8500001", "הכינוי באיתוראן נשאר בנפרד");
+    assert.equal(list.find((x) => x.plate === "8500002").tech, null, "טכנאי מושבת — בלי שם");
+  } finally {
+    await sup(`DELETE FROM technicians WHERE plate LIKE '85000%'`);
+    await sup(`DELETE FROM vehicles_live WHERE license_plate LIKE '85000%'`);
   }
 });

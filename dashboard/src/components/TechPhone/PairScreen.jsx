@@ -11,6 +11,7 @@ export default function PairScreen({ cred, user, loading, onDone }) {
   const other = Boolean(user) && !isTechPhoneEmail(user.email);
   const [stage, setStage] = useState("wait");     // wait | ask | pairing | error
   const [error, setError] = useState(null);
+  const [canRetry, setCanRetry] = useState(false);
   const started = useRef(false);
 
   const start = async () => {
@@ -19,8 +20,11 @@ export default function PairScreen({ cred, user, loading, onDone }) {
     setStage("pairing");
     const r = await pairThisDevice(cred);
     if (r.ok) onDone();
-    else { setError(r.error); setStage("error"); }
+    else { setError(r.error); setCanRetry(Boolean(r.retry)); setStage("error"); }
   };
+  // ⚠️ אין קליטה (21/10/2026, בדיקת הבאגים): עד אז כל כשל נקרא "ה-QR כבר שימש", ו"סגירה" מחקה את הקישור — הרכז הוציא QR
+  // חדש בלי צורך. כשל רשת משאיר את ה-QR, ו"נסו שוב" מנסה איתו שוב.
+  const retry = () => { started.current = false; start(); };
 
   useEffect(() => {
     if (loading || stage !== "wait") return;
@@ -46,7 +50,10 @@ export default function PairScreen({ cred, user, loading, onDone }) {
         <section className="tp-off" role="alert">
           <p><b>החיבור נכשל.</b></p>
           <p>{error}</p>
-          <div className="tp-row"><button type="button" onClick={onDone}>סגירה</button></div>
+          <div className="tp-row">
+            {canRetry && <button type="button" className="tp-primary" onClick={retry}>נסו שוב</button>}
+            <button type="button" onClick={onDone}>סגירה</button>
+          </div>
         </section>
       )}
     </div>

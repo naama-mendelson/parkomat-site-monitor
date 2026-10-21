@@ -1445,12 +1445,16 @@ test("6 · audit_log: מזהים, ספירות ושמות שדות בלבד — 
      WHERE x.t ~ '[א-ת]' AND length(x.t) >= 3`)).map((x) => x.t);
   assert.ok(free.length >= 15, `רק ${free.length} מחרוזות חופשיות נאספו — הבדיקה לא רואה כלום`);
   for (const must of ["אחרי שינוי קוד", "הוזן בטעות", "טכנאי שטח"]) assert.ok(free.includes(must), `לא נאסף: ${must}`);
+  // ⚠️ 21/10/2026 (בדיקת הבאגים): הסוכן וזהות הקליטה כבר לא רואים את audit_log בכלל (עד אז ראו — והבדיקה נשענה על זה).
+  // היומן גלוי לכל הצוות, כולל בקר — ולכן הכלל "בלי טקסט חופשי" נבדק דרך העיניים שלו.
   for (const uid of [AGT, INT]) {
-    const seen = await rpc(uid, `SELECT details::text t FROM audit_log WHERE action LIKE 'inspection.%' OR action LIKE 'pm.%'`);
-    assert.ok(seen.length > 0, "הסוכן רואה את audit_log — ולכן אסור שיהיה בו טקסט");
-    const leaks = free.filter((t) => seen.some((x) => x.t.includes(t)));
-    assert.deepEqual(leaks, [], "טקסט חופשי דלף ל-audit_log");
+    const seen = await rpc(uid, `SELECT details::text t FROM audit_log`);
+    assert.equal(seen.length, 0, "סוכן / קליטה — לא קוראים את היומן");
   }
+  const seen = await rpc(RO, `SELECT details::text t FROM audit_log WHERE action LIKE 'inspection.%' OR action LIKE 'pm.%'`);
+  assert.ok(seen.length > 0, "בקר רואה את audit_log — ולכן אסור שיהיה בו טקסט");
+  const leaks = free.filter((t) => seen.some((x) => x.t.includes(t)));
+  assert.deepEqual(leaks, [], "טקסט חופשי דלף ל-audit_log");
 });
 
 test("29 · הקובץ אידמפוטנטי — גם כששינוי ב-RETURNS TABLE מוחל פעמיים (DROP קודם)", { skip }, async () => {

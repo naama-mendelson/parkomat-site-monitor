@@ -25,6 +25,10 @@ const ms = (iso) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t)
 
 /** השם בלי מספר הרכב שאיתוראן מצרפים לכינוי ("ישראל ישראלי 1234567" → "ישראל ישראלי"). */
 export function vehicleName(v) {
+  // ⚠️ השם מלוח הרכז קודם (21/10/2026, בדיקת הבאגים): רק כותרת הכרטיס הציגה אותו, והחיפוש, "צריכים טכנאי עכשיו" והמפה
+  // הציגו את הכינוי באיתוראן — "דני כהן" בכרטיס, "טנדר 12" בכל השאר. vehicles_live_list מחזיר אותו כ-tech.
+  const tech = String(v?.tech ?? "").replace(/\s+/g, " ").trim();
+  if (tech) return tech;
   const raw = String(v?.name ?? "").replace(/\s+/g, " ").trim();
   const plate = String(v?.plate ?? "").trim();
   let n = plate ? raw.split(plate).join(" ").replace(/\s+/g, " ").trim() : raw;

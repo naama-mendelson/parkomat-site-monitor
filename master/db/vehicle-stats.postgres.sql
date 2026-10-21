@@ -95,6 +95,17 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION app.vehicle_visit_close(bigint) FROM PUBLIC;
 
+-- ביקור "עכשיו": התחיל לפני 2 דקות לפחות (לא רמזור ליד אתר) ועודכן ב-15 הדקות האחרונות (הסנכרון לא נעצר — אחרת טכנאי
+-- שאולי כבר עזב נשאר "באתר"). המקום האחד לכלל (21/10/2026, בדיקת הבאגים): האיקון בלוח (tech_on_site) ו"צריכים טכנאי
+-- עכשיו" (vehicle_alerts_json). עד אז רק האיקון בדק את זה.
+CREATE OR REPLACE FUNCTION app.visit_current(p_started timestamptz, p_last timestamptz, p_now timestamptz DEFAULT now())
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT p_started <= p_now - interval '2 minutes' AND p_last > p_now - interval '15 minutes'
+$$;
+
 -- ============================================================
 -- הדגימה — פעם בסנכרון, לכל רכב שהגיע בו
 -- ============================================================
@@ -113,6 +124,8 @@ DECLARE
   r         record;
   d         vehicle_days;
   o         vehicle_visits;
+  pv        vehicle_visits;
+  v_prev_end timestamptz;
   v_state   text;
   v_at      jsonb;
   v_kind    text;
@@ -131,7 +144,8 @@ BEGIN
   FOR r IN SELECT * FROM vehicles_live
             WHERE synced_at > p_now - interval '2 minutes' AND synced_at <= p_now + interval '1 minute' LOOP
     v_state := app.vehicle_state(r.motion, r.located_at, r.synced_at);
-    v_at := CASE WHEN v_state IN ('parking', 'idle', 'silent') THEN app.site_at(r.lat, r.lon) END;
+    -- ⚠️ השתתק — נחשב עמידה רק אם הדיווח האחרון היה איטי או שלא נסע (app.vehicle_may_be_at_site, 21/10/2026)
+    v_at := CASE WHEN app.vehicle_may_be_at_site(v_state, r.motion, r.speed) THEN app.site_at(r.lat, r.lon) END;
     v_kind := app.vehicle_kind(v_state, v_at IS NOT NULL);
     v_site := v_at ->> 'code';
     v_speed := CASE WHEN v_state = 'driving' AND r.speed BETWEEN 1 AND 250 THEN r.speed END;
@@ -192,12 +206,30 @@ BEGIN
          WHERE id = o.id;
       ELSE
         IF o.id IS NOT NULL THEN PERFORM app.vehicle_visit_close(o.id); END IF;
-        -- חונה: ההגעה היא כיבוי ההצתה ("חונה מאז"), אם היה ב-12 השעות האחרונות; אחרת — הדגימה הזו
-        v_ps := CASE WHEN v_state = 'parking' THEN app.vehicle_parked_since(r.events, r.lat, r.lon) END;
-        INSERT INTO vehicle_visits (license_plate, site_id, site_code, site_name, approx, started_at, last_at, no_signal)
-        VALUES (r.license_plate, (v_at ->> 'site_id')::integer, v_site, v_at ->> 'name', COALESCE((v_at ->> 'approx')::boolean, false),
-                COALESCE(CASE WHEN v_ps >= p_now - interval '12 hours' AND v_ps <= p_now THEN v_ps END, p_now),
-                p_now, v_state = 'silent');
+        -- ⚠️ 21/10/2026 (בדיקת הבאגים): רכב חונה שהמיקום שלו קפץ רגע אל מחוץ לטווח, או סנכרון אחד בלי מצב, סגרו את הביקור,
+        -- והחזרה פתחה ביקור שני — חופף, עם אותה שעת הגעה — ו"ביקורים באתרים" נספרו פעמיים. חזרה לאותו אתר בתוך 15 דקות,
+        -- בלי ביקור אחר באמצע, פותחת מחדש את אותו ביקור.
+        pv := NULL;
+        SELECT * INTO pv FROM vehicle_visits
+         WHERE license_plate = r.license_plate AND ended_at IS NOT NULL AND site_code = v_site
+           AND ended_at >= p_now - interval '15 minutes'
+         ORDER BY ended_at DESC LIMIT 1 FOR UPDATE;
+        IF pv.id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM vehicle_visits x
+                                              WHERE x.license_plate = r.license_plate AND x.id <> pv.id AND x.started_at > pv.ended_at) THEN
+          UPDATE vehicle_visits SET ended_at = NULL, last_at = GREATEST(last_at, p_now), no_signal = no_signal OR v_state = 'silent'
+           WHERE id = pv.id;
+        ELSE
+          -- חונה: ההגעה היא כיבוי ההצתה ("חונה מאז"), אם היה ב-12 השעות האחרונות; אחרת — הדגימה הזו.
+          -- ⚠️ ולא לפני סוף הביקור הקודם של הרכב — אחרת שני ביקורים חופפים (כיבוי ההצתה יכול להיות ישן מהביקור הקודם).
+          v_ps := CASE WHEN v_state = 'parking' THEN app.vehicle_parked_since(r.events, r.lat, r.lon) END;
+          SELECT max(ended_at) INTO v_prev_end FROM vehicle_visits WHERE license_plate = r.license_plate AND ended_at IS NOT NULL;
+          INSERT INTO vehicle_visits (license_plate, site_id, site_code, site_name, approx, started_at, last_at, no_signal)
+          VALUES (r.license_plate, (v_at ->> 'site_id')::integer, v_site, v_at ->> 'name', COALESCE((v_at ->> 'approx')::boolean, false),
+                  -- ⚠️ GREATEST/LEAST מתעלמים מ-NULL: בלי ביקור קודם GREATEST מחזיר את שעת ההגעה, ו-LEAST בחוץ רק מגביל לעכשיו
+                  LEAST(GREATEST(COALESCE(CASE WHEN v_ps >= p_now - interval '12 hours' AND v_ps <= p_now THEN v_ps END, p_now),
+                                 v_prev_end), p_now),
+                  p_now, v_state = 'silent');
+        END IF;
       END IF;
     ELSIF o.id IS NOT NULL THEN
       PERFORM app.vehicle_visit_close(o.id);
@@ -310,13 +342,19 @@ AS $$
            'code', n.code, 'name', n.site_name, 'fault', n.fault, 'calls', n.calls,
            'located', n.lat IS NOT NULL, 'approx', COALESCE(n.geo_precision IN ('street', 'area'), false),
            'on_site', (SELECT COALESCE(jsonb_agg(o.license_plate ORDER BY o.started_at), '[]'::jsonb)
-                         FROM vehicle_visits o WHERE o.ended_at IS NULL AND o.site_id = n.id),
+                         FROM vehicle_visits o
+                        WHERE o.ended_at IS NULL AND o.site_id = n.id AND app.visit_current(o.started_at, o.last_at)),
+           -- ⚠️ בלי מי שכבר באתר הזה — לפני ה-LIMIT, אחרת רכב שעומד באתר תפס מקום מתוך שלושת "הקרובים" (21/10/2026)
            'nearest', (SELECT COALESCE(jsonb_agg(jsonb_build_object('plate', q.license_plate, 'm', q.m, 'state', q.state)
                                                  ORDER BY q.m), '[]'::jsonb)
                          FROM (SELECT x.license_plate, x.state,
                                       round(app.geo_distance_m(n.lat, n.lon, x.lat, x.lon))::integer AS m
                                  FROM veh x
                                 WHERE n.lat IS NOT NULL AND x.state <> 'no_report'
+                                  AND NOT EXISTS (SELECT 1 FROM vehicle_visits o2
+                                                   WHERE o2.ended_at IS NULL AND o2.site_id = n.id
+                                                     AND o2.license_plate = x.license_plate
+                                                     AND app.visit_current(o2.started_at, o2.last_at))
                                 ORDER BY 3 LIMIT 3) q))
          ORDER BY n.fault DESC, n.calls DESC, n.site_name), '[]'::jsonb)
     FROM need n
@@ -353,8 +391,7 @@ BEGIN
                           WHERE x.plate = vv.license_plate AND x.is_active ORDER BY x.id LIMIT 1) t ON true
      WHERE vv.ended_at IS NULL
        AND vv.site_id IS NOT NULL
-       AND vv.started_at <= now() - interval '2 minutes'
-       AND vv.last_at > now() - interval '15 minutes'), '[]'::jsonb);
+       AND app.visit_current(vv.started_at, vv.last_at)), '[]'::jsonb);
 END
 $fn$;
 REVOKE ALL ON FUNCTION public.tech_on_site() FROM PUBLIC, anon;

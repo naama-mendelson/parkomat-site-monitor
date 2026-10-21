@@ -244,7 +244,7 @@ export function alertRows(alerts, vehicles, nowIso) {
 export function matchesCard(v, query) {
   const q = String(query ?? "").replace(/\s+/g, " ").trim();
   if (!q) return true;
-  const bits = [vehicleName(v), v?.plate, v?.address, v?.at_site?.name, v?.at_site?.code,
+  const bits = [vehicleName(v), v?.name, v?.plate, v?.address, v?.at_site?.name, v?.at_site?.code,
     ...nearList(v).map((s) => s.label), ...(v?.stats?.visits ?? []).flatMap((x) => [x.name, x.code])];
   return bits.some((x) => String(x ?? "").includes(q));
 }

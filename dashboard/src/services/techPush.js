@@ -36,20 +36,40 @@ async function save(sub) {
   return subscribeTechPush(j.endpoint, j.keys?.p256dh, j.keys?.auth);
 }
 
-/** הכפתור: מבקש הרשאה, נרשם ושומר. מחזיר את מצב ההרשאה; זורק Error בעברית על כשל אמיתי. */
-export async function enableTechPush() {
+// ⚠️ שגיאות הדפדפן באנגלית (DOMException: "Registration failed - push service error") — לטכנאי בעברית
+const SUBSCRIBE_FAILED = "ההרשמה לצפצוף נכשלה — כדאי לבדוק קליטה ולנסות שוב. אם זה חוזר, כנראה שהטלפון לא תומך בצפצוף מהדפדפן.";
+
+/** הכפתור: מבקש הרשאה, נרשם ושומר. מחזיר את מצב ההרשאה; זורק Error בעברית על כשל אמיתי.
+ *  fresh — מבטל קודם מנוי קיים ונרשם מחדש (המסד לא הכיר את הקודם: נמחק כשהשירות אמר שהוא כבר לא קיים). */
+export async function enableTechPush({ fresh = false } = {}) {
   const st = techPushState();
-  if (st === "unsupported") throw new Error("הטלפון הזה אינו תומך בצפצוף מהדפדפן — יש להתקין את האפליקציה מ-Chrome");
+  if (st === "unsupported") throw new Error("הטלפון הזה אינו תומך בצפצוף מהדפדפן — צריך טלפון אנדרואיד עם Chrome");
   if (!VAPID_PUBLIC) throw new Error("מפתח הצפצוף אינו מוגדר בבנייה");
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return permission;
-  await save(await subscription());
+  try {
+    if (fresh) await unsubscribeTechPush();
+    await save(await subscription());
+  } catch (e) {
+    throw new Error(/[א-ת]/.test(e?.message || "") ? e.message : SUBSCRIBE_FAILED);
+  }
   return "granted";
 }
 
-/** בלי לבקש: ההרשאה כבר ניתנה — לוודא שהמסד מכיר את המנוי. מחזיר true כשנשלח. */
-export async function syncTechPush() {
+/** בלי לבקש: ההרשאה כבר ניתנה — לוודא שהמסד מכיר את המנוי. fresh — מנוי חדש. מחזיר true כשנשלח. */
+export async function syncTechPush({ fresh = false } = {}) {
   if (techPushState() !== "granted" || !VAPID_PUBLIC) return false;
+  if (fresh) await unsubscribeTechPush();
   await save(await subscription());
+  return true;
+}
+
+/** ביטול ההרשמה לצפצוף בדפדפן הזה ("ניתוק הטלפון הזה", או לפני מנוי חדש). true = היה מנוי. */
+export async function unsubscribeTechPush() {
+  if (techPushState() === "unsupported") return false;
+  const reg = await navigator.serviceWorker.getRegistration("/");
+  const sub = await reg?.pushManager?.getSubscription();
+  if (!sub) return false;
+  await sub.unsubscribe();
   return true;
 }

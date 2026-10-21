@@ -11,7 +11,18 @@ const PASSWORD = /^[A-Za-z0-9_-]{20,200}$/;
 const b64url = (s) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64url = (s) => atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "="));
 
-/** הקישור ל-QR: הכתובת של הדשבורד, ופרטי הטלפון אחרי #pair=. */
+// ⚠️ הקישור מוביל תמיד לאתר החי, לא לכתובת של הדפדפן שיצר את ה-QR (21/10/2026). ה-QR הראשון נוצר מהדשבורד שרץ במחשב
+// הפיתוח (localhost:5173), והקישור הוביל ל-localhost — כתובת שקיימת רק במחשב ההוא, והטלפון ענה "לא ניתן לגשת לאתר".
+// גם עותק DELL008 נגיש רק ברשת המשרד, וכתובת תצוגה מקדימה של Pages מתחלפת בכל פריסה. VITE_PUBLIC_ORIGIN — לכתובת אחרת.
+export const PUBLIC_ORIGIN = "https://parkomat-site-monitor.pages.dev";
+
+/** הכתובת שאליה מוביל ה-QR: VITE_PUBLIC_ORIGIN אם הוא כתובת https תקינה, אחרת האתר החי. */
+export function pairOrigin(override) {
+  const o = String(override ?? "").trim().replace(/\/+$/, "");
+  return /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(o) ? o : PUBLIC_ORIGIN;
+}
+
+/** הקישור ל-QR: הכתובת של האתר (pairOrigin), ופרטי הטלפון אחרי #pair=. */
 export function pairLink(origin, email, password) {
   return `${String(origin).replace(/\/+$/, "")}/#pair=${b64url(JSON.stringify({ e: email, p: password }))}`;
 }

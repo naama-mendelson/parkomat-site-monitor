@@ -446,6 +446,18 @@ AS $$
          END
 $$;
 
+-- האם הרכב עומד, כלומר יכול להיות "באתר": חונה, מנוע דולק, או השתתק. ⚠️ 21/10/2026 (בדיקת הבאגים): השתתקות נחשבה תמיד
+-- עמידה ("חניון תת-קרקעי"), ויחידה שהפסיקה לשדר באמצע נסיעה, ליד אתר, נחשבה "באתר" שעות — עם האיקון בלוח. עכשיו השתתקות
+-- נחשבת עמידה רק אם הדיווח האחרון היה איטי (עד 20 קמ"ש) או שאיתוראן לא אמרו "נוסע".
+CREATE OR REPLACE FUNCTION app.vehicle_may_be_at_site(p_state text, p_motion text, p_speed integer)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT p_state IN ('parking', 'idle')
+      OR (p_state = 'silent' AND (COALESCE(p_motion, '') <> 'driving' OR COALESCE(p_speed, 0) <= 20))
+$$;
+
 -- כל האתרים עם המיקום שלהם (או בלעדיו) — לשכבת האתרים במפה ולרשימת "דורשים בדיקה". כל מי שמחובר; jsonb אחד.
 CREATE OR REPLACE FUNCTION public.site_locations_list()
 RETURNS jsonb
@@ -605,7 +617,10 @@ BEGIN
            -- עד 3 אתרים בטווח 1.5 ק"מ מהמיקום (האחרון שידוע), הקרוב ראשון: [{code, name, m, approx}]
            'near', app.near_sites(v.lat, v.lon),
            -- עומד ליד אתר שלנו (חונה, מנוע דולק, או השתתק שם): {site_id, code, name, m, approx}; בנסיעה — NULL
-           'at_site', CASE WHEN s.state IN ('parking', 'idle', 'silent') THEN app.site_at(v.lat, v.lon) END,
+           'at_site', CASE WHEN app.vehicle_may_be_at_site(s.state, v.motion, v.speed) THEN app.site_at(v.lat, v.lon) END,
+           -- שם הטכנאי מלוח הרכז, כשמשויך לרכב (21/10/2026): כדי שהחיפוש, "צריכים טכנאי" והמפה יציגו את אותו שם כמו הכרטיס
+           -- והאיקון בלוח — ולא את הכינוי באיתוראן. NULL בלי שיוך.
+           'tech', (SELECT x.display_name FROM technicians x WHERE x.plate = v.license_plate AND x.is_active ORDER BY x.id LIMIT 1),
            'lat', v.lat, 'lon', v.lon, 'address', v.address, 'speed', v.speed,
            'heading', v.heading, 'odometer', v.odometer,
            'located_at', to_char(v.located_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),

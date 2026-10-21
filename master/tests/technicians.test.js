@@ -880,19 +880,37 @@ test("הצפצוף: התזכורת כל 2 דקות — רק לפתוחה שלא 
     const maxed = await mk();        // 3 צפצופים
     const missed = await mk();       // הראשון לא יצא (0), השליחה לפני 3 דקות — תזכורת
     const nophone = await mk(false); // בלי טלפון — לא
-    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '3 minutes' WHERE id = $1`, [due.d]);
-    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '1 minute' WHERE id = $1`, [fresh.d]);
-    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '3 minutes' WHERE id = $1`, [acked.d]);
+    const arrived = await mk();      // הרכז סימן "הגיע" — לא (21/10/2026, בדיקת הבאגים)
+    const capped = await mk();       // 5 בקשות בלי claim (הפונקציה לא עונה) — לא עוד
+    const edge = await mk();         // הצפצוף לפני 110 שניות — כן (סובלנות 20 שניות: אחרת יצא כל 2.5–3 דקות)
+    // ⚠️ כל שליחה כבר יצאה לבקשה ראשונה (push_requested_at = עכשיו) — מזיזים גם אותה, כמו בייצור
+    const set = (d, cols) => sup(`UPDATE tech_dispatches SET ${cols} WHERE id = $1`, [d]);
+    await set(due.d, `push_count = 1, push_last_at = now() - interval '3 minutes', push_requested_at = now() - interval '181 seconds'`);
+    await set(fresh.d, `push_count = 1, push_last_at = now() - interval '1 minute', push_requested_at = now() - interval '61 seconds'`);
+    await set(acked.d, `push_count = 1, push_last_at = now() - interval '3 minutes', push_requested_at = now() - interval '181 seconds'`);
     await fn(acked.uid, "tech_self_ack", acked.d);
-    await sup(`UPDATE tech_dispatches SET push_count = 3, push_last_at = now() - interval '9 minutes' WHERE id = $1`, [maxed.d]);
-    await sup(`UPDATE tech_dispatches SET push_count = 0, push_last_at = NULL, created_at = now() - interval '3 minutes' WHERE id = $1`, [missed.d]);
-    await sup(`UPDATE tech_dispatches SET created_at = now() - interval '5 minutes' WHERE id = $1`, [nophone.d]);
+    await set(maxed.d, `push_count = 3, push_last_at = now() - interval '9 minutes', push_requested_at = now() - interval '9 minutes'`);
+    await set(missed.d, `push_count = 0, push_last_at = NULL, created_at = now() - interval '3 minutes', push_requested_at = now() - interval '3 minutes'`);
+    await set(nophone.d, `created_at = now() - interval '5 minutes', push_requested_at = now() - interval '5 minutes'`);
+    await set(arrived.d, `push_count = 1, push_last_at = now() - interval '3 minutes', push_requested_at = now() - interval '181 seconds', arrived_at = now(), arrived_by = 'רכז בדיקה'`);
+    await set(capped.d, `push_count = 0, push_last_at = NULL, push_attempts = 5, created_at = now() - interval '20 minutes', push_requested_at = now() - interval '3 minutes'`);
+    await set(edge.d, `push_count = 1, push_last_at = now() - interval '110 seconds', push_requested_at = now() - interval '112 seconds'`);
     await sup(`DELETE FROM net.http_request_queue`);
     const n = (await sup(`SELECT app.tech_push_repeat() n`))[0].n;
     const ids = (await queued()).map((x) => x.body.dispatch_id).sort((a, b) => a - b);
-    assert.deepEqual(ids, [Number(due.d), Number(missed.d)].sort((a, b) => a - b), JSON.stringify({ ids, due: due.d, missed: missed.d }));
-    assert.equal(n, 2);
-    for (const x of [due, fresh, acked, maxed, missed, nophone]) await end(ED, x.d, "cancelled");
+    const want = [due.d, missed.d, edge.d].map(Number).sort((a, b) => a - b);
+    assert.deepEqual(ids, want, JSON.stringify({ ids, due: due.d, missed: missed.d, edge: edge.d }));
+    assert.equal(n, 3);
+    // בקשה שאף claim לא בא אחריה — הכרטיס אומר שהשירות לא ענה (עד 21/10 נשאר "שולח צפצוף…" בלי סוף)
+    assert.equal((await dispOf(missed.d)).push_error, "שירות הצפצוף לא ענה — הצפצוף לא נשלח");
+    assert.equal((await dispOf(capped.d)).push_error, "שירות הצפצוף לא ענה — הצפצוף לא נשלח");
+    assert.equal((await dispOf(due.d)).push_error, null, "צפצוף שנשלח — בלי שגיאה");
+    // כל בקשה נספרת — גם זו של התזכורת
+    assert.equal((await dispOf(missed.d)).push_attempts, 2);
+    // claim אחרי "הגיע" — לא שולחים
+    const c = (await sup(`SELECT public.tech_push_claim($1) j`, [arrived.d]))[0].j;
+    assert.deepEqual({ send: c.send, reason: c.reason }, { send: false, reason: "arrived" });
+    for (const x of [due, fresh, acked, maxed, missed, nophone, arrived, capped, edge]) await end(ED, x.d, "cancelled");
   });
   // התזמון קיים (ב-PGlite יש תחליף ל-cron.job)
   const job = await sup(`SELECT schedule, command FROM cron.job WHERE jobname = 'parkomat-tech-push-repeat'`).catch(() => []);
@@ -934,4 +952,43 @@ test("הצפצוף: 'קיבלתי' — רק על המשימה שלו; פעם ש�
   const t = await techOf(tech);
   await save(ED, tech, t.name, null, false, t.rev);
   assert.equal(await subsOf(third.uid), 0, "טכנאי מושבת — לא יצפצף");
+});
+
+test("בדיקת הבאגים (21/10): היומן ורשימת העובדים — רק צוות; 'ניתוק הטלפון הזה' מנתק באמת; ביומן בלי שם הטכנאי", { skip }, async () => {
+  const tech = await newTech();
+  const { uid } = await pair(tech);
+  await subscribe(uid, SUB(`self-${tech}`));
+  const d = (await dispatch(ED, tech, { site: "TC1" })).dispatch_id;
+  await fn(uid, "tech_self_ack", d);
+  const ackRow = (await sup(`SELECT actor_name FROM audit_log WHERE action = 'tech.ack' ORDER BY id DESC LIMIT 1`))[0];
+  assert.equal(ackRow.actor_name, "טלפון של טכנאי", "'קיבלתי' ביומן — בלי שם הטכנאי");
+
+  // היומן ורשימת העובדים: צוות קורא; טלפון, סוכן וקליטה — לא (עד 21/10 כל חשבון מחובר קרא)
+  const n = async (who, t) => (await user(who, `SELECT count(*)::int n FROM ${t}`))[0].n;
+  for (const who of [MGR, ED, RO]) {
+    assert.ok((await n(who, "audit_log")) > 0, `צוות (${who}) קורא את היומן`);
+    assert.ok((await n(who, "app_users")) > 0, `צוות (${who}) קורא את רשימת העובדים`);
+  }
+  for (const [who, label] of [[uid, "טלפון"], [AG, "סוכן"], [IN, "קליטה"]]) {
+    assert.equal(await n(who, "audit_log"), 0, `${label} — לא קורא את היומן`);
+    assert.equal(await n(who, "app_users"), 0, `${label} — לא קורא את רשימת העובדים`);
+  }
+  // בקר שהושבת — גם לא (עד שהטוקן שלו פג הוא קרא הכול)
+  await sup(`UPDATE app_users SET is_active = false WHERE supabase_uid = $1`, [RO]);
+  assert.equal(await n(RO, "audit_log"), 0, "מושבת — לא קורא את היומן");
+  await sup(`UPDATE app_users SET is_active = true WHERE supabase_uid = $1`, [RO]);
+
+  // "ניתוק הטלפון הזה" מהטלפון: המנוי נמחק, הקישור נמחק, המשתמש מושבת
+  await end(ED, d, "done");
+  const r = await fn(uid, "tech_self_unpair");
+  assert.equal(r.changed, true);
+  assert.equal((await sup(`SELECT count(*)::int n FROM tech_push_subs s JOIN app_users u ON u.id = s.app_user_id WHERE u.supabase_uid = $1`, [uid]))[0].n, 0,
+    "המנוי לצפצוף נמחק — הטלפון לא יצפצף יותר");
+  assert.equal((await sup(`SELECT app_user_id FROM technicians WHERE id = $1`, [tech]))[0].app_user_id, null, "הכרטיס: אין טלפון מחובר");
+  assert.equal((await sup(`SELECT is_active FROM app_users WHERE supabase_uid = $1`, [uid]))[0].is_active, false);
+  await fails(fn(uid, "tech_me"), "42501");
+  assert.equal((await fn(uid, "tech_self_unpair")).changed, false, "פעם שנייה — כלום, בלי שגיאה");
+  const unpairRow = (await sup(`SELECT actor_name FROM audit_log WHERE action = 'tech.phone_self_unpair' ORDER BY id DESC LIMIT 1`))[0];
+  assert.equal(unpairRow.actor_name, "טלפון של טכנאי");
+  await fails(as("anon", {}, `SELECT public.tech_self_unpair()`), "42501");
 });

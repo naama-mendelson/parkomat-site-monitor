@@ -26,10 +26,11 @@ import { loginCodeStatus } from "../../services/loginCodeDirect";
 import LoginCode, { LoginCodeCheckFailed } from "./LoginCode";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { isTechPhoneEmail, parsePairHash } from "../../utils/techPhone";
-import { readDevice, resumeDevice } from "../../services/techDevice";
+import { clearDeviceMark, readDevice, resumeDevice, wasDisconnected } from "../../services/techDevice";
 
 // הטלפון של הטכנאי (21/10/2026) — נטען רק בטלפון כזה, לא בחבילה של הדשבורד
 const TechPhone = lazy(() => import("../TechPhone/TechPhone"));
+const PhoneOff = lazy(() => import("../TechPhone/TechPhone").then((m) => ({ default: m.PhoneOff })));
 const PairScreen = lazy(() => import("../TechPhone/PairScreen"));
 
 function AuthGate({ children }) {
@@ -42,14 +43,28 @@ function AuthGate({ children }) {
   // • טלפון שה-session שלו אבד (נגרף אחרי יממה בלי שימוש) — מתחבר שוב לבד מהפרטים ששמר, ולא מציג טופס התחברות.
   // • משתמש של טלפון — מסך המשימה בלבד, ולא הדשבורד (שהמסד ממילא לא נותן לו לקרוא).
   const [pair, setPair] = useState(() => parsePairHash(typeof window !== "undefined" ? window.location.hash : ""));
-  const [resume, setResume] = useState("idle");      // idle | trying | done
+  // ⚠️ 21/10/2026 (בדיקת הבאגים): התחברות שקטה שנכשלה הציגה תמיד את טופס "אימייל וסיסמה" — גם אחרי QR חדש (הפרטים כבר
+  // לא עובדים; הטכנאי לא יודע מה לכתוב שם), וגם בלי קליטה (ואז נתקע שם עד שסוגרים את האפליקציה). עכשיו:
+  //   off     — הפרטים שגויים (נוצר QR חדש / נותק): מסך "הטלפון אינו מחובר — לבקש מהרכז QR חדש".
+  //   offline — אין חיבור: "מנסה שוב", וניסיון חוזר כל 20 שניות, כשהרשת חוזרת, וכשחוזרים למסך.
+  const [resume, setResume] = useState("idle");      // idle | trying | done | off | offline
   useEffect(() => {
-    if (loading || user || pair || resume !== "idle" || !readDevice()) return;
+    if (loading || user || pair || resume !== "idle") return;
+    if (!readDevice()) { if (wasDisconnected()) setResume("off"); return; }
     setResume("trying");
-    resumeDevice().finally(() => setResume("done"));
+    resumeDevice().then((r) => setResume(r.ok ? "done" : r.reason === "network" ? "offline" : r.reason === "invalid" ? "off" : "done"));
   }, [loading, user, pair, resume]);
   // מחובר שוב — ניסיון שקט נוסף מותר בפעם הבאה שה-session יאבד (ולא לולאה: ניסיון שנכשל נשאר "done")
   useEffect(() => { if (user) setResume("idle"); }, [user]);
+  useEffect(() => {
+    if (resume !== "offline") return undefined;
+    const again = () => setResume("idle");
+    const onVis = () => { if (document.visibilityState === "visible") again(); };
+    const t = setTimeout(again, 20_000);
+    window.addEventListener("online", again);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearTimeout(t); window.removeEventListener("online", again); document.removeEventListener("visibilitychange", onVis); };
+  }, [resume]);
   const pairDone = () => {
     try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* */ }
     setPair(null);
@@ -132,6 +147,14 @@ function AuthGate({ children }) {
   }
 
   if (!user && resume === "trying") return <div className="app-loading">מתחבר…</div>;
+  if (!user && resume === "offline") return <div className="app-loading" role="status">אין חיבור כרגע — מנסה להתחבר שוב…</div>;
+  if (!user && resume === "off") {
+    return (
+      <Suspense fallback={<div className="app-loading">טוען…</div>}>
+        <PhoneOff onPersonLogin={() => { clearDeviceMark(); setResume("done"); }} />
+      </Suspense>
+    );
+  }
   if (!user) return <Login />;
 
   // ⚠️ גם לפי האימייל: טלפון שנותק מקבל מהמסד 'anonymous', ובלי זה היה נופל לדשבורד ריק במקום להסביר מה לעשות

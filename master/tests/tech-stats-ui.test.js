@@ -123,3 +123,13 @@ test("חיפוש בכרטיסים: שם, מספר, כתובת, האתר שהוא
   for (const q of ["דני", "1", "הירקון", "הרצל", "1227", "1206", "מתיתיהו", "", "  "]) assert.ok(matchesCard(v, q), q);
   assert.equal(matchesCard(v, "אין כזה"), false);
 });
+
+test("שם הטכנאי מלוח הרכז — בחיפוש, במיון וב'צריכים טכנאי'; והכינוי באיתוראן עדיין נמצא בחיפוש (21/10)", () => {
+  const a = veh({ plate: "7", name: "טנדר 12 7", tech: "דני כהן" });
+  assert.ok(matchesCard(a, "דני"), "חיפוש לפי שם הטכנאי");
+  assert.ok(matchesCard(a, "טנדר"), "והכינוי באיתוראן — עדיין");
+  const b = veh({ plate: "8", name: "אבי 8" });
+  assert.deepEqual(sortCards([a, b], NOW).map((x) => x.plate), ["8", "7"], "המיון לפי השם שמוצג (אבי לפני דני)");
+  const rows = alertRows([{ code: "1227", name: "הרצל 50", fault: true, calls: 0, on_site: [], nearest: [{ plate: "7", m: 300, state: "parking" }] }], [a, b], NOW);
+  assert.match(JSON.stringify(rows), /דני כהן/, "'הכי קרוב' בשם הטכנאי");
+});

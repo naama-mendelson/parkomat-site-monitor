@@ -3,7 +3,7 @@
 // (technicians.test.js) ובפונקציה (provision-technician-fn.test.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTechPhoneEmail, navLink, pairLink, parsePairHash, phoneStatus, qrPath } from "../../dashboard/src/utils/techPhone.js";
+import { isTechPhoneEmail, navLink, pairLink, pairOrigin, parsePairHash, phoneStatus, PUBLIC_ORIGIN, qrPath } from "../../dashboard/src/utils/techPhone.js";
 
 const PW = "aB3-_xYz0123456789aB3-_xYz0123456789abcdE";   // בצורה של הסיסמה מהפונקציה (base64url)
 const NOW = "2026-10-21T08:00:00Z";                         // 11:00 בישראל
@@ -14,6 +14,18 @@ test("הקישור: הפרטים אחרי # (לא נשלחים לשרת), ונק
   const hash = link.slice(link.indexOf("#"));
   assert.deepEqual(parsePairHash(hash), { email: "tech-7-3@parkomat.co.il", password: PW });
   assert.ok(!link.includes(PW), "הסיסמה אינה גלויה בקישור כמחרוזת");
+});
+
+// 21/10/2026: ה-QR הראשון נוצר מהדשבורד במחשב הפיתוח והוביל ל-localhost — "לא ניתן לגשת לאתר" בטלפון
+test("הקישור מוביל תמיד לאתר החי — לא ל-localhost, לא לרשת המשרד ולא ל-http", () => {
+  assert.equal(PUBLIC_ORIGIN, "https://parkomat-site-monitor.pages.dev");
+  for (const bad of [undefined, null, "", "  ", "http://localhost:5173", "localhost:5173", "http://192.168.1.20:8080",
+    "http://parkomat-site-monitor.pages.dev", "https://", "https://a b.dev", "javascript:alert(1)", "https://x.dev/path"]) {
+    assert.equal(pairOrigin(bad), PUBLIC_ORIGIN, String(bad));
+  }
+  assert.equal(pairOrigin("https://dash.example.co.il/"), "https://dash.example.co.il", "כתובת https מפורשת — מותרת");
+  assert.equal(pairOrigin(" https://x.example:8443 "), "https://x.example:8443");
+  assert.match(pairLink(pairOrigin(undefined), "tech-7-3@parkomat.co.il", PW), /^https:\/\/parkomat-site-monitor\.pages\.dev\/#pair=/);
 });
 
 test("הקישור: רק של טלפון של טכנאי — כל השאר null", () => {

@@ -4647,6 +4647,157 @@ was first put on the technician card only (above). Looking at the board, she sai
   none elsewhere, a click expands, the line on the expanded card, a multiplier, leaving, a failed load, every 2 minutes
   with a fake clock; 1371 light and 390 dark). Mock: `?onsite=1` / `?onsitefail=1`.
 
+### The bug hunt of 21/10/2026 — eleven fixes, and a QR that led nowhere (built, NOT deployed)
+
+The owner: *"תנסה לעבור על המערכת ולמצוא באגים"*. Four independent reviews plus a read-only production health check found
+11 important bugs and about 25 small ones. Her answer, "אוקי", was to the plan: fix the eleven now, test, ask before
+publishing, and leave the small ones for a later round.
+
+**The eleven fixes:**
+
+1. **The staff list and the audit log were readable by almost any signed-in token.**
+   - `app_users_read_authenticated` used `is_active_user`, which includes the agents. An agent's password sits on every
+     site PC, and the list holds every employee's email.
+   - `audit_log_read_authenticated` checked nothing about the caller. The log was readable by agents, by a technician's
+     phone (even after unpairing, until the token expired), by a deactivated user until expiry, and by a sign-in that
+     never typed the login code.
+   - Both now require `current_app_role() IN ('manager', 'editor', 'operator')` (`security.postgres.sql`).
+     `current_app_role` returns its own value for every non-human identity, which is why the list is explicit.
+2. **A phone disconnected from the phone itself kept beeping.**
+   - The cause: "ניתוק הטלפון הזה" only deleted the credentials stored on the device. The user stayed active and linked,
+     the push subscription stayed, and the card said "צפצוף מופעל".
+   - **`public.tech_self_unpair()`** (authenticated, no pilot gate):
+     - deletes the subscriptions, unlinks the technician and deactivates the user;
+     - writes the audit row `tech.phone_self_unpair`;
+     - on a phone that is already disconnected, returns `changed: false` and raises no error.
+   - The phone (`forgetDevice` in `services/techDevice.js`):
+     - calls it, then cancels the browser's push subscription (`unsubscribeTechPush`);
+     - remembers that it was disconnected (`{off: true}`), then signs out;
+     - with no network, it still cancels the subscription and signs out.
+3. **The reminder looped forever when `notify-tech` did not answer.**
+   - The cause: `push_count` counts only after a claim. A function that never answered (a wrong secret, not deployed,
+     crashed) left it at 0, so the cron sent a request every minute with no end. The card stayed on "שולח צפצוף…".
+   - The fix:
+     - two new columns, `tech_dispatches.push_attempts` and `push_requested_at`;
+     - every `tech_push_request` is counted;
+     - a cap, `app.tech_push_attempts_max()` = 5: three beeps plus two retries;
+     - after 90 seconds with no claim, the card says "שירות הצפצוף לא ענה — הצפצוף לא נשלח".
+   - In the same function:
+     - **20 seconds of tolerance on the 2 minutes.** The claim stamps `push_last_at` a second or two into the minute, so
+       "exactly 2 minutes" was 118 seconds and slipped to the next minute: beeps went out at 0, 2.5 and 5.5 minutes.
+     - **No beep after the coordinator marks "הגיע".** The claim returns `reason: 'arrived'`, the repeat skips it, and
+       the card's push line (`pushLine`) shows nothing.
+4. **A false "צפצוף מופעל" on the phone.**
+   - The cause: the phone trusted the browser's permission. If the database no longer knew its subscription (deleted
+     after a 404/410, or never saved), nothing beeped.
+   - Now `missing` = permission granted and `tech_me.push_devices === 0`.
+   - The phone then re-subscribes by itself with a new subscription, at most every 5 minutes. If that fails, it shows
+     "⚠ הצפצוף לא פעיל בטלפון הזה" with a "הפעלת צפצוף מחדש" button.
+   - The errors are in Hebrew.
+   - A phone that cannot beep is told "צריך טלפון אנדרואיד עם Chrome". The old text, "install from the Chrome menu", is
+     gone: an iPhone has no such menu, and installing there loses the session.
+5. **A paired phone fell back to the email-and-password form.**
+   - **No reception during the silent sign-in:**
+     - It shows "אין חיבור כרגע — מנסה להתחבר שוב…".
+     - It retries every 20 seconds, on `online`, and on return to the screen.
+     - The credentials are kept.
+   - **Credentials that are really invalid:**
+     - It shows `PhoneOff`: "הטלפון אינו מחובר לטכנאי… לבקש מהרכז QR חדש", with "כניסה עם מייל וסיסמה" for a person.
+     - The same screen appears after a reload, with no further attempt.
+   - **Pairing with no reception** no longer says "ה-QR כבר שימש". It says "ה-QR עדיין בתוקף" and offers "נסו שוב".
+   - **The replacement password is saved before `updateUser`, as `pending`.** A response lost in the middle of the swap
+     cannot lock the phone out, because the silent sign-in tries both passwords.
+6. **A deadlock on "קיבלתי".**
+   - `tech_self_ack` locked the dispatch, then the technician. Every other writer locks the technician, then the
+     dispatch. So "קיבלתי" pressed at the moment the coordinator pressed "סיום" or "הגיע" failed one of them with 40P01.
+   - The technician is locked first now.
+   - Not testable in PGlite, which has one connection.
+7. **A unit that went silent mid-drive near a site counted as "at the site" for hours**, with the yellow icon on the
+   board.
+   - The cause: silence always counted as standing (meant for an underground car park).
+   - **`app.vehicle_may_be_at_site(state, motion, speed)`:** parking or idle; or silent, but only when the last report
+     was at most 20 km/h or Ituran did not say "driving".
+   - Used by `vehicle_json.at_site` and by `vehicles_track`.
+8. **Double visits.**
+   - The cause: a parked vehicle whose position jumped out of range for one sync, or a sync with no state, closed the
+     visit. The return then opened a second one, overlapping the first, with the same arrival time (the ignition-off).
+     "ביקורים באתרים" counted it twice.
+   - **Reopen:** a return to the same site within 15 minutes, with no other visit in between, reopens the same visit.
+   - **No overlap:** a new visit never starts before the end of the vehicle's previous visit
+     (`LEAST(GREATEST(arrival, prev_end), now)`).
+   - ⚠️ `GREATEST` ignores NULL, and the first version had `LEAST` alone. With no previous visit the arrival became
+     "now". A test caught it.
+   - **One rule for "a visit happening now":** `app.visit_current` (at least 2 minutes old, `last_at` within 15
+     minutes). It is used by the board icon and by "טכנאי באתר" in "צריכים טכנאי עכשיו"; until now only the icon
+     checked.
+   - **"הכי קרוב" leaves out vehicles already at that site**, before the `LIMIT`. Until now they took one of the three
+     places.
+9. **The map was drawn over the help window.**
+   - The cause: Leaflet's panes (z-index 400–1000) sat in the root stacking context, above the help window, which lives
+     inside the header (z-index 100).
+   - The fix: `.veh-map { position: relative; z-index: 0; isolation: isolate }`.
+   - Measured in the harness: with the old CSS the vehicle labels covered the help window; with the fix, none do.
+   - ⚠️ The sticky header itself was not covered in the harness either way, though the bug hunt suspected it. The probe
+     keeps it as a guard.
+10. **On a phone, tapping a vehicle on the map scrolled the page**, through the list row's `scrollIntoView`. Now it
+    scrolls only inside `.veh-side`, and only when that list scrolls on its own (desktop).
+11. **The name from the coordinator's board appeared only in the card's header.**
+    - `vehicle_json` now carries `tech`, the active technician mapped to the plate.
+    - `vehicleName(v)` prefers it. The search, "צריכים טכנאי עכשיו", the map labels and the list now show the same name as
+      the card and the board icon.
+
+**12. The QR led nowhere** (the owner, the same afternoon: *"סרקנו את הקוד QR… לא ניתן לגשת לאתר"*).
+- **The cause:** the link was built from `window.location.origin`. The four QRs made that day (13:40–15:24, all in
+  production, none ever opened) came from the dashboard running on the dev PC, `localhost:5173`, which talks to production
+  Supabase. The link inside them was `http://localhost:5173/#pair=…`, an address that exists only on that PC. The DELL008
+  copy would have failed the same way (office network only), and a Pages preview URL changes on every deploy.
+- **The fix:** `pairOrigin` in `utils/techPhone.js` sends the link to the live site, `PUBLIC_ORIGIN` =
+  `https://parkomat-site-monitor.pages.dev`. `VITE_PUBLIC_ORIGIN` overrides it only with a valid `https://` origin (no
+  path); anything else falls back to the live site.
+- Tests: `tech-phone-ui.test.js` (localhost, an office IP, plain http, a path, `javascript:`, a valid override).
+  `probe-techphone` Q0 now rebuilds the QR from the live site's address and compares it module by module; Q0b checks the
+  QR is not the harness's localhost link (51/51).
+
+**And one more:** the audit rows of the phone's actions (`tech.ack`, `tech.phone_self_unpair`) carry the fixed actor
+"טלפון של טכנאי". They used to carry the technician's name, in a log that every user can read (the log is ids only).
+
+**Tests:**
+- `technicians.test.js`:
+  - The reminder test is rewritten: the arrived case, the cap, the edge at 110 seconds, the "did not answer" error,
+    `push_attempts`, and the claim's `arrived`.
+  - A new test, "בדיקת הבאגים": who reads the log and the list, `tech_self_unpair`, and the fixed actor.
+- `vehicle-stats.test.js`:
+  - silent while fast versus slow;
+  - edge jitter gives one visit;
+  - no overlap;
+  - arrival by ignition-off with no previous visit;
+  - "הכי קרוב" in three stages;
+  - the technician's name in `vehicles_live_list`.
+- `compliance.test.js` test 6: agent and intake see 0 log rows; the leak check runs as a בקר.
+- The roles census: `tech_self_unpair`.
+- UI: `technicians-ui`, `vehicles-ui`, `tech-stats-ui`.
+- **Full suite 1395/1395.** **SQL mutations (isolated copy, `mut2110/run-mut17.cjs`): 27 of 27 caught.** Two survived
+  at first, and each got its case in `vehicle-stats.test.js`: a return after 20 minutes is a new visit (the reopen is
+  within 15 minutes only), and S1 → S2 → S1 gives three visits (reopening the first would overlap the visit at S2).
+- Browser:
+  - `tp/probe-tpfix.mjs` 25 (new): the phone not known, re-subscribing, no reception, pairing with no reception,
+    unsupported, disconnecting with no network.
+  - `tp/probe-tp.mjs` 31 and `tp/probe-tpbeep.mjs` 46, updated.
+  - `e2e/probe-techfix.mjs` 25 (new):
+    - the help window over the map, with X1b putting the old CSS back and expecting the labels over it;
+    - the header after scrolling;
+    - a tap on the map at 390px leaves the page in place;
+    - the board's name in the card, the search, "צריכים טכנאי", the labels and the list.
+  - The mock takes `window.__vehTech[plate]`.
+
+**Deploy (each step with the owner's yes):**
+1. SQL. The dry run shows the new functions (`tech_self_unpair`, `tech_push_attempts_max`, `vehicle_may_be_at_site`,
+   `visit_current`) and the changed bodies. ⚠️ The two `tech_dispatches` columns and the two policies may not show:
+   check `information_schema.columns` and `pg_policies` after `--apply`.
+2. Push.
+- SQL first, though either order is safe. A new bundle against the old SQL: `tech_self_unpair` returns 404, and the phone
+  still cancels the subscription and signs out (tested). `push_devices` is already in production.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

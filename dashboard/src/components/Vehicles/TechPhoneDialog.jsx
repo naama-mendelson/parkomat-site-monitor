@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchTechBoard, provisionTechPhone, saveTechnician, unpairTechPhone } from "../../services/dataSource";
 import { vehicleName } from "../../utils/vehicles";
-import { pairLink, phoneStatus, qrPath } from "../../utils/techPhone";
+import { pairLink, pairOrigin, phoneStatus, qrPath } from "../../utils/techPhone";
 import "./DispatchDialog.css";
 
 const POLL_MS = 4000;
@@ -87,7 +87,7 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
         id = r.id;
       }
       const r = await provisionTechPhone(id);
-      setQr({ link: pairLink(window.location.origin, r.email, r.password), name: r.name || name.trim(), warning: r.warning ?? null });
+      setQr({ link: pairLink(pairOrigin(import.meta.env.VITE_PUBLIC_ORIGIN), r.email, r.password), name: r.name || name.trim(), warning: r.warning ?? null });
       setScanned(false);
       onChanged?.();
     } catch (e) {

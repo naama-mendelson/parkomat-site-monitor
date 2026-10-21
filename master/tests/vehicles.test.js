@@ -94,7 +94,7 @@ test("קליטה: כל השדות מהצורה של איתוראן, ומצב ה�
     plate: "1000001", name: "טכנאי בדיקה 1000001", make: "יצרן", model: "דגם", motion: "driving",
     lat: 32.0853, lon: 34.7818, address: "רחוב הבדיקה, תל אביב", speed: 54, heading: 270, odometer: 12345.6,
     located_at: "2026-10-20T09:58:46Z", places: [{ place_name: "משרד", place_id: 1 }], driver: "נהג בדיקה",
-    power_alert: null, near: [], at_site: null, synced_at: undefined, state: undefined, state_since: undefined,
+    power_alert: null, near: [], at_site: null, tech: null, synced_at: undefined, state: undefined, state_since: undefined,
     stats: undefined,
   });
   assert.ok(Array.isArray(j.alerts));

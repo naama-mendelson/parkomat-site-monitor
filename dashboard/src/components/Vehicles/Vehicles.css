@@ -66,7 +66,9 @@
 .veh-pick button { border: 1px solid var(--border-color); background: var(--bg-card); color: inherit; font: inherit; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 
 .veh-body { flex: 1 1 auto; min-height: 0; display: flex; }
-.veh-map { flex: 1 1 auto; min-width: 0; background: var(--bg-secondary); }
+/* ⚠️ isolation + z-index 0: השכבות של Leaflet (z-index 400–1000) נלחמו בהקשר הראשי במה שמעל המפה — נמדד (21/10/2026, בדיקת
+   הבאגים): תוויות הרכבים צוירו מעל חלון העזרה, שיושב בתוך הכותרת (z-index 100). עכשיו כל המפה היא שכבה אחת, מתחת. */
+.veh-map { flex: 1 1 auto; min-width: 0; background: var(--bg-secondary); position: relative; z-index: 0; isolation: isolate; }
 .leaflet-container.is-picking, .leaflet-container.is-picking .leaflet-interactive { cursor: crosshair; }
 .veh-side {
   flex: 0 0 340px;

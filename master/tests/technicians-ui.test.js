@@ -121,6 +121,9 @@ test("הצפצוף בכרטיס: קיבל / לא אישר אחרי 3 / למה ל
   const d = { created_at: "2026-10-21T07:40:00Z", push_count: 1, push_last_at: "2026-10-21T07:42:00Z", push_max: 3, push_error: null, acked_at: null };
   assert.deepEqual(pushLine(d, now), { tone: "wait", text: "צפצף בטלפון 10:42 · מחכה ל\"קיבלתי\" (1 מתוך 3)" });
   assert.deepEqual(pushLine({ ...d, acked_at: "2026-10-21T07:43:00Z" }, now), { tone: "ok", text: "✓ קיבל 10:43" });
+  assert.equal(pushLine({ ...d, arrived_at: "2026-10-21T07:50:00Z" }, now), null, "הגיע — בלי 'מחכה לקיבלתי'");
+  assert.deepEqual(pushLine({ ...d, arrived_at: "2026-10-21T07:50:00Z", acked_at: "2026-10-21T07:43:00Z" }, now).tone, "ok", "קיבל קודם — עדיין 'קיבל'");
+  assert.deepEqual(pushLine({ ...d, push_count: 0, push_error: "שירות הצפצוף לא ענה — הצפצוף לא נשלח" }, now), { tone: "bad", text: "⚠ שירות הצפצוף לא ענה — הצפצוף לא נשלח" });
   assert.deepEqual(pushLine({ ...d, push_count: 3 }, now), { tone: "bad", text: "לא אישר קבלה — צפצף 3 פעמים" });
   assert.deepEqual(pushLine({ ...d, push_count: 3, acked_at: "2026-10-21T07:50:00Z" }, now).tone, "ok", "קיבל — גם אחרי 3");
   assert.deepEqual(pushLine({ ...d, push_count: 0, push_error: "הטלפון של הטכנאי לא הפעיל צפצוף" }, now),
