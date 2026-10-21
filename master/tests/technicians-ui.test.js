@@ -2,7 +2,7 @@
 // והרשימה בלי חיפוש (dispatchSites). ההחלטות על השליחה עצמה — במסד (technicians.test.js); כאן רק מה שהמסך מציע.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchSites, dispatchLine, techByPlate } from "../../dashboard/src/utils/technicians.js";
+import { dispatchSites, dispatchLine, pushLine, techByPlate } from "../../dashboard/src/utils/technicians.js";
 import { editDistance, looseText, matchScore, searchSites, siteKey, skel } from "../../dashboard/src/utils/siteSearch.js";
 
 // שמות בצורה של הייצור (קיצורים, גרשיים כפולים, טווחים) — רחובות ציבוריים, לא נתונים מסמך
@@ -114,4 +114,18 @@ test("הכרטיס: הטכנאי לפי מספר הרכב, ושורת המשימ
   assert.equal(dispatchLine(d, now), "נשלח 10:42 ע״י מנהלת");
   assert.equal(dispatchLine({ ...d, arrived_at: "2026-10-21T07:58:00Z" }, now), "נשלח 10:42 ע״י מנהלת · הגיע 10:58");
   assert.equal(dispatchLine(null, now), "");
+});
+
+test("הצפצוף בכרטיס: קיבל / לא אישר אחרי 3 / למה לא צפצף / מחכה; מסד ישן — בלי שורה", () => {
+  const now = "2026-10-21T08:00:00Z";
+  const d = { created_at: "2026-10-21T07:40:00Z", push_count: 1, push_last_at: "2026-10-21T07:42:00Z", push_max: 3, push_error: null, acked_at: null };
+  assert.deepEqual(pushLine(d, now), { tone: "wait", text: "צפצף בטלפון 10:42 · מחכה ל\"קיבלתי\" (1 מתוך 3)" });
+  assert.deepEqual(pushLine({ ...d, acked_at: "2026-10-21T07:43:00Z" }, now), { tone: "ok", text: "✓ קיבל 10:43" });
+  assert.deepEqual(pushLine({ ...d, push_count: 3 }, now), { tone: "bad", text: "לא אישר קבלה — צפצף 3 פעמים" });
+  assert.deepEqual(pushLine({ ...d, push_count: 3, acked_at: "2026-10-21T07:50:00Z" }, now).tone, "ok", "קיבל — גם אחרי 3");
+  assert.deepEqual(pushLine({ ...d, push_count: 0, push_error: "הטלפון של הטכנאי לא הפעיל צפצוף" }, now),
+    { tone: "bad", text: "⚠ הטלפון של הטכנאי לא הפעיל צפצוף" });
+  assert.deepEqual(pushLine({ ...d, push_count: 0, push_last_at: null }, now), { tone: "wait", text: "שולח צפצוף לטלפון…" });
+  assert.equal(pushLine({ created_at: d.created_at }, now), null, "מסד ישן");
+  assert.equal(pushLine(null, now), null);
 });

@@ -42,7 +42,8 @@ export function phoneStatus(phone, nowIso) {
   if (!phone.seen_at) {
     return { key: "qr", text: `נוצר QR${phone.paired_at ? ` ב-${clockText(phone.paired_at, nowIso)}` : ""} — הטלפון עוד לא סרק` };
   }
-  return { key: "ok", text: `הטלפון מחובר · נפתח לאחרונה ${ageText(phone.seen_at, nowIso)}` };
+  const push = phone.push_ready === true ? " · צפצוף מופעל" : phone.push_ready === false ? " · צפצוף לא הופעל" : "";
+  return { key: "ok", text: `הטלפון מחובר · נפתח לאחרונה ${ageText(phone.seen_at, nowIso)}${push}`, push: phone.push_ready ?? null };
 }
 
 /** קישור ניווט לאתר (Waze), או null כשלאתר אין מיקום. */

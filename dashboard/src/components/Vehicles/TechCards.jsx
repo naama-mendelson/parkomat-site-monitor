@@ -4,8 +4,8 @@
 // שאתה יכול להביא — תהיה יצירתי ותחשוב גדול, חזק ויפה". לכל כרטיס:
 //   • איפה עכשיו — באתר (מאיזו שעה, וכמה זמן), בנסיעה, חונה, או "לא מתעדכן" עם המקום האחרון;
 //   • כשהוא באתר — מצב האתר (בתקלה + הטקסט מהבקר), והקריאות והמשימות הפתוחות שם, בלחיצה;
-//   • היום — ק"מ, זמן נסיעה, ביקורים באתרים, מתי יצא לדרך; ציר היום (נסיעה / באתר / חונה / אין קליטה); רשימת הביקורים;
-//   • השבוע — עמודה לכל יום.
+//   • היום — ק"מ, זמן נסיעה, ביקורים באתרים, מתי יצא לדרך;
+//   • בלחיצה על הכרטיס — הפירוט: רשימת הביקורים של היום, 7 הימים האחרונים, העדכון האחרון מהרכב והמהירות הגבוהה.
 // מעל הכרטיסים: "צריכים טכנאי עכשיו" — אתרים בתקלה או עם קריאה פתוחה, ומי כבר שם או מי הכי קרוב; והצוות היום.
 //
 // ⚠️ הכרטיס הוא לפי רכב באיתוראן. השם — של הטכנאי המשויך לרכב (technicians, לוח הרכז), ובלי שיוך — הכינוי באיתוראן.
@@ -18,10 +18,10 @@ import { useTasks } from "../Tasks/TasksContext";
 import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import { ageText, clockText, hasPosition, powerAlert, vehicleName } from "../../utils/vehicles";
 import {
-  cardGroup, groupCounts, groupLabel, GROUPS, hhmm, hmText, initials, kmText, matchesCard, sortCards, teamToday,
-  timeline, visitRows, weekBars, weekTotals, whereInfo,
+  cardGroup, groupCounts, groupLabel, GROUPS, hhmm, initials, kmText, matchesCard, sortCards, teamToday,
+  visitRows, weekTotals, whereInfo,
 } from "../../utils/techStats";
-import { destText, dispatchLine, techByPlate } from "../../utils/technicians";
+import { destText, dispatchLine, pushLine, techByPlate } from "../../utils/technicians";
 import { siteKey } from "../../utils/siteSearch";
 import DispatchDialog from "./DispatchDialog";
 import TechPhoneDialog from "./TechPhoneDialog";
@@ -45,7 +45,7 @@ function SiteState({ site, tasks, calls }) {
           <b>האתר בתקלה</b>{site.currentFaultText ? <>: <span>{site.currentFaultText}</span></> : null}
         </p>
       )}
-      {maint && <p className="tc-site-maint"><b>האתר בתחזוקה</b></p>}
+      {maint && <p className="tc-site-maint"><b>האתר במצב תחזוקה בדשבורד</b></p>}
       {(open > 0 || tk > 0) && (
         <p className="tc-site-btns">
           {open > 0 && calls?.openSite && (
@@ -64,46 +64,36 @@ function SiteState({ site, tasks, calls }) {
   );
 }
 
-function Timeline({ stats }) {
-  const tl = timeline(stats);
-  if (!tl) return null;
-  const t = stats.today;
-  const aria = `ציר היום: ${hmText(t?.drive_s)} בנסיעה, ${hmText(t?.site_s)} באתרים`;
+// הפירוט — נפתח בלחיצה על הכרטיס (21/10/2026). ⚠️ ציר היום ועמודות השבוע הוסרו (בעלת המוצר, מול הכרטיס: "זה ממש לא
+// מובן, עד שנחשוב על רעיון אחר תעיף את זה, אולי רק אם ילחצו על הכרטיס יהיה פירוט יותר מלא"). להחזרתם:
+// git show 80c5944:dashboard/src/components/Vehicles/TechCards.jsx (Timeline / Week). timeline / weekBars ב-utils/techStats.js נשארו.
+function Details({ v, w, now, visits, id }) {
+  const t = v.stats?.today;
+  const tot = weekTotals(v.stats);
+  const meta = [
+    w.group === "stale" ? null : `עדכון אחרון מהרכב ${ageText(v.located_at, now)}`,
+    t?.max_speed ? `מהירות שיא היום ${t.max_speed} קמ"ש` : null,
+  ].filter(Boolean);
   return (
-    <div className="tc-tl" role="img" aria-label={aria}>
-      <div className="tc-tl-bar" dir="ltr">
-        {tl.blocks.map((b, i) => (
-          <span key={i} className={`tc-tl-b tc-k--${b.kind}`} style={{ left: `${b.left}%`, width: `${b.width}%` }} title={b.title} />
-        ))}
-        {tl.now != null && <span className="tc-tl-now" style={{ left: `${tl.now}%` }} />}
-      </div>
-      <div className="tc-tl-ticks" dir="ltr" aria-hidden="true">
-        {tl.ticks.map((x) => <span key={x.label + x.at} style={{ left: `${x.at}%` }}>{x.label}</span>)}
-      </div>
-    </div>
-  );
-}
-
-function Week({ stats }) {
-  const bars = weekBars(stats);
-  if (!bars.length) return null;
-  const tot = weekTotals(stats);
-  return (
-    <div className="tc-week">
-      <div className="tc-week-bars" dir="ltr" aria-hidden="true">
-        {bars.map((b) => (
-          <span key={b.day} className={`tc-wb${b.today ? " is-today" : ""}${b.tracked ? "" : " is-empty"}`}
-            title={b.tracked ? `${b.day.slice(8, 10)}/${b.day.slice(5, 7)}: ${kmText(b.km)} ק״מ · ${b.visits} ביקורים` : `${b.day.slice(8, 10)}/${b.day.slice(5, 7)}: לא נאסף`}>
-            <i style={{ height: `${b.h}%` }} />
-            <em>{b.label}</em>
-          </span>
-        ))}
-      </div>
-      <p className="tc-week-sum">
-        {tot.days > 1
-          ? <>השבוע: <b>{kmText(tot.km)}</b> ק״מ · <b>{tot.visits}</b> ביקורים</>
-          : "השבוע — הנתונים נאספים מהיום"}
-      </p>
+    <div className="tc-more" id={id}>
+      {visits.length > 0 ? (
+        <>
+          <p className="tc-more-k">הביקורים באתרים היום</p>
+          <ul className="tc-visits">
+            {visits.map((x) => (
+              <li key={x.code + x.from} className={x.open ? "is-open" : ""}>
+                <b>{x.label}</b>
+                <span dir="ltr">{x.from}{x.to ? `–${x.to}` : ""}</span>
+                <span>{x.open ? `עכשיו · ${x.dur}` : x.dur}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="tc-more-none">לא היה היום באתרים</p>
+      )}
+      {tot.days > 1 && <p className="tc-more-meta">7 הימים האחרונים: {kmText(tot.km)} ק״מ · {tot.visits} ביקורים</p>}
+      {meta.length > 0 && <p className="tc-more-meta">{meta.join(" · ")}</p>}
     </div>
   );
 }
@@ -136,6 +126,7 @@ function TaskBlock({ d, now, canSend, onChanged }) {
       <p className="tc-task-dest"><span className="tc-task-k">משימה:</span> {destText(d)}</p>
       {d.details && <p className="tc-task-text">{d.details}</p>}
       <p className="tc-task-meta">{dispatchLine(d, now)}</p>
+      {(() => { const pl = pushLine(d, now); return pl ? <p className={`tc-task-push tc-push--${pl.tone}`}>{pl.text}</p> : null; })()}
       {canSend && (
         <span className="tc-task-btns">
           <button type="button" onClick={() => end("done")} disabled={busy}>סיום משימה</button>
@@ -156,15 +147,30 @@ function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canS
   const t = v.stats?.today;
   const visits = visitRows(v.stats, now);
   const model = [v.make, v.model].filter(Boolean).join(" ");
+  const [open, setOpen] = useState(false);
+  const moreId = `tc-more-${v.plate}`;
+  // לחיצה בכל מקום בכרטיס פותחת / סוגרת את הפירוט — חוץ מכפתור, קישור או טקסט שמסמנים להעתקה. מקלדת: הכותרת.
+  const onCardClick = (e) => {
+    if (e.target.closest("button, a, input, textarea, select")) return;
+    if (String(window.getSelection?.() ?? "").length > 0) return;
+    setOpen((o) => !o);
+  };
+  const onHeadKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); }
+  };
+  const showFoot = canSend || hasPosition(v);
   return (
-    <article ref={setRef} className={`tc-card tc-g--${w.group}${flash ? " is-flash" : ""}`} aria-label={`${name} — ${w.title}`}>
-      <header className="tc-head">
+    <article ref={setRef} className={`tc-card tc-g--${w.group}${flash ? " is-flash" : ""}${open ? " is-open" : ""}`}
+      aria-label={`${name} — ${w.title}`} onClick={onCardClick}>
+      <header className="tc-head" role="button" tabIndex={0} aria-expanded={open} aria-controls={moreId}
+        title={open ? "סגירת הפירוט" : "לפירוט מלא"} onKeyDown={onHeadKey}>
         <span className="tc-ava" aria-hidden="true">{initials(name)}</span>
         <div className="tc-id">
           <h3 className="tc-name">{name}</h3>
           <span className="tc-plate">{v.plate}{model ? ` · ${model}` : ""}</span>
         </div>
         <span className="tc-chip">{LABEL[w.group]?.label ?? ""}</span>
+        <span className="tc-more-ico" aria-hidden="true">▾</span>
       </header>
 
       {tech?.dispatch && <TaskBlock d={tech.dispatch} now={now} canSend={canSend} onChanged={onBoardChanged} />}
@@ -186,30 +192,15 @@ function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canS
         <div className="tc-stat"><b>{t?.first_move ? clockText(t.first_move, now) : "—"}</b><span>יצא לדרך</span></div>
       </div>
 
-      <Timeline stats={v.stats} />
+      {open && <Details v={v} w={w} now={now} visits={visits} id={moreId} />}
 
-      {visits.length > 0 && (
-        <ul className="tc-visits" aria-label="הביקורים של היום">
-          {visits.map((x) => (
-            <li key={x.code + x.from} className={x.open ? "is-open" : ""}>
-              <b>{x.label}</b>
-              <span dir="ltr">{x.from}{x.to ? `–${x.to}` : ""}</span>
-              <span>{x.open ? `עכשיו · ${x.dur}` : x.dur}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <Week stats={v.stats} />
-
-      <footer className="tc-foot">
-        <span>{w.group === "stale" ? "" : `דיווח ${ageText(v.located_at, now)}`}{t?.max_speed ? ` · מהירות שיא ${t.max_speed} קמ"ש` : ""}</span>
+      {showFoot && <footer className="tc-foot">
         <span className="tc-foot-btns">
           {canSend && <button type="button" className="tc-go" onClick={() => onSend(v)}>צא ל:</button>}
           {canSend && (() => {
             const ph = phoneStatus(tech?.phone, now);
             return (
-              <button type="button" className={`tc-phone tc-phone--${ph.key}`} title={ph.text} aria-label={`טלפון — ${ph.text}`}
+              <button type="button" className={`tc-phone tc-phone--${ph.key === "ok" && ph.push === false ? "nopush" : ph.key}`} title={ph.text} aria-label={`טלפון — ${ph.text}`}
                 onClick={() => onPhone(v)}>
                 {ph.key === "ok" ? "טלפון ✓" : "טלפון"}
               </button>
@@ -218,7 +209,7 @@ function TechCard({ v, now, site, tasks, calls, onMap, flash, setRef, tech, canS
           {hasPosition(v) && <button type="button" onClick={() => onMap(v.plate)}>במפה</button>}
           {hasPosition(v) && <a href={`https://www.google.com/maps?q=${v.lat},${v.lon}`} target="_blank" rel="noopener noreferrer">ניווט</a>}
         </span>
-      </footer>
+      </footer>}
     </article>
   );
 }

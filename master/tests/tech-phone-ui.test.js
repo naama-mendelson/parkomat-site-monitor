@@ -49,7 +49,11 @@ test("מה הכרטיס אומר: אין טלפון / QR שעוד לא נסרק 
   assert.deepEqual(phoneStatus({ paired: true, paired_at: null, seen_at: null }, NOW),
     { key: "qr", text: "נוצר QR — הטלפון עוד לא סרק" });
   assert.deepEqual(phoneStatus({ paired: true, seen_at: "2026-10-21T07:57:00Z" }, NOW),
-    { key: "ok", text: "הטלפון מחובר · נפתח לאחרונה לפני 3 דק'" });
+    { key: "ok", text: "הטלפון מחובר · נפתח לאחרונה לפני 3 דק'", push: null }, "מסד בלי push_ready — בלי סיומת");
+  assert.deepEqual(phoneStatus({ paired: true, seen_at: "2026-10-21T07:57:00Z", push_ready: true }, NOW),
+    { key: "ok", text: "הטלפון מחובר · נפתח לאחרונה לפני 3 דק' · צפצוף מופעל", push: true });
+  assert.deepEqual(phoneStatus({ paired: true, seen_at: "2026-10-21T07:57:00Z", push_ready: false }, NOW),
+    { key: "ok", text: "הטלפון מחובר · נפתח לאחרונה לפני 3 דק' · צפצוף לא הופעל", push: false });
 });
 
 test("ניווט: Waze לפי מיקום האתר; בלי מיקום — אין קישור", () => {

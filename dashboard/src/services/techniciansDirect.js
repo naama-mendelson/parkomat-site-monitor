@@ -135,3 +135,17 @@ export async function unpairTechPhone(techId) {
 export async function fetchTechMe() {
   return rpc("tech_me", {});
 }
+
+// ============================================================
+// הצפצוף (21/10/2026, שלב 4)
+// ============================================================
+
+/** מנוי ה-Web Push של הטלפון (הטכנאי בלבד): { ok, devices }. */
+export async function subscribeTechPush(endpoint, p256dh, auth) {
+  return rpc("tech_push_subscribe", { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth });
+}
+
+/** "קיבלתי" בטלפון: { changed, acked_at }. הצפצוף נעצר, והכרטיס אצל הרכז אומר "קיבל". */
+export async function ackDispatch(dispatchId) {
+  return rpc("tech_self_ack", { p_dispatch: dispatchId });
+}

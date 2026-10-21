@@ -739,3 +739,199 @@ test("הטלפון: לא ברשימת המשתמשים, לא מקבל תפקיד
   assert.match(def, /'technician'/);
   await assert.rejects(sup(`UPDATE app_users SET role = 'tech' WHERE id = $1`, [id]));
 });
+
+// ============================================================
+// הצפצוף — שלב 4 (21/10/2026)
+// ============================================================
+const svc = async (sql, params = []) => (await as("service_role", {}, sql, params))[0];
+const claim = async (d) => (await svc(`SELECT public.tech_push_claim($1) r`, [d])).r;
+const result = async (d, sent, dead, err) =>
+  (await svc(`SELECT public.tech_push_result($1, $2, $3::bigint[], $4) r`, [d, sent, dead, err])).r;
+const SUB = (n) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/test-${n}-${randomUUID()}`, p256dh: "B".repeat(87), auth: "a".repeat(22) });
+const subscribe = (uid, s) => fn(uid, "tech_push_subscribe", s.endpoint, s.p256dh, s.auth);
+const dispOf = async (id) => (await sup(`SELECT * FROM tech_dispatches WHERE id = $1`, [id]))[0];
+const queued = async () => sup(`SELECT url, headers, body FROM net.http_request_queue ORDER BY id`);
+async function withPushSettings(f) {
+  await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('push_caller_secret', 'test-secret', 'x'), ('push_anon_key', 'anon-test', 'x')
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+  try { await f(); } finally { await sup(`DELETE FROM settings WHERE key IN ('push_caller_secret', 'push_anon_key')`); }
+}
+
+test("הצפצוף: הטלפון נרשם לצפצוף (רק הוא, ורק מנוי תקין), והשליחה מבקשת צפצוף מ-notify-tech", { skip }, async () => {
+  const tech = await newTech();
+  const { uid } = await pair(tech);
+  // רישום: רק הטלפון של טכנאי, ורק מנוי בצורה של Web Push
+  await fails(subscribe(ED, SUB(1)), "42501");
+  await fails(fn(uid, "tech_push_subscribe", "http://not-https", "B".repeat(87), "a".repeat(22)), "22023");
+  await fails(fn(uid, "tech_push_subscribe", SUB(1).endpoint, "short", "a".repeat(22)), "22023");
+  assert.equal((await techOf(tech)).phone.push_ready, false);
+  const s1 = SUB(1);
+  assert.deepEqual(await subscribe(uid, s1), { ok: true, devices: 1 });
+  assert.deepEqual(await subscribe(uid, { ...s1, auth: "b".repeat(22) }), { ok: true, devices: 1 }, "אותו endpoint — מתעדכן, לא כפול");
+  assert.equal((await techOf(tech)).phone.push_ready, true);
+  assert.equal((await fn(uid, "tech_me")).push_devices, 1);
+
+  // בלי הגדרות push — השליחה עוברת, והכרטיס אומר למה אין צפצוף
+  await sup(`DELETE FROM net.http_request_queue`);
+  const d0 = (await dispatch(ED, tech, { site: "TC1", details: "בלי הגדרות" })).dispatch_id;
+  assert.equal((await queued()).length, 0);
+  assert.equal((await dispOf(d0)).push_error, "הצפצוף אינו מוגדר במערכת");
+
+  await withPushSettings(async () => {
+    const d1 = (await dispatch(ED, tech, { site: "TC1", details: "מעלית 2 תקועה" })).dispatch_id;
+    const q = await queued();
+    assert.equal(q.length, 1);
+    assert.equal(q[0].url, "https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-tech");
+    assert.deepEqual(q[0].body, { dispatch_id: Number(d1) });
+    assert.equal(q[0].headers["x-parkomat-push-secret"], "test-secret");
+    assert.equal(q[0].headers.Authorization, "Bearer anon-test");
+    // ⚠️ צפצוף שנכשל (פונקציית הבקשה חסרה) אינו מכשיל שליחה
+    await sup(`ALTER FUNCTION app.tech_push_request(bigint) RENAME TO tech_push_request_off`);
+    try {
+      const d2 = (await dispatch(ED, tech, { site: "TC2" })).dispatch_id;
+      assert.ok(d2, "השליחה הצליחה");
+      assert.match((await dispOf(d2)).push_error, /^הצפצוף לא נשלח: /);
+    } finally {
+      await sup(`ALTER FUNCTION app.tech_push_request_off(bigint) RENAME TO tech_push_request`);
+    }
+  });
+});
+
+test("הצפצוף: claim — מתי שולחים, למי, ומה כתוב; result — מה הגיע, ומנויים שנעלמו נמחקים (רק של הטכנאי הזה)", { skip }, async () => {
+  const tech = await newTech();
+  const { uid } = await pair(tech);
+  const s1 = SUB(1), s2 = SUB(2);
+  await subscribe(uid, s1);
+  await subscribe(uid, s2);
+  const other = await newTech();
+  const o = await pair(other);
+  await subscribe(o.uid, SUB(3));
+  const otherSubId = (await sup(`SELECT s.id FROM tech_push_subs s JOIN app_users u ON u.id = s.app_user_id WHERE u.supabase_uid = $1`, [o.uid]))[0].id;
+
+  const d = (await dispatch(ED, tech, { site: "TC1", details: "מעלית 2\nתקועה" })).dispatch_id;
+  let c = await claim(d);
+  assert.equal(c.send, true);
+  assert.equal(c.n, 1);
+  assert.equal(c.title, "משימה חדשה: רחוב הבדיקה 50, תל אביב · TC1");
+  assert.equal(c.body, "מעלית 2 תקועה", "שורות — רווח אחד");
+  assert.equal(c.tag, `dispatch-${d}`);
+  assert.deepEqual(c.subs.map((s) => s.endpoint).sort(), [s1.endpoint, s2.endpoint].sort(), "רק המנויים של הטכנאי הזה");
+  assert.equal((await claim(d)).reason, "recent", "בקשה כפולה באותה דקה — לא שולחים פעמיים");
+  await assert.rejects(user(ED, `SELECT public.tech_push_claim($1)`, [d]), "רק השירות");
+  await assert.rejects(user(ED, `SELECT public.tech_push_result($1, 1, '{}'::bigint[], NULL)`, [d]));
+
+  // result: נשלח לאחד; endpoint שנעלם — נמחק; מנוי של טכנאי אחר ברשימה — לא נוגעים
+  const subIds = c.subs.map((s) => s.id);
+  const r = await result(d, 1, [subIds[1], otherSubId], null);
+  assert.equal(r.removed, 1);
+  assert.equal((await sup(`SELECT count(*)::int n FROM tech_push_subs WHERE id = $1`, [otherSubId]))[0].n, 1, "המנוי של טכנאי אחר נשאר");
+  let row = await dispOf(d);
+  assert.equal(row.push_sent, 1);
+  assert.equal(row.push_error, null);
+  // תזכורת: אחרי 90 שניות, כותרת אחרת; אחרי 3 — לא עוד
+  await sup(`UPDATE tech_dispatches SET push_last_at = now() - interval '3 minutes' WHERE id = $1`, [d]);
+  c = await claim(d);
+  assert.equal(c.n, 2);
+  assert.match(c.title, /^תזכורת — משימה ממתינה: /);
+  await result(d, 0, [], "לא ענו");
+  assert.equal((await dispOf(d)).push_error, "לא ענו");
+  await sup(`UPDATE tech_dispatches SET push_last_at = now() - interval '3 minutes' WHERE id = $1`, [d]);
+  assert.equal((await claim(d)).n, 3);
+  await sup(`UPDATE tech_dispatches SET push_last_at = now() - interval '3 minutes' WHERE id = $1`, [d]);
+  assert.equal((await claim(d)).reason, "max");
+
+  // אושר / הסתיים / אין טלפון
+  const d2 = (await dispatch(ED, tech, { site: "TC2" })).dispatch_id;
+  await fn(uid, "tech_self_ack", d2);
+  assert.equal((await claim(d2)).reason, "acked");
+  await end(ED, d2, "done");
+  assert.equal((await claim(d2)).reason, "ended");
+  assert.equal((await claim(999999)).reason, "gone");
+  const lonely = await newTech();
+  const d3 = (await dispatch(ED, lonely, { site: "TC1" })).dispatch_id;
+  assert.equal((await claim(d3)).reason, "no_phone");
+  row = await dispOf(d3);
+  assert.equal(row.push_error, "הטלפון של הטכנאי לא הפעיל צפצוף");
+  assert.equal(row.push_count, 0, "בלי טלפון — לא נספר כניסיון");
+  await end(ED, d3, "cancelled");
+  // משתמש הטלפון הושבת בדרך אחרת (המנויים שלו נשארו בטבלה) — לא מצפצפים אליו
+  await sup(`UPDATE app_users SET is_active = false WHERE supabase_uid = $1`, [o.uid]);
+  const d4 = (await dispatch(ED, other, { site: "TC2" })).dispatch_id;
+  assert.equal((await claim(d4)).reason, "no_phone", "משתמש מושבת — המכשירים שלו לא מקבלים");
+  await sup(`UPDATE app_users SET is_active = true, role = 'operator' WHERE supabase_uid = $1`, [o.uid]);
+  await sup(`UPDATE tech_dispatches SET push_last_at = NULL, push_error = NULL WHERE id = $1`, [d4]);
+  assert.equal((await claim(d4)).reason, "no_phone", "משתמש שאינו בתפקיד טכנאי — לא");
+  await sup(`UPDATE app_users SET role = 'technician' WHERE supabase_uid = $1`, [o.uid]);
+  await end(ED, d4, "cancelled");
+});
+
+test("הצפצוף: התזכורת כל 2 דקות — רק לפתוחה שלא אושרה, עם טלפון, ופחות מ-3", { skip }, async () => {
+  await withPushSettings(async () => {
+    const mk = async (withPhone = true) => {
+      const tech = await newTech();
+      let uid = null;
+      if (withPhone) { uid = (await pair(tech)).uid; await subscribe(uid, SUB(tech)); }
+      const d = (await dispatch(ED, tech, { site: "TC1" })).dispatch_id;
+      return { tech, uid, d };
+    };
+    const due = await mk();          // צפצוף אחד לפני 3 דקות — תזכורת
+    const fresh = await mk();        // צפצוף לפני דקה — עוד לא
+    const acked = await mk();        // אישר
+    const maxed = await mk();        // 3 צפצופים
+    const missed = await mk();       // הראשון לא יצא (0), השליחה לפני 3 דקות — תזכורת
+    const nophone = await mk(false); // בלי טלפון — לא
+    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '3 minutes' WHERE id = $1`, [due.d]);
+    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '1 minute' WHERE id = $1`, [fresh.d]);
+    await sup(`UPDATE tech_dispatches SET push_count = 1, push_last_at = now() - interval '3 minutes' WHERE id = $1`, [acked.d]);
+    await fn(acked.uid, "tech_self_ack", acked.d);
+    await sup(`UPDATE tech_dispatches SET push_count = 3, push_last_at = now() - interval '9 minutes' WHERE id = $1`, [maxed.d]);
+    await sup(`UPDATE tech_dispatches SET push_count = 0, push_last_at = NULL, created_at = now() - interval '3 minutes' WHERE id = $1`, [missed.d]);
+    await sup(`UPDATE tech_dispatches SET created_at = now() - interval '5 minutes' WHERE id = $1`, [nophone.d]);
+    await sup(`DELETE FROM net.http_request_queue`);
+    const n = (await sup(`SELECT app.tech_push_repeat() n`))[0].n;
+    const ids = (await queued()).map((x) => x.body.dispatch_id).sort((a, b) => a - b);
+    assert.deepEqual(ids, [Number(due.d), Number(missed.d)].sort((a, b) => a - b), JSON.stringify({ ids, due: due.d, missed: missed.d }));
+    assert.equal(n, 2);
+    for (const x of [due, fresh, acked, maxed, missed, nophone]) await end(ED, x.d, "cancelled");
+  });
+  // התזמון קיים (ב-PGlite יש תחליף ל-cron.job)
+  const job = await sup(`SELECT schedule, command FROM cron.job WHERE jobname = 'parkomat-tech-push-repeat'`).catch(() => []);
+  if (job.length) assert.deepEqual({ ...job[0] }, { schedule: "* * * * *", command: "SELECT app.tech_push_repeat()" });
+});
+
+test("הצפצוף: 'קיבלתי' — רק על המשימה שלו; פעם שנייה כלום; הכרטיס אומר 'קיבל'; QR חדש, ניתוק והשבתה מוחקים את המנויים", { skip }, async () => {
+  const tech = await newTech();
+  const { uid } = await pair(tech);
+  await subscribe(uid, SUB(1));
+  const d = (await dispatch(ED, tech, { site: "TC1" })).dispatch_id;
+  const other = await newTech();
+  const od = (await dispatch(ED, other, { site: "TC2" })).dispatch_id;
+  await fails(fn(uid, "tech_self_ack", od), "PT404", /המשימה לא נמצאה/);
+  await fails(fn(ED, "tech_self_ack", d), "42501");
+  const rev0 = (await techOf(tech)).rev;
+  const a1 = await fn(uid, "tech_self_ack", d);
+  assert.equal(a1.changed, true);
+  assert.match(a1.acked_at, /Z$/);
+  assert.equal((await fn(uid, "tech_self_ack", d)).changed, false);
+  const x = await techOf(tech);
+  assert.match(x.dispatch.acked_at, /Z$/);
+  assert.equal(x.rev, rev0 + 1, "הכרטיס מתעדכן (rev)");
+  assert.match((await fn(uid, "tech_me")).dispatch.acked_at, /Z$/);
+  assert.equal((await sup(`SELECT count(*)::int n FROM audit_log WHERE action = 'tech.ack' AND target_id = $1`, [String(tech)]))[0].n, 1);
+  await end(ED, d, "done");
+  await fails(fn(uid, "tech_self_ack", d), "PT409");
+  await end(ED, od, "cancelled");
+
+  const subsOf = async (u) => (await sup(`SELECT count(*)::int n FROM tech_push_subs s JOIN app_users a ON a.id = s.app_user_id WHERE a.supabase_uid = $1`, [u]))[0].n;
+  assert.equal(await subsOf(uid), 1);
+  const second = await pair(tech);
+  assert.equal(await subsOf(uid), 0, "QR חדש — הטלפון הקודם לא יצפצף");
+  await subscribe(second.uid, SUB(2));
+  await fn(ED, "tech_phone_unpair", tech);
+  assert.equal(await subsOf(second.uid), 0, "ניתוק — לא יצפצף");
+  const third = await pair(tech);
+  await subscribe(third.uid, SUB(3));
+  const t = await techOf(tech);
+  await save(ED, tech, t.name, null, false, t.rev);
+  assert.equal(await subsOf(third.uid), 0, "טכנאי מושבת — לא יצפצף");
+});

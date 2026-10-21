@@ -109,6 +109,22 @@ export function dispatchLine(d, nowIso) {
   return parts.join(" · ");
 }
 
+/**
+ * הצפצוף והקבלה בכרטיס (שלב 4, 21/10/2026): { tone: ok | wait | bad, text } או null.
+ * קיבל → "✓ קיבל 10:43"; 3 צפצופים בלי קבלה → "לא אישר קבלה"; שגיאה → למה לא צפצף; אחרת — מתי צפצף ושמחכים.
+ * ⚠️ מסד בלי השדות (לפני שלב 4) — null, ואין שורה.
+ */
+export function pushLine(d, nowIso) {
+  if (!d || d.push_count === undefined) return null;
+  if (d.acked_at) return { tone: "ok", text: `✓ קיבל ${clockText(d.acked_at, nowIso)}` };
+  const max = Number(d.push_max) || 3;
+  const n = Number(d.push_count) || 0;
+  if (n >= max) return { tone: "bad", text: `לא אישר קבלה — צפצף ${n} פעמים` };
+  if (d.push_error) return { tone: "bad", text: `⚠ ${d.push_error}` };
+  if (n > 0) return { tone: "wait", text: `צפצף בטלפון ${clockText(d.push_last_at, nowIso)} · מחכה ל"קיבלתי" (${n} מתוך ${max})` };
+  return { tone: "wait", text: "שולח צפצוף לטלפון…" };
+}
+
 /** אבני הדרך של השליחה שכבר קרו: נשלח, הגיע, נכנס — לכל אחת השעה ו"בדיעבד". */
 export function marksList(d) {
   if (!d) return [];

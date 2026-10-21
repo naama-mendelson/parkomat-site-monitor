@@ -4477,8 +4477,109 @@ only his own task.
   2. `npx supabase functions deploy provision-technician --project-ref xvfsikwaaaohnmldjbtv --use-api`. It needs no
      secrets of its own, and is deployed **without** `--no-verify-jwt`.
   3. Push.
-- ⚠️ **What the phone does not do yet:** beep (step 4), and the קיבלתי / הגעתי / סיימתי buttons (step 3). It does not take
-  the phone's location. Location comes only from the vehicle.
+- ⚠️ **What the phone does not do yet:** ~~beep (step 4)~~ (built, below), and the הגעתי / סיימתי buttons (step 3). It does
+  not take the phone's location. Location comes only from the vehicle.
+
+### The beep and "קיבלתי" — step 4 of 4 (built 21/10/2026, NOT deployed)
+
+The owner chose the beep before step 3 ("קודם הצפצוף"). It repeats every 2 minutes, up to 3 times, until "קיבלתי". "צא ל:"
+and "טלפון" are for the coordinator only ("לרכז בלבד"); his email has not been given yet. There is no explainer page for
+technicians yet ("לא עכשיו").
+
+- **The flow:**
+  1. `tech_dispatch` calls `app.tech_push_request(dispatch)` inside its own `EXCEPTION` block. A failed beep never fails a
+     dispatch: the reason goes to `push_error` and the card shows it. The request is `net.http_post` (sent after the
+     commit) to the Edge Function **`notify-tech`**, with `push_anon_key` and the existing `push_caller_secret` (the same
+     pair as `notify-fault`). With no secret or key it sends nothing, and `push_error` = "הצפצוף אינו מוגדר במערכת".
+  2. `notify-tech` (`handler.ts`, tested in Node, and `index.ts`) checks the secret in constant time. It calls
+     **`tech_push_claim`** (service only), which decides **everything**:
+     - whether to send: not when the dispatch is gone, ended or acked, after 3 beeps, or within 90 s of the last one;
+     - to whom: the subscriptions of an active `technician` user linked to an active technician;
+     - the title ("משימה חדשה: …", then "תזכורת — משימה ממתינה: …") and the body (whitespace collapsed, 180 characters);
+     - `tag` = `dispatch-<id>`.
+     A technician without a subscription is `no_phone`: `push_error` = "הטלפון של הטכנאי לא הפעיל צפצוף", and it is not
+     counted as an attempt.
+  3. Web Push to each device (`@negrel/webpush`, the existing VAPID keys, `urgency: high`, TTL 10 minutes). Then
+     **`tech_push_result`** records `push_sent` / `push_error` and deletes the dead subscriptions, only the technician's
+     own. ⚠️ **Only 404 and 410 delete a subscription.** `PushMessageError` has an empty message, so the status is read from
+     `error.response.status`. `notify-fault` looks for "410" in the text, so it never deletes a dead subscription (not
+     fixed there).
+  4. pg_cron job `parkomat-tech-push-repeat` runs every minute (`app.tech_push_repeat`). It picks dispatches that are open,
+     not acked, under 3 beeps, 2 minutes past the last beep (or past the dispatch), and whose technician has a
+     subscription. Each request runs inside its own `EXCEPTION` block.
+  5. "קיבלתי" on the phone calls **`tech_self_ack`**. It works only on the technician's own dispatch (PT404 otherwise),
+     not on an ended one (PT409), and a second press changes nothing. It bumps `rev` and writes `tech.ack` to the audit
+     log.
+- **Tables and columns:**
+  - `tech_push_subs` (one row per device, endpoint `UNIQUE`, `https` only) is closed and **separate from**
+    `push_subscriptions`. That table exists only in a Supabase migration that `apply-sql` never sees.
+  - `tech_dispatches` gains `acked_at`, `push_count`, `push_last_at`, `push_sent` and `push_error`.
+  - The subscriptions are deleted when a new QR is made, on unpair, and when a technician is deactivated.
+- **`tech_json` and `tech_me`:**
+  - `tech_json` adds `acked_at`, the push fields and `push_max` to the dispatch, and `push_ready` to the phone.
+  - `tech_me` adds `acked_at` and `push_devices`.
+- **The service worker** (`public/sw.js`), for `kind = "dispatch"`:
+  - The notification stays until it is touched (`requireInteraction`).
+  - It vibrates `[400,150,400,150,800]`.
+  - It uses the dispatch's `tag` with `renotify`, so a reminder replaces the previous one and beeps again.
+  - It posts `{type: "dispatch"}` to every open window, so an open app reloads at once.
+  - Fault alerts are unchanged (`tests/sw-dispatch.test.js` runs the file in a `vm`).
+- **The phone** (`TechPhone.jsx`, `services/techPush.js`):
+  - "הפעלת צפצוף" is a button, because the browser asks permission only on a tap. Once granted, the screen says
+    "✓ צפצוף מופעל".
+  - Denied: how to allow it in the settings. Unsupported: install from Chrome.
+  - A permission already granted re-sends the subscription once per open (`syncTechPush`), since a new QR deletes the old
+    subscriptions.
+  - "קיבלתי" is a big button. Afterwards: "✓ קיבלת ב-HH:MM".
+  - The light-theme green is teal-800: teal-700 on its own tint measured 4.24:1.
+- **The card** (`pushLine`):
+  - "צפצף בטלפון 10:42 · מחכה ל"קיבלתי" (1 מתוך 3)".
+  - "✓ קיבל 10:43" (green).
+  - "לא אישר קבלה — צפצף 3 פעמים" (red).
+  - "⚠ <reason>" (red).
+  - "טלפון ✓" has an amber frame when the phone is paired but the beep was not turned on.
+- **Tests:**
+  - `technicians.test.js`: 24.
+  - **SQL and handler mutations: 42 of 43 caught** (`mut2110/run-mut16.cjs`). The survivor is `FOR UPDATE` in the
+    claim, which PGlite cannot test (one connection). The inactive-user and wrong-role cases were added after Q8
+    survived.
+  - `notify-tech-fn.test.js` 5, `sw-dispatch.test.js` 4, and the UI tests.
+  - Full suite: 1388/1388.
+  - Browser:
+    - `e2e/probe-techbeep.mjs` 18: the card in every state.
+    - `tp/probe-tpbeep.mjs` 46: the phone with `services/techPush` swapped. It covers every permission state, the enable
+      click and its failure, a single sync, קיבלתי / a network failure / an ended dispatch, and an open app reloading on
+      the service worker's message.
+    - `probe-tp` 27, `probe-dispatch` 71, `probe-techphone` 50.
+- **Deploy, each step with the owner's yes:**
+  1. SQL. The dry run shows the new functions and bodies. The table and the dispatch columns do not show.
+  2. `npx supabase functions deploy notify-tech --project-ref xvfsikwaaaohnmldjbtv --use-api`, **without**
+     `--no-verify-jwt`. It uses the existing `PUSH_CALLER_SECRET`, `VAPID_*` and service key.
+  3. Push.
+  - ⚠️ A beep to a real technician's phone reaches a person, and it needs its own yes.
+
+### The technician card: no day bar and no week bars; the detail opens on a click (21/10/2026)
+
+The owner, after the meaning of every mark on the card was explained: "לא מובן לי מה כל סימון אומר". She approved a legend
+and a caption ("תעשה"), saw them, and then said: *"זה ממש לא מובן, עד שנחשוב על רעיון אחר תעיף את זה, אולי רק אם ילחצו על
+הכרטיס יהיה פירוט יותר מלא"*.
+
+- **Removed:** the day timeline (with its legend) and the seven week bars. They can be restored with
+  `git show 80c5944:dashboard/src/components/Vehicles/TechCards.jsx` (`Timeline` / `Week`). `timeline` and `weekBars` in
+  `utils/techStats.js` stay, with their tests, for "another idea".
+- **A click anywhere on the card opens the detail, and a second click closes it** (`is-open`, a ▾ in the header). Clicks on
+  a button, a link or a text selection do not toggle. For the keyboard, the header is `role="button"` with
+  `aria-expanded` / `aria-controls`, and Enter or Space toggles it. The detail is text only:
+  - today's visits;
+  - "7 הימים האחרונים: X ק״מ · N ביקורים", once there is more than one tracked day;
+  - "עדכון אחרון מהרכב לפני X";
+  - "מהירות שיא היום".
+- **Stays on the closed card:** where he is now, the site's state, and the four numbers. "האתר בתחזוקה" now reads
+  "האתר במצב תחזוקה בדשבורד", from the approved wording.
+- ⚠️ Today's numbers count only from 11:09 on 21/10, when the tracking started.
+- Browser: `e2e/probe-tcmore.mjs` 38 (closed by default, opened by a click, a button inside does not toggle, the keyboard,
+  a text selection, "צא ל:" from an open card, 1371 light and 390 dark). `probe-techcards` C4 was updated (74).
+  `probe-tclegend` is retired.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

@@ -176,6 +176,7 @@ export function timeline(stats, { from = 360, to = 1320 } = {}) {
   return { from: a, to: b, blocks, now, ticks };
 }
 
+// ⚠️ timeline / weekBars אינם מוצגים מאז 21/10/2026 ("זה ממש לא מובן") — נשארו לרעיון אחר, עם הבדיקות שלהם.
 const WEEKDAY = ["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"];
 /** עמודות השבוע: [{day, label, km, visits, tracked, today, h}] — h באחוזים מהיום הגבוה. */
 export function weekBars(stats) {

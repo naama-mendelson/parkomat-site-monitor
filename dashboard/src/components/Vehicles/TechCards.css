@@ -150,19 +150,6 @@
 .tc-stat b { font-size: 1.12rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tc-stat span { font-size: 0.72rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
 
-/* ציר היום: משמאל לימין (שעות), כמו כל הגרפים בדשבורד */
-.tc-tl { display: flex; flex-direction: column; gap: 3px; padding: 0 14px; }
-.tc-tl-bar { position: relative; height: 14px; border-radius: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); overflow: hidden; }
-.tc-tl-b { position: absolute; top: 0; bottom: 0; }
-.tc-k--drive { background: var(--tc-move); }
-.tc-k--site { background: var(--tc-site); }
-.tc-k--park { background: color-mix(in srgb, var(--tc-park) 32%, transparent); }
-.tc-k--silent { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--tc-silent) 45%, transparent) 0 3px, transparent 3px 6px); }
-.tc-k--none { background: transparent; }
-.tc-tl-now { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text-primary); }
-.tc-tl-ticks { position: relative; height: 13px; font-size: 0.68rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.tc-tl-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-
 .tc-visits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .tc-visits li {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; font-size: 0.84rem;
@@ -173,25 +160,19 @@
 .tc-visits li span { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tc-visits li.is-open b { color: var(--tc-site); font-weight: 700; }
 
-.tc-week { display: flex; align-items: flex-end; gap: 10px; }
-.tc-week-bars { display: grid; grid-template-columns: repeat(7, 14px); gap: 4px; align-items: end; height: 42px; flex: 0 0 auto; }
-.tc-wb { position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
-.tc-wb i { display: block; width: 100%; border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--tc-move) 55%, transparent); min-height: 0; }
-.tc-wb.is-today i { background: var(--tc-move); }
-.tc-wb.is-empty i { height: 3px !important; background: var(--border-color); }
-.tc-wb em { font-style: normal; font-size: 0.62rem; color: var(--text-secondary); line-height: 1.3; }
-.tc-week-bars .tc-wb { padding-bottom: 0; }
-.tc-week-sum { margin: 0; font-size: 0.82rem; color: var(--text-secondary); }
-.tc-week-sum b { color: var(--text-primary); font-weight: 700; }
+/* הפירוט, בלחיצה על הכרטיס (21/10/2026): הביקורים של היום, 7 הימים האחרונים, העדכון האחרון והמהירות — טקסט, בלי גרפים */
+.tc-card { cursor: pointer; }
+.tc-card button, .tc-card a { cursor: pointer; }
+.tc-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+.tc-more-ico { flex: 0 0 auto; font-size: 0.8rem; color: var(--text-secondary); transition: transform 0.2s; }
+.tc-card.is-open .tc-more-ico { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .tc-more-ico { transition: none; } }
+.tc-more { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--border-color); }
+.tc-more-k { margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--text-primary); }
+.tc-more-none, .tc-more-meta { margin: 0; font-size: 0.82rem; color: var(--text-secondary); }
 
-.tc-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);
-  font-size: 0.78rem; color: var(--text-secondary);
-}
-.tc-foot-btns { display: inline-flex; gap: 6px; flex: 0 0 auto; }
-/* עם "צא ל:" שלושה כפתורים: כשאין מקום, השורה נשברת (הטקסט מעל הכפתורים) במקום שהטקסט יימעך לשלוש שורות */
-.tc-foot { flex-wrap: wrap; }
-.tc-foot > span:first-child { flex: 1 1 150px; min-width: 0; }
+.tc-foot { display: flex; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-color); }
+.tc-foot-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .tc-foot-btns button, .tc-foot-btns a {
   min-height: 30px; display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border-color);
   background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.8rem; font-weight: 600; text-decoration: none; cursor: pointer;
@@ -220,9 +201,15 @@
 .tc-task-btns button.is-armed { border-color: var(--tc-fault); color: var(--tc-fault); }
 .tc-task-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tc-task-err { font-size: 0.82rem; color: var(--tc-fault); }
+/* הצפצוף והקבלה (שלב 4): קיבל — ירוק; לא אישר / לא צפצף — אדום; מחכה — שקט */
+.tc-task-push { font-size: 0.84rem; font-weight: 600; }
+.tc-push--ok { color: var(--tc-site); }
+.tc-push--bad { color: var(--tc-fault); }
+.tc-push--wait { color: var(--text-secondary); }
 /* "טלפון" (שלב 2): מחובר — מסגרת ירוקה; QR שעוד לא נסרק — כתומה */
 .tc-foot-btns button.tc-phone--ok { border-color: var(--tc-site); color: var(--tc-site); }
-.tc-foot-btns button.tc-phone--qr { border-color: var(--tc-call); }
+.tc-foot-btns button.tc-phone--qr, .tc-foot-btns button.tc-phone--nopush { border-color: var(--tc-call); }
+/* מחובר אבל לא הפעיל צפצוף — כתום: שליחה לא תצפצף */
 
 .tc-stale { border: 1px dashed var(--border-color); border-radius: 12px; padding: 8px 12px; }
 .tc-stale summary { cursor: pointer; font-weight: 700; font-size: 0.92rem; padding: 4px 0; }

@@ -40,3 +40,19 @@
 .tp-foot button { font-size: 0.9rem; color: var(--text-secondary, #475569); }
 .tp-foot button.is-armed { color: #b91c1c; border-color: #b91c1c; }
 .tp a:focus-visible, .tp button:focus-visible { outline: 3px solid var(--accent, #1d4ed8); outline-offset: 2px; }
+
+/* הצפצוף ו"קיבלתי" (שלב 4, 21/10/2026). ⚠️ הירוק בבהירה הוא teal-800: teal-700 על הגוון של עצמו נמדד 4.24:1 */
+.tp { --tp-ok: #115e59; --tp-bad: #b91c1c; }
+.tp-push { margin: 0; padding: 10px 14px; border-radius: 12px; font-size: 0.95rem; line-height: 1.45; }
+.tp-push--on { background: rgba(15, 118, 110, 0.10); color: var(--tp-ok, #0f766e); font-weight: 600; }
+.tp-push--off { background: rgba(185, 28, 28, 0.08); color: var(--tp-bad, #b91c1c); }
+.tp-push--ask { display: flex; flex-direction: column; gap: 10px; background: var(--bg-card, #fff); border: 2px solid var(--accent, #1d4ed8); }
+.tp-push--ask p { margin: 0; }
+.tp-push--ask .tp-primary { min-height: 52px; border-radius: 12px; border: 0; background: var(--accent, #1d4ed8); color: #fff;
+  font: inherit; font-weight: 700; font-size: 1.05rem; cursor: pointer; }
+.tp-ack { min-height: 56px; margin-top: 4px; border-radius: 12px; border: 0; background: var(--tp-ok, #0f766e); color: #fff;
+  font: inherit; font-weight: 700; font-size: 1.15rem; cursor: pointer; }
+.tp-ack:disabled { opacity: 0.6; }
+.tp-acked { font-weight: 700; color: var(--tp-ok, #0f766e); }
+[data-theme="dark"] .tp { --tp-ok: #2dd4bf; --tp-bad: #fca5a5; }
+[data-theme="dark"] .tp-ack { background: #0f766e; }

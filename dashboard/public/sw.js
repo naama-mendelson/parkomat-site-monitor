@@ -32,6 +32,32 @@ self.addEventListener("push", (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch { d = {}; }
 
+  // ============================================================
+  // משימה לטכנאי ("צא ל:", 21/10/2026) — notify-tech שולח kind = "dispatch"
+  // ============================================================
+  // ⚠️ רטט ארוך ונשאר על המסך עד שנוגעים: הטכנאי בחניון, הטלפון בכיס. tag אחד לכל משימה — התזכורת (כל 2 דקות, עד 3)
+  // מחליפה את הקודמת, ו-renotify מצפצף שוב. והאפליקציה, אם פתוחה, טוענת מיד (ולא בעוד חצי דקה).
+  if (d.kind === "dispatch") {
+    event.waitUntil(Promise.all([
+      self.registration.showNotification(d.title || "משימה חדשה", {
+        body: d.body || "",
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        dir: "rtl",
+        lang: "he",
+        tag: d.tag || `dispatch-${d.id || Date.now()}`,
+        renotify: true,
+        requireInteraction: true,
+        silent: false,
+        vibrate: [400, 150, 400, 150, 800],
+        data: { url: d.url || "/" },
+      }),
+      self.clients.matchAll({ type: "window", includeUncontrolled: true })
+        .then((all) => all.forEach((c) => c.postMessage({ type: "dispatch", id: d.id || null }))),
+    ]));
+    return;
+  }
+
   const siteName = d.siteName || d.code || "אתר";
   // ⚠️ **הכותרת והסוג מגיעים מהשולח.** `notify-fault` שולח `kind` ו-`title`
   // (תקלה / ניתוק תקשורת / תחזוקה), והקוד הזה התעלם משניהם — כל התראה
