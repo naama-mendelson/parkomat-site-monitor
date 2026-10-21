@@ -4480,7 +4480,17 @@ only his own task.
 - ⚠️ **What the phone does not do yet:** ~~beep (step 4)~~ (built, below), and the הגעתי / סיימתי buttons (step 3). It does
   not take the phone's location. Location comes only from the vehicle.
 
-### The beep and "קיבלתי" — step 4 of 4 (built 21/10/2026, NOT deployed)
+### The beep and "קיבלתי" — step 4 of 4 (built and deployed 21/10/2026, 94353df)
+
+✅ **Deployed 21/10/2026, at the owner's word ("כן"), in this order:**
+- **SQL:** 18 gaps (8 new functions, 6 bodies, the cron job and the table's indexes), 12 s, then "הייצור זהה לקוד".
+  Checked by hand: the five dispatch columns exist; `tech_push_subs` is closed (RLS, no policies, no grants) and empty;
+  `parkomat-tech-push-repeat` runs every minute; both push settings are present.
+- **The Edge Function `notify-tech`:** a call without a token gets the gateway's 401. With the public key and a wrong
+  secret it gets the function's own `unauthorized`, not `not configured`, so its secrets are in place.
+- **Push.**
+- At deploy time no technician phone was paired and there was one open dispatch, so nothing could beep yet. The first
+  beep to a real phone needs its own yes.
 
 The owner chose the beep before step 3 ("קודם הצפצוף"). It repeats every 2 minutes, up to 3 times, until "קיבלתי". "צא ל:"
 and "טלפון" are for the coordinator only ("לרכז בלבד"); his email has not been given yet. There is no explainer page for
