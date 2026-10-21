@@ -4647,7 +4647,17 @@ was first put on the technician card only (above). Looking at the board, she sai
   none elsewhere, a click expands, the line on the expanded card, a multiplier, leaving, a failed load, every 2 minutes
   with a fake clock; 1371 light and 390 dark). Mock: `?onsite=1` / `?onsitefail=1`.
 
-### The bug hunt of 21/10/2026 — eleven fixes, and a QR that led nowhere (built, NOT deployed)
+### The bug hunt of 21/10/2026 — eleven fixes, and a QR that led nowhere (built and deployed 21/10/2026, c6af979)
+
+✅ **Deployed at the owner's word ("yes"):**
+- **SQL:** 14 gaps (4 new functions, 8 bodies, 2 policies), 19 s, then "הייצור זהה לקוד".
+- **Checked by hand, read-only:**
+  - The two `tech_dispatches` columns and both policies are in place.
+  - `tech_self_unpair` is closed to anon.
+  - A manager reads 111 users; an agent reads 0 users and 0 log rows.
+  - `vehicles_live_list` carries `tech` on all 38 vehicles.
+  - 86 of 89 agents are beating, and the Ituran sync, the silence scan and the beep repeat all succeed.
+- **Push:** live bundle `index-DfHZDG87.js`.
 
 The owner: *"תנסה לעבור על המערכת ולמצוא באגים"*. Four independent reviews plus a read-only production health check found
 11 important bugs and about 25 small ones. Her answer, "אוקי", was to the plan: fix the eleven now, test, ask before
