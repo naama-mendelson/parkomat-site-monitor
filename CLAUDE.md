@@ -4471,7 +4471,8 @@ only his own task.
     once, like the QR: the phone replaces the password as soon as it opens the link, so a message left in a chat opens
     nothing afterwards. It is hidden after the phone connects. Tests: `tech-phone-ui.test.js`; browser
     `probe-techphone` 57 (S0–S3). ✅ Pushed 22/10/2026 (4d25ece, at the owner's "תעלה"); live bundle `index-CxkltsYo.js`
-    / `TechniciansView-IoPuBiTN.js`. That version used `wa.me`; the Web / app fix below is committed and **not pushed**.
+    / `TechniciansView-IoPuBiTN.js`. That version used `wa.me`; the Web / app fix below is live since ce5d95a (22/10/2026, the owner: "תתקן"), bundle
+    `index-C2MqIHms.js` — `web.whatsapp.com/send` and `whatsapp://send` in it, no `wa.me`.
     ⚠️ **The message is the password.** Whoever opens it first connects as that technician. Send it only to the
     technician's own number. If it went to the wrong chat, press "QR חדש" — that cuts off the old link at once.
     **Checked 22/10/2026:** unit 8/8; browser `probe-techphone` 57, `probe-share-clip` 16 (with clipboard permission: the
