@@ -1030,9 +1030,18 @@ CREATE OR REPLACE FUNCTION app.tech_push_every() RETURNS interval LANGUAGE sql I
 -- תקרת בקשות לשליחה אחת: 3 צפצופים ועוד 2 ניסיונות לפונקציה שלא ענתה
 CREATE OR REPLACE FUNCTION app.tech_push_attempts_max() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 5 $$;
 
+-- התזכורת בהתנעה (22/10/2026, למטה): ign_on_at = ההתנעה שכבר הזכירו עליה; ign_pending = יש תזכורת שעוד לא נשלחה
+-- (tech_push_claim שולח אותה ומאפס); ign_reminded_at / ign_reminds = מתי וכמה נשלחו.
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS ign_on_at timestamptz;
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS ign_pending boolean NOT NULL DEFAULT false;
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS ign_reminded_at timestamptz;
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS ign_reminds integer NOT NULL DEFAULT 0;
+
 -- הבקשה ל-notify-tech. ⚠️ net.http_post נשלח רק אחרי ה-commit (pg_net), כך שהפונקציה רואה את השליחה. בלי סוד או מפתח —
 -- הצפצוף לא נשלח, והכרטיס אומר למה (לא שקט).
-CREATE OR REPLACE FUNCTION app.tech_push_request(p_dispatch bigint)
+-- ⚠️ tech_push_post שולח בלבד; tech_push_request גם סופר ניסיון (התקרה של צפצופי "קיבלתי"). התזכורת בהתנעה קוראת ל-post
+-- ישירות — כך התנעות לא אוכלות את 5 הניסיונות של הצפצוף עד "קיבלתי" (22/10/2026).
+CREATE OR REPLACE FUNCTION app.tech_push_post(p_dispatch bigint)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1042,8 +1051,6 @@ DECLARE
   v_secret text := (SELECT value FROM settings WHERE key = 'push_caller_secret');
   v_key    text := (SELECT value FROM settings WHERE key = 'push_anon_key');
 BEGIN
-  -- כל בקשה נספרת (גם כשהצפצוף אינו מוגדר) — כך לתזכורת יש תקרה גם כשהפונקציה לא עונה
-  UPDATE tech_dispatches SET push_attempts = push_attempts + 1, push_requested_at = now() WHERE id = p_dispatch;
   IF COALESCE(btrim(v_secret), '') = '' OR COALESCE(btrim(v_key), '') = '' THEN
     UPDATE tech_dispatches SET push_error = 'הצפצוף אינו מוגדר במערכת' WHERE id = p_dispatch;
     RETURN NULL;
@@ -1056,6 +1063,20 @@ BEGIN
       'Authorization', 'Bearer ' || btrim(v_key),
       'x-parkomat-push-secret', btrim(v_secret)),
     timeout_milliseconds := 20000);
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_push_post(bigint) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION app.tech_push_request(p_dispatch bigint)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  -- כל בקשה נספרת (גם כשהצפצוף אינו מוגדר) — כך לתזכורת יש תקרה גם כשהפונקציה לא עונה
+  UPDATE tech_dispatches SET push_attempts = push_attempts + 1, push_requested_at = now() WHERE id = p_dispatch;
+  RETURN app.tech_push_post(p_dispatch);
 END
 $fn$;
 REVOKE ALL ON FUNCTION app.tech_push_request(bigint) FROM PUBLIC;
@@ -1107,6 +1128,30 @@ BEGIN
   SELECT * INTO d FROM tech_dispatches WHERE id = p_dispatch FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('send', false, 'reason', 'gone'); END IF;
   IF d.ended_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'ended'); END IF;
+  v_dest := CASE WHEN d.site_code IS NOT NULL THEN COALESCE(d.site_name, d.site_code) || ' · ' || d.site_code ELSE d.place END;
+  -- התזכורת בהתנעה (22/10/2026) — גם אחרי "קיבלתי": היא אומרת לאן לנסוע, לא מבקשת אישור. הבקשה הראשונה שמגיעה שולחת
+  -- אותה ומאפסת (גם בקשה של צפצוף "קיבלתי" באותה דקה). הגיע או נכנס בינתיים — לא שולחים, ומאפסים.
+  IF d.ign_pending THEN
+    UPDATE tech_dispatches SET ign_pending = false WHERE id = d.id;
+    IF d.arrived_at IS NULL AND d.entered_at IS NULL THEN
+      SELECT jsonb_agg(jsonb_build_object('id', s.id, 'endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth) ORDER BY s.id)
+        INTO v_subs
+        FROM technicians t
+        JOIN app_users u ON u.id = t.app_user_id AND u.is_active AND u.role = 'technician'
+        JOIN tech_push_subs s ON s.app_user_id = u.id
+       WHERE t.id = d.technician_id AND t.is_active;
+      IF v_subs IS NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'no_phone'); END IF;
+      -- push_last_at — כדי ש"השירות לא ענה" לא יידלק על בקשה שנענתה, וכדי שצפצוף "קיבלתי" לא יבוא מיד אחריה
+      UPDATE tech_dispatches SET ign_reminded_at = now(), ign_reminds = ign_reminds + 1, push_last_at = now(), push_error = NULL
+       WHERE id = d.id;
+      RETURN jsonb_build_object(
+        'send', true, 'n', GREATEST(d.push_count, 1), 'dispatch_id', d.id, 'kind', 'ignition',
+        'title', 'תזכורת — לאן לנסוע: ' || v_dest,
+        'body', COALESCE(left(regexp_replace(d.details, '\s+', ' ', 'g'), 180), 'המשימה פתוחה באפליקציה'),
+        'tag', 'dispatch-' || d.id,
+        'subs', v_subs);
+    END IF;
+  END IF;
   IF d.acked_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'acked'); END IF;
   -- הרכז סימן "הגיע" — הטכנאי כבר באתר, אין על מה לצפצף (21/10/2026, בדיקת הבאגים)
   IF d.arrived_at IS NOT NULL THEN RETURN jsonb_build_object('send', false, 'reason', 'arrived'); END IF;
@@ -1126,7 +1171,6 @@ BEGIN
   END IF;
   v_n := d.push_count + 1;
   UPDATE tech_dispatches SET push_count = v_n, push_last_at = now(), push_error = NULL WHERE id = d.id;
-  v_dest := CASE WHEN d.site_code IS NOT NULL THEN COALESCE(d.site_name, d.site_code) || ' · ' || d.site_code ELSE d.place END;
   RETURN jsonb_build_object(
     'send', true, 'n', v_n, 'dispatch_id', d.id,
     -- "המשימה הבאה:" — כשהשליחה התחילה מהתור, אחרי שיצא מהאתר הקודם (21/10/2026)
@@ -1529,6 +1573,62 @@ BEGIN
 END
 $fn$;
 REVOKE ALL ON FUNCTION app.tech_leave_scan(timestamptz) FROM PUBLIC;
+
+-- ============================================================
+-- התזכורת בהתנעה (22/10/2026)
+-- ============================================================
+-- הבעלת: "כשהוא מפעיל את הרכב, אם יש לו משימה לעשות — תזכיר לו שוב לאן הוא צריך לנסוע ומה המשימה". רצה בכל סנכרון של
+-- איתוראן (ituran_ingest, אחרי היציאה מהאתר). לכל משימה פתוחה שהטכנאי שלה הניע את הרכב: ign_pending, ובקשה ל-notify-tech;
+-- tech_push_claim שולח "תזכורת — לאן לנסוע: <היעד>" עם הפרטים.
+--   • "משימה לעשות" = פתוחה, ועוד לא הגיע ולא נכנס. גם אחרי "קיבלתי" — התזכורת היא לאן לנסוע, לא בקשת אישור.
+--   • התנעה אחת = תזכורת אחת (ign_on_at), ורק התנעה שאחרי השליחה בשתי דקות לפחות: מי שקיבל משימה ומיד התניע כבר קיבל
+--     את הצפצוף שלה.
+--   • רק התנעה טרייה (15 דקות): סנכרון שחזר אחרי הפסקה לא מצפצף על התנעה של לפני שעה.
+--   • לא כשהרכב כבר היה באתר של המשימה מאז שנשלחה — אז הוא יוצא ממנו, לא נוסע אליו.
+--   • רק לטכנאי שהפעיל צפצוף בטלפון (כמו התזכורת כל 2 דקות) — בלי טלפון אין למי לשלוח, ואין טעם לבקשות.
+-- ⚠️ כל בקשה בתוך EXCEPTION — אחת שנכשלה לא עוצרת את האחרות; ההתנעה לא מסומנת ותנוסה בסנכרון הבא (עד 15 דקות).
+CREATE OR REPLACE FUNCTION app.tech_ignition_grace() RETURNS interval LANGUAGE sql IMMUTABLE AS $$ SELECT interval '2 minutes' $$;
+CREATE OR REPLACE FUNCTION app.tech_ignition_fresh() RETURNS interval LANGUAGE sql IMMUTABLE AS $$ SELECT interval '15 minutes' $$;
+
+CREATE OR REPLACE FUNCTION app.tech_ignition_scan(p_now timestamptz DEFAULT now())
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  r   record;
+  v_n integer := 0;
+BEGIN
+  FOR r IN
+    SELECT d.id, i.on_at
+      FROM tech_dispatches d
+      JOIN technicians t ON t.id = d.technician_id AND t.is_active AND t.plate IS NOT NULL
+      JOIN vehicles_live l ON l.license_plate = t.plate
+      CROSS JOIN LATERAL (SELECT app.vehicle_ignition_on_at(l.events, p_now) AS on_at) i
+     WHERE d.ended_at IS NULL AND d.arrived_at IS NULL AND d.entered_at IS NULL
+       AND i.on_at IS NOT NULL
+       AND i.on_at >= d.created_at + app.tech_ignition_grace()
+       AND i.on_at > p_now - app.tech_ignition_fresh()
+       AND (d.ign_on_at IS NULL OR i.on_at > d.ign_on_at)
+       AND NOT (d.site_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM vehicle_visits v
+              WHERE v.license_plate = t.plate AND v.site_id = d.site_id AND COALESCE(v.ended_at, v.last_at) >= d.created_at))
+       AND EXISTS (SELECT 1 FROM tech_push_subs s JOIN app_users u ON u.id = s.app_user_id AND u.is_active
+                    WHERE s.app_user_id = t.app_user_id)
+  LOOP
+    BEGIN
+      UPDATE tech_dispatches SET ign_on_at = r.on_at, ign_pending = true, push_requested_at = now() WHERE id = r.id;
+      PERFORM app.tech_push_post(r.id);
+      v_n := v_n + 1;
+    EXCEPTION WHEN OTHERS THEN
+      UPDATE tech_dispatches SET push_error = left('התזכורת בהתנעה לא נשלחה: ' || SQLERRM, 200) WHERE id = r.id;
+    END;
+  END LOOP;
+  RETURN v_n;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_ignition_scan(timestamptz) FROM PUBLIC;
 
 -- ============================================================
 -- ניהול הטכנאים — מנהל בלבד (22/10/2026)

@@ -231,6 +231,22 @@ AS $$
   SELECT COALESCE((SELECT max(at) FROM near WHERE kind = 'ign_off'), (SELECT max(at) FROM near WHERE kind = 'stop'))
 $$;
 
+-- מתי הונע הרכב, אם הוא מונע עכשיו: ההדלקה האחרונה (פתיחת סוויץ' / מנוע עובד) שאין אחריה כיבוי. אחרת NULL.
+-- הרשימה של איתוראן שומרת את האחרון מכל זוג (הדלקה/כיבוי), ולכן הדלקה חדשה מכל כיבוי = הרכב מונע מאז.
+-- לתזכורת בהתנעה (technicians.postgres.sql, 22/10/2026).
+CREATE OR REPLACE FUNCTION app.vehicle_ignition_on_at(p_events jsonb, p_ref timestamptz DEFAULT now())
+RETURNS timestamptz
+LANGUAGE sql
+STABLE
+AS $$
+  WITH e AS (
+    SELECT app.ituran_event_kind(x->>'event_id', x->>'event_name') AS kind, app.ituran_ts_at(x->>'time_start', p_ref) AS at
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_events) = 'array' THEN p_events ELSE '[]'::jsonb END) x
+  )
+  SELECT on_at FROM (SELECT max(at) FILTER (WHERE kind = 'ign_on') AS on_at, max(at) FILTER (WHERE kind = 'ign_off') AS off_at FROM e) m
+   WHERE on_at IS NOT NULL AND on_at > COALESCE(off_at, '-infinity'::timestamptz)
+$$;
+
 -- ניתוק מתח / מתח מצבר נמוך שלא בא אחריו חיבור מתח או הדלקה — שורה אחת (מתי התחיל, ושם האירוע כמו באיתוראן), או אף
 -- שורה. נמדד 20/10/2026: אופנוע אחד דיווח ניתוק מתח ומתח מצבר נמוך ארבע וחמש דקות אחרי שכובה, ומאז היחידה מדווחת
 -- לעיתים רחוקות — והמפה לא אמרה כלום. כשיש כמה, הראשון: מאז מתי הבעיה, ובשם שטכנאי מכיר.
@@ -384,6 +400,15 @@ BEGIN
     UPDATE vehicles_sync SET advance_error = NULL, advance_error_at = NULL WHERE id = 1 AND advance_error IS NOT NULL;
   EXCEPTION WHEN others THEN
     UPDATE vehicles_sync SET advance_error = left(SQLERRM, 300), advance_error_at = now() WHERE id = 1;
+  END;
+
+  -- התזכורת בהתנעה (technicians.postgres.sql, 22/10/2026): טכנאי עם משימה פתוחה שהניע את הרכב — צפצוף "לאן לנסוע".
+  -- ⚠️ בבלוק משלו, אחרי היציאה מהאתר: תקלה כאן לא מפילה את הסנכרון ולא את המשימה הבאה. הצלחה לא מנקה את advance_error
+  -- (שייך לסריקה הקודמת, שמנקה אותו בעצמה).
+  BEGIN
+    PERFORM app.tech_ignition_scan(now());
+  EXCEPTION WHEN others THEN
+    UPDATE vehicles_sync SET advance_error = left('תזכורת בהתנעה: ' || SQLERRM, 300), advance_error_at = now() WHERE id = 1;
   END;
 
   RETURN cardinality(v_plates);

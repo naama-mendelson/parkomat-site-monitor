@@ -4600,6 +4600,41 @@ technicians yet ("לא עכשיו").
   3. Push.
   - ⚠️ A beep to a real technician's phone reaches a person, and it needs its own yes.
 
+### A reminder when he starts the vehicle (built 22/10/2026, NOT applied)
+
+The owner: *"כשהוא מפעיל את הרכב, אם יש לו משימה לעשות — תזכיר לו שוב לאן הוא צריך לנסוע ומה המשימה"*.
+
+- **The signal is Ituran's ignition events**, already stored raw in `vehicles_live.events` by every sync.
+  `app.vehicle_ignition_on_at(events, ref)` returns the latest ignition-on ("פתיחת סוויץ", "מנוע עובד") that has no
+  ignition-off after it, or NULL. Ituran keep the latest event of each pair, so an "on" newer than every "off" means the
+  vehicle has been running since then.
+- **`app.tech_ignition_scan(now)`** runs in every `ituran_ingest`, after the leave-site scan, in its own block. A failure is
+  written to `advance_error` as "תזכורת בהתנעה: …"; a success does not clear it. It picks every dispatch that:
+  - is open, not marked "הגיע" and not "נכנס" ("a task to do"). This includes tasks already confirmed with "קיבלתי": the
+    reminder says where to go, it does not ask for confirmation;
+  - has an ignition at least 2 minutes after the task was sent (`app.tech_ignition_grace`). A technician who starts the car
+    right away already got the task's own beep;
+  - has an ignition within the last 15 minutes (`app.tech_ignition_fresh`), so a sync that comes back after an outage does
+    not beep about an hour-old ignition;
+  - has an ignition newer than `ign_on_at`, so there is one reminder per ignition;
+  - whose vehicle has **not** been at the task's site since it was sent (then he is leaving it, not driving to it);
+  - whose technician has a phone subscription.
+- It sets `ign_on_at` and `ign_pending` and calls **`app.tech_push_post`**. That function is new: `tech_push_request` is now
+  "count an attempt, then post", so ignitions do not use up the 5 attempts of the "קיבלתי" beeps. `push_requested_at` is
+  set too, so "השירות לא ענה" still works.
+- **`tech_push_claim`** sends a pending reminder first, before the "קיבלתי" checks: title "תזכורת — לאן לנסוע: <destination>",
+  the details as body, the dispatch's `tag`, and `kind: 'ignition'`. It clears `ign_pending` even when it does not send
+  (marked "הגיע" or "נכנס" meanwhile; no phone), and sets `ign_reminded_at`, `ign_reminds` and `push_last_at`, but not
+  `push_count`.
+- **No Edge Function change.** `notify-tech` sends whatever the claim returns.
+- Tests: `technicians.test.js` +3 (34). They cover the ignition reading, every inclusion and exclusion above, the claim, one
+  reminder per ignition and a new ignition after an off, arrival between the request and the claim, no push settings, and
+  the hook inside the sync with its failure. **Mutations (isolated copy, `scratchpad/mutpark/run-ign.cjs`): 14 of 14
+  caught.**
+- **Deploy:** SQL only. The dry run should show the new functions (`vehicle_ignition_on_at`, `tech_push_post`,
+  `tech_ignition_*`) and the bodies of `tech_push_request`, `tech_push_claim` and `ituran_ingest`. The four
+  `tech_dispatches` columns do not show; check them after `--apply`.
+
 ### The technician card: no day bar and no week bars; the detail opens on a click (21/10/2026)
 
 The owner, after the meaning of every mark on the card was explained: "לא מובן לי מה כל סימון אומר". She approved a legend

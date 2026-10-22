@@ -1228,3 +1228,145 @@ test("המשימה הבאה: הטלפון רואה אותה; tech_me עם follow
   me = await fn(uid, "tech_me");
   assert.deepEqual([me.dispatch.id, me.dispatch.follows, me.next], [Number(r.next_started), Number(d), null]);
 });
+
+// ============================================================
+// התזכורת בהתנעה (22/10/2026): "כשהוא מפעיל את הרכב, אם יש לו משימה לעשות — תזכיר לו שוב לאן לנסוע ומה המשימה"
+// ============================================================
+// שעון קיר בישראל, כמו שאיתוראן כותבים (בלי אזור)
+const ilText = (minAgo) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+    .formatToParts(new Date(Date.now() - minAgo * 60_000)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;
+};
+const ON = (minAgo) => ({ event_id: "12746440", event_name: "פתיחת סוויץ", time_start: ilText(minAgo) });
+const OFF = (minAgo) => ({ event_id: "10181704", event_name: "סגירת סוויץ", time_start: ilText(minAgo) });
+const ENGINE_ON = (minAgo) => ({ event_id: "5295693", event_name: "מנוע עובד", time_start: ilText(minAgo) });
+const setEvents = (plate, evs) => sup(
+  `INSERT INTO vehicles_live (license_plate, motion, lat, lon, located_at, synced_at, events)
+   VALUES ($1, 'idle', 32.2, 34.9, now(), now(), $2::jsonb)
+   ON CONFLICT (license_plate) DO UPDATE SET events = EXCLUDED.events`, [plate, JSON.stringify(evs)]);
+const ignScan = async () => (await sup(`SELECT app.tech_ignition_scan(now()) n`))[0].n;
+const queuedIds = async () => (await queued()).map((x) => Number(x.body.dispatch_id)).sort((a, b) => a - b);
+
+test("התנעה: מתי הרכב הונע — ההדלקה האחרונה שאין אחריה כיבוי (סוויץ' או מנוע); אחרת אין", { skip }, async () => {
+  const at = async (evs) => (await sup(`SELECT app.vehicle_ignition_on_at($1::jsonb, now()) t`, [JSON.stringify(evs)]))[0].t;
+  const near = (t, minAgo) => t && Math.abs(Date.parse(t) - (Date.now() - minAgo * 60_000)) < 90_000;
+  assert.ok(near(await at([OFF(40), ON(3)]), 3), "כיבוי ואז הדלקה — מאז ההדלקה");
+  assert.equal(await at([ON(5), OFF(1)]), null, "הדלקה ואז כיבוי — לא מונע");
+  assert.ok(near(await at([ENGINE_ON(4)]), 4), "'מנוע עובד' — גם הדלקה");
+  assert.equal(await at([]), null);
+  assert.equal(await at(null), null);
+  assert.equal(await at({ not: "array" }), null);
+  assert.equal(await at([{ event_id: "12746437", event_name: "רכב בתנועה", time_start: ilText(2) }]), null, "תנועה אינה הדלקה");
+});
+
+test("התזכורת בהתנעה: התניע עם משימה פתוחה — צפצוף 'לאן לנסוע' עם הפרטים; פעם אחת להתנעה; גם אחרי 'קיבלתי'; לא אחרי 'הגיע', לא מיד אחרי השליחה, לא ישנה, לא כשכבר היה באתר, לא בלי טלפון", { skip }, async () => {
+  await withPushSettings(async () => {
+    const mk = async (plate, o = {}) => {
+      const tech = await newTech(plate);
+      let uid = null;
+      if (o.phone !== false) { uid = (await pair(tech)).uid; await subscribe(uid, SUB(tech)); }
+      const d = (await dispatch(ED, tech, { site: o.place ? null : (o.site ?? "TC2"), place: o.place ?? null,
+                                            details: o.details ?? "המעלית תקועה בקומה 2" })).dispatch_id;
+      await sup(`UPDATE tech_dispatches SET created_at = now() - make_interval(mins => $2) WHERE id = $1`, [d, o.sentMin ?? 30]);
+      return { tech, uid, d: Number(d), plate };
+    };
+    const a = await mk("7320001");                                  // התניע לפני 3 דקות — כן
+    await setEvents(a.plate, [OFF(40), ON(3)]);
+    const b = await mk("7320002");                                  // כבר אישר — כן (לאן לנסוע, לא בקשת אישור)
+    await fn(b.uid, "tech_self_ack", b.d);
+    await setEvents(b.plate, [ON(2)]);
+    const c = await mk("7320003");                                  // הרכז סימן "הגיע" — לא
+    await sup(`UPDATE tech_dispatches SET arrived_at = now(), arrived_by = 'רכז בדיקה' WHERE id = $1`, [c.d]);
+    await setEvents(c.plate, [ON(2)]);
+    const s = await mk("7320004", { sentMin: 4 });                  // התניע דקה אחרי השליחה — כבר קיבל את הצפצוף שלה
+    await setEvents(s.plate, [ON(3)]);
+    const o = await mk("7320005", { sentMin: 60 });                 // התנעה לפני 20 דקות — ישנה
+    await setEvents(o.plate, [ON(20)]);
+    const v = await mk("7320006");                                  // היה באתר של המשימה אחרי השליחה — יוצא ממנו, לא נוסע אליו
+    await visit(v.plate, "TC2", 20, 10);
+    await setEvents(v.plate, [ON(3)]);
+    const n = await mk("7320007", { phone: false });                // בלי טלפון — לא
+    await setEvents(n.plate, [ON(3)]);
+    const p = await mk("7320008", { place: "המחסן בראשון" });       // מקום חופשי — כן, עם המקום
+    await setEvents(p.plate, [ON(3)]);
+    const off = await mk("7320010");                                // הדליק וכיבה — לא מונע עכשיו
+    await setEvents(off.plate, [ON(5), OFF(1)]);
+
+    await sup(`DELETE FROM net.http_request_queue`);
+    const before = (await dispOf(a.d)).push_attempts;
+    const got = await ignScan();
+    assert.deepEqual(await queuedIds(), [a.d, b.d, p.d].sort((x, y) => x - y));
+    assert.equal(got, 3);
+    const da = await dispOf(a.d);
+    assert.equal(da.ign_pending, true);
+    assert.ok(Math.abs(Date.parse(da.ign_on_at) - (Date.now() - 3 * 60_000)) < 90_000, "ההתנעה נרשמה");
+    assert.equal(da.push_attempts, before, "לא אוכל את הניסיונות של צפצוף 'קיבלתי'");
+    const q = (await queued())[0];
+    assert.equal(q.url, "https://xvfsikwaaaohnmldjbtv.supabase.co/functions/v1/notify-tech");
+
+    // ה-claim שולח את התזכורת — כותרת עם היעד, הפרטים בגוף; מאפס; לא נוגע במונה של "קיבלתי"
+    const ca = await claim(a.d);
+    const site = (await sup(`SELECT site_name FROM sites WHERE code = 'TC2'`))[0].site_name;
+    assert.deepEqual({ send: ca.send, kind: ca.kind, title: ca.title, body: ca.body, tag: ca.tag, subs: ca.subs.length },
+      { send: true, kind: "ignition", title: `תזכורת — לאן לנסוע: ${site} · TC2`, body: "המעלית תקועה בקומה 2", tag: `dispatch-${a.d}`, subs: 1 });
+    const da2 = await dispOf(a.d);
+    assert.deepEqual([da2.ign_pending, da2.ign_reminds, da2.push_count], [false, 1, 0]);
+    assert.ok(da2.ign_reminded_at && da2.push_last_at, "מתי נשלחה; push_last_at — כדי ש'השירות לא ענה' לא יידלק");
+    const cb = await claim(b.d);
+    assert.equal(cb.send, true, "גם אחרי 'קיבלתי'");
+    assert.equal((await claim(b.d)).reason, "acked", "פעם שנייה — חזרה לזרימה של 'קיבלתי'");
+    assert.equal((await claim(p.d)).title, "תזכורת — לאן לנסוע: המחסן בראשון");
+
+    // אותה התנעה — לא שוב; התנעה חדשה — כן
+    await sup(`DELETE FROM net.http_request_queue`);
+    assert.equal(await ignScan(), 0, "אותה התנעה — פעם אחת");
+    await setEvents(a.plate, [OFF(2), ON(1)]);
+    assert.equal(await ignScan(), 1, "כיבה והתניע שוב — תזכורת חדשה");
+    assert.equal((await claim(a.d)).send, true);
+    assert.equal((await dispOf(a.d)).ign_reminds, 2);
+
+    // הגיע בין הבקשה ל-claim — לא שולחים, והתזכורת מתאפסת
+    await setEvents(a.plate, [OFF(1), ON(0.5)]);
+    assert.equal(await ignScan(), 1);
+    await sup(`UPDATE tech_dispatches SET arrived_at = now(), arrived_by = 'רכז בדיקה' WHERE id = $1`, [a.d]);
+    const ca3 = await claim(a.d);
+    assert.deepEqual({ send: ca3.send, reason: ca3.reason }, { send: false, reason: "arrived" });
+    assert.equal((await dispOf(a.d)).ign_pending, false);
+
+    // בלי הגדרות הצפצוף — הכרטיס אומר למה
+    await sup(`DELETE FROM settings WHERE key IN ('push_caller_secret', 'push_anon_key')`);
+    const z = await mk("7320011");
+    await setEvents(z.plate, [ON(2)]);
+    assert.equal(await ignScan(), 1);
+    assert.equal((await dispOf(z.d)).push_error, "הצפצוף אינו מוגדר במערכת");
+    for (const x of [a, b, c, s, o, v, n, p, off, z]) await end(ED, x.d, "cancelled");
+  });
+});
+
+test("התזכורת בהתנעה: רצה בכל סנכרון של איתוראן; תקלה בה לא מפילה את הסנכרון — נרשמת", { skip }, async () => {
+  await withPushSettings(async () => {
+    const tech = await newTech("7320020");
+    const { uid } = await pair(tech);
+    await subscribe(uid, SUB(tech));
+    const d = Number((await dispatch(ED, tech, { site: "TC2", details: "שער לא נפתח" })).dispatch_id);
+    await sup(`UPDATE tech_dispatches SET created_at = now() - interval '30 minutes' WHERE id = $1`, [d]);
+    await sup(`DELETE FROM net.http_request_queue`);
+    const withIgn = (x) => (x.license_plate === "7320020" ? { ...x, events: [OFF(30), ON(2)] } : x);
+    await ingest([...FLEET, "7320020"].map(car).map(withIgn));
+    assert.ok((await queuedIds()).includes(d), "הסנכרון הפעיל את התזכורת");
+    assert.equal((await dispOf(d)).ign_pending, true);
+    await sup(`ALTER FUNCTION app.tech_ignition_scan(timestamptz) RENAME TO tech_ignition_scan_off`);
+    try {
+      const n = (await ingest([...FLEET, "7320020"].map(car).map(withIgn)))[0].n;
+      assert.equal(n, FLEET.length + 1, "הסנכרון הצליח");
+      assert.match((await sup(`SELECT advance_error FROM vehicles_sync WHERE id = 1`))[0].advance_error, /^תזכורת בהתנעה: /);
+    } finally {
+      await sup(`ALTER FUNCTION app.tech_ignition_scan_off(timestamptz) RENAME TO tech_ignition_scan`);
+    }
+    await ingest([...FLEET, "7320020"].map(car).map(withIgn));
+    assert.equal((await sup(`SELECT advance_error FROM vehicles_sync WHERE id = 1`))[0].advance_error, null, "מתנקה בסנכרון הבא");
+    await end(ED, d, "cancelled");
+  });
+});
