@@ -117,6 +117,8 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
   }
 
   const title = effTech?.name ?? (name.trim() || vehicleName(vehicle));
+  // בטלפון — האפליקציה ישר (whatsapp://, באותו חלון); במחשב — WhatsApp Web בלשונית חדשה, כדי שה-QR יישאר פתוח
+  const onPhone = typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches);
 
   return (
     <div className="dp-overlay" role="presentation" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
@@ -142,7 +144,8 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
                 <div className="dp-share">
                   <span className="dp-share-k">הטכנאי לא כאן? לשלוח לו את הקישור — הוא פותח אותו בטלפון שלו:</span>
                   <div className="dp-share-btns">
-                    <a className="dp-share-btn dp-share-wa" href={whatsappLink(qr.link, qr.name)} target="_blank" rel="noopener noreferrer">
+                    <a className="dp-share-btn dp-share-wa" href={whatsappLink(qr.link, qr.name, { app: onPhone })}
+                      {...(onPhone ? {} : { target: "_blank", rel: "noopener noreferrer" })}>
                       שליחה בוואטסאפ
                     </a>
                     <button type="button" className="dp-share-btn" onClick={copyLink}>

@@ -59,7 +59,7 @@ export function phoneStatus(phone, nowIso) {
 
 /**
  * הודעת הוואטסאפ עם קישור החיבור (22/10/2026). הבעלת: "אני רוצה שהטכנאים לא יצטרכו לבוא לפה" — ה-QR הוא קישור,
- * ואפשר לשלוח אותו. wa.me בלי מספר — וואטסאפ שואל למי לשלוח. ⚠️ הקישור עובד פעם אחת, כמו ה-QR: הטלפון מחליף את
+ * ואפשר לשלוח אותו. בלי מספר — וואטסאפ שואל למי לשלוח. ⚠️ הקישור עובד פעם אחת, כמו ה-QR: הטלפון מחליף את
  * הסיסמה ברגע שנפתח, ולכן הודעה שנשארת בצ'אט לא פותחת דבר אחר כך.
  */
 export function pairMessage(link, name) {
@@ -71,7 +71,13 @@ export function pairMessage(link, name) {
     "הקישור עובד פעם אחת.",
   ].join("\n");
 }
-export const whatsappLink = (link, name) => `https://wa.me/?text=${encodeURIComponent(pairMessage(link, name))}`;
+/**
+ * ⚠️ לא wa.me (22/10/2026, נמדד ממחשב המשרד): סינון האינטרנט שם (safepage.neto.net.il) חוסם את wa.me ואת
+ * api.whatsapp.com, והכפתור נחת על "לא ניתן לגשת לדף זה". web.whatsapp.com עובר ושומר את ההודעה שלמה. בטלפון —
+ * whatsapp:// פותח את האפליקציה ישר, בלי אתר בדרך שאפשר לחסום.
+ */
+export const whatsappLink = (link, name, { app = false } = {}) =>
+  `${app ? "whatsapp://send" : "https://web.whatsapp.com/send"}?text=${encodeURIComponent(pairMessage(link, name))}`;
 
 /** קישור ניווט לאתר (Waze), או null כשלאתר אין מיקום. */
 export function navLink(d) {

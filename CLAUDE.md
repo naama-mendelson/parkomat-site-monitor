@@ -4458,16 +4458,29 @@ only his own task.
   - The password lives only in the dialog's memory. Closing it loses it.
   - **Since 22/10/2026: "הטכנאי לא כאן?"** under the QR (the owner: *"אני רוצה שהטכנאים לא יצטרכו לבוא לפה"*). It sends
     the same link in a message:
-    - **"שליחה בוואטסאפ"**: `wa.me/?text=`, opened in a new tab, so the QR window stays open;
+    - **"שליחה בוואטסאפ"**: on a computer `https://web.whatsapp.com/send?text=` in a new tab (the QR window stays
+      open); on a phone (`pointer: coarse`) `whatsapp://send?text=` in the same window, which opens the app directly.
+      ⚠️ **Not `wa.me`** — measured from the office PC the same day: the office's internet filter
+      (`safepage.neto.net.il`, "המכשיר שלך מוגן") blocks `wa.me` and `api.whatsapp.com`, so the first version of the
+      button landed on a block page. `web.whatsapp.com` passes, and the message arrived whole (checked against the real
+      site). `whatsapp://` needs no website at all. A computer that uses only the WhatsApp Desktop app links WhatsApp Web
+      once, or uses "העתקת הקישור";
     - **"העתקת הקישור"**: the clipboard. When there is no clipboard access, the link is shown for copying by hand.
     The message (`pairMessage` / `whatsappLink` in `utils/techPhone.js`) carries the name, the link whole on its own line
-    (the `#` stays encoded inside `wa.me`, or WhatsApp would cut the credentials), and "הקישור עובד פעם אחת". It works
+    (the `#` stays encoded inside the WhatsApp link, or WhatsApp would cut the credentials), and "הקישור עובד פעם אחת". It works
     once, like the QR: the phone replaces the password as soon as it opens the link, so a message left in a chat opens
     nothing afterwards. It is hidden after the phone connects. Tests: `tech-phone-ui.test.js`; browser
     `probe-techphone` 57 (S0–S3). ✅ Pushed 22/10/2026 (4d25ece, at the owner's "תעלה"); live bundle `index-CxkltsYo.js`
-    / `TechniciansView-IoPuBiTN.js`.
+    / `TechniciansView-IoPuBiTN.js`. That version used `wa.me`; the Web / app fix below is committed and **not pushed**.
     ⚠️ **The message is the password.** Whoever opens it first connects as that technician. Send it only to the
     technician's own number. If it went to the wrong chat, press "QR חדש" — that cuts off the old link at once.
+    **Checked 22/10/2026:** unit 8/8; browser `probe-techphone` 57, `probe-share-clip` 16 (with clipboard permission: the
+    pasted text is the whole message and its link carries exactly the returned credentials; ⚠️ the Windows clipboard
+    reads back CRLF, so compare after normalising; on a phone 44px buttons, 7.7:1, `whatsapp://`), `tp/probe-tp` 31;
+    against the live site (`e2e/live-share.mjs`, a made-up account, one failed sign-in, nothing written): the link from
+    the message opens the pairing screen, says "ה-QR הזה כבר שימש", stores nothing, and the credentials appear in no
+    request URL (only in the body of the one sign-in). Read-only at the same time: 4 technicians have a QR made, **no
+    phone has opened one yet** (`phone_seen_at` empty, 0 push devices), so a real phone has not paired end to end yet.
 - **The link:** `<origin>/#pair=<base64url {e, p}>` (`pairLink` / `parsePairHash` in `utils/techPhone.js`). The
   credentials sit after `#`, so they are never sent to any server. `parsePairHash` accepts only a `tech-<n>-<n>@` email
   and a base64url password.

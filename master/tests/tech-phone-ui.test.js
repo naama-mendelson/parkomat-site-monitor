@@ -88,7 +88,7 @@ test("ה-QR: ריבוע לכל מודול כהה, בתוך שוליים", () => 
 });
 
 // 22/10/2026 — "הטכנאים לא יצטרכו לבוא לפה": אותו קישור, בהודעה (וואטסאפ / העתקה)
-test("שליחת הקישור: ההודעה עם השם והקישור שלם; וואטסאפ — wa.me עם ההודעה מקודדת; בלי שם — בלי פנייה", () => {
+test("שליחת הקישור: ההודעה עם השם והקישור שלם; וואטסאפ — Web במחשב, האפליקציה בטלפון, לא wa.me; בלי שם — בלי פנייה", () => {
   const link = pairLink(PUBLIC_ORIGIN, "tech-7-2@parkomat.co.il", "Pw_abc-123_0123456789xyz");
   const m = pairMessage(link, " אבי ");
   const lines = m.split(String.fromCharCode(10));
@@ -96,10 +96,15 @@ test("שליחת הקישור: ההודעה עם השם והקישור שלם; �
   assert.equal(lines[2], link, "הקישור בשורה משלו, שלם");
   assert.equal(lines[3], "הקישור עובד פעם אחת.");
   assert.ok(pairMessage(link, "").startsWith("זה הקישור"), "בלי שם — בלי פנייה");
-  const wa = whatsappLink(link, "אבי");
-  assert.ok(wa.startsWith("https://wa.me/?text="));
-  assert.equal(decodeURIComponent(wa.slice("https://wa.me/?text=".length)), pairMessage(link, "אבי"));
-  assert.ok(!wa.includes("#"), "ה-# של הקישור מקודד — אחרת וואטסאפ היה חותך את הפרטים");
+  // ⚠️ 22/10/2026: סינון האינטרנט במשרד חוסם את wa.me ואת api.whatsapp.com (נמדד) — web.whatsapp.com עובר
+  const web = whatsappLink(link, "אבי");
+  const app = whatsappLink(link, "אבי", { app: true });
+  for (const [wa, head] of [[web, "https://web.whatsapp.com/send?text="], [app, "whatsapp://send?text="]]) {
+    assert.ok(wa.startsWith(head), head);
+    assert.equal(decodeURIComponent(wa.slice(head.length)), pairMessage(link, "אבי"));
+    assert.ok(!wa.includes("#"), "ה-# של הקישור מקודד — אחרת וואטסאפ היה חותך את הפרטים");
+    assert.ok(!/wa\.me|api\.whatsapp/.test(wa), "לא דרך הכתובות שהסינון חוסם");
+  }
   assert.deepEqual(parsePairHash(new URL(lines[2]).hash), { email: "tech-7-2@parkomat.co.il", password: "Pw_abc-123_0123456789xyz" },
     "הקישור שבהודעה עדיין מחבר");
 });
