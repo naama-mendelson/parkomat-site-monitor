@@ -1171,8 +1171,28 @@ test("המשימה הבאה: יצא מהאתר — הנוכחית נסגרת ('�
   assert.equal(await scan(), 0);
 });
 
+// 22/10/2026: "באתר" רק לרכב שנסע היום, ולכן ביקור שחוצה חצות (קריאת לילה) נסגר בחצות בלי שהטכנאי זז. הביקור הסתיים, אבל
+// הרכב עדיין בטווח האתר — זו לא יציאה, והבאה לא מתחילה (עם צפצוף) כשהוא עוד שם.
+test("המשימה הבאה: ביקור שנסגר בזמן שהרכב עוד בטווח האתר (חצות) — לא יציאה; כשהוא מתרחק — כן", { skip }, async () => {
+  await sup(`UPDATE sites SET lat = 32.08, lon = 34.78, geo_source = 'manual', geo_precision = 'pin' WHERE code = 'TC1'`);
+  const t = await newTech("7310010");
+  const d = (await dispatch(ED, t, { site: "TC1" })).dispatch_id;
+  await nextSet(ED, t, { site: "TC2" });
+  await sup(`UPDATE tech_dispatches SET created_at = now() - interval '60 minutes' WHERE id = $1`, [d]);
+  await visit("7310010", "TC1", 50, 10);                              // הביקור נסגר לפני 10 דקות
+  const put = (lat, lon) => sup(`INSERT INTO vehicles_live (license_plate, motion, lat, lon, located_at, synced_at)
+      VALUES ('7310010', 'parking', $1, $2, now(), now())
+      ON CONFLICT (license_plate) DO UPDATE SET lat = EXCLUDED.lat, lon = EXCLUDED.lon`, [lat, lon]);
+  await put(32.0805, 34.78);                                          // 55 מ' מהאתר — עוד בטווח (150)
+  assert.equal(await scan(), 0, "עוד בטווח האתר — לא יצא");
+  assert.equal((await dispOf(d)).ended_at, null);
+  await put(32.083, 34.78);                                           // 330 מ' — יצא
+  assert.equal(await scan(), 1, "התרחק — יצא, והבאה מתחילה");
+  assert.equal((await dispOf(d)).ended_by, "יצא מהאתר");
+});
+
 test("המשימה הבאה: הסריקה רצה בכל סנכרון של איתוראן; תקלה בה לא מפילה את הסנכרון — נרשמת ומתנקה", { skip }, async () => {
-  // ⚠️ רכב שאינו בסנכרון: רכבי FLEET עומדים ליד TC1 (מיקום שבדיקה קודמת קבעה), עם ביקור פתוח שם — כלומר "עוד באתר"
+  // ⚠️ רכב שאינו בסנכרון: רכבי FLEET עומדים ליד TC1 (מיקום שבדיקה קודמת קבעה) — כלומר "עוד באתר" (בטווח האתר)
   const t8 = await newTech("7310008");
   const d = (await dispatch(ED, t8, { site: "TC1" })).dispatch_id;
   await nextSet(ED, t8, { site: "TC2" });

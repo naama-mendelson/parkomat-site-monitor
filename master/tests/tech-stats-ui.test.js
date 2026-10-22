@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   cardGroup, groupCounts, groupLabel, sortCards, initials, hmText, hhmm, kmText, whereInfo, teamToday, timeline, minuteClock,
-  weekBars, weekTotals, visitRows, alertRows, matchesCard,
+  weekBars, weekTotals, weekLabel, visitsText, visitRows, alertRows, matchesCard,
 } from "../../dashboard/src/utils/techStats.js";
 import { durationLabel } from "../../dashboard/src/utils/vehicles.js";
 
@@ -96,8 +96,23 @@ test("השבוע: עמודה לכל יום, היום האחרון מסומן, י
   ];
   const bars = weekBars({ week });
   assert.deepEqual(bars.map((b) => [b.label, b.h, b.today, b.tracked]), [["ה׳", 0, false, false], ["ג׳", 100, false, true], ["ד׳", 25, true, true]]);
-  assert.deepEqual(weekTotals({ week }), { km: 50, visits: 4, days: 2 });
-  assert.deepEqual(weekTotals({}), { km: null, visits: 0, days: 0 });
+  assert.deepEqual(weekTotals({ week }), { km: 50, visits: 4, days: 2, since: "2026-10-20", full: false });
+  assert.deepEqual(weekTotals({}), { km: null, visits: 0, days: 0, since: null, full: false });
+});
+
+// 22/10/2026: "מה זה אומר 7 הימים האחרונים, רק מאתמול יש לנו איתוראן" — עד שיש שבעה ימים, הכותרת אומרת מאיזה יום
+test("שורת השבוע: 'מאז 21/10' עד שנאספו שבעה ימים, ואז '7 הימים האחרונים'; ביקור אחד / N ביקורים", () => {
+  const day = (d, tracked = true) => ({ day: d, km: 5, drive_s: 0, visits: 1, sites: 1, tracked });
+  const two = ["2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19", "2026-10-20"].map((d) => day(d, false))
+    .concat([day("2026-10-21"), day("2026-10-22")]);
+  assert.equal(weekLabel(weekTotals({ week: two })), "מאז 21/10");
+  const seven = ["2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28"].map((d) => day(d));
+  assert.equal(weekLabel(weekTotals({ week: seven })), "7 הימים האחרונים");
+  // יום באמצע שלא נאסף (הרכב לא סונכרן) — הכותרת לא מבטיחה שבעה ימים
+  seven[3] = day(seven[3].day, false);
+  assert.equal(weekLabel(weekTotals({ week: seven })), "מאז 22/10");
+  assert.equal(weekLabel(weekTotals({})), "");
+  assert.deepEqual([visitsText(1), visitsText(3), visitsText(0), visitsText(null)], ["ביקור אחד", "3 ביקורים", "0 ביקורים", "0 ביקורים"]);
 });
 
 test("הביקורים: שם האתר בלי העיר, משעה עד שעה ומשך; הפתוח — עד עכשיו", () => {

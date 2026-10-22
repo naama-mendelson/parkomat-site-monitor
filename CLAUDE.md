@@ -5063,6 +5063,75 @@ Full suite 1405/1405.
 **Deploy:** SQL only. The dry run shows 4 gaps: 2 new functions and the bodies of `vehicle_json` and `vehicles_track`.
 There is no dashboard change.
 
+### "באתר" only for a vehicle that drove today; "מאז 21/10" instead of "7 הימים האחרונים" (built 22/10/2026, NOT deployed)
+
+The owner, on a scooter shown "באתר" at a multiplier for 22 hours next to "0 ק״מ היום" and "יצא לדרך —": *"אם הוא לא נסע איך
+הוא הגיע לאתר? אני רוצה שאם הוא לא נוסע אז אל תכתוב אותו שהוא באתר, כנראה הוא גר שם"*. And on the card's detail: *"מה
+זה אומר 7 הימים האחרונים, רק מאתמול יש לנו איתוראן"*.
+
+**Measured first, read-only.**
+- Three vehicles had been parked by 3488 since tracking began (21/10 11:09) without moving, one of them a service
+  vehicle. A fourth was by 1218. That is the place the 21/10 "watch" item was about: a parking spot, not a site visit.
+- The odometer is whole kilometers. 3 vehicles had a "drive" segment today with no movement (engine on away from a site).
+- One scooter that is not on the service list reports only "engine on" at speed 0, with a stuck odometer. It visited
+  five sites one evening.
+
+**`app.vehicle_moved_today(plate, now)`** (`vehicle-stats.postgres.sql`) — today's row (Israel day) shows real movement:
+- `max_speed` (set only on a "driving" sample with speed ≥ 1), or
+- the odometer advanced (`odo_last`, or the live odometer, against `odo_start`).
+
+⚠️ It does **not** use `first_move`: that is also set by engine-on away from a site. A vehicle warming up at home near a
+site would become "drove today", and at the next sample "באתר".
+
+⚠️ It reads the **live** odometer as well. `vehicles_track` decides the site before it updates the day row, so a drive
+that fell between two samples counted only one sample after the arrival.
+
+**`app.vehicle_site` returns NULL first thing when the vehicle has not moved today.** It now takes `p_now`:
+- `vehicles_track` passes its sample time;
+- `vehicle_json` passes the row's `synced_at`, like the state, not `now()`.
+
+A neighbor that has not moved today is not a neighbor (rule 2 of the two-technicians rule). So the visits, the card, the
+"באתרים" group and the yellow icon on the board all follow one rule.
+
+The card can therefore never say "באתר" next to "0 ק״מ / יצא לדרך —".
+
+**The cost: midnight.** A visit across midnight (a night call) closes at the last sample before midnight, and reopens only
+after the vehicle moves. **`app.tech_leave_scan` therefore also requires the vehicle to be out of the site's radius**
+(`vehicles_live` vs `site_radius_m`). Without that, a queued next task would start, with a beep, at 00:02 while the
+technician was still on site. A vehicle with no live row is not blocked.
+
+⚠️ A unit that reports neither speed nor odometer is never "באתר". That is the scooter above, and it is not a service
+vehicle.
+
+**The week line in the card's detail** (`weekLabel` / `visitsText` in `utils/techStats.js`):
+- it reads "מאז 21/10: 45 ק״מ · ביקור אחד" until all seven days of the week are tracked;
+- after that it reads "7 הימים האחרונים";
+- a missing day in the middle also gives "מאז".
+
+**Tests:**
+- `vehicle-stats.test.js`:
+  - a new test covers parked since the morning (not a visit, not on screen), then a drive and a visit; engine on without
+    moving; the odometer between samples; midnight, closed until it moves.
+  - The six existing tests that parked without driving now drive first (`drove`).
+  - The two-technicians test gained case 8 (a neighbor that did not move does not pull).
+- `technicians.test.js`: a visit closed while the vehicle is still in range is not "left"; once it moves away, it is.
+- `tech-stats-ui.test.js`: the label.
+- Browser: `probe-tcmore` 40/40 (the line reads "מאז DD/MM"), `probe-techcards` 66/66.
+- Full suite 1408/1408.
+
+**Mutations (isolated copy, `mut2110/run-mut21.cjs`): 11 of 11 caught.** They cover:
+- no gate;
+- a neighbor that did not move;
+- each of the three movement signals, and `first_move` instead;
+- the day in UTC, or any day;
+- `now()` in the tracking, or on the screen;
+- no in-range guard.
+
+**Deploy:** SQL first (dry run: 6 gaps — `vehicle_moved_today`, `fleet_together_m`, `vehicle_site`, and the bodies of
+`vehicle_json`, `vehicles_track`, `tech_leave_scan`; this includes the two-technicians rule above), then push.
+The open visits of the vehicles that did not move close at the next sync. Their 8 records (open and closed) are not
+deleted by the SQL. Removing them is a separate data step.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

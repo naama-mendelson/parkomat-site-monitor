@@ -19,7 +19,7 @@ import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import { ageText, clockText, hasPosition, powerAlert, vehicleName } from "../../utils/vehicles";
 import {
   cardGroup, groupCounts, groupLabel, GROUPS, hhmm, initials, kmText, matchesCard, sortCards, teamToday,
-  visitRows, weekTotals, whereInfo,
+  visitRows, visitsText, weekLabel, weekTotals, whereInfo,
 } from "../../utils/techStats";
 import { destText, dispatchLine, pushLine, techByPlate } from "../../utils/technicians";
 import { siteKey } from "../../utils/siteSearch";
@@ -94,7 +94,7 @@ function Details({ v, w, now, visits, id }) {
       ) : (
         <p className="tc-more-none">לא היה היום באתרים</p>
       )}
-      {tot.days > 1 && <p className="tc-more-meta">7 הימים האחרונים: {kmText(tot.km)} ק״מ · {tot.visits} ביקורים</p>}
+      {tot.days > 1 && weekLabel(tot) && <p className="tc-more-meta">{weekLabel(tot)}: {kmText(tot.km)} ק״מ · {visitsText(tot.visits)}</p>}
       {meta.length > 0 && <p className="tc-more-meta">{meta.join(" · ")}</p>}
     </div>
   );

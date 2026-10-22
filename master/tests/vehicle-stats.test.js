@@ -47,6 +47,11 @@ async function car(plate, { motion, at = HOME, m, fixM = m, speed = 0, odo = nul
   [plate, `רכב בדיקה ${plate}`, motion, at.lat, at.lon, speed, odo, T(fixM), JSON.stringify(events), T(m)]);
 }
 const track = async (m) => (await sup(`SELECT app.vehicles_track($1::timestamptz) n`, [T(m)]))[0].n;
+// 22/10/2026: "באתר" רק לרכב שנסע היום — רכב שמגיע לאתר בבדיקה נוסע קודם (מהבית, ב-30 קמ"ש, בדקה m)
+const drove = async (plates, m) => {
+  for (const p of plates) await car(p, { motion: "driving", at: HOME, m, speed: 30 });
+  await track(m);
+};
 const dayRow = async (plate, day = DAY) => (await sup(`SELECT * FROM vehicle_days WHERE license_plate = $1 AND day = $2`, [plate, day]))[0];
 const stats = async (plate, m) => (await sup(`SELECT app.vehicle_stats_json($1, $2::timestamptz) j`, [plate, T(m)]))[0].j;
 const visits = async (plate) => sup(`SELECT site_code, started_at, last_at, ended_at, no_signal, approx FROM vehicle_visits
@@ -225,6 +230,7 @@ test("השתתק ליד אתר (חניון תת-קרקעי): באתר, אין ק
   const Q = "8100004";
   const ilText = (m) => new Date(BASE + m * 60_000 + 2 * 3_600_000).toISOString().slice(0, 19);   // שעון ישראל בחורף, בלי אזור
   const offEv = { event_id: "10181704", event_name: "כיבוי סוויץ'", time_start: ilText(188), point: off(S2, 40) };
+  await drove([Q], 180);
   await car(Q, { motion: "parking", at: off(S2, 40), m: 200, events: [offEv] });
   await track(200);
   s = await stats(Q, 200);
@@ -232,6 +238,7 @@ test("השתתק ליד אתר (חניון תת-קרקעי): באתר, אין ק
   // כיבוי ישן מ-12 שעות — לא נלקח
   const R = "8100005";
   const oldEv = { ...offEv, time_start: ilText(200 - 13 * 60) };
+  await drove([R], 181);
   await car(R, { motion: "parking", at: off(S2, 40), m: 200, events: [oldEv] });
   await track(200);
   assert.equal((await stats(R, 200)).visit.since, iso(T(200)));
@@ -239,6 +246,7 @@ test("השתתק ליד אתר (חניון תת-קרקעי): באתר, אין ק
 
 test("רכב שהוצא מהחשבון — הביקור הפתוח שלו נסגר; תקרת 400 מקטעים ליום", { skip }, async () => {
   const P = "8100006";
+  await drove([P], 290);
   await car(P, { motion: "parking", at: off(S1, 10), m: 300 });
   await track(300);
   await car(P, { motion: "parking", at: off(S1, 10), m: 305 });
@@ -266,6 +274,10 @@ test("הקליטה מפעילה את הסיכום; תקלה בסיכום לא מ
     last_location: { location: { point: off(S1, 20), address: { location: "רחוב, עיר" } }, odometer: 4321,
                      timestamp: new Date().toISOString().replace("Z", "+00:00") },
   };
+  // נוסע קודם (לפני דקה), ואז חונה ליד האתר — "באתר" רק לרכב שנסע היום
+  await ingest([{ ...v, motion_status: "driving",
+                  last_location: { ...v.last_location, speed: 30, location: { point: HOME, address: { location: "רחוב, עיר" } },
+                                   timestamp: new Date(Date.now() - 60_000).toISOString().replace("Z", "+00:00") } }]);
   await ingest([v]);
   const today = (await sup(`SELECT (now() AT TIME ZONE 'Asia/Jerusalem')::date::text d`))[0].d;
   const d = await dayRow("8200001", today);
@@ -322,6 +334,9 @@ test("מי הכי קרוב: אתר בתקלה ואתר עם קריאה פתוח�
   await put("8300004", off(S1, 20), "parking");
   await put("8300005", off(S1, 2000), "parking");
   await put("8300006", off(S1, 3000), "parking");
+  // 8300004 נסע היום (לפני שעה) — "באתר" רק לרכב שנסע היום
+  await sup(`INSERT INTO vehicle_days (license_plate, day, first_seen, last_seen, max_speed, last_kind, segments)
+             VALUES ('8300004', (now() AT TIME ZONE 'Asia/Jerusalem')::date, now() - interval '1 hour', now() - interval '1 hour', 40, 'drive', '[]')`);
   await sup(`SELECT app.vehicles_track(now())`);
   const alerts = async () => Object.fromEntries((await user(RO, `SELECT public.vehicles_live_list() j`))[0].j.alerts.map((a) => [a.code, a]));
   const j = (await user(RO, `SELECT public.vehicles_live_list() j`))[0].j;
@@ -445,6 +460,8 @@ test("בדיקת הבאגים (21/10): השתתק באמצע נסיעה — לא
   const va = (await user(MGR, `SELECT public.vehicles_live_list() j`))[0].j.vehicles.find((x) => x.plate === A);
   assert.equal(va.state, "silent");
   assert.equal(va.at_site, null, "השתתק במהירות — המסך לא אומר 'באתר'");
+  // מכאן כל רכב שמגיע לאתר נסע קודם (22/10/2026: "באתר" רק לרכב שנסע היום)
+  await drove(["8400002", "8400003", "8400005", "8400006", "8400007"], 590);
   // ואותו דבר ב-15 קמ"ש — כן (חניון תת-קרקעי: נכנס לאט ואיבד קליטה)
   const A2 = "8400004";
   await car(A2, { motion: "driving", at: off(S1, 80), m: 600, speed: 15 });
@@ -542,6 +559,7 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   assert.deepEqual([await own(a1), await own(b1)], ["TG1A", "TG1B"], "בלי הכלל — כל אחד היה מקבל אתר אחר");
   await show("8700001", "8700002");
   // ⚠️ הרכב שליד B נכנס ראשון: הסנכרון עובר עליו קודם, וכך נבדק "הקרוב למרכז" ולא רק "מי שהגיע ראשון"
+  await drove(["8700001", "8700002"], 899);
   await car("8700002", { motion: "parking", at: b1, m: 900 });
   await car("8700001", { motion: "parking", at: a1, m: 900 });
   await track(900);
@@ -557,9 +575,11 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   const P2 = await pair(2, { lat: 32.33, lon: 34.95 });
   const c2 = off(P2.a, 0, 45), d2 = off(P2.a, 0, -5);
   await show("8700003", "8700004");
+  await drove(["8700003"], 909);
   await car("8700003", { motion: "parking", at: c2, m: 910 });
   await track(910);
   assert.equal(await openVisit("8700003"), "TG2B", "לבד — האתר הקרוב אליו");
+  await drove(["8700004"], 914);
   await car("8700003", { motion: "parking", at: c2, m: 915 });
   await car("8700004", { motion: "parking", at: d2, m: 915 });
   await track(915);
@@ -574,6 +594,7 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   await sup(`INSERT INTO tech_dispatches (client_id, technician_id, site_id, site_code, site_name, created_by)
              VALUES (gen_random_uuid(), $1, $2, $3, $4, 'רכז')`, [techE, siteB.id, siteB.code, siteB.site_name]);
   try {
+    await drove(["8700005", "8700006"], 919);
     await car("8700006", { motion: "parking", at: f3, m: 920 });
     await car("8700005", { motion: "parking", at: e3, m: 920 });
     await track(920);
@@ -595,6 +616,7 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   const P4 = await pair(4, { lat: 32.39, lon: 34.95 });
   const g4 = off(P4.a, 0, -60), h4 = off(P4.a, 0, 60);          // 120 מ' ביניהם
   await show("8700007", "8700008");
+  await drove(["8700007", "8700008"], 924);
   await car("8700007", { motion: "parking", at: g4, m: 925 });
   await car("8700008", { motion: "parking", at: h4, m: 925 });
   await track(925);
@@ -605,9 +627,11 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   // J ליד A (20 מ', B ב-30); I ו-K ליד B, 50–55 מ' מ-J. אילו נספרו — המרכז היה ליד B, ו-J היה עובר ל-B.
   const j5 = off(P5.a, 0, 20), i5 = off(P5.a, 0, 70), k5 = off(P5.a, 0, 75);
   await show("8700009", "8700010");
+  await drove(["8700009"], 929);
   await car("8700009", { motion: "parking", at: i5, m: 930 });
   await track(930);                                              // I לבד ב-B
   await car("8700009", { motion: "driving", at: i5, m: 935, speed: 30 });     // I נוסע עכשיו
+  await drove(["8700010", "8700011"], 934);                     // ⚠️ K נסע — רק הרשימה מוציאה אותו
   await car("8700010", { motion: "parking", at: j5, m: 935 });
   await car("8700011", { motion: "parking", at: k5, m: 935 });              // רכב משרד ליד J
   await sup(`DELETE FROM fleet_shown WHERE license_plate = '8700011'`);
@@ -620,6 +644,7 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   await site("TG7A", A7); await site("TG7C", off(A7, 0, -260));
   const q7 = off(A7, 0, -100), r7 = off(A7, 0, -190);
   await show("8700014", "8700015");
+  await drove(["8700014", "8700015"], 944);
   await car("8700014", { motion: "parking", at: q7, m: 945 });
   await car("8700015", { motion: "parking", at: r7, m: 945 });
   await track(945);
@@ -629,8 +654,75 @@ test("שני טכנאים באותו אתר: צמודים — אותו אתר (�
   const P6 = await pair(6, { lat: 32.45, lon: 34.95 });
   const l6 = off(P6.a, 0, -100);                                 // 100 מ' מ-A — בטווח (150)
   await show("8700012", "8700013");
+  await drove(["8700012", "8700013"], 939);
   await car("8700012", { motion: "parking", at: l6, m: 940 });
   await car("8700013", { motion: "parking", at: off(P6.a, 0, -170), m: 940 });   // 170 מ' מ-A (מחוץ ל-150), 70 מ' מ-L — שכן
   await track(940);
   assert.equal(await openVisit("8700013"), null, "בלי אתר בטווח — לא 'באתר', גם עם שכן באתר");
+
+  // 8 — שכן שלא נסע היום אינו שכן (הוא גם לא "באתר"). Y ליד A (5 מ'); X חונה מהבוקר בלי לזוז, 95 מ' ממנו ליד B.
+  // אילו X נספר — המרכז (42.5 מ' מ-A, 7.5 מ' מ-B) היה מעביר את Y ל-B.
+  const P8 = await pair(8, { lat: 32.51, lon: 34.95 });
+  const y8 = off(P8.a, 0, -5), x8 = off(P8.a, 0, 90);
+  await show("8700016", "8700017");
+  await drove(["8700016"], 949);
+  await car("8700016", { motion: "parking", at: y8, m: 950 });
+  await car("8700017", { motion: "parking", at: x8, m: 950 });
+  await track(950);
+  assert.deepEqual([await openVisit("8700016"), await openVisit("8700017")], ["TG8A", null], "שכן שלא נסע — לא מושך, וגם לא באתר");
+});
+
+// 22/10/2026 — הבעלת, על רכב שחנה ליד אתר מאז תחילת המעקב ונרשם "באתר" 22 שעות עם 0 ק"מ: "אם הוא לא נוסע — אל תכתוב שהוא
+// באתר, כנראה הוא גר שם". באתר רק לרכב שנסע היום (app.vehicle_moved_today). הימים: 11/11 (דקות 960–2399) ו-12/11.
+test("באתר רק לרכב שנסע היום: חונה מהבוקר — לא; מנוע דולק בלי לזוז — לא; מד מרחק שהתקדם — כן; בחצות — נסגר עד שזז", { skip }, async () => {
+  const D1 = "2026-11-11";
+  const onScreen = async (plate) => (await user(MGR, `SELECT public.vehicles_live_list() j`))[0].j.vehicles.find((x) => x.plate === plate);
+
+  // A — חונה ליד VS1 מתחילת היום ולא זז: לא ביקור, ובמסך לא "באתר". נוסע ומגיע — כן.
+  const A = "8800001";
+  for (let m = 1000; m <= 1005; m++) { await car(A, { motion: "parking", at: off(S1, 20), m, odo: 500 }); await track(m); }
+  assert.equal((await visits(A)).length, 0, "לא נסע היום — לא ביקור");
+  assert.equal((await dayRow(A, D1)).last_kind, "park", "בציר — חונה, לא באתר");
+  assert.equal((await onScreen(A)).at_site, null, "ובמסך לא 'באתר'");
+  await car(A, { motion: "driving", at: HOME, m: 1006, speed: 30, odo: 500 });
+  await track(1006);
+  for (let m = 1007; m <= 1010; m++) { await car(A, { motion: "parking", at: off(S1, 20), m, odo: 500 }); await track(m); }
+  const va = await visits(A);
+  assert.deepEqual([va.length, va[0].site_code, iso(va[0].started_at), va[0].ended_at], [1, "VS1", iso(T(1007)), null], "נסע והגיע — ביקור");
+  assert.equal((await onScreen(A)).at_site.code, "VS1");
+
+  // B — מנוע דולק ליד האתר בלי לזוז (חימום מנוע בבית) ואז כיבוי: אינו "נסע היום", ואינו באתר
+  const B = "8800002";
+  for (let m = 1020; m <= 1025; m++) { await car(B, { motion: "idle", at: off(S1, 40), m, odo: 700 }); await track(m); }
+  await car(B, { motion: "parking", at: off(S1, 40), m: 1026, odo: 700 });
+  await track(1026);
+  assert.equal((await visits(B)).length, 0, "מנוע דולק בלי לזוז — לא נסיעה, ולכן לא ביקור");
+  assert.equal((await dayRow(B, D1)).max_speed, null);
+
+  // C — הנסיעה נפלה בין שתי דגימות (בלי דגימה של "נוסע"), אבל מד המרחק התקדם: נסע
+  const C = "8800003";
+  await car(C, { motion: "parking", at: HOME, m: 1030, odo: 100 });
+  await track(1030);
+  await car(C, { motion: "parking", at: off(S1, 30), m: 1033, odo: 102 });
+  await track(1033);
+  assert.deepEqual((await visits(C)).map((x) => x.site_code), ["VS1"], "מד המרחק התקדם — נסע");
+
+  // D — קריאת לילה: נסע ב-23:45, באתר מ-23:50. בחצות היום מתחלף והוא עוד לא זז — הביקור נסגר בדגימה האחרונה של אתמול,
+  // ולא נפתח מחדש עד שהוא נוסע.
+  const D = "8800004";
+  await car(D, { motion: "driving", at: HOME, m: 2385, speed: 40, odo: 900 });
+  await track(2385);
+  for (let m = 2390; m <= 2399; m++) { await car(D, { motion: "parking", at: off(S1, 40), m, odo: 905 }); await track(m); }
+  assert.equal((await visits(D)).filter((x) => !x.ended_at).length, 1, "לפני חצות — באתר");
+  for (const m of [2401, 2405]) { await car(D, { motion: "parking", at: off(S1, 40), m, odo: 905 }); await track(m); }
+  let vd = await visits(D);
+  assert.deepEqual(vd.map((x) => [x.site_code, iso(x.ended_at)]), [["VS1", iso(T(2399))]], "אחרי חצות, בלי לזוז — נסגר");
+  assert.equal((await onScreen(D)).at_site, null);
+  // (אחרי יותר מ-15 דקות מסוף הביקור — אחרת החזרה פותחת מחדש את אותו ביקור, כרגיל)
+  await car(D, { motion: "driving", at: HOME, m: 2420, speed: 40, odo: 905 });
+  await track(2420);
+  for (let m = 2422; m <= 2425; m++) { await car(D, { motion: "parking", at: off(S1, 40), m, odo: 910 }); await track(m); }
+  vd = await visits(D);
+  assert.deepEqual(vd.map((x) => [x.site_code, iso(x.started_at), x.ended_at && iso(x.ended_at)]),
+    [["VS1", iso(T(2390)), iso(T(2399))], ["VS1", iso(T(2422)), null]], "נסע וחזר — ביקור חדש ביום החדש");
 });

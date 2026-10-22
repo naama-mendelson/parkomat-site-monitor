@@ -657,8 +657,10 @@ BEGIN
                                                        'name', pa.name) END,
            -- עד 3 אתרים בטווח 1.5 ק"מ מהמיקום (האחרון שידוע), הקרוב ראשון: [{code, name, m, approx}]
            'near', app.near_sites(v.lat, v.lon),
-           -- עומד ליד אתר שלנו (חונה, מנוע דולק, או השתתק שם): {site_id, code, name, m, approx}; בנסיעה — NULL
-           'at_site', CASE WHEN app.vehicle_may_be_at_site(s.state, v.motion, v.speed) THEN app.vehicle_site(v.license_plate, v.lat, v.lon) END,
+           -- עומד ליד אתר שלנו (חונה, מנוע דולק, או השתתק שם): {site_id, code, name, m, approx}; בנסיעה — NULL.
+           -- ⚠️ ורק אם נסע היום (22/10/2026) — "היום" של הסנכרון שלו, כמו המצב (synced_at ולא now())
+           'at_site', CASE WHEN app.vehicle_may_be_at_site(s.state, v.motion, v.speed)
+                           THEN app.vehicle_site(v.license_plate, v.lat, v.lon, COALESCE(v.synced_at, now())) END,
            -- שם הטכנאי מלוח הרכז, כשמשויך לרכב (21/10/2026): כדי שהחיפוש, "צריכים טכנאי" והמפה יציגו את אותו שם כמו הכרטיס
            -- והאיקון בלוח — ולא את הכינוי באיתוראן. NULL בלי שיוך.
            'tech', (SELECT x.display_name FROM technicians x WHERE x.plate = v.license_plate AND x.is_active ORDER BY x.id LIMIT 1),

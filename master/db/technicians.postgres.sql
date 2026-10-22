@@ -1491,6 +1491,11 @@ BEGIN
      WHERE t.is_active AND t.plate IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM vehicle_visits o
                         WHERE o.license_plate = t.plate AND o.site_id = x.site_id AND o.ended_at IS NULL)
+       -- ⚠️ 22/10/2026: הרכב עדיין בטווח האתר — לא יצא, גם כשהביקור נסגר. "באתר" רק לרכב שנסע היום, ולכן ביקור שחוצה
+       -- חצות (קריאת לילה) נסגר בחצות בלי שהטכנאי זז; בלי זה המשימה הבאה הייתה מתחילה, עם צפצוף, כשהוא עוד באתר.
+       AND NOT EXISTS (SELECT 1 FROM vehicles_live l JOIN sites s ON s.id = x.site_id
+                        WHERE l.license_plate = t.plate AND l.lat IS NOT NULL AND s.lat IS NOT NULL
+                          AND app.geo_distance_m(l.lat, l.lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision))
   LOOP
     PERFORM 1 FROM technicians WHERE id = r.tech_id FOR UPDATE;
     SELECT * INTO d FROM tech_dispatches WHERE id = r.disp_id FOR UPDATE;

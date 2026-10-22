@@ -192,12 +192,28 @@ export function weekBars(stats) {
   });
 }
 
-/** סיכום השבוע: { km, visits, days } — רק ימים שנאספו. */
+/** סיכום השבוע: { km, visits, days, since, full } — רק ימים שנאספו. since = היום הראשון שנאסף; full = כל שבעת הימים. */
 export function weekTotals(stats) {
   const week = Array.isArray(stats?.week) ? stats.week : [];
   const tracked = week.filter((d) => d.tracked);
   const km = tracked.reduce((s, d) => s + (Number(d.km) || 0), 0);
-  return { km: tracked.length ? Math.round(km) : null, visits: tracked.reduce((s, d) => s + (Number(d.visits) || 0), 0), days: tracked.length };
+  return {
+    km: tracked.length ? Math.round(km) : null, visits: tracked.reduce((s, d) => s + (Number(d.visits) || 0), 0), days: tracked.length,
+    since: tracked[0]?.day ?? null, full: week.length === 7 && tracked.length === 7,
+  };
+}
+
+// הכותרת של שורת השבוע. ⚠️ 22/10/2026 — הבעלת, מול "7 הימים האחרונים" יום אחרי שהמעקב התחיל: "מה זה אומר 7 הימים
+// האחרונים, רק מאתמול יש לנו איתוראן". עד שיש שבעה ימים — "מאז 21/10".
+export function weekLabel(tot) {
+  if (tot?.full) return "7 הימים האחרונים";
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(tot?.since ?? "");
+  return m ? `מאז ${m[2]}/${m[1]}` : "";
+}
+
+// "ביקור אחד" / "3 ביקורים"
+export function visitsText(n) {
+  return Number(n) === 1 ? "ביקור אחד" : `${Number(n) || 0} ביקורים`;
 }
 
 /** הביקורים של היום, לתצוגה: [{code, label, from, to, open, dur}] */

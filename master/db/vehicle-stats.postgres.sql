@@ -107,6 +107,31 @@ AS $$
 $$;
 
 -- ============================================================
+-- "באתר" רק לרכב שנסע היום (22/10/2026)
+-- ============================================================
+-- הבעלת, על רכב שחנה ליד אתר מאז שהמעקב התחיל (21/10 11:09) ונרשם "באתר" 22 שעות, ליד "0 ק"מ היום" ו"יצא לדרך —":
+-- "אם הוא לא נסע, איך הוא הגיע לאתר? אם הוא לא נוסע — אל תכתוב שהוא באתר, כנראה הוא גר שם". נמדד באותו בוקר: שלושה רכבים
+-- חנו ליד אותו אתר מאז תחילת המעקב בלי לזוז, ורכב רביעי ליד אתר אחר.
+-- נסע היום = דגימה במצב "נוסע" עם מהירות (max_speed — נרשם רק אז), או שמד המרחק התקדם (נסיעה קצרה שנפלה בין שתי דגימות).
+-- ⚠️ לא first_move: הוא נרשם גם על מנוע דולק שלא ליד אתר ("רמזור"), ורכב שחימם מנוע בבית ליד אתר היה נעשה "נסע היום",
+-- ובדגימה הבאה "באתר". ⚠️ ומד המרחק בק"מ שלמים, ולכן לבד הוא לא מספיק.
+-- היום = היום בישראל, כמו המספרים בכרטיס: הכרטיס לא יאמר "באתר" ליד "לא יצא היום".
+-- המחיר: ביקור שחוצה חצות (קריאת לילה) נסגר בחצות עד שהרכב זז; app.tech_leave_scan לא רואה בזה יציאה כל עוד הרכב בטווח
+-- האתר. ⚠️ יחידה שלא מדווחת מהירות ולא מד מרחק (נמדד: קטנוע אחד שאינו ברשימת רכבי השירות) לא תהיה "באתר" לעולם.
+CREATE OR REPLACE FUNCTION app.vehicle_moved_today(p_plate text, p_now timestamptz DEFAULT now())
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  -- ⚠️ גם מד המרחק של עכשיו (vehicles_live), ולא רק odo_last: vehicles_track בודק "באתר" לפני שהוא מעדכן את שורת היום,
+  -- ונסיעה שנפלה בין שתי דגימות הייתה נספרת רק דגימה אחת אחרי ההגעה.
+  SELECT EXISTS (SELECT 1 FROM vehicle_days d LEFT JOIN vehicles_live l ON l.license_plate = d.license_plate
+                  WHERE d.license_plate = p_plate AND d.day = (p_now AT TIME ZONE 'Asia/Jerusalem')::date
+                    AND (d.max_speed IS NOT NULL OR d.odo_last > d.odo_start OR l.odometer > d.odo_start))
+$$;
+REVOKE ALL ON FUNCTION app.vehicle_moved_today(text, timestamptz) FROM PUBLIC;
+
+-- ============================================================
 -- שני טכנאים באותו אתר (22/10/2026)
 -- ============================================================
 -- הבעלת: "יכול להיות שיהיו שני טכנאים באותו אתר. לכן אם יש שני טכנאים ממש קרובים לאתר מסוים — שים אותם באותו אתר".
@@ -122,22 +147,28 @@ $$;
 --   3. אחרת — הקרוב אליו (app.site_at).
 -- המקום האחד לכלל: הביקורים (vehicles_track) והמסך (vehicle_json → at_site), ולכן גם "טכנאי באתר" בלוח.
 -- ⚠️ שכן = רכב ברשימת רכבי השירות (fleet_shown): רכב משרד שחונה ליד לא מושך טכנאי לאתר אחר.
+-- ⚠️ ורכב שלא נסע היום אינו באתר בכלל (app.vehicle_moved_today) — גם לא כשכן.
 CREATE OR REPLACE FUNCTION app.fleet_together_m() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 100 $$;
 
-CREATE OR REPLACE FUNCTION app.vehicle_site(p_plate text, p_lat double precision, p_lon double precision)
+-- p_now: הדגימה (vehicles_track מעביר את שלו) — "נסע היום" נמדד ליום שלה
+DROP FUNCTION IF EXISTS app.vehicle_site(text, double precision, double precision);
+CREATE OR REPLACE FUNCTION app.vehicle_site(p_plate text, p_lat double precision, p_lon double precision,
+                                            p_now timestamptz DEFAULT now())
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 SET search_path = public, app, pg_temp
 AS $fn$
 DECLARE
-  v_own  jsonb := app.site_at(p_lat, p_lon);
+  v_own  jsonb;
   v_site jsonb;
   v_near text[];
   v_lat  double precision;
   v_lon  double precision;
   v_r    double precision := app.fleet_together_m();
 BEGIN
+  IF NOT app.vehicle_moved_today(p_plate, p_now) THEN RETURN NULL; END IF;
+  v_own := app.site_at(p_lat, p_lon);
   IF v_own IS NULL THEN RETURN NULL; END IF;
 
   -- 1. המשימה הפתוחה של הטכנאי שלו, לאתר שבטווח
@@ -161,6 +192,7 @@ BEGIN
      AND app.geo_distance_m(p_lat, p_lon, l.lat, l.lon) <= v_r
      AND app.fleet_shown(l.license_plate)
      AND app.vehicle_may_be_at_site(app.vehicle_state(l.motion, l.located_at, l.synced_at), l.motion, l.speed)
+     AND app.vehicle_moved_today(l.license_plate, p_now)
      AND app.site_at(l.lat, l.lon) IS NOT NULL;
   IF v_near IS NULL THEN RETURN v_own; END IF;
 
@@ -213,7 +245,7 @@ BEGIN
   RETURN v_own;
 END
 $fn$;
-REVOKE ALL ON FUNCTION app.vehicle_site(text, double precision, double precision) FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.vehicle_site(text, double precision, double precision, timestamptz) FROM PUBLIC;
 
 -- ============================================================
 -- הדגימה — פעם בסנכרון, לכל רכב שהגיע בו
@@ -254,8 +286,8 @@ BEGIN
             WHERE synced_at > p_now - interval '2 minutes' AND synced_at <= p_now + interval '1 minute' LOOP
     v_state := app.vehicle_state(r.motion, r.located_at, r.synced_at);
     -- ⚠️ השתתק — נחשב עמידה רק אם הדיווח האחרון היה איטי או שלא נסע (app.vehicle_may_be_at_site, 21/10/2026)
-    -- ⚠️ איזה אתר — app.vehicle_site: משימה פתוחה, ושני טכנאים צמודים באותו אתר (22/10/2026)
-    v_at := CASE WHEN app.vehicle_may_be_at_site(v_state, r.motion, r.speed) THEN app.vehicle_site(r.license_plate, r.lat, r.lon) END;
+    -- ⚠️ איזה אתר — app.vehicle_site: משימה פתוחה, ושני טכנאים צמודים באותו אתר; ורק לרכב שנסע היום (22/10/2026)
+    v_at := CASE WHEN app.vehicle_may_be_at_site(v_state, r.motion, r.speed) THEN app.vehicle_site(r.license_plate, r.lat, r.lon, p_now) END;
     v_kind := app.vehicle_kind(v_state, v_at IS NOT NULL);
     v_site := v_at ->> 'code';
     v_speed := CASE WHEN v_state = 'driving' AND r.speed BETWEEN 1 AND 250 THEN r.speed END;
