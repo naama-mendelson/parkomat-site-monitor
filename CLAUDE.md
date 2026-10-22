@@ -3958,7 +3958,14 @@ replaces the TOTP app**, whose screens were deleted (nobody had enrolled; `auth.
   `loginCodeDirect` / `auth` / `useAuth`), 1280 light and 390 dark. It found two real defects before any user did: a
   `maxLength` that cut a pasted subject line before its digits, and the "יציאה" link at 3.7:1 in dark.
 
-**To go live, in this order** (nothing is applied or deployed yet):
+**Status 22/10/2026** (the owner: *"אני רוצה שיהיה אימות דו שלבי… המייל של הדשבורד זה dashboard@parkomat.co.il"*):
+step 1 is done (the SQL went out with the Ituran apply; `login_codes` / `login_code_sends` and the four `login_code_*`
+functions are in production), step 3 is done (`send-login-code` v1 deployed, `verify_jwt` on; no token → 401, the anon
+key → its own "אימות נכשל" 401), step 4 is done (the screen has been in the live bundle since 20/10). **The only blocker is
+step 2**: `MS_TENANT_ID` / `MS_CLIENT_ID` / `MS_CLIENT_SECRET` are not in the Edge Function secrets — it needs whoever
+administers Parkomat's Microsoft 365. The flag is absent, so nobody is asked for a code.
+
+**To go live, in this order** (as written 20/10):
 1. SQL (`apply-sql` dry run: 21 gaps — 10 new functions, 8 bodies, 3 indexes; the two tables do not show, `--apply` creates
    them). With the flag absent nothing changes for anyone.
 2. The M365 admin: a mailbox `dashboard@parkomat.co.il` (a shared mailbox is enough), an Entra app registration with the
