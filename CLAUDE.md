@@ -4331,6 +4331,10 @@ UI.
   covers all of the board ("צא ל:", "טלפון", the next task), not the phone alone, she answered "כן, תוסיף אותם אתה". The
   list is now three accounts. It was written by a guarded update (only if the value was still the owner's account alone).
   There is no separate "phone only" permission.
+- **Later on 22/10: eyal@ was added** (the owner: *"אני רוצה שגם אצל אייל יהיה את האופציה לעשות את ה-QR לטכנאים"*). He is a
+  manager, so only the pilot list was missing. It was appended by a guarded update (only if the list still had exactly
+  the three accounts), and the list is now four. He sees "צא ל:", "טלפון" and the next task the next time he opens
+  "טכנאים".
 - ⚠️ **The pilot first named the wrong account.** It got the email the session runs under, not the one the owner signs in
   to the dashboard with, so she saw no "צא ל:". Measured from `auth.sessions` and moved to her dashboard account the same
   morning. Check who actually signs in before setting a pilot.
