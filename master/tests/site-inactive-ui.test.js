@@ -17,9 +17,9 @@ test("חלוקה: הלא-פעילים בסוף, והסדר בתוך כל חלק 
 });
 
 test("שורת הכרטיס: מתי (היום בישראל), ע״י מי (בלי הדומיין), ולמה; פעיל — ריק", () => {
-  const s = { inactive_at: "2026-10-21T22:30:00.000Z", inactive_by: "dana@parkomat.co.il", inactive_reason: "בשיפוץ" };
+  const s = { inactive_at: "2026-10-21T22:30:00.000Z", inactive_by: "test-editor-1@parkomat.co.il", inactive_reason: "בשיפוץ" };
   assert.equal(inactiveSince(s), "מ-22/10", "01:30 בישראל — כבר 22/10");
-  assert.equal(inactiveLine(s), "לא פעיל מ-22/10 ע״י dana · בשיפוץ");
+  assert.equal(inactiveLine(s), "לא פעיל מ-22/10 ע״י test-editor-1 · בשיפוץ");
   assert.equal(inactiveLine({ ...s, inactive_by: "דנה עורכת", inactive_reason: null }), "לא פעיל מ-22/10 ע״י דנה עורכת");
   assert.equal(inactiveLine({ ...s, inactive_by: null }), "לא פעיל מ-22/10 · בשיפוץ");
   assert.equal(inactiveLine({ inactive_at: "x" }), "לא פעיל", "תאריך לא תקין — בלי 'מ-'");
