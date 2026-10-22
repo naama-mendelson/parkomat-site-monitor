@@ -4600,7 +4600,7 @@ technicians yet ("לא עכשיו").
   3. Push.
   - ⚠️ A beep to a real technician's phone reaches a person, and it needs its own yes.
 
-### A reminder when he starts the vehicle (built 22/10/2026, NOT applied)
+### A reminder when he starts the vehicle (built 22/10/2026; SQL applied)
 
 The owner: *"כשהוא מפעיל את הרכב, אם יש לו משימה לעשות — תזכיר לו שוב לאן הוא צריך לנסוע ומה המשימה"*.
 
@@ -5387,7 +5387,7 @@ The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, wher
   run; check `settings` after `--apply`. ✅ Applied 22/10/2026 with the statistics (above): `tech_parking_sites` = `3488`,
   no open visit at 3488 afterwards. The one past 3488 visit was **not** deleted (asked, no answer yet).
 
-## "לא פעיל" — sites that are not active go to the end of the board (built 22/10/2026, NOT applied, NOT pushed)
+## "לא פעיל" — sites that are not active go to the end of the board (built 22/10/2026; applied and pushed)
 
 A request from the field that the owner passed on: sites that are not active but show as "תקלה" or "תחזוקה" should drop to
 the bottom of the list, under the heading "לא פעיל". The examples were ברנדייס 13 (1114, in maintenance since the morning
@@ -5437,6 +5437,13 @@ maintenance window was opened for either.
 
 **Deploy:** SQL first. The dry run shows the new function; the three columns do not show, so check them after `--apply`.
 Then push. A new bundle against the old SQL: the board shows nothing (no `inactive_at`), and the button gets a 404.
+
+✅ **Deployed 22/10/2026 at the owner's word ("אוקי תעשה את זה"), with the ignition reminder and the phone popup.** SQL: 9 gaps
+(6 new functions, 3 bodies), 12 s, then "הייצור זהה לקוד". Checked read-only right after: the three `sites` columns and the four
+`tech_dispatches` columns exist, `site_inactive_set` is closed to anon, the Ituran sync ran 38 s after the apply with
+`stats_error` / `advance_error` NULL, and 89 of 91 agents were beating. Push 2c171d5. The live bundle has `op-inactive` /
+`site_inactive_set`, and the `TechPhone` chunk has `tp-pop`. Nothing is marked yet: 1114 and 1311 are for the owner or an
+editor to mark.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
