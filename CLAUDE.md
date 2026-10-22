@@ -5009,6 +5009,60 @@ The owner: *"כשהוא יוצא מהאתר, אם יש לו משימה נוספ�
   and the `follows` / `advance_error` columns do not show; check `information_schema` after `--apply`.
 - Then push. An old bundle against the new SQL simply never shows a next task.
 
+### Two technicians at the same site (built 22/10/2026, NOT deployed)
+
+The owner: *"יכול להיות שיהיו שני טכנאים באותו אתר. לכן אם יש שני טכנאים ממש קרובים לאתר מסוים — שים אותם באותו אתר"*.
+
+**Measured first, read-only.** Every vehicle got the site nearest to it, so two technicians at one place between two
+adjacent sites were split:
+- the morning of 22/10: two vehicles 33 m apart, at 1163 and 1343 (sites 48 m apart) for 3 minutes;
+- 21/10: two vehicles at 3458 and 3461 (56 m apart) for almost 3 hours.
+
+40 site pairs lie within 100 m of each other, several at the same point (approximate street geocoding).
+
+**`app.vehicle_site(plate, lat, lon)`** (`vehicle-stats.postgres.sql`) is now the one place that decides **which** site a
+standing vehicle is at. It is used by the visits (`vehicles_track`) and by the screen (`vehicle_json.at_site`), so also by
+"טכנאי באתר" on the board. **Whether** the vehicle is at a site does not change: a vehicle with no site within its own
+radius stays without one, even next to a neighbor at a site. The rules, in order:
+1. **The vehicle's technician has an open task at a site within its reach** — that site. This also keeps the next task's
+   "יצא מהאתר" measured against the right site.
+2. **Neighbors:** other standing service vehicles (`fleet_shown`) within `app.fleet_together_m()` (100 m) that have a
+   site within their own reach.
+   - **(a)** A neighbor's open task at a site within reach of both — that site.
+     ⚠️ Without this step the sync's processing order decided: whoever was processed first opened a visit at the site
+     nearest to it, and the one sent to the adjacent site stayed alone there.
+   - **(b)** Otherwise, the open visit that started first, his own or a neighbor's, at a site within his reach. Whoever
+     arrived first decides, and the second joins.
+   - **(c)** Otherwise, the site nearest to the midpoint between them, if it is within his reach.
+3. **Otherwise** — the nearest (`app.site_at`). Office cars, and neighbors who are driving, never pull.
+
+The `m` returned is the distance from this vehicle to the chosen site.
+
+**Preview in production** (the functions created inside a rolled-back transaction): the 6 standing service vehicles at a
+site all keep the site they have. The 1343 pair is already together at that moment. The rule prevents the splits measured
+above; it moves nobody now.
+
+**Tests:** `vehicle-stats.test.js` (+1), one pair of sites 50 m apart per case, far from the others:
+- coming together picks the site nearest the midpoint, even when the vehicle near the other site is processed first;
+- stable over minutes, and on screen too;
+- whoever arrived first decides;
+- an open task decides for both, and for a lone vehicle;
+- 120 m apart is not "close";
+- a driving neighbor and an office car do not pull;
+- no site within reach stays none;
+- a midpoint site outside his reach is not taken.
+
+Full suite 1405/1405.
+
+**SQL mutations (isolated copy, `mut2110/run-mut20.cjs`): 11 of 12 caught.**
+- Three survived at first, and their cases were added or sharpened: a driving neighbor and an office car, whose geometry
+  could not change the result, and a site out of reach.
+- The survivor, "a neighbor with no site in reach counts", is equivalent in practice. With a 150 m site radius and a
+  100 m neighbor radius, such a neighbor cannot pull the midpoint to another site within reach.
+
+**Deploy:** SQL only. The dry run shows 4 gaps: 2 new functions and the bodies of `vehicle_json` and `vehicles_track`.
+There is no dashboard change.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

@@ -520,3 +520,117 @@ test("בדיקת הבאגים (21/10): שם הטכנאי מלוח הרכז מג�
     await sup(`DELETE FROM vehicles_live WHERE license_plate LIKE '85000%'`);
   }
 });
+
+// 22/10/2026 — שני טכנאים צמודים לשני אתרים צמודים: באותו אתר (app.vehicle_site). כל זוג בזוג אתרים משלו, 50 מ' ביניהם,
+// רחוק מהשאר, כדי שזוג אחד לא יהיה "שכן" של אחר.
+test("שני טכנאים באותו אתר: צמודים — אותו אתר (מרכז / מי שהגיע ראשון / משימה פתוחה); רחוקים, נוסע, רכב משרד, בלי אתר בטווח — כל אחד לעצמו", { skip }, async () => {
+  const now = new Date().toISOString();
+  const site = async (code, p) => (await sup(`INSERT INTO sites (code, site_name, status, registered_at, lat, lon, geo_source, geo_precision, geo_set_at, geo_set_by)
+      VALUES ($1, $2, 'ready', $3, $4, $5, 'geocoded', 'house', $3, 'בדיקה') RETURNING id`, [code, `אתר צמוד ${code}`, now, p.lat, p.lon]))[0].id;
+  const pair = async (n, base) => {
+    const a = base, b = off(base, 0, 50);           // שני אתרים, 50 מ' ביניהם
+    await site(`TG${n}A`, a); await site(`TG${n}B`, b);
+    return { a, b };
+  };
+  const show = (...plates) => sup(`INSERT INTO fleet_shown (license_plate) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`, [plates]);
+  const openVisit = async (plate) => (await sup(`SELECT site_code FROM vehicle_visits WHERE license_plate = $1 AND ended_at IS NULL`, [plate]))[0]?.site_code ?? null;
+  const own = async (p) => (await sup(`SELECT app.site_at($1, $2) ->> 'code' c`, [p.lat, p.lon]))[0].c;
+
+  // 1 — באים יחד, בלי ביקור פתוח: האתר הקרוב למרכז ביניהם (15 מ' מ-A, 35 מ' מ-B) לשניהם
+  const P1 = await pair(1, { lat: 32.3, lon: 34.95 });
+  const a1 = off(P1.a, 0, -10), b1 = off(P1.a, 0, 40);          // 50 מ' ביניהם; a1 ליד A, b1 ליד B
+  assert.deepEqual([await own(a1), await own(b1)], ["TG1A", "TG1B"], "בלי הכלל — כל אחד היה מקבל אתר אחר");
+  await show("8700001", "8700002");
+  // ⚠️ הרכב שליד B נכנס ראשון: הסנכרון עובר עליו קודם, וכך נבדק "הקרוב למרכז" ולא רק "מי שהגיע ראשון"
+  await car("8700002", { motion: "parking", at: b1, m: 900 });
+  await car("8700001", { motion: "parking", at: a1, m: 900 });
+  await track(900);
+  assert.deepEqual([await openVisit("8700001"), await openVisit("8700002")], ["TG1A", "TG1A"], "שניהם באותו אתר");
+  for (const m of [901, 902, 903]) { await car("8700001", { motion: "parking", at: a1, m }); await car("8700002", { motion: "parking", at: b1, m }); await track(m); }
+  assert.deepEqual([(await visits("8700001")).length, (await visits("8700002")).length], [1, 1], "יציב — ביקור אחד לכל אחד");
+  // וגם במסך: at_site של שניהם
+  const list = (await user(MGR, `SELECT public.vehicles_live_list() j`))[0].j.vehicles;
+  assert.deepEqual(["8700001", "8700002"].map((p) => list.find((v) => v.plate === p).at_site?.code), ["TG1A", "TG1A"]);
+  assert.ok(Math.abs(list.find((v) => v.plate === "8700002").at_site.m - 40) <= 2, "המרחק — מהרכב שלו לאתר שנבחר");
+
+  // 2 — מי שהגיע ראשון קבע: C לבד ליד B; D מגיע אחריו ליד A — מצטרף ל-B
+  const P2 = await pair(2, { lat: 32.33, lon: 34.95 });
+  const c2 = off(P2.a, 0, 45), d2 = off(P2.a, 0, -5);
+  await show("8700003", "8700004");
+  await car("8700003", { motion: "parking", at: c2, m: 910 });
+  await track(910);
+  assert.equal(await openVisit("8700003"), "TG2B", "לבד — האתר הקרוב אליו");
+  await car("8700003", { motion: "parking", at: c2, m: 915 });
+  await car("8700004", { motion: "parking", at: d2, m: 915 });
+  await track(915);
+  assert.deepEqual([await openVisit("8700003"), await openVisit("8700004")], ["TG2B", "TG2B"], "השני מצטרף לאתר של הראשון");
+
+  // 3 — משימה פתוחה קובעת לשניהם: E ליד A אבל נשלח ל-B; F ליד A בלי משימה — שניהם ב-B, בכל סדר שהסנכרון עובר
+  const P3 = await pair(3, { lat: 32.36, lon: 34.95 });
+  const e3 = off(P3.a, 0, -10), f3 = off(P3.a, 0, 5);
+  await show("8700005", "8700006");
+  const techE = (await sup(`INSERT INTO technicians (display_name, plate, is_active, created_by) VALUES ('טכנאי צמוד', '8700005', true, 'בדיקה') RETURNING id`))[0].id;
+  const siteB = (await sup(`SELECT id, code, site_name FROM sites WHERE code = 'TG3B'`))[0];
+  await sup(`INSERT INTO tech_dispatches (client_id, technician_id, site_id, site_code, site_name, created_by)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, 'רכז')`, [techE, siteB.id, siteB.code, siteB.site_name]);
+  try {
+    await car("8700006", { motion: "parking", at: f3, m: 920 });
+    await car("8700005", { motion: "parking", at: e3, m: 920 });
+    await track(920);
+    assert.deepEqual([await openVisit("8700005"), await openVisit("8700006")], ["TG3B", "TG3B"], "המשימה של E קובעת גם ל-F");
+    // 3ב — לבד, בלי שכן: ליד A, אבל נשלח ל-B — ב-B
+    await car("8700006", { motion: "driving", at: HOME, m: 921, speed: 40 });
+    await car("8700005", { motion: "parking", at: e3, m: 921 });
+    await track(921);
+    await sup(`UPDATE vehicle_visits SET ended_at = $1 WHERE license_plate = '8700005' AND ended_at IS NULL`, [T(921)]);
+    await car("8700005", { motion: "parking", at: e3, m: 922 });
+    await track(922);
+    assert.equal(await openVisit("8700005"), "TG3B", "לבד — המשימה שלו קובעת");
+  } finally {
+    await sup(`DELETE FROM tech_dispatches WHERE technician_id = $1`, [techE]);
+    await sup(`DELETE FROM technicians WHERE id = $1`, [techE]);
+  }
+
+  // 4 — רחוקים יותר מ-100 מ' — כל אחד לאתר הקרוב אליו
+  const P4 = await pair(4, { lat: 32.39, lon: 34.95 });
+  const g4 = off(P4.a, 0, -60), h4 = off(P4.a, 0, 60);          // 120 מ' ביניהם
+  await show("8700007", "8700008");
+  await car("8700007", { motion: "parking", at: g4, m: 925 });
+  await car("8700008", { motion: "parking", at: h4, m: 925 });
+  await track(925);
+  assert.deepEqual([await openVisit("8700007"), await openVisit("8700008")], ["TG4A", "TG4B"], "120 מ' — לא 'צמודים'");
+
+  // 5 — שכן שנוסע, ושכן שאינו ברשימת רכבי השירות — לא מושכים
+  const P5 = await pair(5, { lat: 32.42, lon: 34.95 });
+  // J ליד A (20 מ', B ב-30); I ו-K ליד B, 50–55 מ' מ-J. אילו נספרו — המרכז היה ליד B, ו-J היה עובר ל-B.
+  const j5 = off(P5.a, 0, 20), i5 = off(P5.a, 0, 70), k5 = off(P5.a, 0, 75);
+  await show("8700009", "8700010");
+  await car("8700009", { motion: "parking", at: i5, m: 930 });
+  await track(930);                                              // I לבד ב-B
+  await car("8700009", { motion: "driving", at: i5, m: 935, speed: 30 });     // I נוסע עכשיו
+  await car("8700010", { motion: "parking", at: j5, m: 935 });
+  await car("8700011", { motion: "parking", at: k5, m: 935 });              // רכב משרד ליד J
+  await sup(`DELETE FROM fleet_shown WHERE license_plate = '8700011'`);
+  await track(935);
+  assert.equal(await openVisit("8700010"), "TG5A", "שכן שנוסע — לא נחשב; רכב משרד — לא נחשב");
+
+  // 7 — האתר שנבחר חייב להיות בטווח שלו: שני אתרים 260 מ' זה מזה, שני רכבים 90 מ' זה מזה, כל אחד בטווח של אתר אחר.
+  // המרכז ביניהם קרוב יותר ל-C — אבל C מחוץ לטווח של Q, ולכן Q נשאר ב-A.
+  const A7 = { lat: 32.48, lon: 34.95 };
+  await site("TG7A", A7); await site("TG7C", off(A7, 0, -260));
+  const q7 = off(A7, 0, -100), r7 = off(A7, 0, -190);
+  await show("8700014", "8700015");
+  await car("8700014", { motion: "parking", at: q7, m: 945 });
+  await car("8700015", { motion: "parking", at: r7, m: 945 });
+  await track(945);
+  assert.deepEqual([await openVisit("8700014"), await openVisit("8700015")], ["TG7A", "TG7C"], "לא לאתר שמחוץ לטווח");
+
+  // 6 — "האם באתר" לא משתנה: רכב בלי אתר בטווח שלו נשאר בלי אתר, גם כשהשכן באתר
+  const P6 = await pair(6, { lat: 32.45, lon: 34.95 });
+  const l6 = off(P6.a, 0, -100);                                 // 100 מ' מ-A — בטווח (150)
+  await show("8700012", "8700013");
+  await car("8700012", { motion: "parking", at: l6, m: 940 });
+  await car("8700013", { motion: "parking", at: off(P6.a, 0, -170), m: 940 });   // 170 מ' מ-A (מחוץ ל-150), 70 מ' מ-L — שכן
+  await track(940);
+  assert.equal(await openVisit("8700013"), null, "בלי אתר בטווח — לא 'באתר', גם עם שכן באתר");
+});

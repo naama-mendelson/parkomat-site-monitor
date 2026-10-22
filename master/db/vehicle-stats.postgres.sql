@@ -107,6 +107,115 @@ AS $$
 $$;
 
 -- ============================================================
+-- שני טכנאים באותו אתר (22/10/2026)
+-- ============================================================
+-- הבעלת: "יכול להיות שיהיו שני טכנאים באותו אתר. לכן אם יש שני טכנאים ממש קרובים לאתר מסוים — שים אותם באותו אתר".
+-- נמדד לפני: בבוקר 22/10 שני רכבים עמדו 33 מ' זה מזה, ושלוש דקות אחד נרשם ב-1163 והשני ב-1343 (48 מ' בין האתרים);
+-- ב-21/10 שניים פוצלו בין 3458 ל-3461 (56 מ') כמעט שלוש שעות. כל רכב קיבל את האתר הקרוב *אליו*, ובין שני אתרים צמודים
+-- שני טכנאים באותו מקום התפצלו.
+-- הכלל, לרכב עומד שיש אתר בטווח שלו ("האם הוא באתר" לא משתנה כאן — רק "באיזה"):
+--   1. לטכנאי של הרכב יש משימה פתוחה לאתר שבטווח — האתר של המשימה. הרכז יודע לאן שלח, ו"יצא מהאתר" של המשימה הבאה
+--      נמדד מול אותו אתר.
+--   2. רכבי שירות עומדים אחרים עד app.fleet_together_m() (100 מ') ממנו, שגם להם אתר בטווח: משימה פתוחה של אחד מהם
+--      לאתר שבטווח של שניהם; אחרת הביקור הפתוח שהתחיל ראשון, אצלו או אצלם, באתר שבטווח שלו — מי שהגיע קודם קבע,
+--      והשני מצטרף. בלי ביקור פתוח — האתר הקרוב למרכז ביניהם.
+--   3. אחרת — הקרוב אליו (app.site_at).
+-- המקום האחד לכלל: הביקורים (vehicles_track) והמסך (vehicle_json → at_site), ולכן גם "טכנאי באתר" בלוח.
+-- ⚠️ שכן = רכב ברשימת רכבי השירות (fleet_shown): רכב משרד שחונה ליד לא מושך טכנאי לאתר אחר.
+CREATE OR REPLACE FUNCTION app.fleet_together_m() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 100 $$;
+
+CREATE OR REPLACE FUNCTION app.vehicle_site(p_plate text, p_lat double precision, p_lon double precision)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_own  jsonb := app.site_at(p_lat, p_lon);
+  v_site jsonb;
+  v_near text[];
+  v_lat  double precision;
+  v_lon  double precision;
+  v_r    double precision := app.fleet_together_m();
+BEGIN
+  IF v_own IS NULL THEN RETURN NULL; END IF;
+
+  -- 1. המשימה הפתוחה של הטכנאי שלו, לאתר שבטווח
+  SELECT jsonb_build_object('site_id', s.id, 'code', s.code, 'name', s.site_name,
+                            'm', round(app.geo_distance_m(p_lat, p_lon, s.lat, s.lon))::integer,
+                            'approx', s.geo_precision IN ('street', 'area'))
+    INTO v_site
+    FROM technicians t
+    JOIN tech_dispatches d ON d.technician_id = t.id AND d.ended_at IS NULL
+    JOIN sites s ON s.id = d.site_id
+   WHERE t.is_active AND t.plate = p_plate AND s.lat IS NOT NULL
+     AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
+   LIMIT 1;
+  IF v_site IS NOT NULL THEN RETURN v_site; END IF;
+
+  -- 2. שכנים: רכבי שירות עומדים עד 100 מ', שגם להם אתר בטווח
+  SELECT array_agg(l.license_plate ORDER BY l.license_plate) INTO v_near
+    FROM vehicles_live l
+   WHERE l.license_plate <> p_plate AND l.lat IS NOT NULL AND l.lon IS NOT NULL
+     AND l.lat BETWEEN p_lat - v_r / 111195.0 AND p_lat + v_r / 111195.0
+     AND app.geo_distance_m(p_lat, p_lon, l.lat, l.lon) <= v_r
+     AND app.fleet_shown(l.license_plate)
+     AND app.vehicle_may_be_at_site(app.vehicle_state(l.motion, l.located_at, l.synced_at), l.motion, l.speed)
+     AND app.site_at(l.lat, l.lon) IS NOT NULL;
+  IF v_near IS NULL THEN RETURN v_own; END IF;
+
+  -- שכן שהטכנאי שלו נשלח לאתר שבטווח של שניהם — לשם: המשימה שהרכז נתן קובעת לשניהם. ⚠️ בלי זה הסדר שבו הסנכרון עובר
+  -- על הרכבים קבע: מי שעובר ראשון פותח ביקור באתר הקרוב אליו, והשני — שנשלח לאתר הצמוד — נשאר שם לבד.
+  SELECT jsonb_build_object('site_id', s.id, 'code', s.code, 'name', s.site_name,
+                            'm', round(app.geo_distance_m(p_lat, p_lon, s.lat, s.lon))::integer,
+                            'approx', s.geo_precision IN ('street', 'area'))
+    INTO v_site
+    FROM technicians t
+    JOIN tech_dispatches d ON d.technician_id = t.id AND d.ended_at IS NULL
+    JOIN sites s ON s.id = d.site_id
+    JOIN vehicles_live l ON l.license_plate = t.plate
+   WHERE t.is_active AND t.plate = ANY (v_near) AND s.lat IS NOT NULL
+     AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
+     AND app.geo_distance_m(l.lat, l.lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
+   ORDER BY d.created_at, d.id
+   LIMIT 1;
+  IF v_site IS NOT NULL THEN RETURN v_site; END IF;
+
+  -- הביקור הפתוח שהתחיל ראשון — אצלו או אצל שכן — באתר שבטווח שלו
+  SELECT jsonb_build_object('site_id', s.id, 'code', s.code, 'name', s.site_name,
+                            'm', round(app.geo_distance_m(p_lat, p_lon, s.lat, s.lon))::integer,
+                            'approx', s.geo_precision IN ('street', 'area'))
+    INTO v_site
+    FROM vehicle_visits vv
+    JOIN sites s ON s.id = vv.site_id
+   WHERE vv.ended_at IS NULL AND (vv.license_plate = p_plate OR vv.license_plate = ANY (v_near))
+     AND s.lat IS NOT NULL
+     AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
+   ORDER BY vv.started_at, vv.id
+   LIMIT 1;
+  IF v_site IS NOT NULL THEN RETURN v_site; END IF;
+
+  -- בלי ביקור פתוח — האתר הקרוב למרכז ביניהם, אם הוא בטווח שלו
+  SELECT avg(g.lat), avg(g.lon) INTO v_lat, v_lon
+    FROM (SELECT p_lat AS lat, p_lon AS lon
+          UNION ALL SELECT l.lat, l.lon FROM vehicles_live l WHERE l.license_plate = ANY (v_near)) g;
+  v_site := app.site_at(v_lat, v_lon);
+  IF v_site IS NOT NULL THEN
+    SELECT jsonb_build_object('site_id', s.id, 'code', s.code, 'name', s.site_name,
+                              'm', round(app.geo_distance_m(p_lat, p_lon, s.lat, s.lon))::integer,
+                              'approx', s.geo_precision IN ('street', 'area'))
+      INTO v_site
+      FROM sites s
+     WHERE s.id = (v_site ->> 'site_id')::integer
+       AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision);
+    IF v_site IS NOT NULL THEN RETURN v_site; END IF;
+  END IF;
+  RETURN v_own;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.vehicle_site(text, double precision, double precision) FROM PUBLIC;
+
+-- ============================================================
 -- הדגימה — פעם בסנכרון, לכל רכב שהגיע בו
 -- ============================================================
 -- הזמן שבין הדגימה הקודמת לזו שייך למה שהרכב עשה **בקודמת** (המצב נמשך עד שהשתנה), עד 5 דקות: פער ארוך יותר (סנכרון
@@ -145,7 +254,8 @@ BEGIN
             WHERE synced_at > p_now - interval '2 minutes' AND synced_at <= p_now + interval '1 minute' LOOP
     v_state := app.vehicle_state(r.motion, r.located_at, r.synced_at);
     -- ⚠️ השתתק — נחשב עמידה רק אם הדיווח האחרון היה איטי או שלא נסע (app.vehicle_may_be_at_site, 21/10/2026)
-    v_at := CASE WHEN app.vehicle_may_be_at_site(v_state, r.motion, r.speed) THEN app.site_at(r.lat, r.lon) END;
+    -- ⚠️ איזה אתר — app.vehicle_site: משימה פתוחה, ושני טכנאים צמודים באותו אתר (22/10/2026)
+    v_at := CASE WHEN app.vehicle_may_be_at_site(v_state, r.motion, r.speed) THEN app.vehicle_site(r.license_plate, r.lat, r.lon) END;
     v_kind := app.vehicle_kind(v_state, v_at IS NOT NULL);
     v_site := v_at ->> 'code';
     v_speed := CASE WHEN v_state = 'driving' AND r.speed BETWEEN 1 AND 250 THEN r.speed END;
