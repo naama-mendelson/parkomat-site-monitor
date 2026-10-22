@@ -4909,7 +4909,17 @@ technicians, and three who work with Parkomat sometimes.
   3. Push.
   - An old bundle against the new SQL simply shows the 14. The new bundle needs `fleet_list` only for the window.
 
-### The next task — it starts by itself when he leaves the site (built 21/10/2026, NOT deployed)
+### The next task — it starts by itself when he leaves the site (built and deployed 22/10/2026, 79bc65e)
+
+✅ **Deployed at the owner's word ("כן"):**
+- **SQL:** 19 gaps, 11 s, then "הייצור זהה לקוד".
+- **Checked read-only:**
+  - `tech_next` is closed (RLS, no grants) and empty.
+  - `follows`, `advance_error` and `advance_error_at` exist.
+  - Each changed function has exactly one signature.
+  - The Ituran sync ran after the apply with `advance_error` NULL.
+  - 86 of 89 agents are beating.
+- **Push:** live bundle `index-DNhD7q8P.js`.
 
 The owner: *"כשהוא יוצא מהאתר, אם יש לו משימה נוספת שהקצו לו, שיתזכר אותו לאיפה הוא צריך לנסוע למשימה הבאה"*.
 
