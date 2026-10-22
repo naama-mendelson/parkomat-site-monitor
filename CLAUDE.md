@@ -4456,6 +4456,15 @@ only his own task.
     gz), black on white in both themes, so the link never goes to any service.
   - While the QR is open, the dialog polls `tech_board` every 4 s and says "✓ הטלפון התחבר" as soon as `seen_at` fills.
   - The password lives only in the dialog's memory. Closing it loses it.
+  - **Since 22/10/2026: "הטכנאי לא כאן?"** under the QR (the owner: *"אני רוצה שהטכנאים לא יצטרכו לבוא לפה"*). It sends
+    the same link in a message:
+    - **"שליחה בוואטסאפ"**: `wa.me/?text=`, opened in a new tab, so the QR window stays open;
+    - **"העתקת הקישור"**: the clipboard. When there is no clipboard access, the link is shown for copying by hand.
+    The message (`pairMessage` / `whatsappLink` in `utils/techPhone.js`) carries the name, the link whole on its own line
+    (the `#` stays encoded inside `wa.me`, or WhatsApp would cut the credentials), and "הקישור עובד פעם אחת". It works
+    once, like the QR: the phone replaces the password as soon as it opens the link, so a message left in a chat opens
+    nothing afterwards. It is hidden after the phone connects. Tests: `tech-phone-ui.test.js`; browser
+    `probe-techphone` 57 (S0–S3).
 - **The link:** `<origin>/#pair=<base64url {e, p}>` (`pairLink` / `parsePairHash` in `utils/techPhone.js`). The
   credentials sit after `#`, so they are never sent to any server. `parsePairHash` accepts only a `tech-<n>-<n>@` email
   and a base64url password.

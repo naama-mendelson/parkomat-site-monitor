@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchTechBoard, provisionTechPhone, saveTechnician, unpairTechPhone } from "../../services/dataSource";
 import { vehicleName } from "../../utils/vehicles";
-import { pairLink, pairOrigin, phoneStatus, qrPath } from "../../utils/techPhone";
+import { pairLink, pairMessage, pairOrigin, phoneStatus, qrPath, whatsappLink } from "../../utils/techPhone";
 import "./DispatchDialog.css";
 
 const POLL_MS = 4000;
@@ -41,6 +41,7 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
   const [qr, setQr] = useState(null);              // { link, name, at } — רק בזיכרון של החלון
   const [scanned, setScanned] = useState(false);
   const [armed, setArmed] = useState(null);        // "qr" | "unpair"
+  const [copied, setCopied] = useState(null);      // "ok" | "fail" — העתקת הקישור (22/10/2026)
   const armTimer = useRef(null);
   const created = useRef(null);
   const effTech = tech ?? created.current;
@@ -89,6 +90,7 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
       const r = await provisionTechPhone(id);
       setQr({ link: pairLink(pairOrigin(import.meta.env.VITE_PUBLIC_ORIGIN), r.email, r.password), name: r.name || name.trim(), warning: r.warning ?? null });
       setScanned(false);
+      setCopied(null);
       onChanged?.();
     } catch (e) {
       setError(e?.message || "יצירת ה-QR נכשלה — נסו שוב");
@@ -108,6 +110,12 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
     finally { setBusy(false); }
   }
 
+  // "הטכנאי לא כאן" (22/10/2026): ההודעה עם הקישור ללוח. נכשל (דפדפן בלי הרשאה ללוח) — הקישור מוצג להעתקה ידנית.
+  async function copyLink() {
+    try { await navigator.clipboard.writeText(pairMessage(qr.link, qr.name)); setCopied("ok"); }
+    catch { setCopied("fail"); }
+  }
+
   const title = effTech?.name ?? (name.trim() || vehicleName(vehicle));
 
   return (
@@ -124,11 +132,29 @@ export default function TechPhoneDialog({ vehicle, tech, now, onClose, onChanged
             {scanned ? (
               <p className="dp-ok" role="status">✓ הטלפון התחבר</p>
             ) : (
-              <ol className="dp-steps">
-                <li>לפתוח את המצלמה בטלפון של {qr.name} ולכוון ל-QR.</li>
-                <li>לגעת בקישור שמופיע — הטלפון יתחבר לבד, ויראה את המשימות שלו.</li>
-                <li className="dp-muted">ה-QR עובד לסריקה אחת. אחרי הסגירה הוא לא יוצג שוב.</li>
-              </ol>
+              <>
+                <ol className="dp-steps">
+                  <li>לפתוח את המצלמה בטלפון של {qr.name} ולכוון ל-QR.</li>
+                  <li>לגעת בקישור שמופיע — הטלפון יתחבר לבד, ויראה את המשימות שלו.</li>
+                  <li className="dp-muted">ה-QR עובד לסריקה אחת. אחרי הסגירה הוא לא יוצג שוב.</li>
+                </ol>
+                {/* הטכנאי לא כאן (22/10/2026): אותו קישור, בהודעה. עובד פעם אחת, כמו ה-QR. */}
+                <div className="dp-share">
+                  <span className="dp-share-k">הטכנאי לא כאן? לשלוח לו את הקישור — הוא פותח אותו בטלפון שלו:</span>
+                  <div className="dp-share-btns">
+                    <a className="dp-share-btn dp-share-wa" href={whatsappLink(qr.link, qr.name)} target="_blank" rel="noopener noreferrer">
+                      שליחה בוואטסאפ
+                    </a>
+                    <button type="button" className="dp-share-btn" onClick={copyLink}>
+                      {copied === "ok" ? "✓ הועתק" : "העתקת הקישור"}
+                    </button>
+                  </div>
+                  {copied === "fail" && (
+                    <input className="dp-input dp-share-raw" readOnly value={qr.link} aria-label="הקישור לחיבור הטלפון"
+                      onFocus={(e) => e.target.select()} />
+                  )}
+                </div>
+              </>
             )}
             {qr.warning && <p className="dp-hint">{qr.warning}</p>}
           </div>

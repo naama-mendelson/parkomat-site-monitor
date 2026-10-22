@@ -57,6 +57,22 @@ export function phoneStatus(phone, nowIso) {
   return { key: "ok", text: `הטלפון מחובר · נפתח לאחרונה ${ageText(phone.seen_at, nowIso)}${push}`, push: phone.push_ready ?? null };
 }
 
+/**
+ * הודעת הוואטסאפ עם קישור החיבור (22/10/2026). הבעלת: "אני רוצה שהטכנאים לא יצטרכו לבוא לפה" — ה-QR הוא קישור,
+ * ואפשר לשלוח אותו. wa.me בלי מספר — וואטסאפ שואל למי לשלוח. ⚠️ הקישור עובד פעם אחת, כמו ה-QR: הטלפון מחליף את
+ * הסיסמה ברגע שנפתח, ולכן הודעה שנשארת בצ'אט לא פותחת דבר אחר כך.
+ */
+export function pairMessage(link, name) {
+  const who = String(name ?? "").trim();
+  return [
+    `${who ? `שלום ${who}, ` : ""}זה הקישור לחיבור הטלפון שלך למשימות של פרקומט.`,
+    "לפתוח אותו בטלפון (בכרום), ולאשר צפצוף כשהוא שואל:",
+    link,
+    "הקישור עובד פעם אחת.",
+  ].join("\n");
+}
+export const whatsappLink = (link, name) => `https://wa.me/?text=${encodeURIComponent(pairMessage(link, name))}`;
+
 /** קישור ניווט לאתר (Waze), או null כשלאתר אין מיקום. */
 export function navLink(d) {
   const lat = Number(d?.lat), lon = Number(d?.lon);

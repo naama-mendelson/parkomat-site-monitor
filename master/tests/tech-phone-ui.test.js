@@ -3,7 +3,7 @@
 // (technicians.test.js) ובפונקציה (provision-technician-fn.test.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTechPhoneEmail, navLink, pairLink, pairOrigin, parsePairHash, phoneStatus, PUBLIC_ORIGIN, qrPath } from "../../dashboard/src/utils/techPhone.js";
+import { isTechPhoneEmail, navLink, pairLink, pairMessage, pairOrigin, parsePairHash, phoneStatus, PUBLIC_ORIGIN, qrPath, whatsappLink } from "../../dashboard/src/utils/techPhone.js";
 
 const PW = "aB3-_xYz0123456789aB3-_xYz0123456789abcdE";   // בצורה של הסיסמה מהפונקציה (base64url)
 const NOW = "2026-10-21T08:00:00Z";                         // 11:00 בישראל
@@ -85,4 +85,21 @@ test("ה-QR: ריבוע לכל מודול כהה, בתוך שוליים", () => 
   assert.match(d, /^M4 4h1v1h-1z/, "השורה העליונה-שמאלית — אחרי 4 שוליים");
   assert.ok(d.includes("M6 5h1v1h-1z"), "שורה 1, עמודה 2");
   assert.equal(qrPath(qr, 0).size, 3);
+});
+
+// 22/10/2026 — "הטכנאים לא יצטרכו לבוא לפה": אותו קישור, בהודעה (וואטסאפ / העתקה)
+test("שליחת הקישור: ההודעה עם השם והקישור שלם; וואטסאפ — wa.me עם ההודעה מקודדת; בלי שם — בלי פנייה", () => {
+  const link = pairLink(PUBLIC_ORIGIN, "tech-7-2@parkomat.co.il", "Pw_abc-123_0123456789xyz");
+  const m = pairMessage(link, " אבי ");
+  const lines = m.split(String.fromCharCode(10));
+  assert.equal(lines[0], "שלום אבי, זה הקישור לחיבור הטלפון שלך למשימות של פרקומט.");
+  assert.equal(lines[2], link, "הקישור בשורה משלו, שלם");
+  assert.equal(lines[3], "הקישור עובד פעם אחת.");
+  assert.ok(pairMessage(link, "").startsWith("זה הקישור"), "בלי שם — בלי פנייה");
+  const wa = whatsappLink(link, "אבי");
+  assert.ok(wa.startsWith("https://wa.me/?text="));
+  assert.equal(decodeURIComponent(wa.slice("https://wa.me/?text=".length)), pairMessage(link, "אבי"));
+  assert.ok(!wa.includes("#"), "ה-# של הקישור מקודד — אחרת וואטסאפ היה חותך את הפרטים");
+  assert.deepEqual(parsePairHash(new URL(lines[2]).hash), { email: "tech-7-2@parkomat.co.il", password: "Pw_abc-123_0123456789xyz" },
+    "הקישור שבהודעה עדיין מחבר");
 });

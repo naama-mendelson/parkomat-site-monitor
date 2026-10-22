@@ -78,6 +78,20 @@
 .dp-phone-st--ok { border-inline-start: 3px solid var(--tc-site, #0f766e); }
 .dp-phone-st--qr { border-inline-start: 3px solid var(--tc-call, #b45309); }
 .dp-cancel.is-armed { border-color: var(--tc-fault, #b91c1c); color: var(--tc-fault, #b91c1c); }
+
+/* "הטכנאי לא כאן" (22/10/2026) — הקישור בוואטסאפ או להעתקה. ירוק כהה של וואטסאפ: לבן עליו 7:1 (הירוק הבהיר — 2:1). */
+.dp-share { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.dp-share-k { font-size: 0.92rem; color: var(--text-secondary); }
+.dp-share-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.dp-share-btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 6px 16px; border-radius: 10px;
+  border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);
+  font: inherit; font-size: 0.95rem; font-weight: 700; text-decoration: none; cursor: pointer;
+}
+.dp-share-wa { background: #075e54; border-color: #075e54; color: #fff; }
+.dp-share-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dp-share-raw { direction: ltr; font-size: 0.8rem; }
+@media (pointer: coarse) { .dp-share-btn { min-height: 44px; flex: 1 1 auto; } }
 .dp-foot { flex-wrap: wrap; }
 
 @media (max-width: 640px) {
