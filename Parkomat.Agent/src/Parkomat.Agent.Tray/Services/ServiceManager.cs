@@ -386,13 +386,19 @@ public class ServiceManager
         }
     }
 
+    // ⚠️ ה-exe שלנו עם השם הזה (1.0.62): עם שני סוכנים על המחשב, תהליך באותו שם יכול להיות של הסוכן השני —
+    // והוא לא "רץ" מבחינתנו, ואסור להרוג אותו. ראה ProcessOwnership.
+    private static string OurExeFor(string procName) =>
+        procName == MosquittoProcName ? MosquittoExe : AgentExe;
+
     private static bool IsRunning(string procName)
     {
         Process[] procs = Array.Empty<Process>();
         try
         {
             procs = Process.GetProcessesByName(procName);
-            return procs.Length > 0;
+            string ours = OurExeFor(procName);
+            return procs.Any(p => ProcessPaths.IsOurs(p, ours));
         }
         catch
         {
@@ -409,11 +415,13 @@ public class ServiceManager
         Process[] procs;
         try { procs = Process.GetProcessesByName(procName); }
         catch { return; }
+        string ours = OurExeFor(procName);
 
         foreach (Process p in procs)
         {
             try
             {
+                if (!ProcessPaths.IsOurs(p, ours)) continue;   // של סוכן אחר על המחשב (1.0.62)
                 p.Kill(entireProcessTree: true);
                 p.WaitForExit(5000);
             }

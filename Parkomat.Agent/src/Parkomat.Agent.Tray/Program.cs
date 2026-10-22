@@ -8,7 +8,8 @@ internal static class Program
 {
     // שם ה-Mutex במקום אחד: הוא נתפס פעמיים בזרימת ההשתלטות, ושתי מחרוזות
     // שצריכות להישאר זהות הן שתי מחרוזות שיום אחד לא יהיו.
-    private const string MutexName = @"Local\Parkomat.Agent.Tray.SingleInstance";
+    // ⚠️ לכל סוכן על המחשב Tray משלו (1.0.62): "…SingleInstance" לרגיל, "…SingleInstance-2" לנוסף.
+    private static readonly string MutexName = AgentInstance.Suffixed(@"Local\Parkomat.Agent.Tray.SingleInstance");
 
     // ⚠️ **עד 10 שניות, ולא ניסיון אחד.** פירוק התהליך ההרוג אינו מיידי,
     // וה-Mutex משתחרר רק בסופו. חצי שנייה בין הניסיונות: מספיק תכוף כדי

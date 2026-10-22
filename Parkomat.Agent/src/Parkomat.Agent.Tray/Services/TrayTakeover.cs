@@ -15,6 +15,11 @@ internal static class TrayTakeover
     private const string TrayProcessName = "Parkomat.Agent.Tray";
     private const string AgentProcessName = "Parkomat.Agent.Service";
 
+    // ⚠️ עם שני סוכנים על המחשב (1.0.62) — רק הטריי והסוכן של ההתקנה הזו. בלי זה הטריי של הסוכן השני היה נחשב
+    // "טריי ותיק" (וחוסם השתלטות), הסוכן שלו היה נחשב "הסוכן חי", וההשתלטות הייתה הורגת גם אותו.
+    private static string OurTrayExe => Environment.ProcessPath ?? "";
+    private static string OurAgentExe => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "Parkomat.Agent.Service.exe"));
+
     /// <summary>
     /// האם המופע הרץ אינו מתפקד ויש להחליף אותו.
     ///
@@ -27,7 +32,7 @@ internal static class TrayTakeover
         try
         {
             long? age = LivenessAgeSeconds();
-            bool agentAlive = Process.GetProcessesByName(AgentProcessName).Length > 0;
+            bool agentAlive = Process.GetProcessesByName(AgentProcessName).Any(p => ProcessPaths.IsOurs(p, OurAgentExe));
 
             // ⚠️ קצב הדגימה נקרא מהקובץ ולא מקובע: הסף נגזר ממנו, ואתר
             // שהוגדר לדגימה איטית היה נשפט לפי סף של אתר אחר.
@@ -59,7 +64,7 @@ internal static class TrayTakeover
 
         foreach (Process p in Process.GetProcessesByName(TrayProcessName))
         {
-            try { found.Add((p.Id, p.StartTime)); }
+            try { if (ProcessPaths.IsOurs(p, OurTrayExe)) found.Add((p.Id, p.StartTime)); }
             catch { /* נעלם, או אין הרשאה לקרוא זמן התחלה */ }
             finally { p.Dispose(); }
         }
@@ -109,6 +114,7 @@ internal static class TrayTakeover
             try
             {
                 if (p.Id == me) continue;
+                if (!ProcessPaths.IsOurs(p, OurTrayExe)) continue;   // הטריי של סוכן אחר על המחשב (1.0.62)
                 p.Kill(entireProcessTree: false);
                 p.WaitForExit(5000);
             }

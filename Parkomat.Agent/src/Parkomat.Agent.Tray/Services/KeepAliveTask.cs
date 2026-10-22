@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading;
+using Parkomat.Agent.Core.Configuration;
 using System.Security.Principal;
 using System.Text;
 
@@ -40,7 +41,8 @@ namespace Parkomat.Agent.Tray;
 /// </summary>
 internal static class KeepAliveTask
 {
-    internal const string TaskName = "ParkomatAgentKeepAlive";
+    // ⚠️ לכל סוכן על המחשב משימה משלו (1.0.62) — בלי הסיומת ה-Tray של הסוכן השני היה דורס את המשימה של הראשון
+    internal static readonly string TaskName = AgentInstance.Suffixed("ParkomatAgentKeepAlive");
 
     /// <summary>
     /// רושם את המשימה <b>ברקע</b>, ומחזיר מיד.

@@ -101,7 +101,9 @@ public class AgentVersionTests
             // מחיקה גורפת של תיקיית ProgramData — בכל צורה שהיא
             Assert.False(
                 t.Contains("{commonappdata}\\Parkomat\"", StringComparison.Ordinal) ||
-                t.Contains("{commonappdata}\\Parkomat\\Agent\"", StringComparison.Ordinal),
+                t.Contains("{commonappdata}\\Parkomat\\Agent\"", StringComparison.Ordinal) ||
+                // 1.0.62 — גם תיקיית הנתונים של סוכן נוסף (Agent-2) היא זהות של אתר
+                t.Contains("{commonappdata}\\Parkomat\\Agent{#Sfx}\"", StringComparison.Ordinal),
                 $"הסרה מוחקת את כל נתוני הסוכן, כולל זהות האתר: {t}");
 
             Assert.DoesNotContain("config.json", t);

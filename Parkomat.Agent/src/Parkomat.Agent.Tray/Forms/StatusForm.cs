@@ -24,7 +24,7 @@ public class StatusForm : Form
     public StatusForm()
     {
         // --- הגדרות החלון ---
-        Text = "בדיקת חיבור — Parkomat Agent";
+        Text = $"בדיקת חיבור — {AgentInstance.ProductName()}";
         RightToLeft = RightToLeft.Yes;
         RightToLeftLayout = true;
         StartPosition = FormStartPosition.CenterScreen;

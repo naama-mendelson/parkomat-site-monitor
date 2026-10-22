@@ -12,10 +12,17 @@ public static class AgentPaths
     /// נבחרה כי היא משותפת לכל המשתמשים במחשב — ה-Service (מערכת)
     /// וה-Tray (משתמש רגיל) שניהם יכולים לגשת אליה.
     /// </summary>
-    public static string BaseFolder { get; } = Path.Combine(
+    public static string BaseFolder { get; } = BaseFolderFor(AgentInstance.Current);
+
+    /// <summary>
+    /// תיקיית הנתונים של מופע (1.0.62, 22/10/2026): הסוכן הרגיל — <c>…\Parkomat\Agent</c> כמו תמיד; סוכן נוסף —
+    /// <c>…\Parkomat\Agent-2</c>. ⚠️ לכל סוכן ההגדרות, התור, הלוג והזהות שלו: תיקייה משותפת הייתה גורמת להתקנה של
+    /// אחד לאפס את ההגדרות של השני (דגל האיפוס), ולשני הסוכנים לחלוק תור.
+    /// </summary>
+    public static string BaseFolderFor(string instance) => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Parkomat",
-        "Agent");
+        AgentInstance.Suffixed("Agent", instance));
 
     /// <summary>נתיב מלא לקובץ ההגדרות: ...\Parkomat\Agent\config.json</summary>
     public static string ConfigFile { get; } = Path.Combine(BaseFolder, "config.json");

@@ -16,6 +16,9 @@ Agent (on site) ──HTTPS──→ Supabase (Postgres + pg_cron + Edge Functio
 - **Every site reports directly:** 78 sites, 78 agent identities, 78 `alive` rows. MQTT/HiveMQ is read by
   nobody. Diagrams below that show HiveMQ → Node server, "LIVE at 2438 · off at 17" or agent v1.0.23 are history.
 - **Agents in the field:** 1.0.55 (42), 1.0.57 (34), 1.0.59 (2: the two-system sites 3468 and 1102).
+  **1.0.62 (22/10/2026, not installed anywhere yet):** a second agent on the same PC (`ParkomatAgentSetup-1.0.62-agent2.exe`)
+  for מעפילי אגוז: שמאל 12282 and ימין 1228 on one NUC. Two ordinary agents, each its own site. See
+  `Parkomat.Agent/CLAUDE.md`, *A second agent on the same PC*. ⚠️ 1228 is not registered as a site yet.
 - **Dashboard:** deployed by `git push` to `main` (Cloudflare Pages). DELL008's copy is not what people open.
 - **Edge Functions:** `invite-user`, `provision-agent`, `notify-fault`, `service-calls` (Wizenet → us),
   `wizenet` (since 15/10/2026: only hands the Wizenet token to relay PCs, see *Wizenet relay*).

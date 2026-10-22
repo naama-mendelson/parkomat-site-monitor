@@ -19,11 +19,11 @@ namespace Parkomat.Agent.Core.Configuration;
 /// </summary>
 public static class AutoStartHealth
 {
-    /// <summary>שם המשימה המתוזמנת שהמתקין יוצר.</summary>
-    public const string TaskName = "ParkomatAgentKeepAlive";
+    /// <summary>שם המשימה המתוזמנת. ⚠️ לסוכן נוסף — עם הסיומת שלו (1.0.62), כמו ב-KeepAliveTask ובמתקין.</summary>
+    public static readonly string TaskName = AgentInstance.Suffixed("ParkomatAgentKeepAlive");
 
-    /// <summary>שם הערך תחת <c>HKCU\…\Run</c>.</summary>
-    public const string RunValueName = "ParkomatAgentTray";
+    /// <summary>שם הערך תחת <c>HKCU\…\Run</c>. ⚠️ לסוכן נוסף — עם הסיומת שלו (1.0.62).</summary>
+    public static readonly string RunValueName = AgentInstance.Suffixed("ParkomatAgentTray");
 
     /// <summary>
     /// מה שנקרא מהמכונה. <c>null</c> פירושו "לא הצלחתי לברר", והוא

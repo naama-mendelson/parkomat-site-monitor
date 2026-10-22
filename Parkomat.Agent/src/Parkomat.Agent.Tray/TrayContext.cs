@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Parkomat.Agent.Core.Configuration;
 using Parkomat.Agent.Tray.Services;
 
 namespace Parkomat.Agent.Tray;
@@ -75,7 +76,7 @@ public class TrayContext : ApplicationContext
         {
             ContextMenuStrip = menu,
             Visible = true,
-            Text = "Parkomat Agent"
+            Text = AgentInstance.ProductName()   // "Parkomat Agent", או "Parkomat Agent 2" לסוכן נוסף (1.0.62)
         };
 
         // רענון המצב לפני שהתפריט נפתח, כדי שיציג נתונים עדכניים.
@@ -172,7 +173,7 @@ public class TrayContext : ApplicationContext
         _statusItem.Text = statusText;
 
         // ה-tooltip (מה שרואים בריחוף על האייקון).
-        _notifyIcon.Text = "Parkomat Agent\n" + statusText;
+        _notifyIcon.Text = AgentInstance.ProductName() + "\n" + statusText;
 
         // כפתור ההפעלה/כיבוי: לפי האם התהליך חי.
         if (state == AgentServiceState.NotInstalled)

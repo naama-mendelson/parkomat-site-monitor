@@ -43,7 +43,8 @@ public class AutoStartTests
         // ⚠️ המשימה **מוסיפה** ואינה מחליפה: בכניסה רגילה `Run` מרים
         // מיד, בעוד שהמשימה עלולה להמתין עד חמש דקות. הסרתו הייתה
         // מחליפה כשל נדיר בהשהיה יומיומית.
-        Assert.Matches(new Regex(@"ValueName:\s*""ParkomatAgentTray"""), Code());
+        // 1.0.62: עם הסיומת של המופע ({#Sfx} — ריקה לסוכן הרגיל, "-2" לנוסף), כמו AutoStartHealth.RunValueName
+        Assert.Matches(new Regex(@"ValueName:\s*""ParkomatAgentTray\{#Sfx\}"""), Code());
     }
 
     // ============================================================
@@ -66,7 +67,8 @@ public class AutoStartTests
     [Fact]
     public void TheTaskIsRemovedOnUninstall()
     {
-        Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentKeepAlive"""""), Code());
+        // 1.0.62: עם הסיומת של המופע, כמו KeepAliveTask.TaskName — אחרת הסרת סוכן נוסף הייתה משאירה את המשימה שלו
+        Assert.Matches(new Regex(@"/Delete\s+/TN\s+""""ParkomatAgentKeepAlive\{#Sfx\}"""""), Code());
     }
 
     // ⚠️ **ומשימה אחת עם שני מפעילים, לא שתי משימות.** `schtasks` אינו

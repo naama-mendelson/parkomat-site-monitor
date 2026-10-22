@@ -51,7 +51,7 @@ public class SettingsForm : Form
     public SettingsForm()
     {
         // --- הגדרות החלון עצמו ---
-        Text = "הגדרות — Parkomat Agent";
+        Text = $"הגדרות — {AgentInstance.ProductName()}";
         RightToLeft = RightToLeft.Yes;
         RightToLeftLayout = true;
         StartPosition = FormStartPosition.CenterScreen;

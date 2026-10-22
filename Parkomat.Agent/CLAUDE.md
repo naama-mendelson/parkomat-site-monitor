@@ -1074,3 +1074,57 @@ the agent does.
   `WizenetRelayLiveTests.cs` (1, run only by `master/tools/check-relay-live.js` against the real services). `WizenetRelayTests.cs`: a fake HTTP handler counts and inspects every request, and a fake
   `IRealtimeConnection` drives the Phoenix protocol: join contents, rings, heartbeat, token renewal, four kinds of
   channel end, silence. 39/39 mutations caught (copy under Documents, `--filter WizenetRelayTests`).
+
+## A second agent on the same PC (1.0.62, 22/10/2026)
+
+מעפילי אגוז: one NUC with two separate car parks wired to it, whose PLCs do not talk to each other — שמאל (12282, PLC
+6.6.7.3) and ימין (1228, PLC 6.6.6.3). Two sites, so two agents. The owner chose **"two agents on the same PC"**: each one
+is an ordinary agent with its own config, queue, logs and Supabase identity. She did not choose one agent that serves two
+sites. A second install used to simply upgrade the first one, because there was one AppName, one data folder and one of
+every name.
+
+- **The instance comes from the install folder, with no arguments.** `AgentInstance.Current` is derived from the folder
+  above `service` / `tray`: `…\Parkomat\Agent-2` → `"2"`; anything else (`Agent`, `bin\Debug`, `publish`) → `""`. That is
+  why nothing has to be passed through the Run value, the scheduled task's XML, or the Tray launching the agent. The slug
+  is ASCII letters and digits, 1–16 characters.
+- **Everything machine-wide gets the suffix, and only for an instance:**
+  - the data folder (`AgentPaths.BaseFolderFor`, `ProgramData\Parkomat\Agent-2`);
+  - Mosquitto's persistence folder;
+  - the agent's mutex and the Tray's mutex;
+  - the keep-alive task (`KeepAliveTask.TaskName`, `AutoStartHealth.TaskName`);
+  - the Run value (`AutoStartHealth.RunValueName`);
+  - the product name in the tooltip and window titles ("Parkomat Agent 2").
+  The regular agent keeps every name and path exactly as before (`AgentInstanceTests` pins it).
+- **Processes are matched by path, not only by name.** `ProcessOwnership.IsOurs` is the pure rule; `ProcessPaths` does the
+  I/O with `QueryFullProcessImageName` (`MainModule` throws on a 32-bit Mosquitto and on other users' processes).
+  - **The regular agent** behaves as before: a process whose path can't be read is still its own, which is what cleans up
+    an old admin-era install. The one change is that it ignores a process running from an `Agent-N` folder.
+  - **An instance** owns only what runs from its own exe. An unreadable path is not its own.
+  - Used in `ServiceManager.IsRunning` / `KillByName` and in `TrayTakeover`: the agent-alive check, the oldest other Tray,
+    and the kill. Without it Tray A sees agent B as running and never starts its own, and Stop, Exit or Save kills both.
+- **The installer:** `ISCC /DInstance=2 installer.iss` → `ParkomatAgentSetup-<ver>-agent2.exe`.
+  - The AppName "Parkomat Agent 2" is also the AppId, so it never upgrades the first agent.
+  - Install folder `{localappdata}\Parkomat\Agent-2`; the Run value, the task delete and the data paths take `{#Sfx}`.
+  - It closes only processes under `{app}`, through PowerShell `Where-Object { $_.Path -like '{app}\*' }` (`{{` in
+    `[UninstallRun]`). Without `/DInstance` the installer is the same as before, and `{#Sfx}` is empty.
+  - ⚠️ **Known cost:** the **regular** installer still closes by name, because upgrading an old install depends on that. So
+    upgrading the first agent also stops the second one, which comes back within 5 minutes from its own keep-alive task.
+- ⚠️ **Mosquitto listens on 1883 and is per machine.** Two agents both with MQTT on would collide. Since 1.0.57 MQTT is off
+  whenever the Supabase password is set (and nothing reads HiveMQ since 17/09), so both agents need their site password.
+- ⚠️ **The firewall rules are path-based** (*A new site that never reports*). On a PC with outbound blocked, the second
+  install needs its own rules for `Agent-2\service\…` and `Agent-2\tray\…`.
+- `ops/check-site.ps1` still reads `ProgramData\Parkomat\Agent` only.
+- **Not run end to end on a real PC:** the dev machine must not run the agent or write to `ProgramData\Parkomat` (memory).
+  The first install at the NUC is the field test: two tray icons ("Parkomat Agent" and "Parkomat Agent 2"), two `alive`
+  rows (12282, 1228).
+- Tests: `AgentInstanceTests.cs` covers:
+  - the folder → instance rules, the exe → instance rules and the names;
+  - that the regular agent's data folder is unchanged;
+  - the ownership rule both ways;
+  - text gates on the Tray, the mutexes and the installer (a second agent never closes by name; every data path carries
+    `{#Sfx}`);
+  - `AutoStartTests` now requires `{#Sfx}` in the Run value and the task delete;
+  - `AgentVersionTests` also forbids deleting the `Agent{#Sfx}` folder.
+  Suite 732/732. **Mutations 16 of 16 caught** (copy under Documents; its baseline fails the usual two, no `.git` and
+  no `vendor`). The preprocessed instance script was checked through `#expr SaveToFile`, and the PowerShell close command
+  was run against a path that matches nothing.

@@ -25,7 +25,8 @@ namespace Parkomat.Agent.Service;
 /// </summary>
 public static class SingleInstance
 {
-    private const string Name = "Parkomat.Agent.Service.SingleInstance";
+    // ⚠️ לכל סוכן על המחשב נעילה משלו (1.0.62): הסוכן השני (…\Agent-2) לא נחסם בגלל הראשון.
+    private static readonly string Name = AgentInstance.Suffixed("Parkomat.Agent.Service.SingleInstance");
 
     // ⚠️ ה-Mutex מוחזק בשדה סטטי ולא במשתנה מקומי. משתנה מקומי היה נאסף
     // על ידי ה-GC בזמן שהתהליך עדיין רץ, הנעילה הייתה משתחררת, והמופע

@@ -9,7 +9,25 @@
 ; ⚠️ 1.0.21 מעולם לא שוגר לשדה, ותוקן בו הפער שבו installer.iss הכריז על
 ;    גרסה שהבינאריים לא נשאו (הם אמרו 1.0.20). הגרסה חיה עכשיו במקום
 ;    אחד — Directory.Build.props — ו-AgentVersionTests נועל את השוויון.
-#define MyAppName "Parkomat Agent"
+; ============================================================
+; סוכן נוסף על אותו מחשב (1.0.62, 22/10/2026)
+; ============================================================
+; מחשב אחד ששני אתרים נפרדים מחוברים אליו (מעפילי אגוז: שמאל 12282 ב-6.6.7.3, ימין 1228 ב-6.6.6.3) — שני סוכנים
+; רגילים. את השני בונים כך:   ISCC /DInstance=2 installer.iss
+;   • שם: "Parkomat Agent 2" (וזה גם ה-AppId — Inno גוזר אותו מהשם — ולכן התקנה שלו אינה משדרגת את הראשון).
+;   • מותקן ל-{localappdata}\Parkomat\Agent-2; הנתונים ב-ProgramData\Parkomat\Agent-2; ערך Run, משימה מתוזמנת
+;     וקיצור דרך — כולם עם "-2". הסוכן עצמו גוזר את המופע מתיקיית ההתקנה (AgentInstance), בלי ארגומנטים.
+;   • ⚠️ הוא סוגר רק תהליכים שרצים מהתיקייה שלו (PowerShell לפי נתיב) — taskkill לפי שם היה הורג גם את הסוכן הראשון.
+; בלי /DInstance — המתקין הרגיל, בדיוק כמו קודם (הסיומת ריקה).
+; ⚠️ המחיר הידוע: המתקין **הרגיל** עדיין סוגר לפי שם (שדרוג של התקנה ישנה תלוי בזה), ולכן שדרוג של הסוכן הראשון
+;    סוגר גם את השני — שעולה מחדש תוך עד 5 דקות מהמשימה המתוזמנת שלו.
+#ifdef Instance
+  #define MyAppName "Parkomat Agent " + Instance
+  #define Sfx "-" + Instance
+#else
+  #define MyAppName "Parkomat Agent"
+  #define Sfx ""
+#endif
 ; 1.0.17 — קריאת תיאור התקלה מהבקר (register 002, מחרוזת בסגנון C).
 ;          הטקסט מגיע ללוג הפעילות בדשבורד במקום "מושבת" סתמי.
 ;
@@ -293,7 +311,11 @@
 ;          9600 8N1 כברירת מחדל). בהגדרות → רגיסטרים: "RTU טורי", פורט, מהירות, זוגיות, ביטי עצירה. ערוץ משלנו
 ;          (ModbusRtuChannel) שפותח את הפורט לכל קריאה וסוגר מיד — הטכנאי משתמש באותו כבל. פורט תפוס = קריאה
 ;          שנכשלה, ואחרי עשר — תקלה, כמו נתק בכל אתר. התעבורה והפורט שורדים שדרוג. אתרי TCP/UDP לא משתנים.
-#define MyAppVersion "1.0.61"
+; 1.0.62 — **סוכן נוסף על אותו מחשב** (מעפילי אגוז: שני חניונים נפרדים על NUC אחד). ISCC /DInstance=2 בונה את
+;          "Parkomat Agent 2": מותקן ל-Agent-2, נתונים ב-ProgramData\Parkomat\Agent-2, Mutex / משימה / Run עם "-2".
+;          ה-Tray מזהה את התהליכים שלו לפי הנתיב ולא רק לפי השם. בסוכן הרגיל שום שם ונתיב לא השתנו — רק שהוא מתעלם
+;          מתהליכים של סוכן נוסף.
+#define MyAppVersion "1.0.62"
 #define MyAppPublisher "Parkomat"
 #define ServiceName "ParkomatAgent"
 #define ServiceExe "Parkomat.Agent.Service.exe"
@@ -325,7 +347,7 @@ AppPublisher={#MyAppPublisher}
 ; התקנה למשתמש הנוכחי בלבד — בלי הרשאת מנהל, בלי חלון UAC.
 PrivilegesRequired=lowest
 ; מתקינים לתיקיית המשתמש (…\AppData\Local\Parkomat\Agent).
-DefaultDirName={localappdata}\Parkomat\Agent
+DefaultDirName={localappdata}\Parkomat\Agent{#Sfx}
 DisableProgramGroupPage=yes
 ; רישום-לוג מלא של ההתקנה ל-%TEMP%\Setup Log*.txt (Inno יציע לשמור אם נכשל).
 SetupLogging=yes
@@ -336,7 +358,11 @@ SetupLogging=yes
 ; מאפייני הקובץ אכן נושאים גרסה (VersionInfoVersion למטה), אבל אף אחד
 ; אינו פותח מאפיינים לפני שהוא לוחץ פעמיים — וטכנאי עם שלושה קבצים
 ; בהורדות בוחר לפי השם.
+#ifdef Instance
+OutputBaseFilename=ParkomatAgentSetup-{#MyAppVersion}-agent{#Instance}
+#else
 OutputBaseFilename=ParkomatAgentSetup-{#MyAppVersion}
+#endif
 OutputDir=installer-output
 Compression=lzma2
 SolidCompression=yes
@@ -385,7 +411,7 @@ Source: "{#VcRuntimeDir}\VCRUNTIME140.dll"; DestDir: "{app}\mosquitto"; Flags: i
 ; הפעלה אוטומטית של ה-Tray בכניסת המשתמש (HKCU — לא דורש הרשאת מנהל).
 ; ה-Tray הוא שמפעיל את ה-Agent ואת Mosquitto ומשגיח עליהם.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "ParkomatAgentTray"; \
+  ValueType: string; ValueName: "ParkomatAgentTray{#Sfx}"; \
   ValueData: """{app}\tray\{#TrayExe}"""; Flags: uninsdeletevalue
 
 [InstallDelete]
@@ -458,12 +484,18 @@ Filename: "{app}\tray\{#TrayExe}"; \
 
 [UninstallRun]
 ; לפני מחיקת הקבצים — סוגרים את שלושת התהליכים כדי לשחרר נעילות.
+#ifdef Instance
+; ⚠️ סוכן נוסף (1.0.62): רק התהליכים שרצים מהתיקייה שלו — לפי שם היה סוגר גם את הסוכן הראשון על המחשב.
+; {{ — סוגר מסולסל אמיתי (ב-Inno, "{" לבד פותח קבוע).
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-Process -Name 'Parkomat.Agent.Tray','Parkomat.Agent.Service','mosquitto' -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{app}\*' } | Stop-Process -Force"""; Flags: runhidden; RunOnceId: "KillOwn"
+#else
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#TrayExe}"; Flags: runhidden; RunOnceId: "KillTray"
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#ServiceExe}"; Flags: runhidden; RunOnceId: "KillAgent"
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im mosquitto.exe"; Flags: runhidden; RunOnceId: "KillMosq"
+#endif
 ; ⚠️ והמשימה המתוזמנת נמחקת גם היא. בלעדיה הסרה משאירה משימה שמנסה
 ; להריץ קובץ שנמחק, כל חמש דקות, לנצח.
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentKeepAlive"" /F"; Flags: runhidden; RunOnceId: "DelKeepAlive"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""ParkomatAgentKeepAlive{#Sfx}"" /F"; Flags: runhidden; RunOnceId: "DelKeepAlive"
 
 [UninstallDelete]
 ; מוחקים את כל תיקיית ההתקנה (service, tray, mosquitto) ואת נתוני הריצה,
@@ -503,16 +535,16 @@ Type: filesandordirs; Name: "{app}"
 ; הסרה ואז התקנה, ודווקא אתר עם תור מלא (אחרי נתק ארוך) הוא האתר שמגיעים
 ; אליו לתקן. הגלאי מונע-קצוות, כך שתפעול שנמחק כאן אינו מזוהה שוב לעולם.
 ; נעול ב-AgentVersionTests.UninstallKeepsUndeliveredMessages.
-Type: files; Name: "{commonappdata}\Parkomat\Agent\bridge.conf"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\cacert.pem"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\heartbeat"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\alive"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\detector-state"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\bridge.conf"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\cacert.pem"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\heartbeat"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\alive"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\detector-state"
 ; זיכרון הגלאי של המערכת השנייה (אתר דו-מערכתי) — נוצר מחדש בדגימה הראשונה.
-Type: files; Name: "{commonappdata}\Parkomat\Agent\detector-state-2"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\clock-offset"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\hivemq-status"
-Type: files; Name: "{commonappdata}\Parkomat\Agent\reset-to-defaults.flag"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\detector-state-2"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\clock-offset"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\hivemq-status"
+Type: files; Name: "{commonappdata}\Parkomat\Agent{#Sfx}\reset-to-defaults.flag"
 
 [Code]
 // מריץ פקודה חבויה ומחכה לסיומה; מתעלם מכל שגיאה — ניקוי הגנתי בלבד.
@@ -533,9 +565,15 @@ begin
   Sys := ExpandConstant('{sys}');
 
   // סוגרים את התהליכים של הגרסה החדשה (אם רצים).
+#ifdef Instance
+  // ⚠️ סוכן נוסף (1.0.62): רק התהליכים שרצים מהתיקייה שלו. taskkill לפי שם היה סוגר גם את הסוכן הראשון על המחשב.
+  ExecHidden(Sys + '\WindowsPowerShell\v1.0\powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command "Get-Process -Name ''Parkomat.Agent.Tray'',''Parkomat.Agent.Service'',''mosquitto'' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like ''' + ExpandConstant('{app}') + '\*'' } | Stop-Process -Force"');
+#else
   ExecHidden(Sys + '\taskkill.exe', '/f /im {#TrayExe}');
   ExecHidden(Sys + '\taskkill.exe', '/f /im {#ServiceExe}');
   ExecHidden(Sys + '\taskkill.exe', '/f /im mosquitto.exe');
+#endif
 
   // ניקוי שירותים ישנים (גרסת-מנהל קודמת) — best-effort בלבד.
   ExecHidden(Sys + '\sc.exe', 'stop Mosquitto');
@@ -581,8 +619,8 @@ begin
   // וה-Agent בעלייתו מאפס את PLC/HiveMQ לברירות המחדל תוך *שמירת ה-SiteId*
   // שהוזן (ראה ConfigStore.ApplyResetMarkerIfPresent). config.json *אינו* נמחק
   // כאן — הסוכן צריך אותו כדי לקרוא את ה-SiteId הישן לפני האיפוס.
-  ForceDirectories(ExpandConstant('{commonappdata}\Parkomat\Agent'));
-  SaveStringToFile(ExpandConstant('{commonappdata}\Parkomat\Agent\reset-to-defaults.flag'), '', False);
+  ForceDirectories(ExpandConstant('{commonappdata}\Parkomat\Agent{#Sfx}'));
+  SaveStringToFile(ExpandConstant('{commonappdata}\Parkomat\Agent{#Sfx}\reset-to-defaults.flag'), '', False);
 
   Result := '';   // ריק = ממשיכים בהתקנה
 end;

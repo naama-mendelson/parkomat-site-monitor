@@ -24,9 +24,10 @@ public static class BridgeConfigWriter
     /// </summary>
     // תיקיית ה-persistence של Mosquitto — נגזרת מ-CommonApplicationData (בלי קידוד
     // קשיח ל-C:), ונוצרת ב-Write() לפני ש-Mosquitto עולה, אחרת הוא נכשל בכתיבת ה-DB.
+    // ⚠️ לכל סוכן על המחשב תיקייה משלו (1.0.62): "Mosquitto" לסוכן הרגיל, "Mosquitto-2" לנוסף.
     private static readonly string MosquittoPersistenceFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "Parkomat", "Mosquitto");
+        "Parkomat", AgentInstance.Suffixed("Mosquitto"));
 
     // מסיר תווי-בקרה (בפרט CR/LF) מערך שנכתב לשורת conf: תו שורה-חדשה בסיסמה/שם
     // (הדבקה עם CRLF נגרר) היה שובר את הקובץ לשורה שנייה ש-Mosquitto מפרש כהוראה
