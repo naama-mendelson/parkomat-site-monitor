@@ -3967,6 +3967,12 @@ functions are in production), step 3 is done (`send-login-code` v1 deployed, `ve
 key → its own "אימות נכשל" 401), step 4 is done (the screen has been in the live bundle since 20/10). **The only blocker is
 step 2**: `MS_TENANT_ID` / `MS_CLIENT_ID` / `MS_CLIENT_SECRET` are not in the Edge Function secrets — it needs whoever
 administers Parkomat's Microsoft 365. The flag is absent, so nobody is asked for a code.
+⚠️ **Later on 22/10:** the IT admin registered the app ("Dashboard"), and the three secrets are now set in Supabase. The
+owner pasted them into the chat; they went to Supabase through a temp file that was deleted, and they are in no file in
+the repo. A direct Graph test from the dev PC got a token, but the token carried **`roles: []`**, and `sendMail` as
+dashboard@ returned **403 ErrorAccessDenied**. So **Mail.Send was not granted as an *Application* permission with admin
+consent** — most likely added as Delegated, or the consent was not granted. No mail went out. The fix is on the M365
+side only. After it, re-run the same direct test (the roles must include `Mail.Send`), then the pilot for the owner.
 
 **To go live, in this order** (as written 20/10):
 1. SQL (`apply-sql` dry run: 21 gaps — 10 new functions, 8 bodies, 3 indexes; the two tables do not show, `--apply` creates
