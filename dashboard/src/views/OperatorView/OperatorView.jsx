@@ -6,6 +6,8 @@ import { LampAreasContext } from "../../components/Compliance/ComplianceLights";
 import { matchesSiteFilters } from "../../components/SiteFilterTile/SiteFilterTile";
 import { fuzzyMatch } from "../../utils/helpers";
 import { makeCompareSites } from "../../utils/sortSites";
+import { splitInactive } from "../../utils/siteInactive";
+import "../../components/SiteInactive/SiteInactive.css";
 import { useServiceCalls } from "../../components/ServiceCalls/ServiceCallsContext";
 import { DEFAULT_COMPLIANCE_VIEW, lampAreasFor, matchesComplianceView } from "../../utils/compliance";
 import { matchesBoardKind, DEFAULT_SITE_KIND, SITE_KIND_MULTIPLIERS } from "../../utils/multipliers";
@@ -101,6 +103,9 @@ function OperatorView({
   if (callsMode) order = compareByWaiting(calls.bySite, order);
   if (showRepeat === true) order = compareByRepeat(order);
   const ordered = [...filtered].sort(order);
+  // "לא פעיל" (22/10/2026): בסוף, תחת כותרת, באותו סדר. ⚠️ רשת נפרדת: כותרת בתוך הרשת הייתה שוברת את חישוב השורה של
+  // הכרטיס המורחב (placementFor).
+  const { active, inactive } = splitInactive(ordered);
 
   return (
     <div className="operator-view">
@@ -114,7 +119,14 @@ function OperatorView({
       )}
       {/* רק תחום שנבחר בו משהו בכותרת — הנורה שלו מצוירת בכרטיסים של הלוח (ורק שם: טבלת המפקח לא מושפעת) */}
       <LampAreasContext.Provider value={lampAreas}>
-        <SiteGrid sites={ordered} onSiteClick={onSiteClick} />
+        {/* בלי אף אתר בכלל — הרשת הריקה היא שאומרת "לא נמצאו אתרים" */}
+        {(active.length > 0 || inactive.length === 0) && <SiteGrid sites={active} onSiteClick={onSiteClick} />}
+        {inactive.length > 0 && (
+          <section className="op-inactive" aria-labelledby="op-inactive-h">
+            <h2 className="op-inactive-head" id="op-inactive-h">לא פעיל <span className="op-inactive-n">· {inactive.length}</span></h2>
+            <SiteGrid sites={inactive} onSiteClick={onSiteClick} />
+          </section>
+        )}
       </LampAreasContext.Provider>
     </div>
   );

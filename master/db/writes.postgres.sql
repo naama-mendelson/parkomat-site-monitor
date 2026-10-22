@@ -2363,6 +2363,57 @@ COMMENT ON FUNCTION public.mark_controller_replaced(text) IS
   'הוחלף בקר: הקריאה הבאה נקלטת כבסיס בלי להוסיף למונה. מנהל בלבד.';
 
 -- ============================================================
+-- public.site_inactive_set — "לא פעיל" (22/10/2026)
+-- ============================================================
+-- בקשה מהשטח, שהבעלת העבירה: "אתרים שלא פעילים ומופיעים כ'תקלה' או 'תחזוקה' — להוריד לתחתית הרשימה, תחת הכותרת
+-- 'לא פעיל'" (ברנדייס 13 והזורע 2). בחירות הבעלת: **רק המיקום בלוח** — שום דבר אחר לא משתנה; עורך או מנהל, מהכרטיס.
+--   p_inactive = true — מסמן (או מעדכן את הסיבה, כשכבר מסומן); false — מחזיר לפעיל. סיבה רשות, עד 200 תווים.
+--   אותו מצב ואותה סיבה — כלום (בלי audit ובלי אירוע).
+-- אירוע site_inactive — כל לוח פתוח טוען טעינה חיה (App), בלי סטטיסטיקות. ⚠️ ב-audit המזהה בלבד, בלי הסיבה (טקסט חופשי).
+CREATE OR REPLACE FUNCTION public.site_inactive_set(p_code text, p_inactive boolean, p_reason text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor  text := app.require_editor();
+  v_code   text := btrim(COALESCE(p_code, ''));
+  v_id     integer;
+  v_cur    text;
+  v_reason text := NULLIF(left(btrim(regexp_replace(COALESCE(p_reason, ''), '\s+', ' ', 'g')), 200), '');
+BEGIN
+  IF p_inactive IS NULL THEN
+    RAISE EXCEPTION 'יש לבחור: לסמן כלא פעיל או להחזיר לפעיל' USING ERRCODE = '22023';
+  END IF;
+  SELECT s.id, s.inactive_at INTO v_id, v_cur FROM sites s WHERE s.code = v_code FOR UPDATE;
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'אתר לא נמצא: %', v_code USING ERRCODE = 'PT404';
+  END IF;
+  IF p_inactive AND v_cur IS NOT NULL THEN
+    UPDATE sites SET inactive_reason = v_reason WHERE id = v_id AND inactive_reason IS DISTINCT FROM v_reason;
+    IF NOT FOUND THEN RETURN jsonb_build_object('changed', false, 'inactive', true); END IF;
+  ELSIF p_inactive THEN
+    UPDATE sites SET inactive_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                     inactive_by = v_actor, inactive_reason = v_reason
+     WHERE id = v_id;
+  ELSIF v_cur IS NULL THEN
+    RETURN jsonb_build_object('changed', false, 'inactive', false);
+  ELSE
+    UPDATE sites SET inactive_at = NULL, inactive_by = NULL, inactive_reason = NULL WHERE id = v_id;
+  END IF;
+  PERFORM app.record_write_audit('site.inactive', v_actor, app.current_app_role(), 'site', v_code,
+                                 jsonb_build_object('inactive', p_inactive));
+  -- ⚠️ הדשבורד מקבל את ה-payload בלבד (realtimeDirect) — הסוג והקוד בתוכו, כמו ב-site-updated
+  PERFORM app.record_write_event(v_code, 'site_inactive',
+                                 jsonb_build_object('type', 'site_inactive', 'code', v_code, 'inactive', p_inactive));
+  RETURN jsonb_build_object('changed', true, 'inactive', p_inactive);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.site_inactive_set(text, boolean, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_inactive_set(text, boolean, text) TO authenticated;
+
+-- ============================================================
 -- public.set_admin_code — החלפת קוד המנהל (מנהל בלבד, עם הקוד הנוכחי)
 -- ============================================================
 -- ⚠️ הגדרה זו מחליפה את זו שב-supabase/migrations/20260819_push_notifications.sql: שם היא נולדה,

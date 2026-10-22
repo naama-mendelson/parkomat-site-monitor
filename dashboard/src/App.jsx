@@ -16,6 +16,9 @@ import { useDirect, fetchSiteCompliance, fetchTaskCounts, fetchServiceCallBoard,
 import { TechOnSiteContext } from "./components/TechIcon/TechOnSiteContext";
 import { techOnSiteBySite } from "./utils/technicians";
 import TasksDialog from "./components/Tasks/TasksDialog";
+import InactiveDialog from "./components/SiteInactive/InactiveDialog";
+import { SiteInactiveContext } from "./components/SiteInactive/SiteInactiveContext";
+import { canEdit } from "./utils/roles";
 import { TasksContext } from "./components/Tasks/TasksContext";
 import ServiceCallsDialog from "./components/ServiceCalls/ServiceCallsDialog";
 import { ServiceCallsContext } from "./components/ServiceCalls/ServiceCallsContext";
@@ -98,6 +101,7 @@ function App() {
   const [callsOpen, setCallsOpen] = useState(null);
   const [callsRev, setCallsRev] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(null);
+  const [inactiveOpen, setInactiveOpen] = useState(null);   // "לא פעיל" (22/10/2026): { site } — החלון פתוח
   const [tasksRev, setTasksRev] = useState(0);
 
   // ערכת נושא: בהירה כברירת מחדל, והבחירה נזכרת בין ביקורים (ראה useTheme)
@@ -236,6 +240,10 @@ function App() {
   const tasksCtx = useDirect && taskCounts
     ? { bySite: taskCounts.bySite, openSite: (site) => setTasksOpen({ site }), view: tasksView }
     : null;
+  // "לא פעיל" (22/10/2026): עורך או מנהל מסמנים מהכרטיס; בקר רואה את השורה בלבד. המסד הוא שבודק.
+  const editRole = canEdit(user?.role);
+  const inactiveCtx = useMemo(() => (useDirect ? { canEdit: editRole, open: (site) => setInactiveOpen({ site }) } : null),
+    [editRole]);
   // ⚠️ קריאות ויזנט — כמו המשימות: בעלייה, כל 5 דקות, ומיד בכל אירוע. כבוי (VITE_SERVICE_CALLS) — לא נטען
   // ולא מסומן. כשל משאיר את המספרים הקודמים.
   // ⚠️ גם המספר ל"קריאות היום" (14/10/2026): הסימון על הכרטיס מראה רק פתוחות של אתר מוכר, וביום
@@ -438,6 +446,11 @@ function App() {
       // (בלי סטטיסטיקות ובלי dataVersion): בעלת המוצר — "ברגע שמחברים... שישתנה ישר 'לא חובר'".
       // ⚠️ רצף עריכות הוא רצף אירועים; loadSites מאחד טעינות חופפות לאחת נוספת.
       if (data?.type === "service_link") {
+        reload();
+        return;
+      }
+      // 0ג. "לא פעיל" (22/10/2026) — אתר עבר לסוף הלוח או חזר. טעינה חיה בלבד, כמו הרמזור.
+      if (data?.type === "site_inactive") {
         reload();
         return;
       }
@@ -649,7 +662,9 @@ function App() {
         <TasksContext.Provider value={tasksCtx}>
           <ServiceCallsContext.Provider value={callsCtx}>
             <TechOnSiteContext.Provider value={techOnSite}>
-              {renderView()}
+              <SiteInactiveContext.Provider value={inactiveCtx}>
+                {renderView()}
+              </SiteInactiveContext.Provider>
             </TechOnSiteContext.Provider>
           </ServiceCallsContext.Provider>
         </TasksContext.Provider>
@@ -658,6 +673,9 @@ function App() {
       {tasksOpen && (
         <TasksDialog {...tasksOpen} rev={tasksRev}
           onClose={() => setTasksOpen(null)} onChanged={loadTaskCounts} />
+      )}
+      {inactiveOpen && (
+        <InactiveDialog {...inactiveOpen} onClose={() => setInactiveOpen(null)} onChanged={() => reload()} />
       )}
       {callsOpen && (
         <ServiceCallsDialog {...callsOpen} rev={callsRev}

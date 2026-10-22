@@ -72,7 +72,7 @@ import {
 } from "./api";
 import { inviteUserDirect, deleteUserDirect } from "./usersInviteDirect";
 import { verifyAdminCodeDirect, setAdminCodeDirect } from "./adminCodeDirect";
-import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect, fetchSiteCodesDirect } from "./sitesWriteDirect";
+import { registerSiteDirect, updateSiteDirect, deleteSiteDirect, provisionAgentDirect, agentEverBeatDirect, markControllerReplacedDirect, setSiteInactiveDirect, sitesWithAgentIdentityDirect, listSiteIdentitiesDirect, fetchSiteCodesDirect } from "./sitesWriteDirect";
 import { fetchUsersDirect, setUserActiveDirect, setUserRoleDirect } from "./usersDirect";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
@@ -483,6 +483,11 @@ export async function cancelMaintenance(code, name) {
 export async function markControllerReplaced(code) {
   if (!useDirect) throw new Error("סימון החלפת בקר זמין רק במצב הישיר");
   return markControllerReplacedDirect(code);
+}
+/** "לא פעיל" (22/10/2026) — RPC, עורך או מנהל. ⚠️ אין זרוע שרת. */
+export async function setSiteInactive(code, inactive, reason) {
+  if (!useDirect) throw new Error("סימון \"לא פעיל\" זמין רק במצב הישיר");
+  return setSiteInactiveDirect(code, inactive, reason);
 }
 /**
  * האם האתר פעם אי-פעם. `null` = "לא הצלחתי לברר", והקורא דורש אז אישור.

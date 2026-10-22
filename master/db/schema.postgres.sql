@@ -786,6 +786,13 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_source TEXT;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_precision TEXT;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_set_at TEXT;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS geo_set_by TEXT;
+
+-- "לא פעיל" (22/10/2026): אתר שלא פעיל כרגע (שיפוץ, השבתה) יורד לסוף הלוח, תחת הכותרת "לא פעיל". מסמן עורך או מנהל
+-- (public.site_inactive_set). ⚠️ זה **רק** המיקום בלוח — בבחירת הבעלים: המצב, האריחים, הצלצול והסטטיסטיקה ממשיכים כרגיל.
+-- inactive_at = מתי סומן (ISO, כמו שאר הזמנים ב-sites), NULL = פעיל.
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS inactive_at TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS inactive_by TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS inactive_reason TEXT;
 ALTER TABLE sites DROP CONSTRAINT IF EXISTS sites_geo_shape;
 ALTER TABLE sites ADD CONSTRAINT sites_geo_shape CHECK (
       (lat IS NULL) = (lon IS NULL)

@@ -144,6 +144,21 @@ export async function registerSiteDirect(payload = {}) {
  * ⚠️ נמדד: בקר חדש עם 87 מחזורי מפעל מוסיף 87 מחזורים מדומים,
  * ו-`cycle_total` הוא בלתי הפיך.
  */
+/**
+ * "לא פעיל" (22/10/2026) — עורך או מנהל. inactive = true מסמן (או מעדכן את הסיבה), false מחזיר לפעיל.
+ * { changed, inactive }. ⚠️ p_reason נשלח תמיד, גם null — PostgREST בוחר פונקציה לפי המפתחות.
+ */
+export async function setSiteInactiveDirect(code, inactive, reason = null) {
+  assertConfigured();
+  const { data, error } = await supabase.rpc("site_inactive_set", {
+    p_code: String(code),
+    p_inactive: Boolean(inactive),
+    p_reason: reason == null || String(reason).trim() === "" ? null : String(reason),
+  });
+  if (error) throw new Error(messageFor(error, inactive ? "הסימון כלא פעיל נכשל" : "ההחזרה לפעיל נכשלה"));
+  return data;
+}
+
 export async function markControllerReplacedDirect(code) {
   assertConfigured();
 

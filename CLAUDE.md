@@ -5387,6 +5387,57 @@ The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, wher
   run; check `settings` after `--apply`. ✅ Applied 22/10/2026 with the statistics (above): `tech_parking_sites` = `3488`,
   no open visit at 3488 afterwards. The one past 3488 visit was **not** deleted (asked, no answer yet).
 
+## "לא פעיל" — sites that are not active go to the end of the board (built 22/10/2026, NOT applied, NOT pushed)
+
+A request from the field that the owner passed on: sites that are not active but show as "תקלה" or "תחזוקה" should drop to
+the bottom of the list, under the heading "לא פעיל". The examples were ברנדייס 13 (1114, in maintenance since the morning
+of 22/10) and הזורע 2 (1311, in maintenance since 16/09). Both show maintenance because of what the controller reports; no
+maintenance window was opened for either.
+
+**Her answers:**
+- **Only the position on the board changes.** The status, the header tiles, the alarm on a fault and the statistics all
+  stay as they are.
+- **Editors and managers set it, from the card.** A בקר sees the line only.
+
+**How it works:**
+- **SQL.** `sites.inactive_at` / `inactive_by` / `inactive_reason` (ISO text, like the other times in `sites`).
+  `public.site_inactive_set(code, inactive, reason)` uses `require_editor`:
+  - The reason is optional. Whitespace is collapsed, and it is cut at 200 characters.
+  - Marking a site that is already marked updates only the reason; when and by whom stay.
+  - Clearing removes all three.
+  - The same state with the same reason changes nothing: no audit and no event.
+  - The audit row is `site.inactive` with the id only, not the reason (free text).
+  - The event is `site_inactive`, with type and code inside the payload, because that is what the dashboard receives.
+- **The board** (`OperatorView`, `utils/siteInactive.js`): `splitInactive` keeps the usual order inside each part. The
+  inactive sites get a second `SiteGrid` under `<h2>לא פעיל · N</h2>`. ⚠️ It is a separate grid because a heading inside the
+  grid would break the expanded card's row placement (`placementFor`). With no sites at all, the first grid still renders,
+  so the board still says "לא נמצאו אתרים".
+- **The expanded card:**
+  - The line reads "לא פעיל מ-22/10 ע״י דנה · בשיפוץ".
+  - For an editor there is a button, "סימון כלא פעיל" / "לא פעיל — שינוי".
+  - The button opens `InactiveDialog`: a reason, "סימון כלא פעיל" or "החזרה לפעיל" / "שמירת הסיבה". It uses `.tk-overlay`, so
+    the card does not collapse behind it and Esc closes only the window.
+  - `SiteInactiveContext` from `App` carries `{canEdit, open}`.
+- **On an event,** `App` does a live reload (no statistics), like the traffic light. `needsRefetch` ignores the event. An old
+  bundle treats it as unknown and does one full reload per mark; marks are rare.
+- A site without a controller has no expanded card, so it cannot be marked from the board.
+
+**Tests:**
+- `site-inactive.test.js` (4): mark, update, clear, no-op, the 200 cap, the verified name, audit without the reason, the
+  event payload, a בקר / anon / unknown site / a missing choice, and re-applying the files.
+- **SQL mutations: 7 of 7 caught** (`scratchpad/mutpark/run-inactive.cjs`).
+- `site-inactive-ui.test.js` (2) and the roles census (`site_inactive_set` under EDITOR). Full suite 1429/1429.
+- Browser `e2e/probe-inactive.mjs` 23/23:
+  - no heading without marks; the heading with marked sites last, in order and with the same card count; the tiles do not
+    change;
+  - the line and button on a marked card; returning to active; marking with a reason;
+  - Esc keeps the card open; a בקר gets no button; a failure stays in the window; 390 dark.
+  - The mock takes `?inactive=2438,1003` and `?inactivefail=1`, and exposes `window.__inactiveCalls`.
+  - `probe-expand-square` 7, `probe-card-click` 40 and `probe-techcards` 66 still pass.
+
+**Deploy:** SQL first. The dry run shows the new function; the three columns do not show, so check them after `--apply`.
+Then push. A new bundle against the old SQL: the board shows nothing (no `inactive_at`), and the button gets a 404.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

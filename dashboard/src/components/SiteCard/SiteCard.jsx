@@ -23,6 +23,9 @@ import TechIcon from "../TechIcon/TechIcon";
 import { useTechOnSite } from "../TechIcon/TechOnSiteContext";
 import { techOnSiteText } from "../../utils/technicians";
 import "../Tasks/Tasks.css";
+import { useSiteInactive } from "../SiteInactive/SiteInactiveContext";
+import { inactiveLine, isInactive } from "../../utils/siteInactive";
+import "../SiteInactive/SiteInactive.css";
 
 // ==========================================================
 // צבע הזמינות — והספים **נמדדו**, לא הומצאו
@@ -144,6 +147,7 @@ function TypeBadge({ type, system, lifts = [] }) {
 
 function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpenDetail, style }) {
   const tasks = useTasks();          // null — אין משימות במצב הזה
+  const inactiveCtx = useSiteInactive();   // "לא פעיל" (22/10/2026): null — אין סימון במצב הזה
   const calls = useServiceCalls();   // null — הקריאות כבויות (VITE_SERVICE_CALLS) או לא נטענו
   // "טכנאי באתר" (21/10/2026, הבעלת על הלוח: "אני לא רואה שום איקון שטכנאי טיפל"): רכב של טכנאי עומד עכשיו באתר.
   // תצוגה בלבד — המצב של האתר לא משתנה בגלל זה. ההחלטה מי "באתר" במסד (tech_on_site).
@@ -935,6 +939,17 @@ function SiteCard({ site, density = "normal", expanded, onToggle, onHover, onOpe
 
         {callsButton}
         {taskButton}
+        {/* "לא פעיל" (22/10/2026): מי סימן, מתי ולמה; עורך או מנהל — כפתור לסמן, לשנות או להחזיר */}
+        {(isInactive(site) || inactiveCtx?.canEdit) && (
+          <div className="exp-inactive-row">
+            {isInactive(site) && <p className="exp-inactive">{inactiveLine(site)}</p>}
+            {inactiveCtx?.canEdit && (
+              <button type="button" className="ia-card-btn" onClick={(e) => { e.stopPropagation(); inactiveCtx.open(site); }}>
+                {isInactive(site) ? "לא פעיל — שינוי" : "סימון כלא פעיל"}
+              </button>
+            )}
+          </div>
+        )}
 
         <button
           className="exp-open"

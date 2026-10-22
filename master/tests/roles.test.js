@@ -54,6 +54,8 @@ const EDITOR = [
   "tech_dispatch", "tech_dispatch_end", "tech_dispatch_mark", "tech_save", "tech_set_status", "tech_phone_begin", "tech_phone_unpair",
   // המשימה הבאה (21/10/2026)
   "tech_next_set", "tech_next_clear",
+  // "לא פעיל" (22/10/2026)
+  "site_inactive_set",
 ];
 // מנהל בלבד: מחיקת אתר וכלי השאריות שלו, ניהול משתמשים, קוד הניהול, תיבת הדיווחים, ופעולות השרת המת
 const MANAGER = [

@@ -131,6 +131,8 @@ export function needsRefetch(msg) {
   if (msg.type === "service_calls") return false;
   // הלוח ברמזור — App טוען טעינה חיה בעצמו; טעינה מלאה (ו-dataVersion) מיותרת
   if (msg.type === "service_link") return false;
+  // "לא פעיל" (22/10/2026) — App טוען טעינה חיה בעצמו; טעינה מלאה (וסטטיסטיקות) מיותרת
+  if (msg.type === "site_inactive") return false;
 
   if (msg.type === "operation") {
     return msg.startEnd === "end" && !msg.isAnomaly;
