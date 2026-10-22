@@ -5,7 +5,8 @@
 //     שנשלח בטעות, אינם פותחים דבר אחרי הסריקה. החלפה שנכשלה אינה כשל בחיבור — הטלפון ממשיך עם הסיסמה מה-QR.
 //   • הפרטים נשמרים במכשיר (localStorage), כדי להתחבר שוב לבד: ה-sessions נגרפים אחרי יממה בלי שימוש
 //     (app.prune_auth_sessions), וטלפון שלא פתח את האפליקציה בסוף שבוע היה מגיע למסך התחברות שהטכנאי לא יודע מה לכתוב בו.
-//   • forgetDevice — "ניתוק הטלפון הזה": מנתק במסד (tech_self_unpair), מבטל את ההרשמה לצפצוף, מוחק את הפרטים ויוצא.
+//   • 22/10/2026: "ניתוק הטלפון הזה" (forgetDevice) הוסר מהטלפון לבקשת הבעלת — ניתוק רק מהכרטיס אצל הרכז. ‏tech_self_unpair
+//     נשאר במסד, בלי קורא בדשבורד.
 // ⚠️ מה שהפרטים פותחים: את המשימה של הטכנאי הזה בלבד (tech_me) — לא את הדשבורד. ניתוק מהכרטיס סוגר את המשתמש במסד מיד.
 //
 // ⚠️ תיקונים מבדיקת הבאגים (21/10/2026):
@@ -15,9 +16,7 @@
 //   • התחברות שקטה אומרת למה נכשלה: פרטים שגויים (הטלפון נותק — QR חדש מחק את המשתמש) או אין חיבור (ננסה שוב).
 //   • ניתוק מהטלפון באמת מנתק: עד אז רק מחק את הפרטים, והטלפון המשיך לצפצף על כל משימה.
 import { supabase, isSupabaseConfigured } from "./supabase";
-import { signIn, signOut } from "./auth";
-import { selfUnpairPhone } from "./dataSource";
-import { unsubscribeTechPush } from "./techPush";
+import { signIn } from "./auth";
 
 const KEY = "parkomat.techDevice";
 
@@ -100,12 +99,4 @@ export async function resumeDevice() {
   }
   markDisconnected();
   return { ok: false, reason: invalid ? "invalid" : "none" };
-}
-
-/** "ניתוק הטלפון הזה": מנתק במסד, מבטל את ההרשמה לצפצוף, מוחק את הפרטים ויוצא. */
-export async function forgetDevice() {
-  try { await selfUnpairPhone(); } catch { /* אין רשת — המנוי יימחק כשהשירות יחזיר 404/410, או ב-QR החדש */ }
-  try { await unsubscribeTechPush(); } catch { /* */ }
-  markDisconnected();   // המסך הבא: "הטלפון אינו מחובר לטכנאי" — ולא טופס מייל וסיסמה
-  await signOut();
 }

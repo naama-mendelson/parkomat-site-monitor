@@ -4462,7 +4462,11 @@ only his own task.
     - polls `tech_me` every 30 s while visible, and when the screen returns;
     - keeps the task on a network error and says it is retrying;
     - when unpaired, says "לבקש מהרכז QR חדש";
-    - offers "ניתוק הטלפון הזה" in two taps, which clears the device and signs out.
+    - ~~offers "ניתוק הטלפון הזה" in two taps, which clears the device and signs out.~~ **Removed 22/10/2026** (the owner:
+      *"אין בו צורך, תעיף אותו"*): the phone has no disconnect button; a phone is disconnected only from the coordinator's
+      card ("ניתוק טלפון"). `forgetDevice` and `selfUnpairPhone` are gone from the dashboard; `tech_self_unpair` stays in
+      SQL with no caller. Browser `tp/probe-tp` 31, `probe-tpfix` 25 (both now assert there is no button and nothing is
+      disconnected), `probe-tpbeep` 46, `probe-tpnext` 11. NOT pushed.
 - **Tests:**
   - `technicians.test.js` +3 (20). The QR is for an editor in the pilot only. The phone sees only its own task, and no
     board, vehicles or site rows: RLS on `sites` is switched on inside the test, because PGlite does not have it and

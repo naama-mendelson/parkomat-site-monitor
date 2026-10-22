@@ -152,11 +152,6 @@ export async function fetchTechMe() {
   return rpc("tech_me", {});
 }
 
-/** "ניתוק הטלפון הזה" מהטלפון עצמו (21/10/2026): המנוי לצפצוף, הקישור והמשתמש. { changed }. */
-export async function selfUnpairPhone() {
-  return rpc("tech_self_unpair", {});
-}
-
 /** מי עומד עכשיו באתר — לאיקון "טכנאי באתר" בלוח האתרים (21/10/2026). כל הצוות.
  *  [{ site_id, code, plate, nickname, tech, since, no_signal }] — ההחלטה (2 דקות לפחות, עדכני ב-15 דקות) במסד. */
 export async function fetchTechOnSite() {

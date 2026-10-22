@@ -9,10 +9,10 @@
 // • "קיבלתי": מפסיק את הצפצוף, והכרטיס אצל הרכז אומר "קיבל 10:43".
 // ⚠️ שואל את tech_me כל 30 שניות, רק כשהמסך גלוי, מיד כשחוזרים אליו, ומיד כשמגיע צפצוף והאפליקציה פתוחה (הודעה מה-SW).
 // ⚠️ ניתוק מהכרטיס מחזיר כאן 42501: המסך אומר מה לעשות (QR חדש מהרכז), ולא מנסה שוב לנצח.
+// 22/10/2026: אין כאן "ניתוק הטלפון הזה" (הבעלת: "אין בו צורך, תעיף אותו"). ניתוק — רק מהכרטיס אצל הרכז ("ניתוק טלפון").
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ackDispatch, fetchTechMe } from "../../services/dataSource";
 import { enableTechPush, syncTechPush, techPushState } from "../../services/techPush";
-import { forgetDevice } from "../../services/techDevice";
 import { destText, dispatchLine } from "../../utils/technicians";
 import { clockText } from "../../utils/vehicles";
 import { navLink } from "../../utils/techPhone";
@@ -85,13 +85,11 @@ function PushBar({ state, busy, error, onEnable }) {
 export default function TechPhone() {
   const [me, setMe] = useState(null);
   const [error, setError] = useState(null);
-  const [armed, setArmed] = useState(false);
   const [push, setPush] = useState(() => techPushState());
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState(null);
   const [acking, setAcking] = useState(false);
   const [ackError, setAckError] = useState(null);
-  const armTimer = useRef(null);
   const synced = useRef(0);   // מתי ניסינו לאחרונה להירשם מחדש לבד
 
   const load = useCallback(async () => {
@@ -110,7 +108,6 @@ export default function TechPhone() {
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVis);
       navigator.serviceWorker?.removeEventListener?.("message", onMsg);
-      clearTimeout(armTimer.current);
     };
   }, [load]);
 
@@ -143,19 +140,6 @@ export default function TechPhone() {
   };
 
   const unpaired = error?.code === "42501";
-  const [leaving, setLeaving] = useState(false);
-  const forget = () => {
-    if (leaving) return;
-    if (!armed) {
-      setArmed(true);
-      clearTimeout(armTimer.current);
-      armTimer.current = setTimeout(() => setArmed(false), 4000);
-      return;
-    }
-    clearTimeout(armTimer.current);
-    setLeaving(true);
-    forgetDevice();   // מנתק במסד, מבטל את הצפצוף, ויוצא — המסך הבא הוא "הטלפון נותק"
-  };
 
   return (
     <div className="tp" dir="rtl">
@@ -181,12 +165,6 @@ export default function TechPhone() {
             : <p className="tp-idle">אין משימה כרגע</p>)}
         </>
       )}
-
-      <footer className="tp-foot">
-        <button type="button" className={armed ? "is-armed" : ""} onClick={forget} disabled={leaving}>
-          {leaving ? "מנתק…" : armed ? "לנתק את הטלפון הזה? לחיצה נוספת" : "ניתוק הטלפון הזה"}
-        </button>
-      </footer>
     </div>
   );
 }

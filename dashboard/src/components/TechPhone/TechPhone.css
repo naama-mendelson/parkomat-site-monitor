@@ -43,7 +43,6 @@
 .tp-row .tp-primary { background: var(--accent, #1d4ed8); border-color: var(--accent, #1d4ed8); color: #fff; font-weight: 700; }
 .tp-foot { margin-top: auto; display: flex; justify-content: center; }
 .tp-foot button { font-size: 0.9rem; color: var(--text-secondary, #475569); }
-.tp-foot button.is-armed { color: #b91c1c; border-color: #b91c1c; }
 .tp a:focus-visible, .tp button:focus-visible { outline: 3px solid var(--accent, #1d4ed8); outline-offset: 2px; }
 
 /* הצפצוף ו"קיבלתי" (שלב 4, 21/10/2026). ⚠️ הירוק בבהירה הוא teal-800: teal-700 על הגוון של עצמו נמדד 4.24:1 */

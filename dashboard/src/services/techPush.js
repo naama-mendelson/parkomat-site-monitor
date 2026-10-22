@@ -64,7 +64,7 @@ export async function syncTechPush({ fresh = false } = {}) {
   return true;
 }
 
-/** ביטול ההרשמה לצפצוף בדפדפן הזה ("ניתוק הטלפון הזה", או לפני מנוי חדש). true = היה מנוי. */
+/** ביטול ההרשמה לצפצוף בדפדפן הזה (לפני מנוי חדש). true = היה מנוי. */
 export async function unsubscribeTechPush() {
   if (techPushState() === "unsupported") return false;
   const reg = await navigator.serviceWorker.getRegistration("/");
