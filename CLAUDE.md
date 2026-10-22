@@ -5145,7 +5145,7 @@ vehicle.
 The open visits of the vehicles that did not move close at the next sync. Their 8 records (open and closed) are not
 deleted by the SQL. Removing them is a separate data step.
 
-### "סטטיסטיקה" for the technicians, a history per technician, and "ניהול טכנאים" for managers (built 22/10/2026, NOT deployed)
+### "סטטיסטיקה" for the technicians, a history per technician, and "ניהול טכנאים" for managers (built 22/10/2026; SQL applied, NOT pushed)
 
 The owner: *"אני רוצה לראות גם היסטוריה של אתרים שבהם כל אחד ביקר, וכמה שעות בממוצע נמצא טכנאי באתר, כמה כל אחד מהם, מי
 נוסע הכי מהר וכו' — תפרט הרבה מידע וכמה שיותר סטטיסטיקות. תן אופציה להוסיף עוד טכנאי ולמחוק — רק למי שהוא מנהל"*.
@@ -5252,7 +5252,14 @@ or 365 days; `site_visit_stats` 0.1 s; `tech_history` for a year 0.2 s.
 365-day default nor the two dropped functions; check both after `--apply`. Then push. An old bundle against the new SQL
 loses "רכבים ברשימה" (404); the new bundle against the old SQL has no statistics and no management (404 on those calls).
 
-### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026, NOT deployed)
+✅ **SQL applied 22/10/2026 at the owner's word, the site NOT pushed** (*"אני רוצה לראות את זה ב-SUPABASE אבל אל תעשה
+DEPLOY לאתר — רק ב-LOCALHOST"*): she reviews it on her local Vite (localhost:5173, the working tree, against production).
+11 s, then "הייצור זהה לקוד". Checked read-only right after: `fleet_list` / `fleet_shown_set` are gone, the four new
+public functions exist and are closed to anon, the visit retention default is 365 days, the Ituran sync ran 42 s after
+the apply with `stats_error` / `advance_error` NULL, 87 of 90 agents beating. ⚠️ **Until the push, "רכבים ברשימה" on the
+live site fails (404)** — the live bundle still has that window. Editors only; nothing is lost.
+
+### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026; SQL applied, NOT pushed)
 
 The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, where technicians park): *"להוציא את 3488"*.
 
@@ -5284,7 +5291,8 @@ The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, wher
   the copy, or the delete can reach the repo's `node_modules`.
 - **Deploy:** SQL only, together with the statistics above (dry run on 22/10: 12 gaps — 9 new functions, among them
   `tech_parking_codes`, and the bodies of `site_at`, `vehicle_site`, `tech_save`). The seed row does not show in the dry
-  run; check `settings` after `--apply`.
+  run; check `settings` after `--apply`. ✅ Applied 22/10/2026 with the statistics (above): `tech_parking_sites` = `3488`,
+  no open visit at 3488 afterwards. The one past 3488 visit was **not** deleted (asked, no answer yet).
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
