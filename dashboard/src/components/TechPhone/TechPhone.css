@@ -60,3 +60,21 @@
 .tp-acked { font-weight: 700; color: var(--tp-ok, #0f766e); }
 [data-theme="dark"] .tp { --tp-ok: #2dd4bf; --tp-bad: #fca5a5; }
 [data-theme="dark"] .tp-ack { background: #0f766e; }
+
+/* משימה שעוד לא אושרה — חלון על כל המסך (22/10/2026). נסגר רק ב"קיבלתי". */
+.tp-pop-back {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(15, 23, 42, 0.62); overflow-y: auto;
+}
+.tp-pop {
+  width: 100%; max-width: 480px; max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10px; padding: 22px 18px 18px; border-radius: 18px;
+  background: var(--bg-card, #fff); color: var(--text-primary, #0f172a);
+  border: 1px solid var(--border-color, #cbd5e1); border-top: 6px solid var(--accent, #1d4ed8); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+.tp-pop p { margin: 0; overflow-wrap: anywhere; }
+.tp-pop-k { font-size: 1rem; font-weight: 700; color: var(--accent, #1d4ed8); }
+.tp-pop-dest { margin: 0; font-size: 1.6rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.tp-pop-text { font-size: 1.15rem; line-height: 1.5; white-space: pre-line; }
+.tp-pop-meta { font-size: 0.92rem; color: var(--text-secondary, #475569); }
+.tp-pop-ack { min-height: 64px; margin-top: 10px; font-size: 1.3rem; }

@@ -48,6 +48,33 @@ function Task({ d, next, now, onAck, acking, ackError }) {
   );
 }
 
+// משימה שעוד לא אושרה — חלון על כל המסך, עם "קיבלתי" (22/10/2026). הבעלת: "שזה יהיה פופאפ — ברגע שהוא מאשר את המשימה
+// הפופאפ נעלם ונסגר". נסגר רק באישור: אין ✕, Esc או לחיצה ברקע. אישור שנכשל — החלון נשאר, והשגיאה בתוכו. משימה שנסגרה או
+// בוטלה בינתיים (PT409/PT404) — הטעינה שאחרי השגיאה מורידה אותה, ואיתה את החלון.
+function AckPopup({ d, now, onAck, acking, ackError }) {
+  const btn = useRef(null);
+  useEffect(() => { btn.current?.focus({ preventScroll: true }); }, [d.id]);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";        // המסך שמאחור לא נגלל מתחת לחלון
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div className="tp-pop-back">
+      <section className="tp-pop" role="alertdialog" aria-modal="true" aria-labelledby="tp-pop-k" aria-describedby="tp-pop-dest">
+        <p className="tp-pop-k" id="tp-pop-k">{d.follows ? "המשימה הבאה" : "משימה חדשה"}</p>
+        <h2 className="tp-pop-dest" id="tp-pop-dest">{destText(d)}</h2>
+        {d.details && <p className="tp-pop-text">{d.details}</p>}
+        <p className="tp-pop-meta">{dispatchLine(d, now)}</p>
+        <button ref={btn} type="button" className="tp-ack tp-pop-ack" onClick={onAck} disabled={acking}>
+          {acking ? "שולח…" : "קיבלתי"}
+        </button>
+        {ackError && <p className="tp-warn" role="alert">{ackError}</p>}
+      </section>
+    </div>
+  );
+}
+
 // הצפצוף: מה המצב בטלפון הזה, ומה לעשות
 function PushBar({ state, busy, error, onEnable }) {
   if (state === "granted") return <p className="tp-push tp-push--on">✓ צפצוף מופעל — הטלפון יצפצף כשתגיע משימה</p>;
@@ -163,6 +190,9 @@ export default function TechPhone() {
           {me && (me.dispatch
             ? <Task d={me.dispatch} next={me.next ?? null} now={me.now} onAck={ack} acking={acking} ackError={ackError} />
             : <p className="tp-idle">אין משימה כרגע</p>)}
+          {me?.dispatch && !me.dispatch.acked_at && (
+            <AckPopup key={me.dispatch.id} d={me.dispatch} now={me.now} onAck={ack} acking={acking} ackError={ackError} />
+          )}
         </>
       )}
     </div>

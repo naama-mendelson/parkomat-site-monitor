@@ -4556,6 +4556,15 @@ technicians yet ("לא עכשיו").
   - A permission already granted re-sends the subscription once per open (`syncTechPush`), since a new QR deletes the old
     subscriptions.
   - "קיבלתי" is a big button. Afterwards: "✓ קיבלת ב-HH:MM".
+  - **Since 22/10/2026 an unconfirmed task opens as a full-screen window** (`AckPopup`, `role="alertdialog"`): "משימה
+    חדשה" (or "המשימה הבאה"), the destination, the details, who sent it, and a 64px "קיבלתי" with focus. The owner: *"שזה
+    יהיה פופאפ — ברגע שהוא מאשר את המשימה הפופאפ נעלם ונסגר"* (asked where, she chose the technician's phone, not the
+    coordinator's dashboard). It closes **only** on confirmation: no ✕, Esc or backdrop. A failed confirmation keeps it open
+    with the error inside; a task ended meanwhile (PT409/PT404) is reloaded away, and the window with it. It covers the
+    "הפעלת צפצוף" bar until confirmed. Body scroll is locked while open. Harness: `?acked=1` in the phone mock gives a task
+    already confirmed (no window) for tests of the screen behind; `probe-tpbeep` 56 (A0: the window, full screen, focus, Esc
+    and backdrop do not close it; A1–A3 through it; S1 a new task arrives in it), `probe-tpnext` P2, `probe-tp` 31,
+    `probe-tpfix` 25.
   - The light-theme green is teal-800: teal-700 on its own tint measured 4.24:1.
 - **The card** — ~~`pushLine`, one small line~~ replaced on 22/10/2026 by **`ackLine`**, a chip right under the task's
   destination, on every open task (the owner: *"כשטכנאי מאשר את המשימה אני רוצה לראות על הכרטיס שהוא אישר. אם הוא לא אישר
