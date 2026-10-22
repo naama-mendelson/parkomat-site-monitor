@@ -192,11 +192,23 @@
 .tc-task-btns button.is-armed { border-color: var(--tc-fault); color: var(--tc-fault); }
 .tc-task-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tc-task-err { font-size: 0.82rem; color: var(--tc-fault); }
-/* הצפצוף והקבלה (שלב 4): קיבל — ירוק; לא אישר / לא צפצף — אדום; מחכה — שקט */
-.tc-task-push { font-size: 0.84rem; font-weight: 600; }
-.tc-push--ok { color: var(--tc-site); }
-.tc-push--bad { color: var(--tc-fault); }
-.tc-push--wait { color: var(--text-secondary); }
+/* אישר / עוד לא אישר (22/10/2026): תג בולט בראש המשימה — ירוק "✓ אישר 10:43", ענבר "עוד לא אישר", אדום "✕ לא אישר"
+   אחרי 3 צפצופים. מילה + צבע, לא צבע לבד. מתחתיו — מה קרה עם הצפצוף, בשקט. */
+.tc-ack { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.tc-ack-chip {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 1px 10px; border-radius: 999px;
+  font-size: 0.86rem; font-weight: 700; white-space: nowrap;
+  color: var(--ack-c); border: 1px solid color-mix(in srgb, var(--ack-c) 55%, transparent);
+  background: color-mix(in srgb, var(--ack-c) 12%, var(--bg-card));
+}
+.tc-ack-time { font-variant-numeric: tabular-nums; }
+.tc-ack-detail { font-size: 0.8rem; color: var(--text-secondary); }
+.tc-ack--ok { --ack-c: var(--tc-site); }
+/* ⚠️ הענבר של --tc-call (#b45309) על הגוון של עצמו נמדד 4.25:1 בבהיר — כאן כהה יותר (amber-800) */
+:root { --tc-ack-wait: #92400e; }
+[data-theme="dark"] { --tc-ack-wait: var(--tc-call); }
+.tc-ack--wait { --ack-c: var(--tc-ack-wait); }
+.tc-ack--bad { --ack-c: var(--tc-fault); }
 /* "טלפון" (שלב 2): מחובר — מסגרת ירוקה; QR שעוד לא נסרק — כתומה */
 .tc-foot-btns button.tc-phone--ok { border-color: var(--tc-site); color: var(--tc-site); }
 .tc-foot-btns button.tc-phone--qr, .tc-foot-btns button.tc-phone--nopush { border-color: var(--tc-call); }

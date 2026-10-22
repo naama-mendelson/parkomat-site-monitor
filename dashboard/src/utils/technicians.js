@@ -110,21 +110,23 @@ export function dispatchLine(d, nowIso) {
 }
 
 /**
- * הצפצוף והקבלה בכרטיס (שלב 4, 21/10/2026): { tone: ok | wait | bad, text } או null.
- * קיבל → "✓ קיבל 10:43"; 3 צפצופים בלי קבלה → "לא אישר קבלה"; שגיאה → למה לא צפצף; אחרת — מתי צפצף ושמחכים.
- * ⚠️ מסד בלי השדות (לפני שלב 4) — null, ואין שורה.
+ * האם הטכנאי אישר את המשימה בטלפון ("קיבלתי") — תמיד, כל עוד המשימה פתוחה: { tone: ok | wait | bad, label, time, detail }.
+ * הבעלת (22/10/2026): "כשטכנאי מאשר את המשימה אני רוצה לראות על הכרטיס שהוא אישר. אם הוא לא אישר — שיראו שהוא עדיין לא
+ * אישר". עד אז הייתה כאן שורה קטנה של הצפצוף, ובמצבים מסוימים — אחרי "הגיע", או טלפון שלא מחובר — לא נאמר כלום על האישור.
+ *   אישר → "✓ אישר" + השעה;  3 צפצופים בלי אישור → "✕ לא אישר" (אדום);  אחרת → "עוד לא אישר" (ענבר).
+ *   detail = מה קרה עם הצפצוף (מתי צפצף, שהטלפון לא מחובר לצפצוף, שהשירות לא ענה). אחרי "הגיע" הצפצוף נעצר — בלי פירוט.
+ * ⚠️ מסד בלי השדות (לפני שלב 4, 21/10) — null: אי אפשר לדעת אם אישר, ולא ממציאים "לא אישר".
  */
-export function pushLine(d, nowIso) {
-  if (!d || d.push_count === undefined) return null;
-  if (d.acked_at) return { tone: "ok", text: `✓ קיבל ${clockText(d.acked_at, nowIso)}` };
-  // הגיע (הרכז סימן) — הצפצוף נעצר במסד (21/10/2026), ו"מחכה ל'קיבלתי'" כבר לא נכון. "הגיע" כתוב בשורת השליחה.
-  if (d.arrived_at) return null;
+export function ackLine(d, nowIso) {
+  if (!d || (d.push_count === undefined && d.acked_at === undefined)) return null;
+  if (d.acked_at) return { tone: "ok", label: "✓ אישר", time: clockText(d.acked_at, nowIso), detail: null };
   const max = Number(d.push_max) || 3;
   const n = Number(d.push_count) || 0;
-  if (n >= max) return { tone: "bad", text: `לא אישר קבלה — צפצף ${n} פעמים` };
-  if (d.push_error) return { tone: "bad", text: `⚠ ${d.push_error}` };
-  if (n > 0) return { tone: "wait", text: `צפצף בטלפון ${clockText(d.push_last_at, nowIso)} · מחכה ל"קיבלתי" (${n} מתוך ${max})` };
-  return { tone: "wait", text: "שולח צפצוף לטלפון…" };
+  if (d.arrived_at) return { tone: "wait", label: "עוד לא אישר", time: null, detail: null };
+  if (n >= max) return { tone: "bad", label: "✕ לא אישר", time: null, detail: `צפצף בטלפון ${n} פעמים, בלי תשובה` };
+  if (d.push_error) return { tone: "wait", label: "עוד לא אישר", time: null, detail: `⚠ ${d.push_error}` };
+  if (n > 0) return { tone: "wait", label: "עוד לא אישר", time: null, detail: `צפצף בטלפון ${clockText(d.push_last_at, nowIso)} (${n} מתוך ${max})` };
+  return { tone: "wait", label: "עוד לא אישר", time: null, detail: "שולח צפצוף לטלפון…" };
 }
 
 /** אבני הדרך של השליחה שכבר קרו: נשלח, הגיע, נכנס — לכל אחת השעה ו"בדיעבד". */

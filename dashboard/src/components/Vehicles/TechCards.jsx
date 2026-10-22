@@ -21,7 +21,7 @@ import {
   cardGroup, groupCounts, groupLabel, GROUPS, hhmm, initials, kmText, matchesCard, sortCards, teamToday,
   visitRows, visitsText, weekLabel, weekTotals, whereInfo,
 } from "../../utils/techStats";
-import { destText, dispatchLine, pushLine, techByPlate } from "../../utils/technicians";
+import { ackLine, destText, dispatchLine, techByPlate } from "../../utils/technicians";
 import { siteKey } from "../../utils/siteSearch";
 import DispatchDialog from "./DispatchDialog";
 import TechIcon from "../TechIcon/TechIcon";
@@ -138,9 +138,18 @@ function TaskBlock({ d, next, techId, rev, now, canSend, onChanged }) {
   return (
     <div className="tc-task" aria-label="המשימה הפתוחה">
       <p className="tc-task-dest"><span className="tc-task-k">משימה:</span> {destText(d)}</p>
+      {/* אישר / עוד לא אישר — תמיד, בולט (22/10/2026) */}
+      {(() => {
+        const a = ackLine(d, now);
+        return a ? (
+          <p className={`tc-ack tc-ack--${a.tone}`}>
+            <span className="tc-ack-chip">{a.label}{a.time ? <span className="tc-ack-time">{a.time}</span> : null}</span>
+            {a.detail && <span className="tc-ack-detail">{a.detail}</span>}
+          </p>
+        ) : null;
+      })()}
       {d.details && <p className="tc-task-text">{d.details}</p>}
       <p className="tc-task-meta">{dispatchLine(d, now)}</p>
-      {(() => { const pl = pushLine(d, now); return pl ? <p className={`tc-task-push tc-push--${pl.tone}`}>{pl.text}</p> : null; })()}
       {/* המשימה הבאה (21/10/2026): תתחיל לבד כשייצא מהאתר של הנוכחית, או כשהנוכחית תסתיים */}
       {next && (
         <p className="tc-task-next">

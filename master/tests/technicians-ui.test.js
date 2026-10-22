@@ -2,7 +2,7 @@
 // והרשימה בלי חיפוש (dispatchSites). ההחלטות על השליחה עצמה — במסד (technicians.test.js); כאן רק מה שהמסך מציע.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchSites, dispatchLine, pushLine, techByPlate, techOnSiteBySite, techOnSiteText } from "../../dashboard/src/utils/technicians.js";
+import { ackLine, dispatchSites, dispatchLine, techByPlate, techOnSiteBySite, techOnSiteText } from "../../dashboard/src/utils/technicians.js";
 import { editDistance, looseText, matchScore, searchSites, siteKey, skel } from "../../dashboard/src/utils/siteSearch.js";
 
 // שמות בצורה של הייצור (קיצורים, גרשיים כפולים, טווחים) — רחובות ציבוריים, לא נתונים מסמך
@@ -116,21 +116,26 @@ test("הכרטיס: הטכנאי לפי מספר הרכב, ושורת המשימ
   assert.equal(dispatchLine(null, now), "");
 });
 
-test("הצפצוף בכרטיס: קיבל / לא אישר אחרי 3 / למה לא צפצף / מחכה; מסד ישן — בלי שורה", () => {
+// 22/10/2026 — הבעלת: "כשטכנאי מאשר את המשימה אני רוצה לראות על הכרטיס שהוא אישר. אם לא — שיראו שעדיין לא אישר".
+test("אישר / עוד לא אישר בכרטיס: תמיד כשהמשימה פתוחה; אדום אחרי 3 צפצופים; פירוט הצפצוף מתחת; מסד ישן — כלום", () => {
   const now = "2026-10-21T08:00:00Z";
   const d = { created_at: "2026-10-21T07:40:00Z", push_count: 1, push_last_at: "2026-10-21T07:42:00Z", push_max: 3, push_error: null, acked_at: null };
-  assert.deepEqual(pushLine(d, now), { tone: "wait", text: "צפצף בטלפון 10:42 · מחכה ל\"קיבלתי\" (1 מתוך 3)" });
-  assert.deepEqual(pushLine({ ...d, acked_at: "2026-10-21T07:43:00Z" }, now), { tone: "ok", text: "✓ קיבל 10:43" });
-  assert.equal(pushLine({ ...d, arrived_at: "2026-10-21T07:50:00Z" }, now), null, "הגיע — בלי 'מחכה לקיבלתי'");
-  assert.deepEqual(pushLine({ ...d, arrived_at: "2026-10-21T07:50:00Z", acked_at: "2026-10-21T07:43:00Z" }, now).tone, "ok", "קיבל קודם — עדיין 'קיבל'");
-  assert.deepEqual(pushLine({ ...d, push_count: 0, push_error: "שירות הצפצוף לא ענה — הצפצוף לא נשלח" }, now), { tone: "bad", text: "⚠ שירות הצפצוף לא ענה — הצפצוף לא נשלח" });
-  assert.deepEqual(pushLine({ ...d, push_count: 3 }, now), { tone: "bad", text: "לא אישר קבלה — צפצף 3 פעמים" });
-  assert.deepEqual(pushLine({ ...d, push_count: 3, acked_at: "2026-10-21T07:50:00Z" }, now).tone, "ok", "קיבל — גם אחרי 3");
-  assert.deepEqual(pushLine({ ...d, push_count: 0, push_error: "הטלפון של הטכנאי לא הפעיל צפצוף" }, now),
-    { tone: "bad", text: "⚠ הטלפון של הטכנאי לא הפעיל צפצוף" });
-  assert.deepEqual(pushLine({ ...d, push_count: 0, push_last_at: null }, now), { tone: "wait", text: "שולח צפצוף לטלפון…" });
-  assert.equal(pushLine({ created_at: d.created_at }, now), null, "מסד ישן");
-  assert.equal(pushLine(null, now), null);
+  assert.deepEqual(ackLine(d, now), { tone: "wait", label: "עוד לא אישר", time: null, detail: "צפצף בטלפון 10:42 (1 מתוך 3)" });
+  assert.deepEqual(ackLine({ ...d, acked_at: "2026-10-21T07:43:00Z" }, now), { tone: "ok", label: "✓ אישר", time: "10:43", detail: null });
+  assert.deepEqual(ackLine({ ...d, arrived_at: "2026-10-21T07:50:00Z" }, now), { tone: "wait", label: "עוד לא אישר", time: null, detail: null },
+    "הגיע בלי לאשר — עדיין 'עוד לא אישר' (עד 22/10 השורה נעלמה), בלי פירוט צפצוף");
+  assert.equal(ackLine({ ...d, arrived_at: "2026-10-21T07:50:00Z", acked_at: "2026-10-21T07:43:00Z" }, now).tone, "ok", "אישר קודם — 'אישר'");
+  assert.deepEqual(ackLine({ ...d, push_count: 0, push_error: "שירות הצפצוף לא ענה — הצפצוף לא נשלח" }, now),
+    { tone: "wait", label: "עוד לא אישר", time: null, detail: "⚠ שירות הצפצוף לא ענה — הצפצוף לא נשלח" });
+  assert.deepEqual(ackLine({ ...d, push_count: 3 }, now), { tone: "bad", label: "✕ לא אישר", time: null, detail: "צפצף בטלפון 3 פעמים, בלי תשובה" });
+  assert.equal(ackLine({ ...d, push_count: 3, acked_at: "2026-10-21T07:50:00Z" }, now).tone, "ok", "אישר — גם אחרי 3");
+  assert.equal(ackLine({ ...d, push_count: 0, push_error: "הטלפון של הטכנאי לא הפעיל צפצוף" }, now).detail, "⚠ הטלפון של הטכנאי לא הפעיל צפצוף",
+    "טלפון שלא מחובר לצפצוף — 'עוד לא אישר', והסיבה מתחת");
+  assert.deepEqual(ackLine({ ...d, push_count: 0, push_last_at: null }, now), { tone: "wait", label: "עוד לא אישר", time: null, detail: "שולח צפצוף לטלפון…" });
+  assert.equal(ackLine({ ...d, push_count: 2, push_max: undefined }, now).detail, "צפצף בטלפון 10:42 (2 מתוך 3)", "בלי push_max — 3");
+  assert.equal(ackLine({ created_at: d.created_at }, now), null, "מסד ישן — לא ממציאים 'לא אישר'");
+  assert.equal(ackLine({ created_at: d.created_at, acked_at: null }, now).label, "עוד לא אישר", "יש שדה אישור — יודעים");
+  assert.equal(ackLine(null, now), null);
 });
 
 test("טכנאי באתר בלוח: לפי אתר, השם מהלוח או מהכינוי, מי שהגיע ראשון ראשון; והטקסט של האיקון", () => {

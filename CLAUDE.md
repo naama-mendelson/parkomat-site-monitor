@@ -4557,11 +4557,19 @@ technicians yet ("לא עכשיו").
     subscriptions.
   - "קיבלתי" is a big button. Afterwards: "✓ קיבלת ב-HH:MM".
   - The light-theme green is teal-800: teal-700 on its own tint measured 4.24:1.
-- **The card** (`pushLine`):
-  - "צפצף בטלפון 10:42 · מחכה ל"קיבלתי" (1 מתוך 3)".
-  - "✓ קיבל 10:43" (green).
-  - "לא אישר קבלה — צפצף 3 פעמים" (red).
-  - "⚠ <reason>" (red).
+- **The card** — ~~`pushLine`, one small line~~ replaced on 22/10/2026 by **`ackLine`**, a chip right under the task's
+  destination, on every open task (the owner: *"כשטכנאי מאשר את המשימה אני רוצה לראות על הכרטיס שהוא אישר. אם הוא לא אישר
+  — שיראו שהוא עדיין לא אישר"*). Until then nothing said "not confirmed" after "הגיע", and a phone without the beep showed
+  only a red reason.
+  - "✓ אישר 10:43" (green, `--tc-site`).
+  - "עוד לא אישר" (amber; light `--tc-ack-wait` #92400e — `--tc-call` on its own tint measured 4.25:1), with the beep
+    under it in small text: "צפצף בטלפון 10:42 (1 מתוך 3)", "שולח צפצוף לטלפון…", or "⚠ <reason>" (e.g. "הטלפון של הטכנאי
+    לא הפעיל צפצוף"). After "הגיע" — the chip with no beep line.
+  - "✕ לא אישר" (red) after 3 beeps, "צפצף בטלפון 3 פעמים, בלי תשובה".
+  - An old database (no `push_count` and no `acked_at`) — no chip, rather than a made-up "not confirmed".
+  - Tests: `technicians-ui.test.js`; mutations 7 of 7 (`scratchpad/mutui/run-ack.cjs`); browser `probe-techbeep` 30/30
+    (every state, the chip right after the destination, contrast ≥ 4.5 in both themes: 4.6–7.4), `probe-techcards` 66,
+    `probe-dispatch` 71, `probe-next` 27, `probe-tcmore` 40.
   - "טלפון ✓" has an amber frame when the phone is paired but the beep was not turned on.
 - **Tests:**
   - `technicians.test.js`: 24.
