@@ -815,3 +815,65 @@ test("דוח הטכנאים: לכל טכנאי, היסטוריה ולפי אתר
     await fails(as("anon", {}, sql), "42501");
   }
 });
+
+// 22/10/2026 — חניות הטכנאים: הבעלת, על 3488 ליד המשרד, "להוציא את 3488". חנייה ליד אתר שברשימה אינה "באתר" ואינה ביקור.
+test("חניות הטכנאים: חנייה ליד אתר שברשימה אינה 'באתר' ואינה ביקור; אתר אחר כרגיל; רווחים בין הקודים; הזרע — 3488", { skip }, async () => {
+  const seed = (await sup(`SELECT value FROM settings WHERE key = 'tech_parking_sites'`))[0];
+  assert.equal(seed?.value, "3488", "הזרע: 3488");
+  const at = async (p) => (await sup(`SELECT app.site_at($1, $2) ->> 'code' c`, [p.lat, p.lon]))[0].c;
+  try {
+    // החלה חוזרת של הקובץ לא דורסת רשימה שמישהו שינה
+    const fs = require("node:fs"), path = require("node:path");
+    await sup(`UPDATE settings SET value = 'ZZ1' WHERE key = 'tech_parking_sites'`);
+    await h.pg.exec(fs.readFileSync(path.join(__dirname, "..", "db", "vehicles.postgres.sql"), "utf8"));
+    assert.equal((await sup(`SELECT value FROM settings WHERE key = 'tech_parking_sites'`))[0].value, "ZZ1", "החלה חוזרת — הרשימה נשארת");
+    await sup(`UPDATE settings SET value = ' VS2 , XX9 ' WHERE key = 'tech_parking_sites'`);
+    assert.equal(await at(off(S2, 0, 50)), null, "ליד VS2 — חניית טכנאים, לא 'באתר'");
+    assert.equal(await at(off(S1, 20)), "VS1", "אתר אחר — כרגיל");
+    // רכב שנסע וחונה ליד VS2 — לא ביקור, ובציר "חונה"
+    const P = "8810001";
+    await car(P, { motion: "driving", at: HOME, m: 1100, speed: 40, odo: 10 });
+    await track(1100);
+    for (let m = 1101; m <= 1106; m++) { await car(P, { motion: "parking", at: off(S2, 0, 50), m, odo: 15 }); await track(m); }
+    assert.equal((await visits(P)).length, 0, "חניית טכנאים — לא ביקור");
+    assert.equal((await dayRow(P, "2026-11-11")).last_kind, "park");
+    // חניית טכנאים צמודה לאתר רגיל (50 מ'): גם משימה פתוחה — שלו או של שכן — לא מכניסה אותו לחנייה
+    const now = new Date().toISOString();
+    const mk = async (code, p) => (await sup(`INSERT INTO sites (code, site_name, status, registered_at, lat, lon, geo_source, geo_precision, geo_set_at, geo_set_by)
+        VALUES ($1, $1, 'ready', $2, $3, $4, 'geocoded', 'house', $2, 'בדיקה') RETURNING id, code, site_name`, [code, now, p.lat, p.lon]))[0];
+    const KA = { lat: 32.71, lon: 35.13 }, KB = off(KA, 0, 50);
+    await mk("PK1A", KA); const sb = await mk("PK1B", KB);
+    await sup(`UPDATE settings SET value = 'VS2,PK1B' WHERE key = 'tech_parking_sites'`);
+    await sup(`INSERT INTO fleet_shown (license_plate) VALUES ('8810002'), ('8810003') ON CONFLICT DO NOTHING`);
+    const tk = (await sup(`INSERT INTO technicians (display_name, plate, is_active, created_by) VALUES ('טכנאי חנייה', '8810002', true, 'בדיקה') RETURNING id`))[0].id;
+    await sup(`INSERT INTO tech_dispatches (client_id, technician_id, site_id, site_code, site_name, created_by)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, 'רכז')`, [tk, sb.id, sb.code, sb.site_name]);
+    const openAt = async (p) => (await sup(`SELECT site_code FROM vehicle_visits WHERE license_plate = $1 AND ended_at IS NULL`, [p]))[0]?.site_code ?? null;
+    try {
+      await drove(["8810002", "8810003"], 1200);
+      await car("8810002", { motion: "parking", at: off(KA, 0, 20), m: 1201 });   // 30 מ' מהחנייה, 20 מ' מ-PK1A
+      await car("8810003", { motion: "parking", at: off(KA, 0, 10), m: 1201 });
+      await track(1201);
+      assert.deepEqual([await openAt("8810002"), await openAt("8810003")], ["PK1A", "PK1A"], "משימה לחנייה — לא 'באתר' שם; האתר הרגיל");
+    } finally {
+      await sup(`DELETE FROM tech_dispatches WHERE technician_id = $1`, [tk]);
+      await sup(`DELETE FROM technicians WHERE id = $1`, [tk]);
+    }
+    // ביקור פתוח ישן בחנייה (מלפני שנכנסה לרשימה — המעבר בייצור): שכן לא מצטרף אליו, והוא עצמו עובר לאתר הרגיל
+    await sup(`UPDATE vehicle_visits SET ended_at = last_at WHERE license_plate = '8810003' AND ended_at IS NULL`);
+    await sup(`INSERT INTO vehicle_visits (license_plate, site_id, site_code, site_name, started_at, last_at)
+               VALUES ('8810003', $1, 'PK1B', 'PK1B', $2, $2)`, [sb.id, T(1150)]);
+    await car("8810002", { motion: "parking", at: off(KA, 0, 20), m: 1203 });
+    await car("8810003", { motion: "parking", at: off(KA, 0, 10), m: 1203 });
+    await track(1203);
+    assert.deepEqual([await openAt("8810002"), await openAt("8810003")], ["PK1A", "PK1A"], "ביקור ישן בחנייה — לא קובע");
+    // הרשימה ריקה — VS2 חוזר להיות אתר
+    await sup(`UPDATE settings SET value = '' WHERE key = 'tech_parking_sites'`);
+    assert.equal(await at(off(S2, 0, 50)), "VS2");
+    await sup(`DELETE FROM settings WHERE key = 'tech_parking_sites'`);
+    assert.equal(await at(off(S2, 0, 50)), "VS2", "בלי ההגדרה — אין חניות");
+  } finally {
+    await sup(`INSERT INTO settings (key, value, updated_at) VALUES ('tech_parking_sites', $1, 'x')
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [seed?.value ?? "3488"]);
+  }
+});

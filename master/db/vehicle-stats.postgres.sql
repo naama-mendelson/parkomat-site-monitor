@@ -149,6 +149,7 @@ REVOKE ALL ON FUNCTION app.vehicle_moved_today(text, timestamptz) FROM PUBLIC;
 -- המקום האחד לכלל: הביקורים (vehicles_track) והמסך (vehicle_json → at_site), ולכן גם "טכנאי באתר" בלוח.
 -- ⚠️ שכן = רכב ברשימת רכבי השירות (fleet_shown): רכב משרד שחונה ליד לא מושך טכנאי לאתר אחר.
 -- ⚠️ ורכב שלא נסע היום אינו באתר בכלל (app.vehicle_moved_today) — גם לא כשכן.
+-- ⚠️ חניות הטכנאים (app.tech_parking_codes, 22/10) אינן אתר בשום שלב — גם לא דרך משימה פתוחה או ביקור של שכן.
 CREATE OR REPLACE FUNCTION app.fleet_together_m() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 100 $$;
 
 -- p_now: הדגימה (vehicles_track מעביר את שלו) — "נסע היום" נמדד ליום שלה
@@ -181,6 +182,7 @@ BEGIN
     JOIN tech_dispatches d ON d.technician_id = t.id AND d.ended_at IS NULL
     JOIN sites s ON s.id = d.site_id
    WHERE t.is_active AND t.plate = p_plate AND s.lat IS NOT NULL
+     AND s.code <> ALL (app.tech_parking_codes())
      AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
    LIMIT 1;
   IF v_site IS NOT NULL THEN RETURN v_site; END IF;
@@ -208,6 +210,7 @@ BEGIN
     JOIN sites s ON s.id = d.site_id
     JOIN vehicles_live l ON l.license_plate = t.plate
    WHERE t.is_active AND t.plate = ANY (v_near) AND s.lat IS NOT NULL
+     AND s.code <> ALL (app.tech_parking_codes())
      AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
      AND app.geo_distance_m(l.lat, l.lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
    ORDER BY d.created_at, d.id
@@ -222,7 +225,7 @@ BEGIN
     FROM vehicle_visits vv
     JOIN sites s ON s.id = vv.site_id
    WHERE vv.ended_at IS NULL AND (vv.license_plate = p_plate OR vv.license_plate = ANY (v_near))
-     AND s.lat IS NOT NULL
+     AND s.lat IS NOT NULL AND s.code <> ALL (app.tech_parking_codes())
      AND app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) <= app.site_radius_m(s.geo_precision)
    ORDER BY vv.started_at, vv.id
    LIMIT 1;

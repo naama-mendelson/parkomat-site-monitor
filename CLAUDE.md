@@ -5219,7 +5219,8 @@ list is `fleet_shown` with a name per vehicle from `technicians`.
 or 365 days; `site_visit_stats` 0.1 s; `tech_history` for a year 0.2 s.
 - 14 technicians, one of them named on the coordinator's board.
 - 21/10 was a partial day (tracking started 11:09), so the average departures are late for now.
-- 3488, the parking spot near the office, is one vehicle's "most-visited site". Excluding it is the owner's call.
+- 3488, the parking spot near the office, is one vehicle's "most-visited site". ~~Excluding it is the owner's call.~~
+  The owner: "להוציא את 3488" — see *Technicians' parking spots* below.
 
 **Tests:**
 - `vehicle-stats.test.js` (+1, fixed December data):
@@ -5250,6 +5251,40 @@ or 365 days; `site_visit_stats` 0.1 s; `tech_history` for a year 0.2 s.
 **Deploy:** SQL first. The dry run shows 9 gaps: 8 new functions and the body of `tech_save`. ⚠️ It shows neither the
 365-day default nor the two dropped functions; check both after `--apply`. Then push. An old bundle against the new SQL
 loses "רכבים ברשימה" (404); the new bundle against the old SQL has no statistics and no management (404 on those calls).
+
+### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026, NOT deployed)
+
+The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, where technicians park): *"להוציא את 3488"*.
+
+- **`settings.tech_parking_sites`** is a comma list of site codes (spaces ignored). The file seeds it with `3488` only when
+  the key is missing (`ON CONFLICT DO NOTHING`), so a re-apply never overwrites a changed list. An empty value, or no row,
+  means no parking spots. `app.tech_parking_codes()` reads it.
+- **A parking spot is never "at a site", at any step:**
+  - `app.site_at` skips it (the nearest site within its radius);
+  - `app.vehicle_site` skips it in all three rules that can pick a site by themselves: his own open task, a neighbour's
+    open task, and the open visit that started first (an old open visit at a spot, from before it was listed, does not
+    pull anyone in).
+  - So it gets no visit, no "באתר" on the card, no yellow icon on the board, no time at sites, and is never "the site he
+    visited most".
+- **"ליד" does not change** (`near_sites`): the card still says "ליד ישראל בק…", and "הכי קרוב" still lists vehicles
+  near it.
+- ⚠️ **The cost, by her choice:** a real job at 3488 is not counted either. A task sent to 3488 never sees "יצא מהאתר",
+  so a queued next task there starts only on a manual end. A technician handling a call at 3488 is not "טכנאי באתר".
+- ⚠️ `s.code <> ALL ((SELECT app.tech_parking_codes()))` — the first version — is parsed as `ALL (subquery)` and fails on
+  `text <> text[]`. It is `<> ALL (app.tech_parking_codes())`.
+- **Measured before deploy (read only):** no other site within 400 m of 3488 (street precision, 300 m radius), so nothing
+  else is affected. One past visit remains there (a service vehicle, 4 hours, closed); the 8 others were deleted on the
+  morning of 22/10. It still counts in the statistics until it is deleted — a separate data step, the owner's call.
+- Tests: `vehicle-stats.test.js` "חניות הטכנאים" (the seed; re-apply keeps a changed list; spaces; parking is not a visit
+  and the timeline says "park"; a task — his or a neighbour's — at a spot next to a regular site gives the regular site;
+  an old open visit at a spot does not pull a neighbour; empty or missing list). File 18/18; `vehicles` 18, `technicians`
+  31, `roles` 9. **Mutations (isolated copy, `scratchpad/mutpark/run-mut.cjs`): 8 of 8 caught** (each of the four
+  exclusions, `btrim`, an overwriting re-apply, another seed, another key). ⚠️ The copy needs `node_modules`: PGlite is
+  an ESM import and ignores `NODE_PATH`. A junction works; remove it with `cmd /c rmdir` (the link only) before deleting
+  the copy, or the delete can reach the repo's `node_modules`.
+- **Deploy:** SQL only, together with the statistics above (dry run on 22/10: 12 gaps — 9 new functions, among them
+  `tech_parking_codes`, and the bodies of `site_at`, `vehicle_site`, `tech_save`). The seed row does not show in the dry
+  run; check `settings` after `--apply`.
 
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 

@@ -450,7 +450,24 @@ LANGUAGE sql
 IMMUTABLE
 AS $$ SELECT CASE WHEN p_precision IN ('street', 'area') THEN 300 ELSE 150 END $$;
 
--- האתר שהנקודה בתוכו (הקרוב, אם יש כמה), או NULL: {site_id, code, name, m, approx}.
+-- חניות הטכנאים (22/10/2026): אתרים שהטכנאים חונים לידם ולא מבקרים בהם — חנייה שם אינה "באתר" ואינה ביקור.
+-- הבעלת, על 3488 (ליד המשרד; שלושה רכבים חנו שם מאז תחילת המעקב, ורכב שירות נספר שם "האתר שביקר בו הכי הרבה"):
+-- "להוציא את 3488". רשימת קודים מופרדת בפסיקים ב-settings.tech_parking_sites; הזרע — אם אין עדיין ערך.
+-- ⚠️ גם ביקור אמיתי באתר כזה לא נספר. "ליד" (near_sites) לא משתנה.
+INSERT INTO settings (key, value, updated_at)
+VALUES ('tech_parking_sites', '3488', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+ON CONFLICT (key) DO NOTHING;
+CREATE OR REPLACE FUNCTION app.tech_parking_codes()
+RETURNS text[]
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE((SELECT array_agg(btrim(x)) FROM settings s, unnest(string_to_array(s.value, ',')) x
+                    WHERE s.key = 'tech_parking_sites' AND btrim(x) <> ''), '{}'::text[])
+$$;
+REVOKE ALL ON FUNCTION app.tech_parking_codes() FROM PUBLIC;
+
+-- האתר שהנקודה בתוכו (הקרוב, אם יש כמה), או NULL: {site_id, code, name, m, approx}. ⚠️ בלי חניות הטכנאים.
 CREATE OR REPLACE FUNCTION app.site_at(p_lat double precision, p_lon double precision)
 RETURNS jsonb
 LANGUAGE sql
@@ -461,6 +478,7 @@ AS $$
     FROM (SELECT s.id, s.code, s.site_name, s.geo_precision, app.geo_distance_m(p_lat, p_lon, s.lat, s.lon) AS m
             FROM sites s
            WHERE p_lat IS NOT NULL AND p_lon IS NOT NULL AND s.lat IS NOT NULL
+             AND s.code <> ALL (app.tech_parking_codes())
              AND s.lat BETWEEN p_lat - 300 / 111195.0 AND p_lat + 300 / 111195.0
              AND s.lon BETWEEN p_lon - 300 / (111195.0 * cos(radians(p_lat)))
                            AND p_lon + 300 / (111195.0 * cos(radians(p_lat)))) n
