@@ -4909,6 +4909,96 @@ technicians, and three who work with Parkomat sometimes.
   3. Push.
   - An old bundle against the new SQL simply shows the 14. The new bundle needs `fleet_list` only for the window.
 
+### The next task — it starts by itself when he leaves the site (built 21/10/2026, NOT deployed)
+
+The owner: *"כשהוא יוצא מהאתר, אם יש לו משימה נוספת שהקצו לו, שיתזכר אותו לאיפה הוא צריך לנסוע למשימה הבאה"*.
+
+**Her answers:**
+- **One next task at most.** A new one replaces it.
+- **The next starts by itself.** When his vehicle leaves the site of the current task:
+  - the current one closes ("יצא מהאתר");
+  - the next becomes a regular dispatch;
+  - the phone beeps "המשימה הבאה: X", with navigation and "קיבלתי".
+- She was told the risk and chose it: driving off for a minute to fetch a part ends the task early.
+
+**How it works:**
+- **`tech_next`** (`technicians.postgres.sql`, at the end) is one row per technician (PK), closed.
+  - It is a separate table, not a row in `tech_dispatches`. "One open dispatch per technician", the beep and "קיבלתי" stay
+    exactly as they were; the next turns into a dispatch only when it starts.
+  - `tech_dispatches.follows` points to the dispatch it followed. It has a partial index, because the prune deletes old
+    dispatches.
+- **`tech_next_set(tech, site_code, place, details, ticket, client_id, rev)`** — editor, pilot.
+  - It needs an open dispatch; otherwise PT409 "אין לטכנאי משימה פתוחה — אפשר לשלוח אותו ישר".
+  - A new next replaces the existing one (`replaced`).
+  - The same `client_id` again returns what was saved, also after the next has started (the id moves to the dispatch).
+    ⚠️ A next that was **replaced** is gone, and so is its id: a stale retry of that old draft would set it again. This is
+    accepted; it needs a retry after a different save.
+  - `tech_next_clear(tech, rev)` — editor, pilot. With nothing to clear it changes nothing.
+  - The audit actions are `tech.next`, `tech.next_clear` and `tech.next_start`.
+- **One path for every dispatch.** `app.tech_dest_check` validates the destination, and `app.tech_dispatch_create` creates
+  the row, sets "בדרך", logs, and requests the beep inside its own `EXCEPTION`. `tech_dispatch` was refactored onto both,
+  and the 57 existing tests pass unchanged.
+- **When the next starts** (`app.tech_next_start`, called after the current one closed, with the technician locked):
+  1. **Leaving the site** (`app.tech_leave_scan`), run in every Ituran sync after the visits, in its own block:
+     - a failure is written to `vehicles_sync.advance_error`, shown in the technicians screen, and cleared by the next
+       good sync;
+     - "left" = a visit at the task's site that ended after the task was sent, at least 2 minutes ago, with no open visit
+       there now;
+     - the current task closes as `done`, `ended_by` "יצא מהאתר", `ended_at` = the exit time (never before arrival or
+       entry);
+     - the log's source is `gps`.
+  2. **A manual end** (`tech_dispatch_end`, done or cancelled) **when the next status is "פנוי"**:
+     - Otherwise a task at a "מקום אחר" (no site, so no exit) would block it.
+     - "הפסקה" / "סיום יום" leaves it queued.
+     - Replacing the current task ("החלפה ושליחה") leaves the next queued.
+  - **The started dispatch:** `created_by` is whoever queued it. The log row is source `system`.
+  - **The phone:** the beep's first title is "המשימה הבאה: …" instead of "משימה חדשה: …".
+- **The source of a log row** comes from a transaction-local GUC, `app.tech_source`, read by `tech_log_add`. A parameter
+  would have made a second signature of a function everybody calls. Each setter restores the previous value, and a test
+  checks that the coordinator's next "הגיע" is `dispatcher` again.
+- **A deactivated technician** loses his next task (`tech_save`).
+
+**On screen:**
+- **"צא ל:"** on a technician with an open task:
+  - The dialog says "אפשר להוסיף את זו כמשימה הבאה — היא תתחיל לבד כשייצא מהאתר — או להחליף את הנוכחית", and that an
+    existing next will be replaced.
+  - The main button is **"הוספה כמשימה הבאה"**, so the current task is not replaced by habit. "החלפה ושליחה" is the
+    second button (`.dp-replace`).
+- **The card's task block:**
+  - A dashed line "הבאה: X · פרטים", from `tech_json.next`.
+  - For an editor, "ביטול הבאה" in one click: nothing has reached the phone yet.
+- **The phone:**
+  - "אחרי זה: X", with the details on their own line and "תתחיל לבד, עם צפצוף, כשתצא מהאתר".
+  - A task that started from the queue is headed "המשימה הבאה" (from `tech_me.dispatch.follows`).
+
+**Tests:**
+- `technicians.test.js` (+5, 30 in all):
+  - setting, replacing, idempotency, permissions and the pilot, keeping the next when the current is replaced, clearing,
+    the audit rows, a deactivated technician, the closed table;
+  - a manual end starts it (also a cancel), with `follows`, the status, the beep title and the log sources; "הפסקה"
+    waits;
+  - leaving: an old visit, under 2 minutes, back at the site, exit time, `gps`, once only; no next, another site, a
+    place, no vehicle;
+  - the scan inside `ituran_ingest`, and a failing scan that does not break the sync and clears again;
+  - `tech_me`.
+  - ⚠️ The ingest case uses a plate outside `FLEET`. An earlier test puts TC1 at the FLEET vehicles' location, so they
+    have an open visit there and are rightly "still at the site".
+- `technicians-direct.test.js` (new): the request bodies, with explicit nulls.
+- The roles census and `check-row-cap` cover both new functions.
+- Full suite 1404/1404. **SQL mutations (isolated copy, `mut2110/run-mut19.cjs`): 22 of 23 caught.** The survivor is equivalent:
+  not restoring `app.tech_source` after the next starts, since nothing logs again in the same transaction (each request
+  is its own). The restore stays as a safeguard.
+- Browser: `e2e/probe-next.mjs` 27 (the dialog, adding, the card line, replacing, cancelling, a manual end, a בקר, a
+  failure, 390 dark), `tp/probe-tpnext.mjs` 11, `probe-dispatch` 71 (C4 follows the new buttons) and `probe-techbeep` 18 (its
+  `sendTo` presses "החלפה ושליחה" on a technician with an open task). Unchanged and green: techcards 66, techphone 51,
+  vehicles 109, fleet 24, tcmore 38, techfix 23, tp 31, tpbeep 46, tpfix 25.
+- The harness mocks take `queueNextTask` / `clearNextTask`, and the phone takes `?me=next|follows`.
+
+**Deploy (each step with the owner's yes):**
+- SQL first. The dry run shows 19 gaps: 6 new functions, 9 bodies, and the new table's indexes. ⚠️ The `tech_next` table
+  and the `follows` / `advance_error` columns do not show; check `information_schema` after `--apply`.
+- Then push. An old bundle against the new SQL simply never shows a next task.
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

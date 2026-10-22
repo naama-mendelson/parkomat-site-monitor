@@ -116,6 +116,12 @@ export default function TechniciansView({ sites }) {
       {data?.sync?.stats_error && (
         <p className="veh-warn" role="status">הסטטיסטיקה של היום לא התעדכנה בסנכרון האחרון — המיקומים כן. ({data.sync.stats_error})</p>
       )}
+      {/* המשימה הבאה (21/10/2026): המעבר האוטומטי כשטכנאי יוצא מהאתר רץ בכל סנכרון, ותקלה בו לא עוצרת את הסנכרון */}
+      {data?.sync?.advance_error && (
+        <p className="veh-warn" role="status">
+          המעבר האוטומטי למשימה הבאה לא רץ בסנכרון האחרון — אפשר לסיים את המשימה הנוכחית ידנית. ({data.sync.advance_error})
+        </p>
+      )}
 
       {/* ⚠️ גם כשהטעינה הראשונה נכשלה (board עדיין null): בלי השורה, "צא ל:" פשוט לא מופיע, בלי שום סימן למה.
           מי שלא בפיילוט אינו "כשל" — הוא מקבל {enabled: false} ואין שורה. */}

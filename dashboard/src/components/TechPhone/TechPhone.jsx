@@ -20,11 +20,12 @@ import "./TechPhone.css";
 
 const POLL_MS = 30_000;
 
-function Task({ d, now, onAck, acking, ackError }) {
+function Task({ d, next, now, onAck, acking, ackError }) {
   const nav = navLink(d);
   return (
     <section className="tp-task" aria-label="המשימה">
-      <p className="tp-task-k">משימה</p>
+      {/* התחילה מהתור — אחרי שיצא מהאתר הקודם (21/10/2026) */}
+      <p className="tp-task-k">{d.follows ? "המשימה הבאה" : "משימה"}</p>
       <h2 className="tp-task-dest">{destText(d)}</h2>
       {d.details && <p className="tp-task-text">{d.details}</p>}
       <p className="tp-task-meta">{dispatchLine(d, now)}</p>
@@ -35,6 +36,14 @@ function Task({ d, now, onAck, acking, ackError }) {
       )}
       {ackError && <p className="tp-warn" role="alert">{ackError}</p>}
       {nav && <a className="tp-nav" href={nav} target="_blank" rel="noopener noreferrer">ניווט לאתר (Waze)</a>}
+      {/* המשימה הבאה בתור (21/10/2026): תתחיל לבד, עם צפצוף, כשתצא מהאתר */}
+      {next && (
+        <p className="tp-next">
+          <span className="tp-next-k">אחרי זה:</span> {destText(next)}
+          {next.details ? <span className="tp-next-text">{next.details}</span> : null}
+          <span className="tp-next-hint">תתחיל לבד, עם צפצוף, כשתצא מהאתר</span>
+        </p>
+      )}
     </section>
   );
 }
@@ -168,7 +177,7 @@ export default function TechPhone() {
           {error && <p className="tp-warn" role="status">אין חיבור כרגע — מנסה שוב…</p>}
           {me && <PushBar state={missing ? "missing" : push} busy={pushBusy} error={pushError} onEnable={enable} />}
           {me && (me.dispatch
-            ? <Task d={me.dispatch} now={me.now} onAck={ack} acking={acking} ackError={ackError} />
+            ? <Task d={me.dispatch} next={me.next ?? null} now={me.now} onAck={ack} acking={acking} ackError={ackError} />
             : <p className="tp-idle">אין משימה כרגע</p>)}
         </>
       )}

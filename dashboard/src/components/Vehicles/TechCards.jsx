@@ -13,7 +13,7 @@
 // הראשונה. רק בפיילוט (settings.technicians_board) ורק לעורך / מנהל.
 // ⚠️ כל ההחלטות במסד (vehicle-stats.postgres.sql); utils/techStats.js מתרגם.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { endDispatch } from "../../services/dataSource";
+import { clearNextTask, endDispatch } from "../../services/dataSource";
 import { useTasks } from "../Tasks/TasksContext";
 import { useServiceCalls } from "../ServiceCalls/ServiceCallsContext";
 import { ageText, clockText, hasPosition, powerAlert, vehicleName } from "../../utils/vehicles";
@@ -102,7 +102,7 @@ function Details({ v, w, now, visits, id }) {
 
 // המשימה הפתוחה של הטכנאי (21/10/2026): לאן, מה, מתי ומי שלח — ולעורך "סיום" ו"ביטול". ⚠️ "ביטול" בשתי לחיצות (4 שניות),
 // כמו X במשימות: לחיצה אחת בטעות לא מוחקת שליחה.
-function TaskBlock({ d, now, canSend, onChanged }) {
+function TaskBlock({ d, next, techId, rev, now, canSend, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [armed, setArmed] = useState(false);
@@ -123,12 +123,28 @@ function TaskBlock({ d, now, canSend, onChanged }) {
     catch (e) { setErr(e?.message || "הפעולה נכשלה"); if (e?.stale) onChanged?.(); }
     finally { setBusy(false); }
   };
+  // ביטול המשימה הבאה (21/10/2026) — לחיצה אחת: היא עוד לא הגיעה לטלפון
+  const dropNext = async () => {
+    setBusy(true);
+    setErr(null);
+    try { await clearNextTask(techId, rev); onChanged?.(); }
+    catch (e) { setErr(e?.message || "הפעולה נכשלה"); if (e?.stale) onChanged?.(); }
+    finally { setBusy(false); }
+  };
   return (
     <div className="tc-task" aria-label="המשימה הפתוחה">
       <p className="tc-task-dest"><span className="tc-task-k">משימה:</span> {destText(d)}</p>
       {d.details && <p className="tc-task-text">{d.details}</p>}
       <p className="tc-task-meta">{dispatchLine(d, now)}</p>
       {(() => { const pl = pushLine(d, now); return pl ? <p className={`tc-task-push tc-push--${pl.tone}`}>{pl.text}</p> : null; })()}
+      {/* המשימה הבאה (21/10/2026): תתחיל לבד כשייצא מהאתר של הנוכחית, או כשהנוכחית תסתיים */}
+      {next && (
+        <p className="tc-task-next">
+          <span className="tc-task-k">הבאה:</span> {destText(next)}
+          {next.details ? <span className="tc-task-next-text"> · {next.details}</span> : null}
+          {canSend && <button type="button" className="tc-task-next-x" onClick={dropNext} disabled={busy}>ביטול הבאה</button>}
+        </p>
+      )}
       {canSend && (
         <span className="tc-task-btns">
           <button type="button" onClick={() => end("done")} disabled={busy}>סיום משימה</button>
@@ -175,7 +191,8 @@ function TechCard({ v, now, site, tasks, calls, onMap, tech, canSend, onSend, on
         <span className="tc-more-ico" aria-hidden="true">▾</span>
       </header>
 
-      {tech?.dispatch && <TaskBlock d={tech.dispatch} now={now} canSend={canSend} onChanged={onBoardChanged} />}
+      {tech?.dispatch && <TaskBlock d={tech.dispatch} next={tech.next ?? null} techId={tech.id} rev={tech.rev} now={now}
+        canSend={canSend} onChanged={onBoardChanged} />}
 
       <div className="tc-where">
         <p className="tc-where-title">

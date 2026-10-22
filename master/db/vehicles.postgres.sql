@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS vehicles_sync (
 -- ⚠️ ADD COLUMN ולא בתוך ה-CREATE — בייצור הטבלה כבר קיימת. תקלה בסיכום היומי (vehicle-stats), שלא עוצרת את הסנכרון.
 ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS stats_error text;
 ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS stats_error_at timestamptz;
+-- תקלה במעבר האוטומטי למשימה הבאה (21/10/2026) — גם היא לא עוצרת את הסנכרון, ומוצגת במסך הטכנאים
+ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS advance_error text;
+ALTER TABLE vehicles_sync ADD COLUMN IF NOT EXISTS advance_error_at timestamptz;
 
 -- סגורות: RLS בלי מדיניות ובלי הרשאות (ברירת המחדל של Supabase מעניקה ALL לכל טבלה חדשה). קריאה רק דרך
 -- vehicles_live_list, כתיבה רק דרך ituran_ingest / ituran_sync_failed.
@@ -374,6 +377,15 @@ BEGIN
     UPDATE vehicles_sync SET stats_error = left(SQLERRM, 300), stats_error_at = now() WHERE id = 1;
   END;
 
+  -- "המשימה הבאה" (technicians.postgres.sql, 21/10/2026): טכנאי שיצא מהאתר של המשימה שלו, ויש לו משימה באה — היא
+  -- מתחילה. ⚠️ בבלוק משלו, אחרי הביקורים (שמהם הוא קורא): תקלה כאן לא מפילה את הסנכרון ולא את הסטטיסטיקה.
+  BEGIN
+    PERFORM app.tech_leave_scan(now());
+    UPDATE vehicles_sync SET advance_error = NULL, advance_error_at = NULL WHERE id = 1 AND advance_error IS NOT NULL;
+  EXCEPTION WHEN others THEN
+    UPDATE vehicles_sync SET advance_error = left(SQLERRM, 300), advance_error_at = now() WHERE id = 1;
+  END;
+
   RETURN cardinality(v_plates);
 END
 $fn$;
@@ -690,7 +702,8 @@ BEGIN
                       'vehicles', s.vehicles,
                       'last_error', s.last_error,
                       'last_error_at', to_char(s.last_error_at AT TIME ZONE 'UTC', iso),
-                      'stats_error', s.stats_error)
+                      'stats_error', s.stats_error,
+                      'advance_error', s.advance_error)
                FROM vehicles_sync s WHERE s.id = 1),
     'now', to_char(now() AT TIME ZONE 'UTC', iso));
 END

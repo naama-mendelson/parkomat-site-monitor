@@ -995,3 +995,216 @@ test("בדיקת הבאגים (21/10): היומן ורשימת העובדים �
   assert.equal(unpairRow.actor_name, "טלפון של טכנאי");
   await fails(as("anon", {}, `SELECT public.tech_self_unpair()`), "42501");
 });
+
+// ============================================================
+// המשימה הבאה (21/10/2026): רק אחת; מתחילה כשהרכב יוצא מהאתר של הנוכחית, או כשהנוכחית מסתיימת ("פנוי")
+// ============================================================
+const nextSet = (uid, tech, o = {}) => fn(uid, "tech_next_set", tech, o.site ?? null, o.place ?? null, o.details ?? null,
+  o.ticket ?? null, "client" in o ? o.client : randomUUID(), o.rev ?? null);
+const nextClear = (uid, tech, rev = null) => fn(uid, "tech_next_clear", tech, rev);
+const nextOf = async (tech) => (await sup(`SELECT * FROM tech_next WHERE technician_id = $1`, [tech]))[0];
+const siteId = async (code) => (await sup(`SELECT id FROM sites WHERE code = $1`, [code]))[0].id;
+// ביקור באתר — כמו ש-vehicles_track רושם אותו (התחלה, עדכון אחרון, סוף או פתוח). endMin null = פתוח.
+const visit = async (plate, code, startMin, endMin) => sup(
+  `INSERT INTO vehicle_visits (license_plate, site_id, site_code, site_name, started_at, last_at, ended_at)
+   VALUES ($1, $2, $3, 'x', now() - make_interval(mins => $4), now() - make_interval(mins => COALESCE($5, 0)),
+           CASE WHEN $5::int IS NULL THEN NULL ELSE now() - make_interval(mins => $5) END)`,
+  [plate, await siteId(code), code, startMin, endMin]);
+const scan = async () => (await sup(`SELECT app.tech_leave_scan(now()) n`))[0].n;
+
+test("המשימה הבאה: רק עם משימה פתוחה; רק אחת — חדשה מחליפה; אותה בקשה פעמיים; עורך בפיילוט בלבד; החלפת הנוכחית משאירה אותה; ביטול", { skip }, async () => {
+  const t1 = await newTech("7310001");
+  await fails(nextSet(ED, t1, { site: "TC2" }), "PT409", /אין לטכנאי משימה פתוחה/);
+  const d1 = (await dispatch(ED, t1, { site: "TC1" })).dispatch_id;
+  await fails(nextSet(RO, t1, { site: "TC2" }), "42501");
+  await fails(nextSet(AG, t1, { site: "TC2" }), "42501");
+  await fails(nextSet(ED2, t1, { site: "TC2" }), "42501", /לוח הטכנאים אינו פעיל/);
+  await fails(nextSet(ED, 999999, { site: "TC2" }), "PT404");
+  await fails(nextSet(ED, t1, { site: "NOPE" }), "PT404");
+  await fails(nextSet(ED, t1, {}), "22023");
+  await fails(nextSet(ED, t1, { site: "TC2", place: "גם וגם" }), "22023");
+  await fails(nextSet(ED, t1, { site: "TC2", client: null }), "22023");
+
+  const c = randomUUID();
+  const r1 = await nextSet(ED, t1, { site: "TC2", details: "  להחליף נורה  ", client: c });
+  assert.deepEqual([r1.changed, r1.replaced], [true, false]);
+  assert.equal((await nextSet(ED, t1, { site: "TC2", client: c })).changed, false, "אותה בקשה — לא נשמרת פעמיים");
+  let n = await nextOf(t1);
+  assert.deepEqual([n.site_code, n.place, n.details, n.created_by], ["TC2", null, "להחליף נורה", "רכז בדיקה"]);
+  const tj = await techOf(t1);
+  assert.equal(tj.dispatch.id, Number(d1), "הנוכחית לא נגעה");
+  assert.deepEqual([tj.next.site_code, tj.next.details, tj.next.created_by], ["TC2", "להחליף נורה", "רכז בדיקה"]);
+
+  // רק אחת: באה חדשה מחליפה את הקיימת
+  const r2 = await nextSet(ED, t1, { place: "  המחסן   באזור  " });
+  assert.equal(r2.replaced, true);
+  n = await nextOf(t1);
+  assert.deepEqual([n.site_code, n.place], [null, "המחסן באזור"]);
+  assert.equal((await sup(`SELECT count(*)::int c FROM tech_next WHERE technician_id = $1`, [t1]))[0].c, 1);
+  // מזהה של בקשה שכבר שימשה לטכנאי אחר
+  const t9 = await newTech();
+  await dispatch(ED, t9, { site: "TC1" });
+  await fails(nextSet(ED, t9, { site: "TC2", client: (await nextOf(t1)).client_id }), "22023");
+  // לוח ישן
+  await fails(nextSet(ED, t1, { site: "TC2", rev: 0 }), "PT409");
+  // החלפת הנוכחית ("החלפה ושליחה") — הבאה נשארת בתור
+  await dispatch(ED, t1, { site: "TC2" });
+  assert.equal((await nextOf(t1)).place, "המחסן באזור", "החלפת הנוכחית — הבאה נשארת");
+
+  // ביטול
+  await fails(nextClear(RO, t1), "42501");
+  await fails(nextClear(ED, t1, 0), "PT409");
+  assert.equal((await nextClear(ED, t1)).changed, true);
+  assert.equal(await nextOf(t1), undefined);
+  assert.equal((await nextClear(ED, t1)).changed, false, "אין באה — כלום");
+  assert.equal((await techOf(t1)).next, null);
+  const acts = (await sup(`SELECT action FROM audit_log WHERE target_id = $1 AND action LIKE 'tech.next%' ORDER BY id`, [String(t1)]))
+    .map((r) => r.action);
+  assert.deepEqual(acts, ["tech.next", "tech.next", "tech.next_clear"]);
+  // טכנאי שהושבת — גם הבאה שלו
+  await nextSet(ED, t1, { site: "TC1" });
+  // מסיימים את הנוכחית ב"סיום יום" — הבאה מחכה (לא "פנוי"); טכנאי עם שליחה פתוחה לא מושבת
+  assert.equal((await end(ED, (await techOf(t1)).dispatch.id, "done", "day_done")).next_started, null);
+  assert.ok(await nextOf(t1));
+  await save(ED, t1, (await techOf(t1)).name, "7310001", false, null);
+  assert.equal(await nextOf(t1), undefined, "טכנאי מושבת — בלי באה");
+  // הטבלה סגורה
+  await fails(user(ED, `SELECT * FROM tech_next`), "42501");
+});
+
+test("המשימה הבאה: סיום ידני מתחיל אותה (גם ביטול), כש'פנוי'; 'הפסקה' — מחכה; הכותרת בטלפון 'המשימה הבאה:'", { skip }, async () => {
+  await withPushSettings(async () => {
+    const t2 = await newTech("7310002");
+    const { uid } = await pair(t2);
+    await subscribe(uid, SUB(70));
+    const d = (await dispatch(ED, t2, { site: "TC1" })).dispatch_id;
+    await nextSet(ED, t2, { site: "TC2", details: "בדיקת לחצן" });
+    const r = await end(ED, d, "done");
+    assert.ok(r.next_started, "הבאה התחילה");
+    const nd = await dispOf(r.next_started);
+    assert.deepEqual([nd.site_code, Number(nd.follows), nd.created_by, nd.details], ["TC2", Number(d), "רכז בדיקה", "בדיקת לחצן"]);
+    assert.equal(nd.ended_at, null);
+    assert.equal(await nextOf(t2), undefined, "יצאה מהתור");
+    const tj = await techOf(t2);
+    assert.deepEqual([tj.status, tj.dispatch.id, tj.dispatch.follows, tj.next], ["en_route", Number(r.next_started), Number(d), null]);
+    assert.equal(r.rev, tj.rev, "ה-rev שחוזר = המצב אחרי שהבאה התחילה");
+    // צפצוף: נשלחה בקשה, והכותרת "המשימה הבאה:"
+    assert.equal(nd.push_attempts, 1);
+    const c = await claim(r.next_started);
+    assert.equal(c.send, true);
+    assert.equal(c.title, "המשימה הבאה: רחוב השני 7, רמת גן · TC2");
+    assert.equal(c.body, "בדיקת לחצן");
+    // היומן: הסיום — הרכז; השליחה החדשה — המערכת, ע"י מי שהכניס אותה לתור
+    const lg = await sup(`SELECT action, source, actor FROM tech_log WHERE dispatch_id = $1 ORDER BY id`, [r.next_started]);
+    assert.deepEqual(lg.map((x) => [x.action, x.source, x.actor]), [["dispatch", "system", "רכז בדיקה"]]);
+    const le = await sup(`SELECT source FROM tech_log WHERE dispatch_id = $1 AND action = 'ended'`, [d]);
+    assert.deepEqual(le.map((x) => x.source), ["dispatcher"]);
+    assert.equal((await sup(`SELECT count(*)::int n FROM audit_log WHERE action = 'tech.next_start' AND target_id = $1`, [String(t2)]))[0].n, 1);
+    // אחרי זה היומן חוזר להיות של הרכז (ה-GUC הוחזר)
+    await mark(ED, r.next_started, "arrived");
+    assert.equal((await sup(`SELECT source FROM tech_log WHERE dispatch_id = $1 AND action = 'arrived'`, [r.next_started]))[0].source, "dispatcher");
+
+    // 'הפסקה' אחרי הסיום — הבאה מחכה
+    const t3 = await newTech("7310003");
+    const d3 = (await dispatch(ED, t3, { site: "TC1" })).dispatch_id;
+    await nextSet(ED, t3, { site: "TC2" });
+    const r3 = await end(ED, d3, "done", "break");
+    assert.equal(r3.next_started, null);
+    assert.equal((await nextOf(t3)).site_code, "TC2", "'הפסקה' — הבאה מחכה בתור");
+    // ביטול (ב'פנוי') — גם מתחיל את הבאה
+    const d3b = (await dispatch(ED, t3, { site: "TC1" })).dispatch_id;
+    const r3b = await end(ED, d3b, "cancelled");
+    assert.ok(r3b.next_started, "ביטול — הבאה מתחילה");
+    // בלי באה — סיום כרגיל, בלי שליחה חדשה
+    const r3c = await end(ED, r3b.next_started, "done");
+    assert.equal(r3c.next_started, null);
+    assert.equal((await techOf(t3)).status, "free");
+  });
+});
+
+test("המשימה הבאה: יצא מהאתר — הנוכחית נסגרת ('יצא מהאתר', מקור gps) והבאה מתחילה; לא לפני 2 דקות, לא כשחזר, לא על ביקור ישן", { skip }, async () => {
+  const t4 = await newTech("7310004");
+  await visit("7310004", "TC1", 120, 100);                            // ביקור ישן, לפני השליחה — לא נחשב
+  const d = (await dispatch(ED, t4, { site: "TC1" })).dispatch_id;
+  await nextSet(ED, t4, { site: "TC2", details: "הבא בתור" });
+  assert.equal(await scan(), 0, "ביקור שנגמר לפני השליחה — לא יציאה");
+  await sup(`UPDATE tech_dispatches SET created_at = now() - interval '60 minutes' WHERE id = $1`, [d]);
+  await visit("7310004", "TC1", 50, 1);                               // יצא לפני דקה — עוד לא
+  assert.equal(await scan(), 0, "פחות מ-2 דקות — עוד לא");
+  await sup(`UPDATE vehicle_visits SET ended_at = now() - interval '5 minutes', last_at = now() - interval '5 minutes'
+              WHERE license_plate = '7310004' AND started_at > now() - interval '55 minutes' AND ended_at IS NOT NULL`);
+  await visit("7310004", "TC1", 1, null);                             // חזר (ביקור פתוח) — לא
+  assert.equal(await scan(), 0, "יש ביקור פתוח באתר — הוא שם, לא יצא");
+  await sup(`DELETE FROM vehicle_visits WHERE license_plate = '7310004' AND ended_at IS NULL`);
+  assert.equal(await scan(), 1, "יצא לפני 5 דקות, לא חזר — הבאה מתחילה");
+  const old = await dispOf(d);
+  assert.deepEqual([old.end_kind, old.ended_by], ["done", "יצא מהאתר"]);
+  assert.ok(Math.abs(Date.parse(old.ended_at) - (Date.now() - 5 * 60_000)) < 90_000, "שעת הסיום = שעת היציאה");
+  const tj = await techOf(t4);
+  assert.deepEqual([tj.dispatch.site_code, tj.dispatch.follows, tj.dispatch.details, tj.next, tj.status],
+    ["TC2", Number(d), "הבא בתור", null, "en_route"]);
+  const lg = await sup(`SELECT action, source, actor, detail FROM tech_log WHERE dispatch_id = $1 AND action = 'ended'`, [d]);
+  assert.deepEqual(lg.map((x) => [x.source, x.actor, x.detail.auto]), [["gps", "יצא מהאתר", "left_site"]]);
+  assert.equal(await scan(), 0, "פעם שנייה — כלום");
+
+  // בלי משימה באה — היציאה לא סוגרת כלום
+  const t5 = await newTech("7310005");
+  const d5 = (await dispatch(ED, t5, { site: "TC1" })).dispatch_id;
+  await sup(`UPDATE tech_dispatches SET created_at = now() - interval '60 minutes' WHERE id = $1`, [d5]);
+  await visit("7310005", "TC1", 50, 10);
+  assert.equal(await scan(), 0);
+  assert.equal((await dispOf(d5)).ended_at, null, "בלי באה — המשימה נשארת פתוחה");
+  // יציאה מאתר אחר — לא נחשבת
+  await nextSet(ED, t5, { site: "TC2" });
+  await sup(`DELETE FROM vehicle_visits WHERE license_plate = '7310005'`);
+  await visit("7310005", "TC2", 50, 10);
+  assert.equal(await scan(), 0, "יצא מאתר אחר — לא מהאתר של המשימה");
+  // משימה ל"מקום אחר" — אין אתר, אין יציאה
+  const t6 = await newTech("7310006");
+  await dispatch(ED, t6, { place: "המחסן" });
+  await nextSet(ED, t6, { site: "TC2" });
+  assert.equal(await scan(), 0, "מקום שאינו אתר — אין יציאה");
+  // טכנאי בלי רכב — אין יציאה
+  const t7 = await newTech(null);
+  await dispatch(ED, t7, { site: "TC1" });
+  await nextSet(ED, t7, { site: "TC2" });
+  assert.equal(await scan(), 0);
+});
+
+test("המשימה הבאה: הסריקה רצה בכל סנכרון של איתוראן; תקלה בה לא מפילה את הסנכרון — נרשמת ומתנקה", { skip }, async () => {
+  // ⚠️ רכב שאינו בסנכרון: רכבי FLEET עומדים ליד TC1 (מיקום שבדיקה קודמת קבעה), עם ביקור פתוח שם — כלומר "עוד באתר"
+  const t8 = await newTech("7310008");
+  const d = (await dispatch(ED, t8, { site: "TC1" })).dispatch_id;
+  await nextSet(ED, t8, { site: "TC2" });
+  await sup(`UPDATE tech_dispatches SET created_at = now() - interval '60 minutes' WHERE id = $1`, [d]);
+  await visit("7310008", "TC1", 50, 10);
+  await ingest(FLEET.map(car));
+  assert.equal((await dispOf(d)).ended_by, "יצא מהאתר", "הסנכרון הפעיל את הסריקה");
+  assert.equal((await techOf(t8)).dispatch.site_code, "TC2");
+  // תקלה בסריקה: הסנכרון מצליח, הסיבה נרשמת ומגיעה למסך, ומתנקה בסנכרון הבא
+  await sup(`ALTER FUNCTION app.tech_leave_scan(timestamptz) RENAME TO tech_leave_scan_off`);
+  try {
+    const n = (await ingest(FLEET.map(car)))[0].n;
+    assert.equal(n, FLEET.length, "הסנכרון הצליח");
+    const s = (await sup(`SELECT advance_error FROM vehicles_sync WHERE id = 1`))[0];
+    assert.match(s.advance_error, /tech_leave_scan/);
+    await sup(`INSERT INTO fleet_shown (license_plate) SELECT license_plate FROM vehicles_live ON CONFLICT DO NOTHING`);
+    assert.match((await fn(RO, "vehicles_live_list")).sync.advance_error, /tech_leave_scan/);
+  } finally {
+    await sup(`ALTER FUNCTION app.tech_leave_scan_off(timestamptz) RENAME TO tech_leave_scan`);
+  }
+  await ingest(FLEET.map(car));
+  assert.equal((await sup(`SELECT advance_error FROM vehicles_sync WHERE id = 1`))[0].advance_error, null);
+});
+
+test("המשימה הבאה: הטלפון רואה אותה; tech_me עם follows ו-next", { skip }, async () => {
+  const t9 = await newTech("7310009");
+  const { uid } = await pair(t9);
+  const d = (await dispatch(ED, t9, { site: "TC1" })).dispatch_id;
+  await nextSet(ED, t9, { site: "TC2", details: "אחרי זה" });
+  let me = await fn(uid, "tech_me");
+  assert.deepEqual([me.dispatch.id, me.dispatch.follows, me.next.site_code, me.next.details], [Number(d), null, "TC2", "אחרי זה"]);
+  const r = await end(ED, d, "done");
+  me = await fn(uid, "tech_me");
+  assert.deepEqual([me.dispatch.id, me.dispatch.follows, me.next], [Number(r.next_started), Number(d), null]);
+});

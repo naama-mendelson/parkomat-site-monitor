@@ -12,7 +12,7 @@
 //   שתוקנה אחרי תשובה שאבדה הייתה מחזירה בשקט את השליחה הישנה (הלקח של המשימות, 12/10).
 // • ⚠️ הרקע לא סוגר כשיש טיוטה — רק ✕ / ביטול / Esc. לחיצה בצד המסך באמצע הקלדה לא מוחקת אותה (הלקח של ניהול האתרים).
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { dispatchTech, saveTechnician } from "../../services/dataSource";
+import { dispatchTech, queueNextTask, saveTechnician } from "../../services/dataSource";
 import { vehicleName } from "../../utils/vehicles";
 import { destText, dispatchSites } from "../../utils/technicians";
 import "./DispatchDialog.css";
@@ -94,7 +94,8 @@ export default function DispatchDialog({ vehicle, tech, sites, siteKeys, callsBy
 
   const canSend = Boolean(chosen) && !busy && name.trim().length >= 2;
 
-  async function send() {
+  // mode = "next": המשימה הבאה (21/10/2026) — לטכנאי שכבר יש משימה; היא תתחיל כשייצא מהאתר של הנוכחית
+  async function send(mode = "now") {
     if (!canSend) return;
     setBusy(true);
     setError(null);
@@ -107,12 +108,13 @@ export default function DispatchDialog({ vehicle, tech, sites, siteKeys, callsBy
         id = r.id;
         rev = r.rev;
       }
-      await dispatchTech({
+      const req = {
         id, rev, clientId: clientId.current,
         siteCode: chosen.site ? chosen.site.code : null,
         place: chosen.place ?? null,
         details: details.trim() || null,
-      });
+      };
+      if (mode === "next") await queueNextTask(req); else await dispatchTech(req);
       onSent?.();
     } catch (e) {
       setError(e?.message || "השליחה נכשלה — נסה שוב");
@@ -139,7 +141,9 @@ export default function DispatchDialog({ vehicle, tech, sites, siteKeys, callsBy
 
         {open && (
           <p className="dp-open">
-            יש לו משימה פתוחה: <b>{destText(open)}</b>. שליחה חדשה תחליף אותה.
+            יש לו משימה פתוחה: <b>{destText(open)}</b>. אפשר להוסיף את זו כמשימה הבאה — היא תתחיל לבד כשייצא מהאתר —
+            או להחליף את הנוכחית.
+            {tech?.next && <> המשימה הבאה שכבר נקבעה (<b>{destText(tech.next)}</b>) תוחלף.</>}
           </p>
         )}
 
@@ -208,9 +212,18 @@ export default function DispatchDialog({ vehicle, tech, sites, siteKeys, callsBy
         {error && <p className="dp-err" role="alert">{error}</p>}
 
         <footer className="dp-foot">
-          <button type="button" className="dp-send" onClick={send} disabled={!canSend}>
-            {busy ? "שולח…" : open ? "החלפה ושליחה" : "שליחה"}
-          </button>
+          {open ? (
+            <>
+              <button type="button" className="dp-send" onClick={() => send("next")} disabled={!canSend}>
+                {busy ? "שומר…" : "הוספה כמשימה הבאה"}
+              </button>
+              <button type="button" className="dp-cancel dp-replace" onClick={() => send("now")} disabled={!canSend}>החלפה ושליחה</button>
+            </>
+          ) : (
+            <button type="button" className="dp-send" onClick={() => send("now")} disabled={!canSend}>
+              {busy ? "שולח…" : "שליחה"}
+            </button>
+          )}
           <button type="button" className="dp-cancel" onClick={close} disabled={busy}>ביטול</button>
         </footer>
       </div>

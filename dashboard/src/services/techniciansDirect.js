@@ -79,6 +79,22 @@ export async function dispatchTech({ id, siteCode = null, place = null, details 
   });
 }
 
+/**
+ * המשימה הבאה (21/10/2026): לטכנאי שיש לו משימה פתוחה. רק אחת — חדשה מחליפה. מתחילה לבד כשהרכב שלו יוצא מהאתר של
+ * הנוכחית, או כשהנוכחית מסתיימת. אותם מפתחות כמו dispatchTech.
+ */
+export async function queueNextTask({ id, siteCode = null, place = null, details = null, ticket = null, clientId, rev = null }) {
+  return rpc("tech_next_set", {
+    p_tech: id, p_site_code: siteCode || null, p_place: place || null, p_details: details || null,
+    p_ticket: ticket || null, p_client_id: clientId, p_rev: rev,
+  });
+}
+
+/** ביטול המשימה הבאה. */
+export async function clearNextTask(id, rev = null) {
+  return rpc("tech_next_clear", { p_tech: id, p_rev: rev });
+}
+
 /** "הגיע" / "נכנס". at = שעה בדיעבד או null. על סימון קיים — at הוא תיקון. */
 export async function markDispatch(dispatchId, mark, at = null) {
   return rpc("tech_dispatch_mark", { p_dispatch: dispatchId, p_mark: mark, p_at: at });

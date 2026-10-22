@@ -54,6 +54,8 @@ const EDITOR = [
   "tech_dispatch", "tech_dispatch_end", "tech_dispatch_mark", "tech_save", "tech_set_status", "tech_phone_begin", "tech_phone_unpair",
   // רשימת רכבי השירות (21/10/2026): השמירה, וגם הקריאה של הרשימה המלאה — היא כוללת את רכבי המשרד, שבקר לא אמור לראות
   "fleet_shown_set", "fleet_list",
+  // המשימה הבאה (21/10/2026)
+  "tech_next_set", "tech_next_clear",
 ];
 // מנהל בלבד: מחיקת אתר וכלי השאריות שלו, ניהול משתמשים, קוד הניהול, תיבת הדיווחים, ופעולות השרת המת
 const MANAGER = [

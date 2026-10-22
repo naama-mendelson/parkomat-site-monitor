@@ -907,7 +907,7 @@ export {
 export { fetchVehicles, fetchSiteLocations, saveSiteLocation, fetchFleet, saveFleet } from "./vehiclesDirect";
 // לוח טכנאי השטח (20/10/2026) — אותו כלל
 export {
-  fetchTechBoard, fetchTechDay, saveTechnician, setTechStatus, dispatchTech, markDispatch, endDispatch,
+  fetchTechBoard, fetchTechDay, saveTechnician, setTechStatus, dispatchTech, queueNextTask, clearNextTask, markDispatch, endDispatch,
   provisionTechPhone, unpairTechPhone, fetchTechMe, subscribeTechPush, ackDispatch, fetchTechOnSite, selfUnpairPhone,
 } from "./techniciansDirect";
 

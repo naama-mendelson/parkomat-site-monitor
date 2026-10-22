@@ -264,8 +264,10 @@ BEGIN
   INSERT INTO tech_log (technician_id, at, action, status_after, dispatch_id, site_code, site_name, place, detail,
                         actor, actor_user_id, source,
                         veh_plate, veh_lat, veh_lon, veh_located_at, veh_state, veh_address)
+  -- המקור: הרכז, אלא אם מי שקרא קבע אחרת לטרנזקציה (app.tech_source): 'gps' ליציאה מהאתר, 'system' למשימה הבאה שהתחילה
+  -- (21/10/2026). GUC ולא פרמטר: פרמטר נוסף היה יוצר חתימה שנייה לפונקציה שכולם קוראים לה.
   VALUES (p_tech, p_at, p_action, p_status_after, p_dispatch, d.site_code, d.site_name, d.place, p_detail,
-          p_actor, app.current_app_user(), 'dispatcher',
+          p_actor, app.current_app_user(), COALESCE(NULLIF(current_setting('app.tech_source', true), ''), 'dispatcher'),
           CASE WHEN p_snapshot THEN t.plate END, v.lat, v.lon, v.located_at,
           CASE WHEN v.license_plate IS NOT NULL THEN app.vehicle_state(v.motion, v.located_at, v.synced_at) END,
           v.address);
@@ -296,7 +298,14 @@ BEGIN
                'entered_at', app.tech_iso(d.entered_at), 'entered_late', d.entered_late,
                -- הצפצוף (שלב 4): קיבל / כמה צפצופים / לכמה מכשירים הגיע / למה לא
                'acked_at', app.tech_iso(d.acked_at), 'push_count', d.push_count, 'push_last_at', app.tech_iso(d.push_last_at),
-               'push_sent', d.push_sent, 'push_error', d.push_error, 'push_max', app.tech_push_max()) END,
+               'push_sent', d.push_sent, 'push_error', d.push_error, 'push_max', app.tech_push_max(),
+               -- התחילה מ"המשימה הבאה" (21/10/2026) — המשימה שקדמה לה
+               'follows', d.follows) END,
+           -- המשימה הבאה בתור (לכל היותר אחת) — מתחילה כשהוא יוצא מהאתר של הנוכחית, או כשהנוכחית מסתיימת
+           'next', (SELECT jsonb_build_object('site_code', n.site_code, 'site_name', n.site_name, 'place', n.place,
+                                              'details', n.details, 'created_at', app.tech_iso(n.created_at),
+                                              'created_by', n.created_by)
+                      FROM tech_next n WHERE n.technician_id = t.id),
            -- הטלפון (שלב 2): paired = יש משתמש פעיל מקושר; seen_at = הטלפון פנה אלינו (עד אז ה-QR נוצר אבל לא נסרק)
            'phone', jsonb_build_object('paired', u.id IS NOT NULL AND u.is_active,
                                        'paired_at', app.tech_iso(t.phone_paired_at), 'paired_by', t.phone_paired_by,
@@ -489,6 +498,10 @@ BEGIN
      WHERE id = t.id;
     DELETE FROM tech_push_subs WHERE app_user_id = t.app_user_id;
   END IF;
+  -- טכנאי שהושבת — גם המשימה הבאה שלו (21/10/2026): היא לא תתחיל לעולם, ובחזרה היא כבר לא רלוונטית
+  IF NOT v_active AND t.is_active THEN
+    DELETE FROM tech_next WHERE technician_id = t.id;
+  END IF;
   PERFORM app.record_write_audit('tech.save', v_actor, app.current_app_role(), 'technician', t.id::text,
                                  jsonb_build_object('fields', to_jsonb(v_fields)));
   RETURN jsonb_build_object('id', t.id, 'rev', t.rev + 1, 'changed', true);
@@ -580,22 +593,7 @@ BEGIN
   IF p_rev IS NOT NULL AND t.rev <> p_rev THEN
     RAISE EXCEPTION 'הלוח השתנה בינתיים — טוען מחדש' USING ERRCODE = 'PT409';
   END IF;
-  IF (v_code IS NULL) = (v_place IS NULL) THEN
-    RAISE EXCEPTION 'יש לבחור אתר, או לכתוב מקום שאינו אתר — אחד מהם' USING ERRCODE = '22023';
-  END IF;
-  IF v_place IS NOT NULL AND (length(v_place) < 2 OR length(v_place) > 80) THEN
-    RAISE EXCEPTION 'המקום: 2 עד 80 תווים' USING ERRCODE = '22023';
-  END IF;
-  IF v_details IS NOT NULL AND length(v_details) > 500 THEN
-    RAISE EXCEPTION 'פרטי התקלה: עד 500 תווים' USING ERRCODE = '22023';
-  END IF;
-  IF v_ticket IS NOT NULL AND length(v_ticket) > 40 THEN
-    RAISE EXCEPTION 'מספר הקריאה ארוך מדי' USING ERRCODE = '22023';
-  END IF;
-  IF v_code IS NOT NULL THEN
-    SELECT * INTO s FROM sites WHERE code = v_code;
-    IF NOT FOUND THEN RAISE EXCEPTION 'האתר לא נמצא: %', v_code USING ERRCODE = 'PT404'; END IF;
-  END IF;
+  s := app.tech_dest_check(v_code, v_place, v_details, v_ticket);
 
   UPDATE tech_dispatches SET ended_at = now(), ended_by = v_actor, end_kind = 'moved'
    WHERE technician_id = t.id AND ended_at IS NULL
@@ -604,19 +602,11 @@ BEGIN
     PERFORM app.tech_log_add(t.id, now(), 'ended', NULL, v_old, jsonb_build_object('end_kind', 'moved'), v_actor, false);
   END IF;
 
-  INSERT INTO tech_dispatches (client_id, technician_id, site_id, site_code, site_name, place, details, ticket, created_by)
-  VALUES (p_client_id, t.id, s.id, s.code, s.site_name, v_place, v_details, v_ticket, v_actor)
-  RETURNING * INTO d;
-  UPDATE technicians SET status = 'en_route', status_at = now(), status_by = v_actor, rev = rev + 1 WHERE id = t.id;
-  PERFORM app.tech_log_add(t.id, now(), 'dispatch', 'en_route', d.id, NULL, v_actor, true);
+  -- היצירה, המצב "בדרך", היומן והצפצוף — app.tech_dispatch_create, אותו מסלול כמו המשימה הבאה כשהיא מתחילה (21/10/2026).
+  -- ⚠️ המשימה הבאה (tech_next) נשארת בתור גם כשהנוכחית מוחלפת.
+  d := app.tech_dispatch_create(t.id, p_client_id, s.id, s.code, s.site_name, v_place, v_details, v_ticket, v_actor, NULL);
   PERFORM app.record_write_audit('tech.dispatch', v_actor, app.current_app_role(), 'technician', t.id::text,
                                  jsonb_build_object('dispatch_id', d.id, 'site_code', s.code, 'moved_from', v_old));
-  -- הצפצוף לטלפון (שלב 4). ⚠️ בתוך EXCEPTION: צפצוף שנכשל לא מכשיל שליחה — הסיבה נרשמת ומוצגת בכרטיס.
-  BEGIN
-    PERFORM app.tech_push_request(d.id);
-  EXCEPTION WHEN OTHERS THEN
-    UPDATE tech_dispatches SET push_error = left('הצפצוף לא נשלח: ' || SQLERRM, 200) WHERE id = d.id;
-  END;
   RETURN jsonb_build_object('id', t.id, 'dispatch_id', d.id, 'rev', t.rev + 1, 'changed', true);
 END
 $fn$;
@@ -723,6 +713,7 @@ DECLARE
   t       technicians;
   d       tech_dispatches;
   v_at    timestamptz;
+  v_started bigint;
 BEGIN
   PERFORM app.tech_gate();
   IF p_kind IS NULL OR p_kind NOT IN ('done', 'cancelled') THEN
@@ -748,7 +739,13 @@ BEGIN
   PERFORM app.tech_log_add(t.id, v_at, 'ended', v_next, d.id, jsonb_build_object('end_kind', p_kind), v_actor, true);
   PERFORM app.record_write_audit('tech.end', v_actor, app.current_app_role(), 'technician', t.id::text,
                                  jsonb_build_object('dispatch_id', d.id, 'end_kind', p_kind));
-  RETURN jsonb_build_object('id', t.id, 'rev', t.rev + 1, 'changed', true);
+  -- המשימה הבאה מתחילה (21/10/2026) — אבל רק כשהטכנאי חוזר ל"פנוי": רכז שסיים עם "הפסקה" / "סיום יום" לא רוצה שהיא
+  -- תצפצף עכשיו, והיא מחכה בתור.
+  IF v_next = 'free' THEN
+    v_started := app.tech_next_start(t.id, d.id, CASE p_kind WHEN 'done' THEN 'המשימה הסתיימה' ELSE 'המשימה בוטלה' END);
+  END IF;
+  RETURN jsonb_build_object('id', t.id, 'rev', (SELECT rev FROM technicians WHERE id = t.id), 'changed', true,
+                            'next_started', v_started);
 END
 $fn$;
 REVOKE ALL ON FUNCTION public.tech_dispatch_end(bigint, text, text, timestamptz) FROM PUBLIC, anon;
@@ -923,7 +920,11 @@ BEGIN
     'dispatch', CASE WHEN d.id IS NOT NULL THEN jsonb_build_object(
         'id', d.id, 'site_code', d.site_code, 'site_name', d.site_name, 'place', d.place, 'details', d.details,
         'created_at', app.tech_iso(d.created_at), 'created_by', d.created_by,
-        'arrived_at', app.tech_iso(d.arrived_at), 'acked_at', app.tech_iso(d.acked_at), 'lat', s.lat, 'lon', s.lon) END,
+        'arrived_at', app.tech_iso(d.arrived_at), 'acked_at', app.tech_iso(d.acked_at), 'lat', s.lat, 'lon', s.lon,
+        'follows', d.follows) END,
+    -- המשימה הבאה (21/10/2026): הטכנאי רואה לאן ייסע אחרי זו. היא תתחיל לבד כשייצא מהאתר.
+    'next', (SELECT jsonb_build_object('site_code', n.site_code, 'site_name', n.site_name, 'place', n.place, 'details', n.details)
+               FROM tech_next n WHERE n.technician_id = t.id),
     'push_devices', (SELECT count(*)::int FROM tech_push_subs ps WHERE ps.app_user_id = t.app_user_id),
     'now', app.tech_iso(now()));
 END
@@ -1113,7 +1114,9 @@ BEGIN
   v_dest := CASE WHEN d.site_code IS NOT NULL THEN COALESCE(d.site_name, d.site_code) || ' · ' || d.site_code ELSE d.place END;
   RETURN jsonb_build_object(
     'send', true, 'n', v_n, 'dispatch_id', d.id,
-    'title', CASE WHEN v_n = 1 THEN 'משימה חדשה: ' ELSE 'תזכורת — משימה ממתינה: ' END || v_dest,
+    -- "המשימה הבאה:" — כשהשליחה התחילה מהתור, אחרי שיצא מהאתר הקודם (21/10/2026)
+    'title', CASE WHEN v_n > 1 THEN 'תזכורת — משימה ממתינה: '
+                  WHEN d.follows IS NOT NULL THEN 'המשימה הבאה: ' ELSE 'משימה חדשה: ' END || v_dest,
     'body', COALESCE(left(regexp_replace(d.details, '\s+', ' ', 'g'), 180), 'לפתוח את האפליקציה ולאשר קבלה'),
     'tag', 'dispatch-' || d.id,
     'subs', v_subs);
@@ -1257,3 +1260,252 @@ BEGIN
 END
 $fn$;
 REVOKE ALL ON FUNCTION app.prune_technicians(interval, interval) FROM PUBLIC;
+
+-- ============================================================
+-- המשימה הבאה (21/10/2026)
+-- ============================================================
+-- הבעלת: "כשהוא יוצא מהאתר, אם יש לו משימה נוספת שהקצו לו, שיתזכר אותו לאיפה הוא צריך לנסוע למשימה הבאה". בחירותיה:
+-- **רק משימה באה אחת** (באה חדשה מחליפה את הקודמת), ו**הבאה מתחילה לבד**: כשהרכב שלו יוצא מהאתר של המשימה הנוכחית,
+-- הנוכחית נסגרת ("יצא מהאתר"), הבאה הופכת לשליחה רגילה, והטלפון מצפצף "המשימה הבאה: X" — עם ניווט ו"קיבלתי".
+-- ⚠️ "יצא" = ביקור באתר של המשימה (vehicle_visits, נרשמים בכל סנכרון) שנגמר אחרי שהמשימה נשלחה, לפני 2 דקות לפחות, ואין
+-- עכשיו ביקור פתוח שם. מי שנסע רגע להביא חלק — המשימה נסגרה מוקדם; זה הסיכון שהבעלת בחרה.
+-- ⚠️ גם סיום ידני של הנוכחית (סיום / ביטול, כשהטכנאי חוזר ל"פנוי") מתחיל את הבאה — אחרת משימה ל"מקום אחר", שאין לה אתר
+-- ולכן אין יציאה, הייתה תוקעת אותה. החלפת הנוכחית ("החלפה ושליחה") משאירה את הבאה בתור.
+-- טבלה נפרדת ולא שורה ב-tech_dispatches: "שליחה פתוחה אחת לכל טכנאי" (ux_tech_dispatch_open), הצפצוף ו"קיבלתי" נשארים
+-- כמו שהם — המשימה הבאה הופכת לשליחה רק כשהיא מתחילה (app.tech_next_start).
+CREATE TABLE IF NOT EXISTS tech_next (
+  technician_id bigint PRIMARY KEY REFERENCES technicians(id),
+  client_id     uuid NOT NULL UNIQUE,      -- של הטיוטה; כשהבאה מתחילה הוא עובר לשליחה, וכך בקשה חוזרת מזוהה גם אחרי
+  site_id       integer REFERENCES sites(id) ON DELETE SET NULL,
+  site_code     text,
+  site_name     text,
+  place         text,
+  details       text,
+  ticket        text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  created_by    text NOT NULL,
+  CONSTRAINT tech_next_dest CHECK ((site_code IS NULL) <> (place IS NULL))
+);
+-- ⚠️ ה-FK ל-sites הוא ON DELETE SET NULL: בלי אינדקס, delete_site סורק את הטבלה
+CREATE INDEX IF NOT EXISTS ix_tech_next_site ON tech_next (site_id) WHERE site_id IS NOT NULL;
+ALTER TABLE tech_next ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON tech_next FROM PUBLIC, anon, authenticated;
+-- השליחה שקדמה לזו, כשזו התחילה מ"המשימה הבאה" — הכותרת בטלפון "המשימה הבאה:". ⚠️ הגריפה מוחקת שליחות ישנות → אינדקס.
+ALTER TABLE tech_dispatches ADD COLUMN IF NOT EXISTS follows bigint REFERENCES tech_dispatches(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS ix_tech_dispatch_follows ON tech_dispatches (follows) WHERE follows IS NOT NULL;
+
+-- היעד של שליחה או של משימה באה — אותם כללים בשני המקומות. מחזיר את האתר (שורה ריקה למקום שאינו אתר).
+CREATE OR REPLACE FUNCTION app.tech_dest_check(p_code text, p_place text, p_details text, p_ticket text)
+RETURNS sites
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  s sites;
+BEGIN
+  IF (p_code IS NULL) = (p_place IS NULL) THEN
+    RAISE EXCEPTION 'יש לבחור אתר, או לכתוב מקום שאינו אתר — אחד מהם' USING ERRCODE = '22023';
+  END IF;
+  IF p_place IS NOT NULL AND (length(p_place) < 2 OR length(p_place) > 80) THEN
+    RAISE EXCEPTION 'המקום: 2 עד 80 תווים' USING ERRCODE = '22023';
+  END IF;
+  IF p_details IS NOT NULL AND length(p_details) > 500 THEN
+    RAISE EXCEPTION 'פרטי התקלה: עד 500 תווים' USING ERRCODE = '22023';
+  END IF;
+  IF p_ticket IS NOT NULL AND length(p_ticket) > 40 THEN
+    RAISE EXCEPTION 'מספר הקריאה ארוך מדי' USING ERRCODE = '22023';
+  END IF;
+  IF p_code IS NOT NULL THEN
+    SELECT * INTO s FROM sites WHERE code = p_code;
+    IF NOT FOUND THEN RAISE EXCEPTION 'האתר לא נמצא: %', p_code USING ERRCODE = 'PT404'; END IF;
+  END IF;
+  RETURN s;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_dest_check(text, text, text, text) FROM PUBLIC;
+
+-- יצירת שליחה: השורה, "בדרך", היומן והצפצוף. ⚠️ הקורא נעל את הטכנאי (FOR UPDATE) וסגר שליחה פתוחה קודם. הצפצוף בתוך
+-- EXCEPTION: צפצוף שנכשל לא מכשיל שליחה — הסיבה נרשמת ומוצגת בכרטיס.
+CREATE OR REPLACE FUNCTION app.tech_dispatch_create(p_tech bigint, p_client uuid, p_site_id integer, p_site_code text,
+                                                    p_site_name text, p_place text, p_details text, p_ticket text,
+                                                    p_actor text, p_follows bigint)
+RETURNS tech_dispatches
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  d tech_dispatches;
+BEGIN
+  INSERT INTO tech_dispatches (client_id, technician_id, site_id, site_code, site_name, place, details, ticket, created_by, follows)
+  VALUES (p_client, p_tech, p_site_id, p_site_code, p_site_name, p_place, p_details, p_ticket, p_actor, p_follows)
+  RETURNING * INTO d;
+  UPDATE technicians SET status = 'en_route', status_at = now(), status_by = p_actor, rev = rev + 1 WHERE id = p_tech;
+  PERFORM app.tech_log_add(p_tech, now(), 'dispatch', 'en_route', d.id,
+                           CASE WHEN p_follows IS NOT NULL THEN jsonb_build_object('follows', p_follows) END, p_actor, true);
+  BEGIN
+    PERFORM app.tech_push_request(d.id);
+  EXCEPTION WHEN OTHERS THEN
+    UPDATE tech_dispatches SET push_error = left('הצפצוף לא נשלח: ' || SQLERRM, 200) WHERE id = d.id;
+  END;
+  RETURN d;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_dispatch_create(bigint, uuid, integer, text, text, text, text, text, text, bigint) FROM PUBLIC;
+
+-- המשימה הבאה הופכת לשליחה. ⚠️ הקורא נעל את הטכנאי וסגר את הנוכחית. אין באה, או שעדיין יש שליחה פתוחה — NULL ולא
+-- שגיאה (שגיאה כאן הייתה מבטלת את הסיום שקרא לה). נשלח-ע"י של השליחה = מי שהכניס אותה לתור; היומן — מקור 'system'.
+CREATE OR REPLACE FUNCTION app.tech_next_start(p_tech bigint, p_follows bigint, p_why text)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  n     tech_next;
+  d     tech_dispatches;
+  v_src text := current_setting('app.tech_source', true);
+BEGIN
+  IF EXISTS (SELECT 1 FROM tech_dispatches WHERE technician_id = p_tech AND ended_at IS NULL) THEN RETURN NULL; END IF;
+  DELETE FROM tech_next WHERE technician_id = p_tech RETURNING * INTO n;
+  IF n.technician_id IS NULL THEN RETURN NULL; END IF;
+  PERFORM set_config('app.tech_source', 'system', true);
+  d := app.tech_dispatch_create(p_tech, n.client_id, n.site_id, n.site_code, n.site_name, n.place, n.details, n.ticket,
+                                n.created_by, p_follows);
+  PERFORM set_config('app.tech_source', COALESCE(v_src, ''), true);
+  PERFORM app.record_write_audit('tech.next_start', 'מערכת — ' || p_why, 'system', 'technician', p_tech::text,
+                                 jsonb_build_object('dispatch_id', d.id, 'follows', p_follows));
+  RETURN d.id;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_next_start(bigint, bigint, text) FROM PUBLIC;
+
+-- הרכז קובע לטכנאי את המשימה הבאה (עורך, בפיילוט). רק כשיש לו משימה פתוחה — בלי, שולחים ישר ("צא ל:"). רק אחת: באה
+-- חדשה מחליפה את הקיימת. אותו client_id שוב (התשובה אבדה בדרך) — מה שכבר נשמר, גם אם הבאה כבר התחילה.
+CREATE OR REPLACE FUNCTION public.tech_next_set(p_tech bigint, p_site_code text, p_place text, p_details text,
+                                               p_ticket text, p_client_id uuid, p_rev integer)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor   text := app.require_editor();
+  v_code    text := NULLIF(btrim(COALESCE(p_site_code, '')), '');
+  v_place   text := NULLIF(btrim(regexp_replace(COALESCE(p_place, ''), '\s+', ' ', 'g')), '');
+  v_details text := NULLIF(btrim(COALESCE(p_details, '')), '');
+  v_ticket  text := NULLIF(btrim(COALESCE(p_ticket, '')), '');
+  t         technicians;
+  s         sites;
+  v_owner   bigint;
+  v_had     boolean := false;
+BEGIN
+  PERFORM app.tech_gate();
+  IF p_client_id IS NULL THEN RAISE EXCEPTION 'חסר מזהה בקשה' USING ERRCODE = '22023'; END IF;
+  SELECT * INTO t FROM technicians WHERE id = p_tech FOR UPDATE;
+  IF NOT FOUND OR NOT t.is_active THEN RAISE EXCEPTION 'הטכנאי לא נמצא' USING ERRCODE = 'PT404'; END IF;
+
+  SELECT technician_id INTO v_owner FROM tech_next WHERE client_id = p_client_id;
+  IF v_owner IS NULL THEN SELECT technician_id INTO v_owner FROM tech_dispatches WHERE client_id = p_client_id; END IF;
+  IF v_owner IS NOT NULL THEN
+    IF v_owner <> t.id THEN RAISE EXCEPTION 'מזהה הבקשה כבר שימש לשליחה אחרת' USING ERRCODE = '22023'; END IF;
+    RETURN jsonb_build_object('id', t.id, 'rev', t.rev, 'changed', false);
+  END IF;
+
+  IF p_rev IS NOT NULL AND t.rev <> p_rev THEN
+    RAISE EXCEPTION 'הלוח השתנה בינתיים — טוען מחדש' USING ERRCODE = 'PT409';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM tech_dispatches WHERE technician_id = t.id AND ended_at IS NULL) THEN
+    RAISE EXCEPTION 'אין לטכנאי משימה פתוחה — אפשר לשלוח אותו ישר' USING ERRCODE = 'PT409';
+  END IF;
+  s := app.tech_dest_check(v_code, v_place, v_details, v_ticket);
+  DELETE FROM tech_next WHERE technician_id = t.id RETURNING true INTO v_had;
+  INSERT INTO tech_next (technician_id, client_id, site_id, site_code, site_name, place, details, ticket, created_by)
+  VALUES (t.id, p_client_id, s.id, s.code, s.site_name, v_place, v_details, v_ticket, v_actor);
+  UPDATE technicians SET rev = rev + 1 WHERE id = t.id;
+  PERFORM app.record_write_audit('tech.next', v_actor, app.current_app_role(), 'technician', t.id::text,
+                                 jsonb_build_object('site_code', s.code, 'replaced', COALESCE(v_had, false)));
+  RETURN jsonb_build_object('id', t.id, 'rev', t.rev + 1, 'changed', true, 'replaced', COALESCE(v_had, false));
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_next_set(bigint, text, text, text, text, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_next_set(bigint, text, text, text, text, uuid, integer) TO authenticated;
+
+-- ביטול המשימה הבאה (עורך, בפיילוט). אין באה — כלום, לא שגיאה (שני מסכים).
+CREATE OR REPLACE FUNCTION public.tech_next_clear(p_tech bigint, p_rev integer)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_editor();
+  t       technicians;
+  v_code  text;
+BEGIN
+  PERFORM app.tech_gate();
+  SELECT * INTO t FROM technicians WHERE id = p_tech FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'הטכנאי לא נמצא' USING ERRCODE = 'PT404'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM tech_next WHERE technician_id = t.id) THEN
+    RETURN jsonb_build_object('id', t.id, 'rev', t.rev, 'changed', false);
+  END IF;
+  IF p_rev IS NOT NULL AND t.rev <> p_rev THEN
+    RAISE EXCEPTION 'הלוח השתנה בינתיים — טוען מחדש' USING ERRCODE = 'PT409';
+  END IF;
+  DELETE FROM tech_next WHERE technician_id = t.id RETURNING site_code INTO v_code;
+  UPDATE technicians SET rev = rev + 1 WHERE id = t.id;
+  PERFORM app.record_write_audit('tech.next_clear', v_actor, app.current_app_role(), 'technician', t.id::text,
+                                 jsonb_build_object('site_code', v_code));
+  RETURN jsonb_build_object('id', t.id, 'rev', t.rev + 1, 'changed', true);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_next_clear(bigint, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_next_clear(bigint, integer) TO authenticated;
+
+-- הסריקה: טכנאי שיש לו משימה באה, והרכב שלו יצא מהאתר של המשימה הנוכחית. רצה בכל סנכרון של איתוראן, אחרי הביקורים
+-- (ituran_ingest, בבלוק משלה). הנוכחית נסגרת כ"סיים" ע"י "יצא מהאתר" (היומן: מקור 'gps'), והבאה מתחילה.
+-- ⚠️ סדר הנעילה כמו כל הכותבים: הטכנאי, ואחר כך השליחה. ⚠️ שעת הסיום = שעת היציאה (לא לפני ההגעה / הכניסה).
+CREATE OR REPLACE FUNCTION app.tech_leave_scan(p_now timestamptz DEFAULT now())
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  r     record;
+  d     tech_dispatches;
+  v_end timestamptz;
+  v_src text;
+  n     integer := 0;
+BEGIN
+  FOR r IN
+    SELECT t.id AS tech_id, x.id AS disp_id, vv.ended_at AS left_at
+      FROM technicians t
+      JOIN tech_next nx ON nx.technician_id = t.id
+      JOIN tech_dispatches x ON x.technician_id = t.id AND x.ended_at IS NULL AND x.site_id IS NOT NULL
+      CROSS JOIN LATERAL (SELECT v.ended_at FROM vehicle_visits v
+                           WHERE v.license_plate = t.plate AND v.site_id = x.site_id AND v.ended_at IS NOT NULL
+                             AND v.ended_at >= x.created_at AND v.ended_at <= p_now - interval '2 minutes'
+                           ORDER BY v.ended_at DESC LIMIT 1) vv
+     WHERE t.is_active AND t.plate IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM vehicle_visits o
+                        WHERE o.license_plate = t.plate AND o.site_id = x.site_id AND o.ended_at IS NULL)
+  LOOP
+    PERFORM 1 FROM technicians WHERE id = r.tech_id FOR UPDATE;
+    SELECT * INTO d FROM tech_dispatches WHERE id = r.disp_id FOR UPDATE;
+    CONTINUE WHEN d.ended_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM tech_next WHERE technician_id = r.tech_id);
+    v_end := GREATEST(r.left_at, COALESCE(d.entered_at, d.arrived_at, d.created_at));
+    UPDATE tech_dispatches SET ended_at = v_end, ended_by = 'יצא מהאתר', end_kind = 'done' WHERE id = d.id;
+    v_src := current_setting('app.tech_source', true);
+    PERFORM set_config('app.tech_source', 'gps', true);
+    PERFORM app.tech_log_add(r.tech_id, v_end, 'ended', NULL, d.id,
+                             jsonb_build_object('end_kind', 'done', 'auto', 'left_site'), 'יצא מהאתר', true);
+    PERFORM set_config('app.tech_source', COALESCE(v_src, ''), true);
+    PERFORM app.tech_next_start(r.tech_id, d.id, 'יצא מהאתר');
+    n := n + 1;
+  END LOOP;
+  RETURN n;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_leave_scan(timestamptz) FROM PUBLIC;
