@@ -4466,7 +4466,7 @@ only his own task.
       *"אין בו צורך, תעיף אותו"*): the phone has no disconnect button; a phone is disconnected only from the coordinator's
       card ("ניתוק טלפון"). `forgetDevice` and `selfUnpairPhone` are gone from the dashboard; `tech_self_unpair` stays in
       SQL with no caller. Browser `tp/probe-tp` 31, `probe-tpfix` 25 (both now assert there is no button and nothing is
-      disconnected), `probe-tpbeep` 46, `probe-tpnext` 11. NOT pushed.
+      disconnected), `probe-tpbeep` 46, `probe-tpnext` 11. Pushed e6152cf.
 - **Tests:**
   - `technicians.test.js` +3 (20). The QR is for an editor in the pilot only. The phone sees only its own task, and no
     board, vehicles or site rows: RLS on `sites` is switched on inside the test, because PGlite does not have it and
@@ -5156,7 +5156,7 @@ vehicle.
 The open visits of the vehicles that did not move close at the next sync. Their 8 records (open and closed) are not
 deleted by the SQL. Removing them is a separate data step.
 
-### "סטטיסטיקה" for the technicians, a history per technician, and "ניהול טכנאים" for managers (built 22/10/2026; SQL applied, NOT pushed)
+### "סטטיסטיקה" for the technicians, a history per technician, and "ניהול טכנאים" for managers (built 22/10/2026; SQL applied and pushed, e6152cf)
 
 The owner: *"אני רוצה לראות גם היסטוריה של אתרים שבהם כל אחד ביקר, וכמה שעות בממוצע נמצא טכנאי באתר, כמה כל אחד מהם, מי
 נוסע הכי מהר וכו' — תפרט הרבה מידע וכמה שיותר סטטיסטיקות. תן אופציה להוסיף עוד טכנאי ולמחוק — רק למי שהוא מנהל"*.
@@ -5268,9 +5268,9 @@ DEPLOY לאתר — רק ב-LOCALHOST"*): she reviews it on her local Vite (loca
 11 s, then "הייצור זהה לקוד". Checked read-only right after: `fleet_list` / `fleet_shown_set` are gone, the four new
 public functions exist and are closed to anon, the visit retention default is 365 days, the Ituran sync ran 42 s after
 the apply with `stats_error` / `advance_error` NULL, 87 of 90 agents beating. ⚠️ **Until the push, "רכבים ברשימה" on the
-live site fails (404)** — the live bundle still has that window. Editors only; nothing is lost.
+live site fails (404)** — the live bundle still has that window. Editors only; nothing is lost. ✅ Pushed the same day at the owner's word ("כן"), e6152cf; Pages `completed success`, live bundle `index-Dd9UTvk0.js` with `tech_roster` / `tech_stats`, the `TechniciansView` chunk with `ts-kpis` / `ts-gantt` / `ts-mix` and no `fleet_list`, and the `TechPhone` chunk without the disconnect button.
 
-### "סטטיסטיקה" is visual, not a table (22/10/2026, NOT pushed — the owner reviews it on localhost)
+### "סטטיסטיקה" is visual, not a table (22/10/2026, pushed e6152cf)
 
 The owner, looking at the table: *"לא רוצה כזו תצוגה, אני רוצה תצוגה ויזואלית, מעניינת, צבעונית וברורה"*. The screen
 (`TechStats.jsx`) is now:
@@ -5300,7 +5300,7 @@ Browser `e2e/probe-techreport.mjs` 64/64 (V: tiles, cards, bar order and proport
 CSS variable, switching measure, timeline order and right-to-left, the axis, the split filling its row, the table hidden
 until clicked, sites; on a phone the leading bar takes most of the row and hour labels do not overlap). Full suite 1420/1420.
 
-### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026; SQL applied, NOT pushed)
+### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026; SQL applied)
 
 The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, where technicians park): *"להוציא את 3488"*.
 
