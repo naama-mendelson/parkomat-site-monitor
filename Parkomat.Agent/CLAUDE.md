@@ -1109,6 +1109,10 @@ every name.
     `[UninstallRun]`). Without `/DInstance` the installer is the same as before, and `{#Sfx}` is empty.
   - ⚠️ **Known cost:** the **regular** installer still closes by name, because upgrading an old install depends on that. So
     upgrading the first agent also stops the second one, which comes back within 5 minutes from its own keep-alive task.
+- ⚠️ **Order at the site: upgrade the first agent to 1.0.62 (the regular installer) BEFORE installing the second.** A
+  first agent older than 1.0.62 matches processes by name only, so its Tray would take agent 2's process for its own
+  ("running", and it never starts its own agent), and its Stop / Exit / Save would kill agent 2. The regular 1.0.62
+  installer keeps the first site's config, as every upgrade does.
 - ⚠️ **Mosquitto listens on 1883 and is per machine.** Two agents both with MQTT on would collide. Since 1.0.57 MQTT is off
   whenever the Supabase password is set (and nothing reads HiveMQ since 17/09), so both agents need their site password.
 - ⚠️ **The firewall rules are path-based** (*A new site that never reports*). On a PC with outbound blocked, the second
