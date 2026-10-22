@@ -4464,7 +4464,10 @@ only his own task.
     (the `#` stays encoded inside `wa.me`, or WhatsApp would cut the credentials), and "הקישור עובד פעם אחת". It works
     once, like the QR: the phone replaces the password as soon as it opens the link, so a message left in a chat opens
     nothing afterwards. It is hidden after the phone connects. Tests: `tech-phone-ui.test.js`; browser
-    `probe-techphone` 57 (S0–S3).
+    `probe-techphone` 57 (S0–S3). ✅ Pushed 22/10/2026 (4d25ece, at the owner's "תעלה"); live bundle `index-CxkltsYo.js`
+    / `TechniciansView-IoPuBiTN.js`.
+    ⚠️ **The message is the password.** Whoever opens it first connects as that technician. Send it only to the
+    technician's own number. If it went to the wrong chat, press "QR חדש" — that cuts off the old link at once.
 - **The link:** `<origin>/#pair=<base64url {e, p}>` (`pairLink` / `parsePairHash` in `utils/techPhone.js`). The
   credentials sit after `#`, so they are never sent to any server. `parsePairHash` accepts only a `tech-<n>-<n>@` email
   and a base64url password.
