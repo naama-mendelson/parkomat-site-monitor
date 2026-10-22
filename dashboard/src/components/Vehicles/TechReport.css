@@ -78,6 +78,175 @@
 .rs-note { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; color: var(--tc-site, #0f766e);
   background: color-mix(in srgb, var(--tc-site, #0f766e) 9%, var(--bg-card)); }
 
+/* ── התצוגה הוויזואלית (22/10/2026): "ויזואלית, מעניינת, צבעונית וברורה" ──
+   צבע לפי משפחת המדד, קבוע: road = מרחק ונסיעה, site = אתרים, speed = מהירות, time = שעות היום; other = "חונה ואחר".
+   ארבעת הגוונים — מהפלטה שנבדקה ב-validate_palette מול משטח הכרטיס (#ffffff בהיר, #182238 כהה): עיוורון צבעים ΔE ≥ 9,
+   ראייה רגילה ≥ 20 (הכחול הבהיר — צעד 500, #256abf: לבן עליו 5.4:1; צעד 450 היה 4.4). ⚠️ ה"אתרים" הבהיר 2.8:1 מול הלבן — ולכן לכל עמודה יש תווית ערך גלויה, והטקסט אף פעם לא בצבע הנתון.
+   *-ink = צבע הטקסט בתוך מקטע צבוע (מקרא "איך עובר היום"), לפי בהירות המקטע. */
+.tr {
+  --ts-road: #256abf; --ts-site: #1baf7a; --ts-speed: #eb6834; --ts-time: #6250d6; --ts-other: #cfd4dd;
+  --ts-road-ink: #ffffff; --ts-site-ink: #05261a; --ts-other-ink: #1f2a3d;
+  --ts-grid: #e4e8ef;
+}
+[data-theme="dark"] .tr {
+  --ts-road: #3987e5; --ts-site: #199e70; --ts-speed: #d95926; --ts-time: #9085e9; --ts-other: #3a4762;
+  --ts-road-ink: #061226; --ts-site-ink: #02160f; --ts-other-ink: #e8edf5;
+  --ts-grid: #2a3a5c;
+}
+.ts-f--road { --ts-c: var(--ts-road); }
+.ts-f--site { --ts-c: var(--ts-site); }
+.ts-f--speed { --ts-c: var(--ts-speed); }
+.ts-f--time { --ts-c: var(--ts-time); }
+
+.ts-svg { display: block; }
+.ts-ico {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ts-c); color: #fff;
+}
+.ts-panel {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px;
+  border: 1px solid var(--border-color); background: var(--bg-card);
+}
+.ts-panel > .tr-h { margin: 0; }
+
+/* אריחי הצוות */
+.ts-kpis { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.ts-kpi {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--ts-c) 32%, var(--border-color));
+  background: color-mix(in srgb, var(--ts-c) 9%, var(--bg-card));
+}
+.ts-kpi-text { display: flex; flex-direction: column; min-width: 0; }
+.ts-kpi-val { font-size: 1.6rem; font-weight: 700; line-height: 1.15; color: var(--text-primary); white-space: nowrap; }
+.ts-kpi-label { font-size: 0.86rem; color: var(--text-secondary); }
+
+/* "מי הכי" — כרטיס לכל שאלה, פס בצבע המשפחה */
+.ts-recs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.ts-rec {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; min-width: 0;
+  border: 1px solid var(--border-color); border-inline-start: 5px solid var(--ts-c); background: var(--bg-card);
+}
+.ts-rec .ts-ico { width: 36px; height: 36px; background: color-mix(in srgb, var(--ts-c) 16%, var(--bg-card)); color: var(--text-primary); }
+.ts-rec-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ts-rec .tr-rec-label { font-size: 0.8rem; }
+.ts-rec-name { font-size: 1.02rem; overflow-wrap: anywhere; }
+.ts-rec .tr-rec-val { font-size: 1.02rem; font-weight: 700; color: var(--text-primary); }
+
+/* בורר המדד */
+.ts-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ts-chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.88rem;
+}
+.ts-chip::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--ts-c); flex: 0 0 auto; }
+.ts-chip:hover { border-color: color-mix(in srgb, var(--ts-c) 60%, var(--border-color)); }
+.ts-chip[aria-checked="true"] {
+  border-color: var(--ts-c); background: color-mix(in srgb, var(--ts-c) 15%, var(--bg-card)); font-weight: 700;
+}
+.ts-chip:focus-visible, .ts-more:focus-visible, .ts-tchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* עמודות ההשוואה — העמודה יוצאת מימין (קו בסיס אחד), קצה הנתון מעוגל, הערך מיד אחריה */
+.ts-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ts-bar-row { display: grid; grid-template-columns: 1.75rem minmax(6.5rem, 11rem) minmax(0, 1fr); align-items: center; gap: 4px 10px; min-height: 32px; }
+.ts-rank {
+  justify-self: center; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.ts-rank--top { background: color-mix(in srgb, var(--ts-c) 16%, var(--bg-card)); color: var(--text-primary); }
+.ts-rank--1 { background: color-mix(in srgb, var(--ts-c) 34%, var(--bg-card)); }
+.ts-name { justify-self: start; overflow-wrap: anywhere; }
+.ts-track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ts-bar {
+  flex: 0 0 auto; height: 20px; min-width: 3px; width: calc((100% - 8.5rem) * var(--p) / 100);
+  background: var(--ts-c); border-start-end-radius: 4px; border-end-end-radius: 4px;
+}
+.ts-val { white-space: nowrap; font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+
+/* יום העבודה — ציר שעות, הבוקר מימין */
+.ts-gantt { display: flex; flex-direction: column; }
+.ts-g-row { display: grid; grid-template-columns: minmax(7.5rem, 11rem) minmax(0, 1fr); gap: 10px; align-items: stretch; }
+.ts-g-who { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 4px 0; }
+.ts-g-times { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+.ts-g-track { position: relative; min-height: 40px; }
+.ts-g-axis .ts-g-track { min-height: 20px; }
+.ts-g-tick { position: absolute; top: 0; bottom: 0; inset-inline-start: var(--x); width: 1px; background: var(--ts-grid); }
+/* ⚠️ RTL: הסימון נמדד מימין; translateX(50%) מזיז ימינה — ממרכז את התווית על הקו */
+.ts-g-ticklabel {
+  position: absolute; bottom: 2px; inset-inline-start: var(--x); transform: translateX(50%);
+  font-size: 0.74rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ts-g-ticklabel.is-first { transform: none; }
+.ts-g-ticklabel.is-last { transform: translateX(100%); }
+.ts-g-bar {
+  position: absolute; top: 50%; height: 18px; transform: translateY(-50%);
+  inset-inline-start: var(--s); width: var(--w); border-radius: 4px; background: var(--ts-c);
+}
+
+/* איך עובר היום — עמודה אחת מחולקת, רווח של 2px בצבע המשטח בין המקטעים */
+.ts-legend { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.86rem; color: var(--text-secondary); }
+.ts-sw { display: inline-flex; align-items: center; gap: 6px; }
+.ts-sw::before { content: ""; width: 12px; height: 12px; border-radius: 3px; background: var(--sw); }
+.ts-sw--drive, .ts-seg--drive { --sw: var(--ts-road); --ink: var(--ts-road-ink); }
+.ts-sw--site, .ts-seg--site { --sw: var(--ts-site); --ink: var(--ts-site-ink); }
+.ts-sw--other, .ts-seg--other { --sw: var(--ts-other); --ink: var(--ts-other-ink); }
+.ts-mixes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ts-mix-row { display: grid; grid-template-columns: minmax(6.5rem, 11rem) minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.ts-mix { display: flex; gap: 2px; height: 24px; min-width: 0; }
+.ts-seg {
+  flex-basis: 0; min-width: 2px; display: grid; place-items: center; overflow: hidden;
+  background: var(--sw); color: var(--ink); font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.ts-seg:first-child { border-start-start-radius: 4px; border-end-start-radius: 4px; }
+.ts-seg:last-child { border-start-end-radius: 4px; border-end-end-radius: 4px; }
+.ts-mix-total { font-size: 0.86rem; color: var(--text-secondary); white-space: nowrap; }
+
+/* לפי אתר — שורה שנייה: מי היה שם, וכמה */
+.ts-site-row { padding: 4px 0; border-bottom: 1px solid var(--border-color); }
+.ts-site-row:last-child { border-bottom: 0; }
+.ts-site-name { font-weight: 700; overflow-wrap: anywhere; }
+.ts-site-more { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ts-tchip {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 1px 9px 1px 3px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 0.82rem;
+}
+.ts-tchip-ava {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 0.66rem; font-weight: 700;
+  background: color-mix(in srgb, var(--ts-c) 18%, var(--bg-card)); color: var(--text-primary);
+}
+.ts-tchip-n { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.ts-site-facts { font-size: 0.8rem; color: var(--text-secondary); }
+
+/* הטבלה המלאה — מאחורי כפתור */
+.ts-more {
+  align-self: flex-start; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);
+  border-radius: 999px; padding: 5px 14px; min-height: 32px; font: inherit; font-size: 0.88rem; cursor: pointer;
+}
+#ts-table, #ts-site-table { margin-top: 10px; }
+
+@media (max-width: 640px) {
+  .ts-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ts-kpi { padding: 10px; gap: 8px; }
+  .ts-kpi .ts-ico { width: 32px; height: 32px; }
+  .ts-kpi-val { font-size: 1.25rem; }
+  .ts-recs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .ts-rec { padding: 8px 10px; border-inline-start-width: 4px; }
+  .ts-rec .ts-ico { display: none; }
+  .ts-panel { padding: 12px 10px; }
+  /* בטלפון — השם מעל, העמודה ברוחב מלא מתחתיו (בעמודה צרה ליד השם העמודות יצאו זעירות) */
+  .ts-bar-row { grid-template-columns: 1.5rem minmax(0, 1fr); gap: 2px 8px; padding: 3px 0; }
+  .ts-bar-row > .ts-track, .ts-bar-row > .ts-site-more { grid-column: 2; }
+  .ts-bar { width: calc((100% - 6.5rem) * var(--p) / 100); height: 16px; }
+  .ts-val { font-size: 0.82rem; }
+  .ts-g-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .ts-g-axis > span:first-child { display: none; }
+  .ts-g-ticklabel.is-minor { display: none; }
+  .ts-g-who { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 6px 0 0; }
+  .ts-g-track { min-height: 26px; }
+  .ts-mix-row { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; }
+  .ts-mix-row > .ts-mix { grid-column: 1 / -1; grid-row: 2; }
+  .ts-chip, .ts-more { min-height: 40px; }
+}
+
 /* כפתורי התקופה — שורה אחת ("7 ימים" לא נשבר לשתי שורות); בטלפון צרים יותר וממלאים את הרוחב */
 .tr .tv-seg button, .tr-periods button { white-space: nowrap; }
 @media (max-width: 640px) {

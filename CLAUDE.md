@@ -5259,6 +5259,36 @@ public functions exist and are closed to anon, the visit retention default is 36
 the apply with `stats_error` / `advance_error` NULL, 87 of 90 agents beating. ⚠️ **Until the push, "רכבים ברשימה" on the
 live site fails (404)** — the live bundle still has that window. Editors only; nothing is lost.
 
+### "סטטיסטיקה" is visual, not a table (22/10/2026, NOT pushed — the owner reviews it on localhost)
+
+The owner, looking at the table: *"לא רוצה כזו תצוגה, אני רוצה תצוגה ויזואלית, מעניינת, צבעונית וברורה"*. The screen
+(`TechStats.jsx`) is now:
+- **six team tiles** (ק״מ, בנסיעה, ביקורים באתרים, אתרים שונים, זמן ממוצע באתר, ימי עבודה);
+- **"מי הכי"** — one card per record, with a stripe in its colour;
+- **"השוואה בין הטכנאים"** — one measure at a time (chips: ק״מ, ביקורים, זמן באתרים, זמן נסיעה, אתרים שונים, ק״מ ליום,
+  זמן ממוצע באתר, מהירות ממוצעת, מהירות שיא), horizontal bars from the leader down, the value after each bar, and
+  "N בלי נתון" under them (zero and no data are not bars);
+- **"יום העבודה"** — average departure to average finish on an hour axis, morning on the right, earliest first;
+- **"איך עובר יום עבודה"** — one split bar per technician: נסיעה / באתרים / חונה ואחר, from `drive_s` / `site_s` per
+  work day out of `workday_min` (if driving + sites exceed the day, the day is their sum and "אחר" is 0); most time at
+  sites first;
+- **"לפי אתר"** — bars by visits / total time / average time, technician chips (×n) and the facts line under each.
+- **The full table stays, behind "כל המספרים בטבלה"** — every number, and a reading without colour.
+
+Colour follows the measure's family, always the same: road (distance, driving) blue, site (sites, visits) aqua, speed
+orange, time (hours of the day) violet; "אחר" grey. Validated with the dataviz validator against the card surface (white /
+`#182238`): CVD ΔE ≥ 9.2, normal vision ≥ 20.9. ⚠️ Light blue is step 500 `#256abf` (white on it 5.4:1; step 450 was 4.4).
+⚠️ Light aqua is 2.8:1 against white, so every bar has a visible value label and text never takes the data colour. On a
+phone the name sits above a full-width bar (beside it the bars were tiny), hour labels show every two hours, and the
+record cards are two columns. Pure rules in `utils/techReport.js` (`METRICS`, `barRows`, `recordFamily`, `clockAxis`,
+`spanRows`, `MIX_PARTS`, `dayMix`, `mixRows`, `SITE_METRICS`, `siteBarRows`); `teamFacts` is gone.
+
+Tests: `tech-report-ui.test.js` 9 (+4); **mutations 13 of 13** (isolated copy `scratchpad/mutui/run.cjs`; two survived
+until their cases were added: departure order equal to finish order in the test, and no work days with both times set).
+Browser `e2e/probe-techreport.mjs` 64/64 (V: tiles, cards, bar order and proportional widths, the family colour from the
+CSS variable, switching measure, timeline order and right-to-left, the axis, the split filling its row, the table hidden
+until clicked, sites; on a phone the leading bar takes most of the row and hour labels do not overlap). Full suite 1420/1420.
+
 ### Technicians' parking spots — 3488 is not a site for the vehicles (built 22/10/2026; SQL applied, NOT pushed)
 
 The owner, on 3488 (ישראל בק 11-19, a multiplier next to the office, where technicians park): *"להוציא את 3488"*.

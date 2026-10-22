@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PERIODS, israelDay, addDays, periodRange, dayShort, dataNote, minuteText, minutesLong, techLabel, kmPerDay,
-  COLUMNS, sortTechs, records, teamFacts, siteTechsText, siteLabel,
+  COLUMNS, sortTechs, records, siteTechsText, siteLabel,
+  METRICS, barRows, recordFamily, clockAxis, spanRows, MIX_PARTS, dayMix, mixRows, SITE_METRICS, siteBarRows,
 } from "../../dashboard/src/utils/techReport.js";
 
 const T = (o) => ({ plate: "8600001", nickname: "כינוי 8600001", tech: null, work_days: 0, km: 0, drive_s: 0, visits: 0, sites: 0,
@@ -72,11 +73,79 @@ test("שיאים: מי מוביל וכמה; אפס אינו שיא; יוצא מ�
   assert.deepEqual(records([]), []);
 });
 
-test("שורת הצוות והטכנאים באתר", () => {
-  const f = teamFacts({ km: 80, drive_s: 5400, visits: 5, sites: 2, visit_avg_s: 3600, visit_total_s: 18000, work_days: 3 });
-  assert.deepEqual(f.map((x) => x.text), ["80", "1:30 שע׳", "5", "2", "1:00 שע׳", "5:00 שע׳", "3"]);
-  assert.equal(teamFacts({ visit_avg_s: null }).find((x) => x.label === "זמן ממוצע באתר").text, "—");
-  assert.deepEqual(teamFacts(null), []);
+test("הטכנאים באתר", () => {
   assert.equal(siteTechsText({ techs: [{ plate: "1", tech: "אבי", n: 3 }, { plate: "2", nickname: "כינוי 2", n: 1 }] }), "אבי (3), כינוי (1)");
   assert.equal(siteTechsText({}), "");
+});
+
+// 22/10/2026 — התצוגה הוויזואלית: עמודות השוואה, ציר יום העבודה, איך עובר היום, ולפי אתר.
+test("השוואה: מהמוביל למטה, המוביל 100%, אפס ובלי נתון — לא עמודה ונספרים; שוויון — לפי שם; מדד לא מוכר — ק\"מ", () => {
+  const a = T({ plate: "1", tech: "אבי", km: 50, visits: 2, max_speed: null });
+  const b = T({ plate: "2", tech: "בני", km: 100, visits: 2, max_speed: 120 });
+  const c = T({ plate: "3", tech: "גדי", km: 0 });
+  const r = barRows([a, b, c], "km");
+  assert.deepEqual(r.rows.map((x) => [x.name, x.pct, x.rank, x.text]), [["בני", 100, 1, "100 ק״מ"], ["אבי", 50, 2, "50 ק״מ"]]);
+  assert.equal(r.missing, 1, "אפס — לא עמודה");
+  assert.deepEqual(barRows([b, a], "visits").rows.map((x) => x.name), ["אבי", "בני"], "שוויון — לפי שם");
+  assert.equal(barRows([a, b], "visits").rows[0].text, "2 ביקורים");
+  assert.equal(barRows([T({ visits: 1 })], "visits").rows[0].text, "ביקור אחד");
+  const sp = barRows([a, b], "max_speed");
+  assert.deepEqual([sp.rows.length, sp.missing], [1, 1], "בלי נתון — נספר");
+  assert.equal(barRows([a, b], "xyz").metric.key, "km");
+  assert.deepEqual(barRows([], "km").rows, []);
+  assert.equal(new Set(METRICS.map((m) => m.key)).size, METRICS.length);
+  for (const m of METRICS) assert.ok(["road", "site", "speed"].includes(m.family), m.key);
+  assert.deepEqual([recordFamily("km"), recordFamily("visits"), recordFamily("max_speed"), recordFamily("first_min"), recordFamily("workday_min")],
+    ["road", "site", "speed", "time", "time"]);
+});
+
+test("ציר יום העבודה: משעה עגולה לפני היציאה עד אחרי הסיום, לפחות 07–17; שורות מהמוקדם; בלי נתון — null", () => {
+  assert.equal(clockAxis([T({})]), null);
+  assert.equal(clockAxis([]), null);
+  const ax = clockAxis([T({ first_min: 381, last_min: 953 })]);            // 06:21–15:53
+  assert.deepEqual([ax.from, ax.to], [360, 1020], "06:00 עד 17:00 (המינימום)");
+  assert.equal(ax.ticks.length, 12, "עד 12 שעות — כל שעה");
+  assert.deepEqual([ax.ticks[0].label, ax.ticks.at(-1).label, ax.ticks[0].pct, ax.ticks.at(-1).pct], ["06:00", "17:00", 0, 100]);
+  const wide = clockAxis([T({ first_min: 330, last_min: 1310 })]);       // 05:30–21:50
+  assert.deepEqual([wide.from, wide.to], [300, 1320]);
+  assert.equal(wide.ticks[1].label, "07:00", "מעל 12 שעות — כל שעתיים");
+  const late = clockAxis([T({ first_min: 600, last_min: 1439 })]);
+  assert.deepEqual([late.from, late.to], [420, 1440], "לא לפני 07:00; עד חצות");
+  const a = T({ plate: "1", tech: "אבי", first_min: 480, last_min: 960, workday_min: 470 });
+  const b = T({ plate: "2", tech: "בני", first_min: 420, last_min: 900, workday_min: 480 });
+  const c = T({ plate: "4", tech: "גדי", first_min: 450, last_min: 860, workday_min: 410 });   // יוצא אחרי בני ומסיים לפניו
+  const rows = spanRows([a, b, c, T({ plate: "3" })], clockAxis([a, b, c]));
+  assert.deepEqual(rows.map((r) => r.name), ["בני", "גדי", "אבי"], "מהיוצא המוקדם — לא מהמסיים המוקדם");
+  assert.deepEqual([rows[0].start, rows[0].width, rows[0].first, rows[0].last, rows[0].len], [0, 80, "07:00", "15:00", "8:00 שע׳"]);
+  assert.deepEqual(spanRows([a], null), []);
+  const back = spanRows([T({ first_min: 600, last_min: 590 })], clockAxis([T({ first_min: 600, last_min: 590 })]));
+  assert.equal(back[0].width, 0.5, "סיום לפני יציאה — עמודה דקה, לא שלילית");
+});
+
+test("איך עובר היום: נסיעה / באתרים / השאר מתוך היום הממוצע; ארוך מהיום — השאר אפס; לא נסע — אין; הכי הרבה באתרים למעלה", () => {
+  assert.deepEqual(MIX_PARTS.map((p) => p.key), ["drive", "site", "other"]);
+  const m = dayMix(T({ work_days: 2, drive_s: 14400, site_s: 21600, workday_min: 480 }));  // ליום: 2 שע׳ נסיעה, 3 באתרים, מתוך 8
+  assert.equal(m.total, 28800);
+  assert.deepEqual(m.parts.map((p) => [p.key, p.s, p.pct]), [["drive", 7200, 25], ["site", 10800, 37.5], ["other", 10800, 37.5]]);
+  const over = dayMix(T({ work_days: 1, drive_s: 18000, site_s: 18000, workday_min: 480 }));
+  assert.deepEqual([over.total, over.parts[2].s], [36000, 0], "יותר מהיום — הסכום הוא היום");
+  assert.equal(dayMix(T({ work_days: 0, drive_s: 100 })), null);
+  assert.equal(dayMix(T({ work_days: 0, drive_s: 100, site_s: 100, workday_min: 60 })), null, "לא נסע אף יום — אין, גם עם זמנים");
+  assert.equal(dayMix(T({ work_days: 1 })), null, "בלי זמנים — אין");
+  assert.equal(dayMix(null), null);
+  const rows = mixRows([
+    T({ plate: "1", tech: "אבי", work_days: 1, drive_s: 3600, site_s: 3600, workday_min: 480 }),
+    T({ plate: "2", tech: "בני", work_days: 1, drive_s: 3600, site_s: 14400, workday_min: 480 }),
+    T({ plate: "3", tech: "גדי" }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.name), ["בני", "אבי"]);
+});
+
+test("לפי אתר: עמודות לפי ביקורים / זמן כולל / ממוצע; המוביל 100%", () => {
+  const s = [{ code: "1", name: "א", visits: 2, total_s: 7200, avg_s: 3600 }, { code: "2", name: "ב", visits: 4, total_s: 3600, avg_s: 900 }];
+  assert.deepEqual(siteBarRows(s, "visits").rows.map((r) => [r.site.code, r.pct, r.text]), [["2", 100, "4 ביקורים"], ["1", 50, "2 ביקורים"]]);
+  assert.deepEqual(siteBarRows(s, "total_s").rows.map((r) => r.site.code), ["1", "2"]);
+  assert.deepEqual(siteBarRows(s, "avg_s").rows.map((r) => r.text), ["1:00 שע׳", "15 דק׳"]);
+  assert.equal(siteBarRows(s, "xyz").metric.key, "visits");
+  assert.deepEqual(SITE_METRICS.map((m) => m.key), ["visits", "total_s", "avg_s"]);
 });

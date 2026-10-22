@@ -175,21 +175,129 @@ export function records(list) {
   return out;
 }
 
-/** שורת הצוות: [{label, text}] — רק מה שיש בו נתון. */
-export function teamFacts(team) {
-  if (!team) return [];
-  return [
-    { label: "ק״מ", text: kmText(team.km ?? 0) },
-    { label: "בנסיעה", text: hmText(team.drive_s ?? 0) },
-    { label: "ביקורים באתרים", text: String(team.visits ?? 0) },
-    { label: "אתרים שונים", text: String(team.sites ?? 0) },
-    { label: "זמן ממוצע באתר", text: team.visit_avg_s == null ? "—" : hmText(team.visit_avg_s) },
-    { label: "סה״כ באתרים", text: hmText(team.visit_total_s ?? 0) },
-    { label: "ימי עבודה", text: String(team.work_days ?? 0) },
-  ];
-}
-
 /** "דני (3), רון (1)" — הטכנאים באתר, עם כמה פעמים כל אחד. */
 export function siteTechsText(site) {
   return (site?.techs ?? []).map((t) => `${techLabel(t)} (${t.n})`).join(", ");
+}
+
+// ── התצוגה הוויזואלית (22/10/2026) ──────────────────────────────────────────────────────────────────────────────────
+// הבעלת, על הטבלה: "לא רוצה כזו תצוגה, אני רוצה תצוגה ויזואלית, מעניינת, צבעונית וברורה". הטבלה נשארת מאחורי כפתור.
+// צבע לפי משפחת המדד, תמיד אותו צבע לאותה משפחה: road = מרחק ונסיעה, site = אתרים, speed = מהירות, time = שעות היום.
+// הגוונים עצמם ב-TechReport.css (--ts-road / --ts-site / --ts-speed / --ts-time), לכל ערכת נושא.
+
+/** המדדים של "השוואה בין הטכנאים" — אחד בכל פעם, עמודה לכל טכנאי. */
+export const METRICS = [
+  { key: "km", label: "ק״מ", family: "road", value: (t) => num(t.km), text: (v) => `${kmText(v)} ק״מ` },
+  { key: "visits", label: "ביקורים", family: "site", value: (t) => num(t.visits), text: (v) => (v === 1 ? "ביקור אחד" : `${v} ביקורים`) },
+  { key: "visit_total_s", label: "זמן באתרים", family: "site", value: (t) => num(t.visit_total_s), text: (v) => hmText(v) },
+  { key: "drive_s", label: "זמן נסיעה", family: "road", value: (t) => num(t.drive_s), text: (v) => hmText(v) },
+  { key: "sites", label: "אתרים שונים", family: "site", value: (t) => num(t.sites), text: (v) => (v === 1 ? "אתר אחד" : `${v} אתרים`) },
+  { key: "km_day", label: "ק״מ ליום", family: "road", value: (t) => kmPerDay(t), text: (v) => `${v} ק״מ ליום` },
+  { key: "visit_avg_s", label: "זמן ממוצע באתר", family: "site", value: (t) => num(t.visit_avg_s), text: (v) => hmText(v) },
+  { key: "avg_speed", label: "מהירות ממוצעת", family: "speed", value: (t) => num(t.avg_speed), text: (v) => `${v} קמ״ש` },
+  { key: "max_speed", label: "מהירות שיא", family: "speed", value: (t) => num(t.max_speed), text: (v) => `${v} קמ״ש` },
+];
+
+/**
+ * עמודות ההשוואה למדד אחד: מהגבוה לנמוך; אפס ובלי נתון — לא עמודה, נספרים ב-missing. pct = רוחב העמודה (המוביל 100).
+ * { metric, rows: [{ plate, name, value, text, pct, rank }], missing }
+ */
+export function barRows(list, key) {
+  const m = METRICS.find((x) => x.key === key) ?? METRICS[0];
+  const all = (list || []).map((t) => ({ t, v: m.value(t) }));
+  const has = all.filter((r) => r.v != null && r.v > 0)
+    .sort((a, b) => b.v - a.v || techLabel(a.t).localeCompare(techLabel(b.t), "he"));
+  const max = has[0]?.v ?? 0;
+  return {
+    metric: m,
+    rows: has.map((r, i) => ({ plate: r.t.plate, name: techLabel(r.t), value: r.v, text: m.text(r.v), pct: (r.v / max) * 100, rank: i + 1 })),
+    missing: all.length - has.length,
+  };
+}
+
+/** משפחת הצבע של שיא (לפי המדד שלו). */
+export function recordFamily(key) {
+  if (key === "first_min" || key === "workday_min") return "time";
+  return METRICS.find((m) => m.key === key)?.family ?? "road";
+}
+
+const hourText = (h) => `${String(h % 24).padStart(2, "0")}:00`;
+
+/**
+ * ציר השעות של "יום העבודה": משעה עגולה לפני היציאה המוקדמת ועד שעה עגולה אחרי הסיום המאוחר, לפחות 07:00–17:00.
+ * סימון כל שעה עד 12 שעות, אחרת כל שעתיים. בלי אף טכנאי עם יציאה וסיום — null.
+ */
+export function clockAxis(list) {
+  const pts = (list || []).filter((t) => num(t.first_min) != null && num(t.last_min) != null);
+  if (!pts.length) return null;
+  const from = Math.max(0, Math.min(7, Math.floor(Math.min(...pts.map((t) => num(t.first_min))) / 60)));
+  const to = Math.min(24, Math.max(17, Math.ceil(Math.max(...pts.map((t) => num(t.last_min))) / 60)));
+  const step = to - from <= 12 ? 1 : 2;
+  const ticks = [];
+  for (let h = from; h <= to; h += step) ticks.push({ pct: ((h - from) / (to - from)) * 100, label: hourText(h) });
+  return { from: from * 60, to: to * 60, ticks };
+}
+
+/**
+ * שורה לכל טכנאי שיש לו יציאה וסיום: מאיפה עד איפה על הציר (אחוזים), מהמוקדם ביותר.
+ * [{ plate, name, start, width, first, last, len }]
+ */
+export function spanRows(list, axis) {
+  if (!axis) return [];
+  const span = axis.to - axis.from;
+  const at = (m) => Math.min(100, Math.max(0, ((m - axis.from) / span) * 100));
+  return (list || [])
+    .filter((t) => num(t.first_min) != null && num(t.last_min) != null)
+    .sort((a, b) => num(a.first_min) - num(b.first_min) || techLabel(a).localeCompare(techLabel(b), "he"))
+    .map((t) => {
+      const s = at(num(t.first_min)), e = at(Math.max(num(t.first_min), num(t.last_min)));
+      return { plate: t.plate, name: techLabel(t), start: s, width: Math.max(e - s, 0.5), first: minuteText(t.first_min),
+               last: minuteText(t.last_min), len: minutesLong(t.workday_min) };
+    });
+}
+
+/** חלקי היום, לפי הסדר שבו הם מצוירים. */
+export const MIX_PARTS = [
+  { key: "drive", label: "נסיעה" },
+  { key: "site", label: "באתרים" },
+  { key: "other", label: "חונה ואחר" },
+];
+
+/**
+ * איך עובר יום עבודה ממוצע: נסיעה, באתרים, והשאר (חונה, עצירות) — מתוך אורך היום הממוצע. רק מי שנסע בתקופה.
+ * ⚠️ אם נסיעה + אתרים ארוכים מהיום הממוצע (למשל זמן באתר אחרי התזוזה האחרונה) — הסכום הוא היום, ו"אחר" אפס.
+ * { total, parts: [{ key, label, s, pct }] } או null.
+ */
+export function dayMix(t) {
+  const d = Number(t?.work_days);
+  if (!(d > 0)) return null;
+  const drive = Math.max(0, Number(t.drive_s) || 0) / d;
+  const site = Math.max(0, Number(t.site_s) || 0) / d;
+  const day = (Number(t.workday_min) || 0) * 60;
+  const total = Math.max(day, drive + site);
+  if (!(total > 0)) return null;
+  const s = { drive, site, other: total - drive - site };
+  return { total, parts: MIX_PARTS.map((p) => ({ ...p, s: s[p.key], pct: (s[p.key] / total) * 100 })) };
+}
+
+/** שורות "איך עובר היום": מי שהכי הרבה באתרים — למעלה. */
+export function mixRows(list) {
+  return (list || [])
+    .map((t) => ({ plate: t.plate, name: techLabel(t), mix: dayMix(t) }))
+    .filter((r) => r.mix)
+    .sort((a, b) => b.mix.parts[1].pct - a.mix.parts[1].pct || a.name.localeCompare(b.name, "he"));
+}
+
+/** מדדי האתרים, ועמודות לפיהם (כמו barRows). */
+export const SITE_METRICS = [
+  { key: "visits", label: "ביקורים", value: (s) => num(s.visits), text: (v) => (v === 1 ? "ביקור אחד" : `${v} ביקורים`) },
+  { key: "total_s", label: "זמן כולל", value: (s) => num(s.total_s), text: (v) => hmText(v) },
+  { key: "avg_s", label: "זמן ממוצע", value: (s) => num(s.avg_s), text: (v) => hmText(v) },
+];
+export function siteBarRows(sites, key) {
+  const m = SITE_METRICS.find((x) => x.key === key) ?? SITE_METRICS[0];
+  const has = (sites || []).map((s) => ({ s, v: m.value(s) })).filter((r) => r.v != null && r.v > 0)
+    .sort((a, b) => b.v - a.v || siteLabel(a.s).localeCompare(siteLabel(b.s), "he"));
+  const max = has[0]?.v ?? 0;
+  return { metric: m, rows: has.map((r, i) => ({ site: r.s, value: r.v, text: m.text(r.v), pct: (r.v / max) * 100, rank: i + 1 })) };
 }
