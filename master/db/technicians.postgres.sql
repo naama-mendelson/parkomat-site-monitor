@@ -408,6 +408,31 @@ GRANT EXECUTE ON FUNCTION public.tech_day(date) TO authenticated;
 -- ⚠️ סדר נעילה אחד בכל הפונקציות: קודם הטכנאי, אחר כך השליחה. בסדר הפוך שתי לחיצות במקביל היו נתקעות זו בזו.
 -- ============================================================
 
+-- טכנאי שהושבת — מה שהולך איתו (המקום האחד: tech_save ו-tech_roster_remove).
+--   הטלפון (21/10/2026): בלי זה המשתמש היה נשאר פעיל, ו-QR מחדש אחרי החזרה היה מוצא קישור ישן.
+--   המשימה הבאה (21/10/2026): היא לא תתחיל לעולם, ובחזרה היא כבר לא רלוונטית.
+-- ⚠️ הקורא כבר נעל את שורת הטכנאי ושינה את is_active.
+CREATE OR REPLACE FUNCTION app.tech_release(p_id bigint, p_app_user integer)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  IF p_app_user IS NOT NULL THEN
+    UPDATE app_users SET is_active = false,
+           disabled_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+           disabled_by = app.current_app_user()
+     WHERE id = p_app_user AND is_active;
+    UPDATE technicians SET app_user_id = NULL, phone_paired_at = NULL, phone_paired_by = NULL, phone_seen_at = NULL
+     WHERE id = p_id;
+    DELETE FROM tech_push_subs WHERE app_user_id = p_app_user;
+  END IF;
+  DELETE FROM tech_next WHERE technician_id = p_id;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.tech_release(bigint, integer) FROM PUBLIC;
+
 -- הוספה (p_id NULL) או עריכה: שם, רכב, פעיל. רכב שמשתנה נרשם ביומן (vehicle) — זו ההיסטוריה של מי נסע על מה.
 CREATE OR REPLACE FUNCTION public.tech_save(p_id bigint, p_name text, p_plate text, p_active boolean, p_rev integer)
 RETURNS jsonb
@@ -488,19 +513,9 @@ BEGIN
     PERFORM app.tech_log_add(t.id, now(), 'vehicle', NULL, NULL, jsonb_build_object('from', t.plate, 'to', v_plate),
                              v_actor, false);
   END IF;
-  -- טכנאי שהושבת — גם הטלפון שלו (21/10/2026). בלי זה המשתמש היה נשאר פעיל, ו-QR מחדש אחרי החזרה היה מוצא קישור ישן.
-  IF NOT v_active AND t.is_active AND t.app_user_id IS NOT NULL THEN
-    UPDATE app_users SET is_active = false,
-           disabled_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-           disabled_by = app.current_app_user()
-     WHERE id = t.app_user_id AND is_active;
-    UPDATE technicians SET app_user_id = NULL, phone_paired_at = NULL, phone_paired_by = NULL, phone_seen_at = NULL
-     WHERE id = t.id;
-    DELETE FROM tech_push_subs WHERE app_user_id = t.app_user_id;
-  END IF;
-  -- טכנאי שהושבת — גם המשימה הבאה שלו (21/10/2026): היא לא תתחיל לעולם, ובחזרה היא כבר לא רלוונטית
+  -- טכנאי שהושבת — גם הטלפון והמשימה הבאה שלו (app.tech_release; גם "ניהול טכנאים" משתמש בה)
   IF NOT v_active AND t.is_active THEN
-    DELETE FROM tech_next WHERE technician_id = t.id;
+    PERFORM app.tech_release(t.id, t.app_user_id);
   END IF;
   PERFORM app.record_write_audit('tech.save', v_actor, app.current_app_role(), 'technician', t.id::text,
                                  jsonb_build_object('fields', to_jsonb(v_fields)));
@@ -1514,3 +1529,159 @@ BEGIN
 END
 $fn$;
 REVOKE ALL ON FUNCTION app.tech_leave_scan(timestamptz) FROM PUBLIC;
+
+-- ============================================================
+-- ניהול הטכנאים — מנהל בלבד (22/10/2026)
+-- ============================================================
+-- הבעלת: "תן אופציה להוסיף עוד טכנאי ולמחוק — רק למי שהוא מנהל". בחרה: טכנאי = שם + הרכב שלו באיתוראן.
+-- רשימת הטכנאים היא רשימת רכבי השירות (fleet_shown, מה שמוצג בכל מקום) עם שם לכל רכב (technicians). מחליף את "רכבים
+-- ברשימה" (fleet_list / fleet_shown_set, עורך ומנהל), שהוסרו.
+-- ⚠️ בלי שער הפיילוט: מי מופיע בדשבורד אינו חלק מלוח הרכז. ⚠️ סדר נעילה: fleet_shown, ואחר כך שורת הטכנאי.
+-- ⚠️ "מחיקה" = הוצאה מהרשימה והשבתה. ההיסטוריה (ביקורים, ימים, יומן) נשמרת — לפי מספר הרכב, והטכנאי המושבת נשאר ביומן.
+
+-- הרשימה למסך הניהול: הטכנאים (רכבים ברשימה, עם השם — או בלעדיו, כשאין עדיין שורת טכנאי), והרכבים מאיתוראן שאינם ברשימה.
+CREATE OR REPLACE FUNCTION public.tech_roster()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+BEGIN
+  PERFORM app.require_manager();
+  RETURN jsonb_build_object(
+    'techs', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                         'plate', f.license_plate, 'nickname', v.nickname, 'in_ituran', v.license_plate IS NOT NULL,
+                         'located_at', app.iso_z(v.located_at),
+                         'tech_id', t.id, 'name', t.display_name, 'phone', t.app_user_id IS NOT NULL,
+                         'open_task', EXISTS (SELECT 1 FROM tech_dispatches d WHERE d.technician_id = t.id AND d.ended_at IS NULL))
+                         ORDER BY COALESCE(t.display_name, v.nickname, f.license_plate), f.license_plate)
+                         FROM fleet_shown f
+                         LEFT JOIN vehicles_live v ON v.license_plate = f.license_plate
+                         LEFT JOIN technicians t ON t.plate = f.license_plate AND t.is_active), '[]'::jsonb),
+    'available', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                             'plate', v.license_plate, 'nickname', v.nickname, 'located_at', app.iso_z(v.located_at))
+                             ORDER BY v.nickname, v.license_plate)
+                             FROM vehicles_live v WHERE NOT app.fleet_shown(v.license_plate)), '[]'::jsonb));
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_roster() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_roster() TO authenticated;
+
+-- הוספה או שינוי שם: הרכב נכנס לרשימה (אם לא היה), ולרכב יש טכנאי פעיל בשם הזה. שמירה שלא משנה דבר — בלי יומן.
+-- רכב חדש חייב להיות באיתוראן; רכב שכבר ברשימה ונעלם מאיתוראן — אפשר לשנות לו שם.
+-- טכנאי פעיל באותו שם בלי רכב (נוסף בלוח הרכז) מקבל את הרכב. באותו שם עם רכב אחר — PT409.
+CREATE OR REPLACE FUNCTION public.tech_roster_set(p_plate text, p_name text)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor   text := app.require_manager();
+  v_plate   text := btrim(COALESCE(p_plate, ''));
+  v_name    text := btrim(regexp_replace(COALESCE(p_name, ''), '\s+', ' ', 'g'));
+  v_shown   boolean;
+  t         technicians;
+  o         technicians;
+  v_created boolean := false;
+  v_renamed boolean := false;
+  v_linked  boolean := false;
+BEGIN
+  IF v_plate = '' OR length(v_plate) > 20 THEN
+    RAISE EXCEPTION 'מספר רכב לא תקין' USING ERRCODE = '22023';
+  END IF;
+  IF length(v_name) < 2 OR length(v_name) > 60 THEN
+    RAISE EXCEPTION 'שם הטכנאי: 2 עד 60 תווים' USING ERRCODE = '22023';
+  END IF;
+  LOCK TABLE fleet_shown IN SHARE ROW EXCLUSIVE MODE;
+  v_shown := app.fleet_shown(v_plate);
+  IF NOT v_shown AND NOT EXISTS (SELECT 1 FROM vehicles_live WHERE license_plate = v_plate) THEN
+    RAISE EXCEPTION 'הרכב % לא נמצא באיתוראן', v_plate USING ERRCODE = 'PT404';
+  END IF;
+
+  SELECT * INTO t FROM technicians WHERE is_active AND plate = v_plate FOR UPDATE;
+  SELECT * INTO o FROM technicians
+   WHERE is_active AND lower(display_name) = lower(v_name) AND id IS DISTINCT FROM t.id FOR UPDATE;
+  BEGIN
+    IF o.id IS NOT NULL THEN
+      IF o.plate IS NOT NULL THEN
+        RAISE EXCEPTION 'כבר יש טכנאי פעיל בשם הזה, ברכב %', o.plate USING ERRCODE = 'PT409';
+      END IF;
+      IF t.id IS NOT NULL THEN
+        RAISE EXCEPTION 'כבר יש טכנאי פעיל בשם הזה' USING ERRCODE = 'PT409';
+      END IF;
+      UPDATE technicians SET plate = v_plate, rev = rev + 1 WHERE id = o.id RETURNING * INTO t;
+      PERFORM app.tech_log_add(t.id, now(), 'vehicle', NULL, NULL, jsonb_build_object('from', NULL, 'to', v_plate),
+                               v_actor, false);
+      v_linked := true;
+    ELSIF t.id IS NULL THEN
+      INSERT INTO technicians (display_name, plate, created_by) VALUES (v_name, v_plate, v_actor) RETURNING * INTO t;
+      PERFORM app.tech_log_add(t.id, now(), 'vehicle', NULL, NULL, jsonb_build_object('from', NULL, 'to', v_plate),
+                               v_actor, false);
+      v_created := true;
+    ELSIF t.display_name IS DISTINCT FROM v_name THEN
+      UPDATE technicians SET display_name = v_name, rev = rev + 1 WHERE id = t.id;
+      v_renamed := true;
+    END IF;
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'כבר יש טכנאי פעיל עם השם או הרכב האלה' USING ERRCODE = 'PT409';
+  END;
+
+  IF NOT v_shown THEN
+    INSERT INTO fleet_shown (license_plate, added_by) VALUES (v_plate, v_actor);
+  END IF;
+  IF NOT (v_created OR v_renamed OR v_linked OR NOT v_shown) THEN
+    RETURN jsonb_build_object('tech_id', t.id, 'changed', false);
+  END IF;
+  -- ⚠️ יומן: מזהים ומספר רכב, בלי שמות (היומן קריא לכל משתמש)
+  PERFORM app.record_write_audit('tech.roster_set', v_actor, app.current_app_role(), 'technician', t.id::text,
+    jsonb_build_object('plate', v_plate, 'shown_added', NOT v_shown, 'created', v_created, 'renamed', v_renamed,
+                       'linked', v_linked));
+  RETURN jsonb_build_object('tech_id', t.id, 'changed', true, 'created', v_created, 'renamed', v_renamed,
+                            'linked', v_linked, 'shown_added', NOT v_shown);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_roster_set(text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_roster_set(text, text) TO authenticated;
+
+-- הסרה: הרכב יוצא מהרשימה (לא מופיע יותר בשום מקום), והטכנאי שלו מושבת — עם הטלפון והמשימה הבאה (app.tech_release).
+-- טכנאי עם משימה פתוחה — PT409: קודם מסיימים או מבטלים אותה. כבר לא ברשימה ובלי טכנאי — changed: false.
+CREATE OR REPLACE FUNCTION public.tech_roster_remove(p_plate text)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_actor text := app.require_manager();
+  v_plate text := btrim(COALESCE(p_plate, ''));
+  v_shown boolean;
+  t       technicians;
+BEGIN
+  IF v_plate = '' THEN
+    RAISE EXCEPTION 'מספר רכב לא תקין' USING ERRCODE = '22023';
+  END IF;
+  LOCK TABLE fleet_shown IN SHARE ROW EXCLUSIVE MODE;
+  v_shown := app.fleet_shown(v_plate);
+  SELECT * INTO t FROM technicians WHERE is_active AND plate = v_plate FOR UPDATE;
+  IF t.id IS NOT NULL AND EXISTS (SELECT 1 FROM tech_dispatches d WHERE d.technician_id = t.id AND d.ended_at IS NULL) THEN
+    RAISE EXCEPTION 'יש לטכנאי משימה פתוחה — לסיים או לבטל אותה קודם' USING ERRCODE = 'PT409';
+  END IF;
+  IF NOT v_shown AND t.id IS NULL THEN
+    RETURN jsonb_build_object('changed', false);
+  END IF;
+  DELETE FROM fleet_shown WHERE license_plate = v_plate;
+  IF t.id IS NOT NULL THEN
+    UPDATE technicians SET is_active = false, rev = rev + 1 WHERE id = t.id;
+    PERFORM app.tech_release(t.id, t.app_user_id);
+  END IF;
+  PERFORM app.record_write_audit('tech.roster_remove', v_actor, app.current_app_role(), 'technician', t.id::text,
+    jsonb_build_object('plate', v_plate, 'deactivated', t.id IS NOT NULL));
+  RETURN jsonb_build_object('changed', true, 'tech_id', t.id);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_roster_remove(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_roster_remove(text) TO authenticated;

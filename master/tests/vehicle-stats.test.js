@@ -381,19 +381,20 @@ test("הרשאות: הטבלאות והעזרים סגורים; הסיכום מ�
   assert.ok(Array.isArray(j.alerts));
 });
 
-test("הגריפה: ביקורים אחרי 90 יום, ציר היום אחרי 90, הסיכום אחרי 13 חודשים; ביקור פתוח נשאר; המשימה מתוזמנת", { skip }, async () => {
+test("הגריפה: ביקורים אחרי שנה (22/10/2026; עד אז 90 יום), ציר היום אחרי 90, הסיכום אחרי 13 חודשים; ביקור פתוח נשאר; המשימה מתוזמנת", { skip }, async () => {
   const P = "8400001";
   const vis = (days, open = false) => sup(`INSERT INTO vehicle_visits (license_plate, site_code, started_at, last_at, ended_at)
       VALUES ($1, 'VS1', now() - make_interval(days => $2), now() - make_interval(days => $2),
               CASE WHEN $3 THEN NULL ELSE now() - make_interval(days => $2) END) RETURNING id::int AS id`, [P + (open ? "o" : ""), days, open]);
   const dayAgo = (days) => sup(`INSERT INTO vehicle_days (license_plate, day, first_seen, last_seen, last_kind, segments)
       VALUES ($1, (now() AT TIME ZONE 'Asia/Jerusalem')::date - $2::int, now(), now(), 'park', '[["park",0,1,null]]')`, [P, days]);
-  const v10 = (await vis(10))[0].id, v100 = (await vis(100))[0].id, vOpen = (await vis(200, true))[0].id;
+  const v10 = (await vis(10))[0].id, v100 = (await vis(100))[0].id, v364 = (await vis(364))[0].id, v366 = (await vis(366))[0].id;
+  const vOpen = (await vis(400, true))[0].id;
   await dayAgo(10); await dayAgo(100); await dayAgo(500);
   const r = (await sup(`SELECT app.prune_vehicle_stats() r`))[0].r;
   assert.ok(r.visits >= 1 && r.days >= 1 && r.segments >= 1, JSON.stringify(r));
-  const left = (await sup(`SELECT id::int AS id FROM vehicle_visits WHERE id = ANY($1) ORDER BY id`, [[v10, v100, vOpen]])).map((x) => x.id);
-  assert.deepEqual(left, [v10, vOpen].sort((a, b) => a - b));
+  const left = (await sup(`SELECT id::int AS id FROM vehicle_visits WHERE id = ANY($1) ORDER BY id`, [[v10, v100, v364, v366, vOpen]])).map((x) => x.id);
+  assert.deepEqual(left, [v10, v100, v364, vOpen].sort((a, b) => a - b), "שנה: 364 יום נשאר, 366 נמחק; ביקור פתוח נשאר");
   const days = await sup(`SELECT (now() AT TIME ZONE 'Asia/Jerusalem')::date - day AS ago, segments FROM vehicle_days
                            WHERE license_plate = $1 ORDER BY day DESC`, [P]);
   assert.deepEqual(days.map((x) => [x.ago, x.segments.length]), [[10, 1], [100, 0]]);
@@ -725,4 +726,92 @@ test("באתר רק לרכב שנסע היום: חונה מהבוקר — לא; 
   vd = await visits(D);
   assert.deepEqual(vd.map((x) => [x.site_code, iso(x.started_at), x.ended_at && iso(x.ended_at)]),
     [["VS1", iso(T(2390)), iso(T(2399))], ["VS1", iso(T(2422)), null]], "נסע וחזר — ביקור חדש ביום החדש");
+});
+
+// 22/10/2026 — דוח הטכנאים: "היסטוריה של אתרים שבהם כל אחד ביקר, כמה שעות בממוצע נמצא טכנאי באתר, מי נוסע הכי מהר — כמה
+// שיותר סטטיסטיקות". נתונים קבועים בדצמבר (חורף, +2), רחוק משאר הבדיקות. A עם שם מהלוח, B בלי, C רכב משרד (לא ברשימה).
+test("דוח הטכנאים: לכל טכנאי, היסטוריה ולפי אתר — ימים, ק\"מ, מהירות, ביקורים וזמן באתר; גבולות יום בישראל; רק רכבי השירות", { skip }, async () => {
+  const A = "8900001", B = "8900002", C = "8900003";
+  const il = (t) => `('${t}'::timestamp AT TIME ZONE 'Asia/Jerusalem')`;
+  for (const p of [A, B, C]) {
+    await sup(`INSERT INTO vehicles_live (license_plate, nickname, motion, synced_at) VALUES ($1, $2, 'parking', now())
+               ON CONFLICT (license_plate) DO NOTHING`, [p, `כינוי ${p}`]);
+  }
+  await sup(`DELETE FROM fleet_shown WHERE license_plate IN ($1, $2, $3)`, [A, B, C]);
+  await sup(`INSERT INTO fleet_shown (license_plate) VALUES ($1), ($2)`, [A, B]);
+  await sup(`INSERT INTO technicians (display_name, plate, created_by) VALUES ('טכנאי הדוח', $1, 'בדיקה')`, [A]);
+  const day = (plate, d, o) => sup(`INSERT INTO vehicle_days (license_plate, day, first_seen, last_seen, first_move, last_move, odo_start,
+        odo_last, drive_s, site_s, stops, max_speed, last_kind, segments)
+      VALUES ($1, $2::date, now(), now(), ${o.first ? il(`${d} ${o.first}`) : "NULL"}, ${o.last ? il(`${d} ${o.last}`) : "NULL"},
+              $3, $4, $5, $6, $7, $8, 'park', '[]')`, [plate, d, o.odo0 ?? null, o.odo1 ?? null, o.drive ?? 0, o.site ?? 0, o.stops ?? 0, o.max ?? null]);
+  await day(A, "2026-12-01", { odo0: 1000, odo1: 1050, drive: 3600, site: 7200, stops: 3, max: 90, first: "07:30", last: "16:30" });
+  await day(A, "2026-12-02", { odo0: 1050, odo1: 1080, drive: 1800, site: 3600, stops: 2, max: 110, first: "08:30", last: "15:30" });
+  // מנוע דולק בלי לזוז (first_move נרשם, אבל לא נסע) — נספר כיום, לא כיום עבודה, ולא נכנס ליציאה הממוצעת
+  await day(A, "2026-12-03", { odo0: 1080, odo1: 1080, first: "05:00", last: "05:10" });
+  await day(A, "2026-11-30", { odo0: 900, odo1: 1000, drive: 9000, max: 140, first: "06:00", last: "20:00" });   // מחוץ לתקופה
+  await day(B, "2026-12-01", { odo0: 10, odo1: 12, drive: 300, max: 40, first: "12:00", last: "12:05" });   // 2 ק"מ בחמש דקות
+  await day(C, "2026-12-01", { odo0: 1, odo1: 500, drive: 30000, max: 180, first: "05:00", last: "23:00" });
+  const visit = (plate, code, from, to, open = false) => sup(`INSERT INTO vehicle_visits (license_plate, site_code, site_name, started_at, last_at, ended_at)
+      VALUES ($1, $2, 'שם ישן', ${il(from)}, ${il(to)}, ${open ? "NULL" : il(to)})`, [plate, code]);
+  await visit(A, "VS1", "2026-12-01 08:00", "2026-12-01 09:00");
+  await visit(A, "VS2", "2026-12-01 10:00", "2026-12-01 10:30");
+  await visit(A, "VS1", "2026-12-02 09:00", "2026-12-02 11:00");
+  await visit(A, "VS2", "2026-12-02 12:00", "2026-12-02 12:01");                 // דקה — לא ביקור
+  await visit(A, "VS2", "2026-12-03 23:50", "2026-12-04 00:20");                 // התחיל ב-3/12 בישראל — בתקופה
+  await visit(A, "VS1", "2026-11-30 23:30", "2026-12-01 00:30");                 // התחיל לפני התקופה
+  await visit(A, "VS1", "2026-12-04 00:10", "2026-12-04 01:00");                 // אחרי התקופה
+  await visit(B, "VS1", "2026-12-01 13:00", "2026-12-01 14:00", true);           // פתוח — עד הדגימה האחרונה
+  await visit(C, "VS1", "2026-12-01 13:00", "2026-12-01 18:00");                 // רכב משרד
+
+  const stats = async (uid, from, to) => (await userRaw(uid, `SELECT public.tech_stats($1::date, $2::date) j`, [from, to]))[0].j;
+  const s = await stats(RO, "2026-12-01", "2026-12-03");
+  const a = s.techs.find((t) => t.plate === A), b = s.techs.find((t) => t.plate === B);
+  assert.equal(s.techs.find((t) => t.plate === C), undefined, "רכב משרד — לא בדוח");
+  assert.deepEqual([s.from, s.to], ["2026-12-01", "2026-12-03"]);
+  assert.deepEqual([a.tech, a.nickname, b.tech, b.nickname], ["טכנאי הדוח", `כינוי ${A}`, null, `כינוי ${B}`]);
+  assert.deepEqual([a.tracked_days, a.work_days, a.km, a.drive_s, a.site_s, a.stops, a.max_speed, a.avg_speed],
+    [3, 2, 80, 5400, 10800, 5, 110, 53], "ימים, ק\"מ, נסיעה, באתרים, עצירות, שיא, ממוצע (80 ק\"מ ב-1.5 שעות)");
+  assert.deepEqual([a.first_min, a.last_min, a.workday_min], [480, 960, 480], "יציאה 08:00, סיום 16:00, יום של 8 שעות — רק בימים שנסע");
+  assert.deepEqual([a.visits, a.sites, a.visit_total_s, a.visit_avg_s, a.visit_max_s], [4, 2, 14400, 3600, 7200]);
+  assert.deepEqual(a.top_site, { code: "VS1", name: "שם ישן", n: 2 }, "שוויון בביקורים — לפי הזמן הכולל");
+  assert.deepEqual([b.km, b.avg_speed, b.work_days, b.visits, b.visit_avg_s], [2, null, 1, 1, 3600], "פחות מעשר דקות נסיעה — בלי ממוצע (גם עם ק\"מ); ביקור פתוח נספר");
+  assert.deepEqual(s.team, { km: 82, drive_s: 5700, site_s: 10800, work_days: 3, visits: 5, sites: 2, visit_avg_s: 3600, visit_total_s: 18000 });
+  assert.ok(s.first_day <= "2026-11-30");
+  // תקופה של יום אחד
+  const d1 = (await stats(MGR, "2026-12-02", "2026-12-02")).techs.find((t) => t.plate === A);
+  assert.deepEqual([d1.km, d1.visits, d1.max_speed, d1.first_min], [30, 1, 110, 510]);
+
+  // היסטוריה של טכנאי
+  const hist = async (uid, plate, from, to) => (await userRaw(uid, `SELECT public.tech_history($1, $2::date, $3::date) j`, [plate, from, to]))[0].j;
+  const ha = await hist(RO, A, "2026-12-01", "2026-12-03");
+  assert.deepEqual([ha.plate, ha.tech, ha.visits_total], [A, "טכנאי הדוח", 4]);
+  assert.deepEqual(ha.days.map((x) => [x.day, x.km, x.visits, x.moved]),
+    [["2026-12-03", 0, 1, false], ["2026-12-02", 30, 1, true], ["2026-12-01", 50, 2, true]], "החדש ראשון; הביקור של דקה לא נספר");
+  assert.equal(ha.days[2].first_move, "2026-12-01T05:30:00Z");
+  assert.deepEqual(ha.visits.map((x) => [x.code, x.dur_s, x.open]), [["VS2", 1800, false], ["VS1", 7200, false], ["VS2", 1800, false], ["VS1", 3600, false]]);
+  assert.equal(ha.visits[0].name, "אתר בדיקה VS2", "השם הנוכחי של האתר, לא תמונת המצב");
+  assert.deepEqual(ha.sites.map((x) => [x.code, x.n, x.total_s, x.avg_s, x.max_s]), [["VS1", 2, 10800, 5400, 7200], ["VS2", 2, 3600, 1800, 1800]]);
+  await fails(hist(RO, C, "2026-12-01", "2026-12-03"), "PT404");
+  await fails(hist(RO, "אין כזה", "2026-12-01", "2026-12-03"), "PT404");
+
+  // לפי אתר
+  const sites = (await userRaw(RO, `SELECT public.site_visit_stats('2026-12-01'::date, '2026-12-03'::date) j`))[0].j;
+  assert.deepEqual(sites.map((x) => [x.code, x.visits, x.tech_count, x.total_s, x.avg_s]), [["VS1", 3, 2, 14400, 4800], ["VS2", 2, 1, 3600, 1800]]);
+  assert.deepEqual(sites[0].techs.map((x) => [x.plate, x.tech, x.n, x.total_s]), [[A, "טכנאי הדוח", 2, 10800], [B, null, 1, 3600]]);
+  assert.equal(sites[0].name, "אתר בדיקה VS1");
+
+  // טווח: הפוך, יותר מ-400 יום — 22023; 400 — מותר
+  await fails(stats(RO, "2026-12-03", "2026-12-01"), "22023");
+  await fails(stats(RO, "2025-10-01", "2026-12-01"), "22023");
+  assert.ok((await stats(RO, "2025-11-01", "2026-12-05")).techs.length >= 2);
+  await fails(userRaw(RO, `SELECT public.site_visit_stats('2026-12-03'::date, '2026-12-01'::date)`), "22023");
+  // הרשאות: כל מי שמחובר (גם בקר); לא סוכן, לא אנונימי
+  const AGT = "f3000000-0000-0000-0000-000000000009";
+  await sup(`INSERT INTO app_users (email, full_name, role, is_active, supabase_uid, site_id, created_at)
+             VALUES ('site-vs1@parkomat.co.il', 'סוכן', 'agent', true, $1, (SELECT id FROM sites WHERE code = 'VS1'), now()::text)`, [AGT]);
+  for (const sql of [`SELECT public.tech_stats('2026-12-01', '2026-12-03')`, `SELECT public.tech_history('${A}', '2026-12-01', '2026-12-03')`,
+                     `SELECT public.site_visit_stats('2026-12-01', '2026-12-03')`]) {
+    await fails(userRaw(AGT, sql), "42501");
+    await fails(as("anon", {}, sql), "42501");
+  }
 });

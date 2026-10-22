@@ -5145,6 +5145,112 @@ vehicle.
 The open visits of the vehicles that did not move close at the next sync. Their 8 records (open and closed) are not
 deleted by the SQL. Removing them is a separate data step.
 
+### "סטטיסטיקה" for the technicians, a history per technician, and "ניהול טכנאים" for managers (built 22/10/2026, NOT deployed)
+
+The owner: *"אני רוצה לראות גם היסטוריה של אתרים שבהם כל אחד ביקר, וכמה שעות בממוצע נמצא טכנאי באתר, כמה כל אחד מהם, מי
+נוסע הכי מהר וכו' — תפרט הרבה מידע וכמה שיותר סטטיסטיקות. תן אופציה להוסיף עוד טכנאי ולמחוק — רק למי שהוא מנהל"*.
+
+**Her answers:**
+- A technician is a name plus his vehicle in Ituran. This replaces "רכבים ברשימה", which editors could use.
+- Everyone signed in sees the statistics.
+- Visit history is kept for **a year** (it was 90 days).
+- Speed means max and average, from data that is already collected; nothing new is gathered.
+
+**The report** (`vehicle-stats.postgres.sql`, at the end) is a summary of `vehicle_days` and `vehicle_visits`. It covers
+service vehicles only (`fleet_shown`). The period is Israel days, `[from, to]` inclusive, up to 400 days
+(`app.report_range`, 22023 beyond that). All three functions are `require_staff` and return one jsonb.
+- **`public.tech_stats(from, to)`** returns, per technician:
+  - days tracked and work days (days it drove: speed or odometer, the same rule as "באתר");
+  - km, km per work day, driving time, time at sites, stops;
+  - visits, distinct sites, and time at a site (average, total, longest);
+  - average departure, average finish and average workday length (work days only);
+  - max speed, and average speed = km per driving hour (only from 10 minutes of driving);
+  - the most-visited site (ties go to total time).
+  It also returns `team` (distinct sites across all of them, not a sum) and `first_day`.
+- **`public.tech_history(plate, from, to)`** returns one technician's days (newest first, visits per day), all his visits
+  (newest first, up to 1000, plus the total), and his sites (count, total, average, longest, last).
+  - A vehicle that is not on the list is PT404.
+  - Site names are the current ones from `sites`, not the snapshot.
+- **`public.site_visit_stats(from, to)`** returns, per site: visits, how many technicians and who (with counts and time),
+  average / total / longest, and the last visit.
+- A visit counts as on the card: 2 minutes or more, or open. It belongs to the day it started.
+- **Retention:** `app.prune_vehicle_stats` keeps visits for **365 days**, changed in the default. ⚠️ The dry run does not
+  show a changed parameter default, but `--apply` writes it.
+
+**"ניהול טכנאים"** (`technicians.postgres.sql`, at the end) is manager only (`require_manager`), with no pilot gate. The
+list is `fleet_shown` with a name per vehicle from `technicians`.
+- `public.tech_roster()` returns the technicians on the list and the Ituran vehicles that are not.
+- `public.tech_roster_set(plate, name)` adds or renames:
+  - A vehicle that is not on the list must be in Ituran (PT404).
+  - The name of another active technician who has a vehicle is PT409.
+  - An active technician with that name and no vehicle gets this vehicle.
+  - A save that changes nothing writes nothing to the audit log.
+- `public.tech_roster_remove(plate)` takes the vehicle off the list and deactivates its technician, through
+  `app.tech_release`: the phone user is deactivated, the push subscriptions are deleted, and the next task is deleted.
+  - An open task is PT409.
+  - History is kept.
+- `app.tech_release` is the one place for what goes with a deactivated technician. `tech_save` now calls it, with the same
+  behaviour as before.
+- **`fleet_list` / `fleet_shown_set` are dropped**, along with the "רכבים ברשימה" window (`FleetListDialog.jsx`). An old
+  bundle that opens that window gets a 404.
+- The audit actions are `tech.roster_set` and `tech.roster_remove`, with ids and plates only.
+
+**On screen:**
+- **"טכנאים" has a third view, "סטטיסטיקה"** (`TechStats.jsx`):
+  - periods היום / 7 ימים (default) / 30 / 90 / שנה, and "לפי טכנאי" / "לפי אתר";
+  - "הנתונים מ-21/10, מאז שהמעקב התחיל" when the period starts earlier;
+  - a team line;
+  - "שיאים", one row per question: most km, visits, sites, time at sites, longest average visit, max speed, highest
+    average speed, earliest departure, longest workday;
+  - a table per technician, sortable by any column (null always last, `aria-sort`);
+  - a table per site.
+  - It loads only when the period or tab changes, not every minute.
+- **A name opens `TechHistoryDialog.jsx`**, from the table, from "שיאים", and from "היסטוריה וסטטיסטיקה ←" in the
+  card's detail (30 days). It shows a summary, sites, day by day ("לא נסע" for a day without driving, departure–finish
+  in Israel time) and every visit, with its own period switch.
+- **"ניהול טכנאים"** (`TechRosterDialog.jsx`) is for managers only:
+  - add (a name and a vehicle from a `ChoiceSelect`), rename inline, and remove in two clicks (4 s);
+  - tags: "שם מאיתוראן", "לא נמצא כרגע באיתוראן", "משימה פתוחה", "טלפון מחובר";
+  - a draft does not close on Esc or the backdrop.
+- Pure rules are in `utils/techReport.js`: periods by the Israel day, `COLUMNS`, `sortTechs`, `records`, `teamFacts`, and
+  time texts.
+
+**Preview in production** (the functions inside a rolled-back transaction, 22/10): `tech_stats` takes 0.2–0.3 s for 1, 7
+or 365 days; `site_visit_stats` 0.1 s; `tech_history` for a year 0.2 s.
+- 14 technicians, one of them named on the coordinator's board.
+- 21/10 was a partial day (tracking started 11:09), so the average departures are late for now.
+- 3488, the parking spot near the office, is one vehicle's "most-visited site". Excluding it is the owner's call.
+
+**Tests:**
+- `vehicle-stats.test.js` (+1, fixed December data):
+  - every figure per technician and for the team;
+  - the 2-minute rule, the Israel day edges, an open visit;
+  - an office car excluded;
+  - a day with the engine on but no driving (not a work day, not in the departure average);
+  - a five-minute drive with km gets no average speed;
+  - the history and its order;
+  - by site;
+  - the range checks;
+  - an agent and anon refused.
+- The prune test: visits at 364 days are kept, at 366 deleted.
+- `vehicles.test.js`: the old list test is replaced by the roster test:
+  - manager only (editor, בקר, agent, anon refused);
+  - add, rename, no-op, a taken name, linking a technician without a vehicle, an unknown plate;
+  - a vehicle that left Ituran;
+  - an open task;
+  - removal with the phone and push subscriptions;
+  - re-adding;
+  - a vehicle with no technician row.
+- `tech-report-ui.test.js` (5), `vehicles-direct.test.js`, and the roles census.
+- Full suite 1415/1415.
+- **SQL mutations (isolated copy, `mut2110/run-mut22.cjs`): 24 of 24 caught.** Two cases were sharpened first, so that a
+  mutation could tell them apart: the engine-on day got a `first_move`, and the short drive got km.
+- Browser `e2e/probe-techreport.mjs` 48/48; `probe-fleet` is retired.
+
+**Deploy:** SQL first. The dry run shows 9 gaps: 8 new functions and the body of `tech_save`. ⚠️ It shows neither the
+365-day default nor the two dropped functions; check both after `--apply`. Then push. An old bundle against the new SQL
+loses "רכבים ברשימה" (404); the new bundle against the old SQL has no statistics and no management (404 on those calls).
+
 ## Gates re-run on the evening of 18/10/2026: five outdated, one real gap
 
 The owner asked for the checks to be run again. Local: 1199/1199, 37 browser probes all green. Selected production gates

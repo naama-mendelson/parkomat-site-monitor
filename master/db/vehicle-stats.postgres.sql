@@ -11,7 +11,8 @@
 --   vehicle_visits — שורה לכל ביקור באתר: איזה אתר, מתי הגיע, עד מתי. כמה ביום לכל רכב.
 -- **אין כאן קואורדינטות.** הדגימה היא כל סנכרון (פעם בדקה): app.vehicles_track נקראת מסוף ituran_ingest, בבלוק שתקלה
 -- בו לא מפילה את הסנכרון.
--- ⚠️ שמירה: ביקורים — 90 יום; סיכומים יומיים — 13 חודשים, ציר היום שבהם — 90 יום (החלטה 7 בתוכנית הטכנאים).
+-- ⚠️ שמירה: ביקורים — שנה (22/10/2026, הבעלת בחרה "שנה" להיסטוריית הביקורים; עד אז 90 יום); סיכומים יומיים — 13 חודשים,
+--    ציר היום שבהם — 90 יום (החלטה 7 בתוכנית הטכנאים).
 -- ⚠️ בלי שורת events, כמו כל הרכבים: המסך שואל רק כשהוא פתוח.
 
 CREATE TABLE IF NOT EXISTS vehicle_days (
@@ -546,7 +547,8 @@ GRANT EXECUTE ON FUNCTION public.tech_on_site() TO authenticated;
 -- ============================================================
 -- הגריפה — מ-pg_cron (cron.postgres.sql), פעם ביום
 -- ============================================================
-CREATE OR REPLACE FUNCTION app.prune_vehicle_stats(p_visits interval DEFAULT interval '90 days',
+-- ⚠️ ביקורים — שנה (22/10/2026; עד אז 90 יום). הגריפה נקראת בלי פרמטרים, כך שהברירה היא הכלל.
+CREATE OR REPLACE FUNCTION app.prune_vehicle_stats(p_visits interval DEFAULT interval '365 days',
                                                    p_days interval DEFAULT interval '400 days',
                                                    p_segments interval DEFAULT interval '90 days')
 RETURNS jsonb
@@ -570,3 +572,226 @@ BEGIN
 END
 $fn$;
 REVOKE ALL ON FUNCTION app.prune_vehicle_stats(interval, interval, interval) FROM PUBLIC;
+
+-- ============================================================
+-- דוח הטכנאים — סטטיסטיקה והיסטוריה לתקופה (22/10/2026)
+-- ============================================================
+-- הבעלת: "אני רוצה לראות גם היסטוריה של אתרים שבהם כל אחד ביקר, וכמה שעות בממוצע נמצא טכנאי באתר, כמה כל אחד מהם, מי
+-- נוסע הכי מהר וכו' — תפרט הרבה מידע וכמה שיותר סטטיסטיקות". בחרה: כל מי שמחובר רואה; מהירות = שיא וממוצע (מה שכבר נאסף).
+-- המקור: vehicle_days (סיכום יומי) ו-vehicle_visits (הביקורים). אין כאן נתון חדש שנאסף — רק סיכום של מה שנשמר.
+-- ⚠️ רק רכבי השירות (fleet_shown), כמו כל הטכנאים. ⚠️ התקופה בימי ישראל, [p_from, p_to] כולל, עד 400 יום (13 חודשים —
+--    הסיכום היומי; הביקורים נשמרים שנה).
+-- ⚠️ ביקור נספר כמו בכרטיס (vehicle_stats_json): שתי דקות לפחות, או הפתוח. משכו = עד הסיום, או עד הדגימה האחרונה שבה עוד
+--    היה שם (פתוח). ביקור שייך ליום שבו התחיל.
+-- "נסע" ביום = app.vehicle_moved_today (מהירות או מד מרחק); יציאה ממוצעת וסיום ממוצע — רק בימים שנסע. מהירות ממוצעת =
+--    ק"מ לשעת נסיעה (זמן הנסיעה כולל עמידה ברמזור), רק מעשר דקות נסיעה ומעלה.
+
+CREATE OR REPLACE FUNCTION app.report_range(p_from date, p_to date)
+RETURNS void
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+BEGIN
+  IF p_from IS NULL OR p_to IS NULL OR p_to < p_from OR p_to - p_from > 400 THEN
+    RAISE EXCEPTION 'טווח תאריכים לא תקין (עד 400 יום)' USING ERRCODE = '22023';
+  END IF;
+END
+$fn$;
+REVOKE ALL ON FUNCTION app.report_range(date, date) FROM PUBLIC;
+
+-- לכל טכנאי: ימים, ק"מ, נסיעה, באתרים, ביקורים, אתרים שונים, זמן באתר (ממוצע / כולל / הארוך), יציאה וסיום ממוצעים, אורך
+-- יום עבודה, מהירות שיא וממוצעת, והאתר שביקר בו הכי הרבה. ובנוסף הצוות כולו (אתרים שונים — של כולם יחד, לא סכום).
+CREATE OR REPLACE FUNCTION public.tech_stats(p_from date, p_to date)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_t0 timestamptz;
+  v_t1 timestamptz;
+BEGIN
+  PERFORM app.require_staff();
+  PERFORM app.report_range(p_from, p_to);
+  v_t0 := p_from::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  v_t1 := (p_to + 1)::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  RETURN (
+    WITH f AS (SELECT license_plate AS plate FROM fleet_shown),
+    dd AS (
+      SELECT d.license_plate AS plate, app.vehicle_day_km(d.odo_start, d.odo_last) AS km, d.drive_s, d.site_s, d.stops,
+             d.max_speed, (d.max_speed IS NOT NULL OR d.odo_last > d.odo_start) AS moved,
+             EXTRACT(EPOCH FROM (d.first_move AT TIME ZONE 'Asia/Jerusalem') - d.day::timestamp) / 60 AS first_min,
+             EXTRACT(EPOCH FROM (d.last_move AT TIME ZONE 'Asia/Jerusalem') - d.day::timestamp) / 60 AS last_min
+        FROM vehicle_days d JOIN f ON f.plate = d.license_plate
+       WHERE d.day BETWEEN p_from AND p_to),
+    ds AS (
+      SELECT plate, count(*) AS tracked_days, count(*) FILTER (WHERE moved) AS work_days,
+             COALESCE(sum(km), 0) AS km, sum(drive_s) AS drive_s, sum(site_s) AS site_s, sum(stops) AS stops,
+             max(max_speed) AS max_speed,
+             avg(first_min) FILTER (WHERE moved) AS first_min, avg(last_min) FILTER (WHERE moved) AS last_min,
+             avg(last_min - first_min) FILTER (WHERE moved AND last_min > first_min) AS workday_min
+        FROM dd GROUP BY plate),
+    vis AS (
+      SELECT vv.license_plate AS plate, vv.site_code, vv.site_name,
+             EXTRACT(EPOCH FROM COALESCE(vv.ended_at, vv.last_at) - vv.started_at) AS dur
+        FROM vehicle_visits vv JOIN f ON f.plate = vv.license_plate
+       WHERE vv.started_at >= v_t0 AND vv.started_at < v_t1
+         AND (vv.ended_at IS NULL OR vv.ended_at - vv.started_at >= interval '2 minutes')),
+    vs AS (
+      SELECT plate, count(*) AS visits, count(DISTINCT site_code) AS sites, sum(dur) AS total_s, avg(dur) AS avg_s,
+             max(dur) AS max_s
+        FROM vis GROUP BY plate),
+    top AS (
+      SELECT DISTINCT ON (plate) plate, site_code, max(site_name) AS site_name, count(*) AS n
+        FROM vis GROUP BY plate, site_code
+       ORDER BY plate, count(*) DESC, sum(dur) DESC, site_code)
+    SELECT jsonb_build_object(
+      'from', to_char(p_from, 'YYYY-MM-DD'), 'to', to_char(p_to, 'YYYY-MM-DD'),
+      'first_day', (SELECT to_char(min(day), 'YYYY-MM-DD') FROM vehicle_days),
+      'team', jsonb_build_object(
+        'km', (SELECT round(COALESCE(sum(km), 0), 1) FROM ds),
+        'drive_s', (SELECT COALESCE(sum(drive_s), 0) FROM ds),
+        'site_s', (SELECT COALESCE(sum(site_s), 0) FROM ds),
+        'work_days', (SELECT COALESCE(sum(work_days), 0) FROM ds),
+        'visits', (SELECT count(*) FROM vis),
+        'sites', (SELECT count(DISTINCT site_code) FROM vis),
+        'visit_avg_s', (SELECT round(avg(dur)) FROM vis),
+        'visit_total_s', (SELECT round(COALESCE(sum(dur), 0)) FROM vis)),
+      'techs', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'plate', f.plate, 'nickname', v.nickname, 'tech', t.display_name,
+          'tracked_days', COALESCE(ds.tracked_days, 0), 'work_days', COALESCE(ds.work_days, 0),
+          'km', round(COALESCE(ds.km, 0), 1), 'drive_s', COALESCE(ds.drive_s, 0), 'site_s', COALESCE(ds.site_s, 0),
+          'stops', COALESCE(ds.stops, 0), 'max_speed', ds.max_speed,
+          'avg_speed', CASE WHEN ds.drive_s >= 600 AND ds.km > 0 THEN round(ds.km / (ds.drive_s / 3600.0)) END,
+          'first_min', round(ds.first_min), 'last_min', round(ds.last_min), 'workday_min', round(ds.workday_min),
+          'visits', COALESCE(vs.visits, 0), 'sites', COALESCE(vs.sites, 0),
+          'visit_total_s', round(COALESCE(vs.total_s, 0)), 'visit_avg_s', round(vs.avg_s), 'visit_max_s', round(vs.max_s),
+          'top_site', CASE WHEN top.plate IS NOT NULL
+                           THEN jsonb_build_object('code', top.site_code, 'name', top.site_name, 'n', top.n) END)
+          ORDER BY f.plate)
+        FROM f
+        LEFT JOIN vehicles_live v ON v.license_plate = f.plate
+        LEFT JOIN ds ON ds.plate = f.plate
+        LEFT JOIN vs ON vs.plate = f.plate
+        LEFT JOIN top ON top.plate = f.plate
+        LEFT JOIN LATERAL (SELECT x.display_name FROM technicians x
+                            WHERE x.plate = f.plate AND x.is_active ORDER BY x.id LIMIT 1) t ON true), '[]'::jsonb))
+  );
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_stats(date, date) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_stats(date, date) TO authenticated;
+
+-- טכנאי אחד לתקופה: הימים (ק"מ, נסיעה, באתרים, ביקורים, יציאה–סיום, שיא), כל הביקורים (החדש ראשון, עד 1000 — והמספר
+-- הכולל), והאתרים שביקר בהם (כמה פעמים, זמן כולל וממוצע, הביקור האחרון).
+CREATE OR REPLACE FUNCTION public.tech_history(p_plate text, p_from date, p_to date)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_plate text := btrim(COALESCE(p_plate, ''));
+  v_t0    timestamptz;
+  v_t1    timestamptz;
+BEGIN
+  PERFORM app.require_staff();
+  PERFORM app.report_range(p_from, p_to);
+  IF NOT app.fleet_shown(v_plate) THEN
+    RAISE EXCEPTION 'הרכב אינו ברשימת הטכנאים' USING ERRCODE = 'PT404';
+  END IF;
+  v_t0 := p_from::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  v_t1 := (p_to + 1)::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  RETURN (
+    WITH vis AS (
+      SELECT vv.site_code, vv.site_name, vv.started_at, vv.ended_at, vv.last_at, vv.approx, vv.no_signal,
+             EXTRACT(EPOCH FROM COALESCE(vv.ended_at, vv.last_at) - vv.started_at) AS dur,
+             (vv.started_at AT TIME ZONE 'Asia/Jerusalem')::date AS day
+        FROM vehicle_visits vv
+       WHERE vv.license_plate = v_plate AND vv.started_at >= v_t0 AND vv.started_at < v_t1
+         AND (vv.ended_at IS NULL OR vv.ended_at - vv.started_at >= interval '2 minutes')),
+    per_day AS (SELECT day, count(*) AS n FROM vis GROUP BY day)
+    SELECT jsonb_build_object(
+      'plate', v_plate,
+      'nickname', (SELECT nickname FROM vehicles_live WHERE license_plate = v_plate),
+      'tech', (SELECT display_name FROM technicians WHERE plate = v_plate AND is_active ORDER BY id LIMIT 1),
+      'from', to_char(p_from, 'YYYY-MM-DD'), 'to', to_char(p_to, 'YYYY-MM-DD'),
+      'days', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'day', to_char(d.day, 'YYYY-MM-DD'), 'km', app.vehicle_day_km(d.odo_start, d.odo_last),
+          'drive_s', d.drive_s, 'site_s', d.site_s, 'stops', d.stops, 'max_speed', d.max_speed,
+          'moved', (d.max_speed IS NOT NULL OR d.odo_last > d.odo_start),
+          'first_move', app.iso_z(d.first_move), 'last_move', app.iso_z(d.last_move),
+          'visits', COALESCE(pd.n, 0))
+          ORDER BY d.day DESC)
+          FROM vehicle_days d LEFT JOIN per_day pd ON pd.day = d.day
+         WHERE d.license_plate = v_plate AND d.day BETWEEN p_from AND p_to), '[]'::jsonb),
+      'visits', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'code', x.site_code, 'name', COALESCE(s.site_name, x.site_name),
+          'from', app.iso_z(x.started_at), 'to', app.iso_z(COALESCE(x.ended_at, x.last_at)),
+          'open', x.ended_at IS NULL, 'dur_s', round(x.dur), 'approx', x.approx, 'no_signal', x.no_signal)
+          ORDER BY x.started_at DESC)
+          FROM (SELECT * FROM vis ORDER BY started_at DESC LIMIT 1000) x
+          LEFT JOIN sites s ON s.code = x.site_code), '[]'::jsonb),
+      'visits_total', (SELECT count(*) FROM vis),
+      'sites', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'code', g.site_code, 'name', COALESCE(s.site_name, g.site_name), 'n', g.n,
+          'total_s', round(g.total_s), 'avg_s', round(g.avg_s), 'max_s', round(g.max_s), 'last', app.iso_z(g.last))
+          ORDER BY g.n DESC, g.total_s DESC, g.site_code)
+          FROM (SELECT site_code, max(site_name) AS site_name, count(*) AS n, sum(dur) AS total_s, avg(dur) AS avg_s,
+                       max(dur) AS max_s, max(started_at) AS last
+                  FROM vis GROUP BY site_code) g
+          LEFT JOIN sites s ON s.code = g.site_code), '[]'::jsonb))
+  );
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.tech_history(text, date, date) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tech_history(text, date, date) TO authenticated;
+
+-- לפי אתר: כמה ביקורים, כמה טכנאים שונים ומי (כמה פעמים כל אחד וכמה זמן), זמן ממוצע / כולל / הארוך, והביקור האחרון.
+-- רק אתרים שהיה בהם ביקור בתקופה.
+CREATE OR REPLACE FUNCTION public.site_visit_stats(p_from date, p_to date)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, app, pg_temp
+AS $fn$
+DECLARE
+  v_t0 timestamptz;
+  v_t1 timestamptz;
+BEGIN
+  PERFORM app.require_staff();
+  PERFORM app.report_range(p_from, p_to);
+  v_t0 := p_from::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  v_t1 := (p_to + 1)::timestamp AT TIME ZONE 'Asia/Jerusalem';
+  RETURN (
+    WITH vis AS (
+      SELECT vv.license_plate AS plate, vv.site_code, vv.site_name, vv.started_at,
+             EXTRACT(EPOCH FROM COALESCE(vv.ended_at, vv.last_at) - vv.started_at) AS dur
+        FROM vehicle_visits vv
+       WHERE app.fleet_shown(vv.license_plate) AND vv.started_at >= v_t0 AND vv.started_at < v_t1
+         AND (vv.ended_at IS NULL OR vv.ended_at - vv.started_at >= interval '2 minutes')),
+    per AS (SELECT site_code, plate, count(*) AS n, sum(dur) AS total_s FROM vis GROUP BY site_code, plate),
+    g AS (SELECT site_code, max(site_name) AS site_name, count(*) AS n, count(DISTINCT plate) AS tech_count,
+                 sum(dur) AS total_s, avg(dur) AS avg_s, max(dur) AS max_s, max(started_at) AS last
+            FROM vis GROUP BY site_code)
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+        'code', g.site_code, 'name', COALESCE(s.site_name, g.site_name), 'visits', g.n, 'tech_count', g.tech_count,
+        'total_s', round(g.total_s), 'avg_s', round(g.avg_s), 'max_s', round(g.max_s), 'last', app.iso_z(g.last),
+        'techs', (SELECT jsonb_agg(jsonb_build_object('plate', p.plate, 'tech', t.display_name, 'nickname', v.nickname,
+                                                      'n', p.n, 'total_s', round(p.total_s))
+                                   ORDER BY p.n DESC, p.total_s DESC, p.plate)
+                    FROM per p
+                    LEFT JOIN vehicles_live v ON v.license_plate = p.plate
+                    LEFT JOIN LATERAL (SELECT x.display_name FROM technicians x
+                                        WHERE x.plate = p.plate AND x.is_active ORDER BY x.id LIMIT 1) t ON true
+                   WHERE p.site_code = g.site_code))
+        ORDER BY g.n DESC, g.total_s DESC, g.site_code), '[]'::jsonb)
+      FROM g LEFT JOIN sites s ON s.code = g.site_code
+  );
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.site_visit_stats(date, date) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_visit_stats(date, date) TO authenticated;

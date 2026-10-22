@@ -713,82 +713,11 @@ $fn$;
 REVOKE ALL ON FUNCTION public.vehicles_live_list() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.vehicles_live_list() TO authenticated;
 
--- חלון "רכבים ברשימה": כל הרכבים מאיתוראן, ומי מהם מוצג. ⚠️ עורך ומנהל בלבד — הרשימה המלאה כוללת את רכבי המשרד, שבקר
--- לא אמור לראות. 'shown' = הרשימה עצמה, כולל רכב שנעלם מאיתוראן: המסך מחזיר אותה כ-p_seen.
-CREATE OR REPLACE FUNCTION public.fleet_list()
-RETURNS jsonb
-LANGUAGE plpgsql
-STABLE
-SECURITY DEFINER
-SET search_path = public, app, pg_temp
-AS $fn$
-BEGIN
-  PERFORM app.require_editor();
-  RETURN jsonb_build_object(
-    'vehicles', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                           'plate', v.license_plate, 'nickname', v.nickname,
-                           'shown', app.fleet_shown(v.license_plate),
-                           'located_at', to_char(v.located_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-                           ORDER BY v.nickname, v.license_plate)
-                            FROM vehicles_live v), '[]'::jsonb),
-    'shown', COALESCE((SELECT jsonb_agg(f.license_plate ORDER BY f.license_plate) FROM fleet_shown f), '[]'::jsonb));
-END
-$fn$;
-REVOKE ALL ON FUNCTION public.fleet_list() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.fleet_list() TO authenticated;
-
--- שמירת הרשימה כולה (מצב יעד). p_seen = הרשימה שהמסך ראה: עורך שני ששמר בינתיים → PT409, לא דריסה שקטה. NULL = בלי
--- בדיקה. רכב חדש ברשימה חייב להיות באיתוראן (טעות הקלדה לא נכנסת); רכב שכבר ברשימה ונעלם מאיתוראן נשאר כמו שהוא.
--- ⚠️ יומן: מספרי רכב בלבד, בלי שמות (היומן — מזהים בלבד). שינוי שלא משנה דבר לא נרשם.
-CREATE OR REPLACE FUNCTION public.fleet_shown_set(p_plates text[], p_seen text[] DEFAULT NULL)
-RETURNS jsonb
-LANGUAGE plpgsql
-VOLATILE
-SECURITY DEFINER
-SET search_path = public, app, pg_temp
-AS $fn$
-DECLARE
-  v_actor   text := app.require_editor();
-  v_new     text[];
-  v_cur     text[];
-  v_seen    text[];
-  v_added   text[];
-  v_removed text[];
-  v_bad     text;
-BEGIN
-  -- שני עורכים שומרים יחד: אחד אחרי השני (נעילה שמתנגשת עם עצמה), והשני נבדק מול מה שהראשון כתב
-  LOCK TABLE fleet_shown IN SHARE ROW EXCLUSIVE MODE;
-  v_new := ARRAY(SELECT DISTINCT btrim(p) FROM unnest(COALESCE(p_plates, '{}'::text[])) p
-                  WHERE btrim(COALESCE(p, '')) <> '' ORDER BY 1);
-  IF cardinality(v_new) > 300 THEN
-    RAISE EXCEPTION 'יותר מדי רכבים ברשימה' USING ERRCODE = '22023';
-  END IF;
-  v_cur := ARRAY(SELECT license_plate FROM fleet_shown ORDER BY 1);
-  IF p_seen IS NOT NULL THEN
-    v_seen := ARRAY(SELECT DISTINCT btrim(p) FROM unnest(p_seen) p WHERE btrim(COALESCE(p, '')) <> '' ORDER BY 1);
-    IF v_seen IS DISTINCT FROM v_cur THEN
-      RAISE EXCEPTION 'רשימת הרכבים השתנתה בינתיים — יש לרענן ולנסות שוב' USING ERRCODE = 'PT409';
-    END IF;
-  END IF;
-  v_added   := ARRAY(SELECT p FROM unnest(v_new) p WHERE NOT (p = ANY (v_cur)) ORDER BY 1);
-  v_removed := ARRAY(SELECT p FROM unnest(v_cur) p WHERE NOT (p = ANY (v_new)) ORDER BY 1);
-  SELECT p INTO v_bad FROM unnest(v_added) p
-   WHERE NOT EXISTS (SELECT 1 FROM vehicles_live v WHERE v.license_plate = p) LIMIT 1;
-  IF v_bad IS NOT NULL THEN
-    RAISE EXCEPTION 'הרכב % לא נמצא באיתוראן', v_bad USING ERRCODE = 'PT404';
-  END IF;
-  IF cardinality(v_added) = 0 AND cardinality(v_removed) = 0 THEN
-    RETURN jsonb_build_object('changed', false, 'shown', to_jsonb(v_cur));
-  END IF;
-  DELETE FROM fleet_shown WHERE license_plate = ANY (v_removed);
-  INSERT INTO fleet_shown (license_plate, added_by) SELECT p, v_actor FROM unnest(v_added) p;
-  PERFORM app.record_write_audit('fleet.set', v_actor, app.current_app_role(), 'fleet', NULL,
-    jsonb_build_object('added', to_jsonb(v_added), 'removed', to_jsonb(v_removed)));
-  RETURN jsonb_build_object('changed', true, 'shown', to_jsonb(v_new));
-END
-$fn$;
-REVOKE ALL ON FUNCTION public.fleet_shown_set(text[], text[]) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.fleet_shown_set(text[], text[]) TO authenticated;
+-- "רכבים ברשימה" (fleet_list / fleet_shown_set, עורך ומנהל, 21/10/2026) הוחלף ב-22/10/2026 ב"ניהול טכנאים" — מנהל בלבד,
+-- טכנאי = שם + הרכב שלו (public.tech_roster* ב-technicians.postgres.sql). הבעלת: "תן אופציה להוסיף עוד טכנאי ולמחוק — רק
+-- למי שהוא מנהל". הטבלה fleet_shown והכלל app.fleet_shown לא השתנו.
+DROP FUNCTION IF EXISTS public.fleet_list();
+DROP FUNCTION IF EXISTS public.fleet_shown_set(text[], text[]);
 
 -- ============================================================
 -- הקריאה ל-Edge Function, מ-pg_cron (cron.postgres.sql). אותו דפוס כמו app.push_request: המפתח הפומבי עובר את השער,

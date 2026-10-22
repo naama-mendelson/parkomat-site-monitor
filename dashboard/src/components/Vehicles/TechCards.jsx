@@ -69,7 +69,7 @@ function SiteState({ site, tasks, calls }) {
 // הפירוט — נפתח בלחיצה על הכרטיס (21/10/2026). ⚠️ ציר היום ועמודות השבוע הוסרו (בעלת המוצר, מול הכרטיס: "זה ממש לא
 // מובן, עד שנחשוב על רעיון אחר תעיף את זה, אולי רק אם ילחצו על הכרטיס יהיה פירוט יותר מלא"). להחזרתם:
 // git show 80c5944:dashboard/src/components/Vehicles/TechCards.jsx (Timeline / Week). timeline / weekBars ב-utils/techStats.js נשארו.
-function Details({ v, w, now, visits, id }) {
+function Details({ v, w, now, visits, id, onHistory }) {
   const t = v.stats?.today;
   const tot = weekTotals(v.stats);
   const meta = [
@@ -96,6 +96,10 @@ function Details({ v, w, now, visits, id }) {
       )}
       {tot.days > 1 && weekLabel(tot) && <p className="tc-more-meta">{weekLabel(tot)}: {kmText(tot.km)} ק״מ · {visitsText(tot.visits)}</p>}
       {meta.length > 0 && <p className="tc-more-meta">{meta.join(" · ")}</p>}
+      {/* 22/10/2026: ההיסטוריה המלאה — האתרים שביקר בהם, כל יום וכל הביקורים (TechHistoryDialog) */}
+      {onHistory && (
+        <button type="button" className="tc-more-link" onClick={() => onHistory(v.plate)}>היסטוריה וסטטיסטיקה ←</button>
+      )}
     </div>
   );
 }
@@ -158,7 +162,7 @@ function TaskBlock({ d, next, techId, rev, now, canSend, onChanged }) {
   );
 }
 
-function TechCard({ v, now, site, tasks, calls, onMap, tech, canSend, onSend, onPhone, onBoardChanged }) {
+function TechCard({ v, now, site, tasks, calls, onMap, onHistory, tech, canSend, onSend, onPhone, onBoardChanged }) {
   const name = tech?.name || vehicleName(v);
   const w = whereInfo(v, now);
   const power = powerAlert(v, now);
@@ -211,7 +215,7 @@ function TechCard({ v, now, site, tasks, calls, onMap, tech, canSend, onSend, on
         <div className="tc-stat"><b>{t?.first_move ? clockText(t.first_move, now) : "—"}</b><span>יצא לדרך</span></div>
       </div>
 
-      {open && <Details v={v} w={w} now={now} visits={visits} id={moreId} />}
+      {open && <Details v={v} w={w} now={now} visits={visits} id={moreId} onHistory={onHistory} />}
 
       {showFoot && <footer className="tc-foot">
         <span className="tc-foot-btns">
@@ -237,7 +241,7 @@ function TechCard({ v, now, site, tasks, calls, onMap, tech, canSend, onSend, on
 // שצריכים טכנאי. לשחזור: git show 12d689a:dashboard/src/components/Vehicles/TechCards.jsx (AlertStrip).
 
 
-export default function TechCards({ data, error, sites, onMap, board, onBoardChanged }) {
+export default function TechCards({ data, error, sites, onMap, onHistory, board, onBoardChanged }) {
   const tasks = useTasks();
   const calls = useServiceCalls();
   // "צא ל:" (21/10/2026): רק בפיילוט של לוח הטכנאים, ורק לעורך / מנהל (המסד מחליט — tech_board.can_edit)
@@ -260,7 +264,7 @@ export default function TechCards({ data, error, sites, onMap, board, onBoardCha
 
   const card = (v) => (
     <TechCard key={v.plate} v={v} now={now} site={v.at_site ? siteByCode.get(v.at_site.code) : null}
-      tasks={tasks} calls={calls} onMap={onMap}
+      tasks={tasks} calls={calls} onMap={onMap} onHistory={onHistory}
       tech={techs.get(v.plate) ?? null} canSend={canSend} onSend={setSending} onPhone={setPhoneFor} onBoardChanged={onBoardChanged} />
   );
 

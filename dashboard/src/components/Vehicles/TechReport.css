@@ -1,0 +1,91 @@
+/* components/Vehicles/TechReport.css — הסטטיסטיקה, ההיסטוריה וניהול הטכנאים (22/10/2026).
+   ⚠️ שורות ולא קופסאות (הבעלת מעדיפה ממשק מינימלי); עברית במשקל 700 לכל היותר (Segoe UI בלי 800). */
+
+.tr { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.tr-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tr-loading { font-size: 0.88rem; color: var(--text-secondary); }
+.tr-note { margin: 0; font-size: 0.88rem; color: var(--text-secondary); }
+.tr-team { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-size: 0.95rem; color: var(--text-secondary); }
+.tr-fact { white-space: nowrap; }
+.tr-fact b { color: var(--text-primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+.tr-h { margin: 6px 0 6px; font-size: 1.02rem; font-weight: 700; }
+.tr-h-hint { font-size: 0.84rem; font-weight: 400; color: var(--text-secondary); }
+
+/* השיאים — שורה לכל שאלה */
+.tr-records { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 24px; }
+.tr-records li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 7px 0; border-bottom: 1px solid var(--border-color);
+}
+.tr-rec-label { flex: 1 1 100%; font-size: 0.84rem; color: var(--text-secondary); }
+.tr-rec-val { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.tr-link {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--text-primary); cursor: pointer;
+  text-align: start; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 3px;
+}
+.tr-link:hover { color: var(--accent); }
+.tr-link:focus-visible, .tr-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* הטבלאות — גוללות בתוך עצמן לרוחב; העמודה הראשונה נשארת */
+.tr-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); }
+.tr-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.tr-table th, .tr-table td { padding: 8px 10px; text-align: start; white-space: nowrap; border-bottom: 1px solid var(--border-color); }
+.tr-table thead th { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); background: var(--bg-secondary); position: sticky; top: 0; }
+.tr-table tbody tr:last-child > * { border-bottom: 0; }
+.tr-table tbody th { font-weight: 600; position: sticky; inset-inline-start: 0; background: var(--bg-card); z-index: 1; }
+.tr-table thead th:first-child { inset-inline-start: 0; z-index: 2; }
+.tr-table tbody tr:hover > * { background: color-mix(in srgb, var(--accent) 5%, var(--bg-card)); }
+.tr-table .tr-wide { white-space: normal; min-width: 220px; }
+.tr-quiet > * { color: var(--text-secondary); }
+.tr-ltr { unicode-bidi: isolate; }
+.tr-sort {
+  border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; font-weight: 700;
+}
+.tr-sort.is-on { color: var(--text-primary); }
+.tr-foot { margin: 6px 0 0; font-size: 0.8rem; color: var(--text-secondary); }
+.tr-periods { align-self: flex-start; flex-wrap: wrap; }
+
+/* חלונות — רחב (ההיסטוריה) וניהול הטכנאים */
+.dp--wide { max-width: 980px; }
+.dp--roster { max-width: 680px; }
+.rs-sub { margin: 4px 0 0; font-size: 0.98rem; font-weight: 700; }
+.rs-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); }
+.rs-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color); min-height: 30px;
+}
+.rs-row:last-child { border-bottom: 0; }
+.rs-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; overflow-wrap: anywhere; }
+.rs-name b { font-weight: 700; }
+.rs-tag { font-size: 0.76rem; color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 999px; padding: 0 8px; white-space: nowrap; }
+.rs-tag--warn { color: var(--tc-call, #b45309); border-color: color-mix(in srgb, var(--tc-call, #b45309) 45%, transparent); }
+.rs-acts { display: flex; gap: 6px; flex: 0 0 auto; }
+.rs-btn {
+  min-height: 34px; padding: 4px 12px; border-radius: 8px; font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);
+}
+.rs-btn:disabled { opacity: 0.55; cursor: default; }
+.rs-btn--main { border-color: var(--accent); background: var(--accent); color: #fff; }
+.rs-btn--del.is-armed { border-color: var(--tc-fault, #b91c1c); color: var(--tc-fault, #b91c1c); font-weight: 700; }
+.rs-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rs-edit { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; align-items: center; }
+.rs-edit .dp-input { flex: 1 1 200px; min-height: 36px; }
+.rs-empty { padding: 12px; }
+.rs-add { display: flex; flex-direction: column; gap: 8px; }
+.rs-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.rs-add-row .dp-input { flex: 1 1 180px; }
+.rs-pick { flex: 1 1 220px; min-width: 0; }
+.rs-note { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; color: var(--tc-site, #0f766e);
+  background: color-mix(in srgb, var(--tc-site, #0f766e) 9%, var(--bg-card)); }
+
+/* כפתורי התקופה — שורה אחת ("7 ימים" לא נשבר לשתי שורות); בטלפון צרים יותר וממלאים את הרוחב */
+.tr .tv-seg button, .tr-periods button { white-space: nowrap; }
+@media (max-width: 640px) {
+  .tr-bar .tv-seg, .tr-periods { display: flex; width: 100%; }
+  .tr-bar .tv-seg button, .tr-periods button { flex: 1 1 auto; padding: 7px 6px; }
+  .tr-records { grid-template-columns: 1fr; }
+  .rs-btn { min-height: 44px; }
+  .rs-acts { flex: 1 1 100%; }
+  .rs-acts .rs-btn { flex: 1 1 auto; }
+}
+@media (pointer: coarse) { .tr-sort, .tr-link { min-height: 32px; } }

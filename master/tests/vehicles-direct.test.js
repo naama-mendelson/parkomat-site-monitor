@@ -50,26 +50,49 @@ test("fetchVehicles מעביר את 'צריכים טכנאי עכשיו' (alerts
   await assert.rejects(m.fetchVehicles(), /boom/);
 });
 
-test("רשימת רכבי השירות: fetchFleet קורא fleet_list; saveFleet שולח את כל הרשימה ואת מה שנראה; מסך ישן מסומן", async () => {
+test("ניהול הטכנאים: tech_roster / tech_roster_set / tech_roster_remove — מה נשלח ומה חוזר", async () => {
   const m = await load();
-  let calls = fake({ vehicles: [{ plate: "8600001", nickname: "א 8600001", shown: true }], shown: ["8600001", "8600009"] });
-  const fl = await m.fetchFleet();
-  assert.equal(calls[0].fn, "fleet_list");
-  assert.deepEqual(fl.shown, ["8600001", "8600009"]);
-  assert.equal(fl.vehicles.length, 1);
+  let calls = fake({ techs: [{ plate: "8600001", name: "דני" }], available: [{ plate: "8600002" }] });
+  const r = await m.fetchRoster();
+  assert.equal(calls[0].fn, "tech_roster");
+  assert.deepEqual([r.techs.length, r.available.length], [1, 1]);
+  fake({});
+  assert.deepEqual(await m.fetchRoster(), { techs: [], available: [] }, "תשובה בלי השדות — רשימות ריקות");
 
-  calls = fake({ changed: true, shown: ["8600001", "8600002"] });
-  const r = await m.saveFleet(["8600001", "8600002"], ["8600001"]);
-  assert.equal(calls[0].fn, "fleet_shown_set");
-  assert.equal(calls[0].body, JSON.stringify({ p_plates: ["8600001", "8600002"], p_seen: ["8600001"] }));
-  assert.equal(r.changed, true);
-  // בלי seen — null במפורש (המפתח נשלח: PostgREST בוחר פונקציה לפי המפתחות)
-  calls = fake({ changed: false, shown: [] });
-  await m.saveFleet([]);
-  assert.equal(calls[0].body, JSON.stringify({ p_plates: [], p_seen: null }));
+  calls = fake({ tech_id: 7, changed: true, created: true });
+  assert.equal((await m.saveRosterTech("8600002", "יוסי לוי")).tech_id, 7);
+  assert.equal(calls[0].fn, "tech_roster_set");
+  assert.equal(calls[0].body, JSON.stringify({ p_plate: "8600002", p_name: "יוסי לוי" }));
+  calls = fake({ changed: true, tech_id: 7 });
+  await m.removeRosterTech("8600002");
+  assert.equal(calls[0].fn, "tech_roster_remove");
+  assert.equal(calls[0].body, JSON.stringify({ p_plate: "8600002" }));
+  fake({ error: { code: "PT409", message: "יש לטכנאי משימה פתוחה — לסיים או לבטל אותה קודם" } });
+  await assert.rejects(m.removeRosterTech("8600001"), /משימה פתוחה/);
+  fake({ error: { code: "42501", message: "רק מנהל" } });
+  await assert.rejects(m.saveRosterTech("8600001", "x"), /רק מנהל/);
+});
 
-  fake({ error: { code: "PT409", message: "רשימת הרכבים השתנתה בינתיים — יש לרענן ולנסות שוב" } });
-  await assert.rejects(m.saveFleet(["8600001"], []), (e) => e.stale === true && /השתנתה/.test(e.message));
-  fake({ error: { code: "PT404", message: "הרכב 9999999 לא נמצא באיתוראן" } });
-  await assert.rejects(m.saveFleet(["9999999"], []), (e) => e.stale === false && /9999999/.test(e.message));
+test("דוח הטכנאים: tech_stats / tech_history / site_visit_stats — הטווח נשלח כמו שהוא; שדות חסרים — רשימות ריקות", async () => {
+  const m = await load();
+  let calls = fake({ from: "2026-10-16", to: "2026-10-22", team: { km: 5 }, techs: [{ plate: "8600001" }] });
+  const s = await m.fetchTechStats("2026-10-16", "2026-10-22");
+  assert.equal(calls[0].fn, "tech_stats");
+  assert.equal(calls[0].body, JSON.stringify({ p_from: "2026-10-16", p_to: "2026-10-22" }));
+  assert.deepEqual([s.team.km, s.techs.length], [5, 1]);
+  fake({ from: "x" });
+  assert.deepEqual((await m.fetchTechStats("a", "b")).techs, []);
+
+  calls = fake({ plate: "8600001", days: [{ day: "2026-10-22" }] });
+  const h = await m.fetchTechHistory("8600001", "2026-10-01", "2026-10-22");
+  assert.equal(calls[0].fn, "tech_history");
+  assert.equal(calls[0].body, JSON.stringify({ p_plate: "8600001", p_from: "2026-10-01", p_to: "2026-10-22" }));
+  assert.deepEqual([h.days.length, h.visits, h.sites], [1, [], []]);
+
+  calls = fake([{ code: "1227", visits: 3 }]);
+  assert.equal((await m.fetchSiteVisitStats("2026-10-01", "2026-10-22")).length, 1);
+  assert.equal(calls[0].fn, "site_visit_stats");
+  fake({ error: { message: "טווח תאריכים לא תקין (עד 400 יום)" } });
+  await assert.rejects(m.fetchSiteVisitStats("2026-10-22", "2026-10-01"), /טווח/);
+  await assert.rejects(m.fetchTechStats("2026-10-22", "2026-10-01"), /טווח/);
 });

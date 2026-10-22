@@ -9,15 +9,19 @@
 // ולידה tech_board (21/10/2026, "צא ל:"): מי משויך לאיזה רכב והמשימה הפתוחה. מי שלא בפיילוט מקבל {enabled: false} והמסך
 // בלי "צא ל:", כמו קודם.
 // ⚠️ נטען רק כשפותחים (React.lazy ב-App): Leaflet והכרטיסים לא נכנסים לחבילה הראשית.
+// 22/10/2026: תצוגה שלישית, "סטטיסטיקה" (TechStats: לתקופה — הצוות, שיאים, לפי טכנאי ולפי אתר; לחיצה על טכנאי פותחת את
+// ההיסטוריה שלו), ו"ניהול טכנאים" למנהל בלבד (TechRosterDialog) במקום "רכבים ברשימה".
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTechBoard, fetchVehicles } from "../../services/dataSource";
 import { useAuth } from "../../hooks/useAuth";
-import { canEdit } from "../../utils/roles";
+import { isManagerRole } from "../../utils/roles";
 import { ageText, syncState } from "../../utils/vehicles";
 import { alertRows, groupCounts, groupLabel, GROUPS } from "../../utils/techStats";
-import FleetListDialog from "./FleetListDialog";
 import FleetMap from "./FleetMap";
 import TechCards from "./TechCards";
+import TechHistoryDialog from "./TechHistoryDialog";
+import TechRosterDialog from "./TechRosterDialog";
+import TechStats from "./TechStats";
 import "./Vehicles.css";
 import "./TechCards.css";
 
@@ -25,8 +29,9 @@ const POLL_MS = 60_000;
 const VIEW_KEY = "parkomat.techView";
 const NBSP = " ";
 
+const VIEWS = ["cards", "map", "stats"];
 function readView(uid) {
-  try { return localStorage.getItem(`${VIEW_KEY}:${uid}`) === "map" ? "map" : "cards"; } catch { return "cards"; }
+  try { const v = localStorage.getItem(`${VIEW_KEY}:${uid}`); return VIEWS.includes(v) ? v : "cards"; } catch { return "cards"; }
 }
 function writeView(uid, v) {
   try { localStorage.setItem(`${VIEW_KEY}:${uid}`, v); } catch { /* חסום — נשאר לביקור הזה בלבד */ }
@@ -56,8 +61,10 @@ export default function TechniciansView({ sites }) {
   const [board, setBoard] = useState(null);          // לוח הטכנאים: מי משויך לאיזה רכב והמשימה הפתוחה ("צא ל:")
   const [boardError, setBoardError] = useState(null);
   const [focusPlate, setFocusPlate] = useState(null);
-  const [fleetOpen, setFleetOpen] = useState(false);   // "רכבים ברשימה" — עורך ומנהל (21/10/2026)
-  const editable = canEdit(user?.role);
+  const [rosterOpen, setRosterOpen] = useState(false); // "ניהול טכנאים" — מנהל בלבד (22/10/2026)
+  const [period, setPeriod] = useState("7");           // התקופה של הסטטיסטיקה
+  const [history, setHistory] = useState(null);        // plate — חלון ההיסטוריה של טכנאי
+  const manager = isManagerRole(user?.role);
 
   useEffect(() => { setViewState(readView(uid)); }, [uid]);
   const setView = useCallback((v) => { setViewState(v); writeView(uid, v); }, [uid]);
@@ -95,9 +102,10 @@ export default function TechniciansView({ sites }) {
           <div className="tv-seg" role="group" aria-label="תצוגה">
             <button type="button" className={view === "cards" ? "is-on" : ""} aria-pressed={view === "cards"} onClick={() => setView("cards")}>כרטיסים</button>
             <button type="button" className={view === "map" ? "is-on" : ""} aria-pressed={view === "map"} onClick={() => setView("map")}>מפה</button>
+            <button type="button" className={view === "stats" ? "is-on" : ""} aria-pressed={view === "stats"} onClick={() => setView("stats")}>סטטיסטיקה</button>
           </div>
-          {editable && (
-            <button type="button" className="tv-fleet-btn" onClick={() => setFleetOpen(true)} aria-haspopup="dialog">רכבים ברשימה</button>
+          {manager && (
+            <button type="button" className="tv-fleet-btn" onClick={() => setRosterOpen(true)} aria-haspopup="dialog">ניהול טכנאים</button>
           )}
         </div>
         {data && (
@@ -131,10 +139,11 @@ export default function TechniciansView({ sites }) {
         </p>
       )}
 
-      {view === "cards"
-        ? <TechCards data={data} error={error} sites={sites} onMap={onMap} board={board} onBoardChanged={load} />
-        : <FleetMap data={data} error={error} onReload={load} focusPlate={focusPlate} onFocused={onFocused} alerts={alerts} />}
-      {fleetOpen && <FleetListDialog onClose={() => setFleetOpen(false)} onSaved={load} />}
+      {view === "cards" && <TechCards data={data} error={error} sites={sites} onMap={onMap} board={board} onBoardChanged={load} onHistory={setHistory} />}
+      {view === "map" && <FleetMap data={data} error={error} onReload={load} focusPlate={focusPlate} onFocused={onFocused} alerts={alerts} />}
+      {view === "stats" && <TechStats period={period} onPeriod={setPeriod} onHistory={setHistory} />}
+      {rosterOpen && <TechRosterDialog onClose={() => setRosterOpen(false)} onChanged={load} />}
+      {history && <TechHistoryDialog plate={history} period={view === "stats" ? period : "30"} onClose={() => setHistory(null)} />}
     </section>
   );
 }

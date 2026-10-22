@@ -52,8 +52,6 @@ const EDITOR = [
   "tl_add_column", "tl_add_row", "tl_delete_column", "tl_delete_row", "tl_move_column", "tl_move_row", "tl_paste_rows",
   "tl_set_cell", "tl_update_column", "unmark_test", "update_site", "wizenet_request_lookups", "wizenet_request_update",
   "tech_dispatch", "tech_dispatch_end", "tech_dispatch_mark", "tech_save", "tech_set_status", "tech_phone_begin", "tech_phone_unpair",
-  // רשימת רכבי השירות (21/10/2026): השמירה, וגם הקריאה של הרשימה המלאה — היא כוללת את רכבי המשרד, שבקר לא אמור לראות
-  "fleet_shown_set", "fleet_list",
   // המשימה הבאה (21/10/2026)
   "tech_next_set", "tech_next_clear",
 ];
@@ -62,6 +60,8 @@ const MANAGER = [
   "compliance_orphans", "compliance_purge", "compliance_reattach", "compliance_storage", "delete_field_report", "delete_site",
   "list_users", "reply_to_field_report", "request_service_ping", "request_service_restart", "resolve_field_report",
   "set_admin_code", "set_user_active", "set_user_role",
+  // ניהול הטכנאים (22/10/2026, הבעלת: "להוסיף טכנאי ולמחוק — רק למי שהוא מנהל"). הרשימה המלאה כוללת את רכבי המשרד.
+  "tech_roster", "tech_roster_set", "tech_roster_remove",
 ];
 // קריאה (require_staff / RLS), זהויות מכונה (סוכן, ממסר, קליטה), ומה שמשתמש עושה לעצמו בלבד
 const OTHER = [
@@ -70,6 +70,8 @@ const OTHER = [
   "login_code_issue", "login_code_status", "login_code_unsend", "login_code_verify",
   "ituran_ingest", "ituran_sync_failed", "vehicles_live_list", "site_geo_import", "site_locations_list", "tech_on_site",
   "tech_board", "tech_day", "tech_me", "tech_phone_link", "tech_push_subscribe", "tech_push_claim", "tech_push_result", "tech_self_ack", "tech_self_unpair",
+  // דוח הטכנאים (22/10/2026): כל מי שמחובר רואה
+  "tech_stats", "tech_history", "site_visit_stats",
   "mark_announcement_seen", "my_role", "my_seen_announcements", "pending_announcement", "pm_profiles_list", "pm_site",
   "pm_template", "pm_templates_list", "pm_visit_detail", "recent_errors", "report_by_site", "report_monthly",
   "report_site_months", "server_heartbeat", "service_call_counts", "service_calls_board", "service_calls_history",

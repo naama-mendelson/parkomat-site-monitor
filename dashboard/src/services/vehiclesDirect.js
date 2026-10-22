@@ -19,30 +19,64 @@ export async function fetchVehicles() {
   };
 }
 
-/**
- * חלון "רכבים ברשימה" (21/10/2026): כל הרכבים מאיתוראן, ומי מהם מוצג בדשבורד. עורך ומנהל בלבד (המסד מחליט).
- * { vehicles: [{plate, nickname, shown, located_at}], shown: [plate] } — shown = הרשימה עצמה, כולל רכב שנעלם מאיתוראן.
- */
-export async function fetchFleet() {
-  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
-  const { data, error } = await supabase.rpc("fleet_list");
-  if (error) throw new Error(error.message || "טעינת רשימת הרכבים נכשלה");
+// ⚠️ "רכבים ברשימה" (fetchFleet / saveFleet) הוחלף ב-22/10/2026 ב"ניהול טכנאים" — מנהל בלבד, טכנאי = שם + רכב.
+
+const need = () => { if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד"); };
+
+/** ניהול הטכנאים (מנהל בלבד): { techs: [{plate, nickname, in_ituran, tech_id, name, phone, open_task}], available: [{plate, nickname}] } */
+export async function fetchRoster() {
+  need();
+  const { data, error } = await supabase.rpc("tech_roster");
+  if (error) throw new Error(error.message || "טעינת רשימת הטכנאים נכשלה");
   return {
-    vehicles: Array.isArray(data?.vehicles) ? data.vehicles : [],
-    shown: Array.isArray(data?.shown) ? data.shown : [],
+    techs: Array.isArray(data?.techs) ? data.techs : [],
+    available: Array.isArray(data?.available) ? data.available : [],
   };
 }
 
-/** שמירת הרשימה כולה. seen = הרשימה שהמסך ראה: עורך אחר ששמר בינתיים → שגיאה במקום דריסה. מחזיר {changed, shown}. */
-export async function saveFleet(plates, seen) {
-  if (!isSupabaseConfigured) throw new Error("Supabase אינו מוגדר בדשבורד");
-  const { data, error } = await supabase.rpc("fleet_shown_set", { p_plates: plates, p_seen: seen ?? null });
-  if (error) {
-    const e = new Error(error.message || "שמירת רשימת הרכבים נכשלה");
-    e.stale = error.code === "PT409";
-    throw e;
-  }
+/** הוספת טכנאי (שם + רכב) או שינוי שם. { tech_id, changed, created, renamed, linked, shown_added } */
+export async function saveRosterTech(plate, name) {
+  need();
+  const { data, error } = await supabase.rpc("tech_roster_set", { p_plate: plate, p_name: name });
+  if (error) throw new Error(error.message || "השמירה נכשלה");
   return data;
+}
+
+/** הסרת טכנאי: יוצא מהרשימה ומושבת (ההיסטוריה נשמרת). { changed, tech_id } */
+export async function removeRosterTech(plate) {
+  need();
+  const { data, error } = await supabase.rpc("tech_roster_remove", { p_plate: plate });
+  if (error) throw new Error(error.message || "ההסרה נכשלה");
+  return data;
+}
+
+/** דוח הטכנאים לתקופה (22/10/2026). from / to = ימים בישראל, 'YYYY-MM-DD'. { from, to, first_day, team, techs } */
+export async function fetchTechStats(from, to) {
+  need();
+  const { data, error } = await supabase.rpc("tech_stats", { p_from: from, p_to: to });
+  if (error) throw new Error(error.message || "טעינת הסטטיסטיקה נכשלה");
+  return { ...data, techs: Array.isArray(data?.techs) ? data.techs : [] };
+}
+
+/** טכנאי אחד לתקופה: { plate, tech, nickname, days, visits, visits_total, sites } */
+export async function fetchTechHistory(plate, from, to) {
+  need();
+  const { data, error } = await supabase.rpc("tech_history", { p_plate: plate, p_from: from, p_to: to });
+  if (error) throw new Error(error.message || "טעינת ההיסטוריה נכשלה");
+  return {
+    ...data,
+    days: Array.isArray(data?.days) ? data.days : [],
+    visits: Array.isArray(data?.visits) ? data.visits : [],
+    sites: Array.isArray(data?.sites) ? data.sites : [],
+  };
+}
+
+/** לפי אתר לתקופה: [{code, name, visits, tech_count, total_s, avg_s, max_s, last, techs: [...]}] */
+export async function fetchSiteVisitStats(from, to) {
+  need();
+  const { data, error } = await supabase.rpc("site_visit_stats", { p_from: from, p_to: to });
+  if (error) throw new Error(error.message || "טעינת הסטטיסטיקה לפי אתר נכשלה");
+  return Array.isArray(data) ? data : [];
 }
 
 /** כל האתרים עם המיקום שלהם (20/10/2026): [{code, name, monitored, lat, lon, source, precision, set_at, set_by}]. */
