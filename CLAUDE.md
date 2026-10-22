@@ -4311,6 +4311,10 @@ UI.
   - There were 38 `vehicle_days` rows and 7 visits after the first syncs.
   - 86 of 89 agents were beating.
 - ⚠️ To open it to the coordinator, add his email to `technicians_board` (a comma list), or set it to `all`.
+- **22/10/2026: two editors were added at the owner's request** (*"את האופציה של הטלפון גם ל-…"*). Told that the pilot
+  covers all of the board ("צא ל:", "טלפון", the next task), not the phone alone, she answered "כן, תוסיף אותם אתה". The
+  list is now three accounts. It was written by a guarded update (only if the value was still the owner's account alone).
+  There is no separate "phone only" permission.
 - ⚠️ **The pilot first named the wrong account.** It got the email the session runs under, not the one the owner signs in
   to the dashboard with, so she saw no "צא ל:". Measured from `auth.sessions` and moved to her dashboard account the same
   morning. Check who actually signs in before setting a pilot.
@@ -5009,7 +5013,7 @@ The owner: *"כשהוא יוצא מהאתר, אם יש לו משימה נוספ�
   and the `follows` / `advance_error` columns do not show; check `information_schema` after `--apply`.
 - Then push. An old bundle against the new SQL simply never shows a next task.
 
-### Two technicians at the same site (built 22/10/2026, NOT deployed)
+### Two technicians at the same site (built and deployed 22/10/2026, b2e0835 — together with the next section)
 
 The owner: *"יכול להיות שיהיו שני טכנאים באותו אתר. לכן אם יש שני טכנאים ממש קרובים לאתר מסוים — שים אותם באותו אתר"*.
 
@@ -5063,7 +5067,16 @@ Full suite 1405/1405.
 **Deploy:** SQL only. The dry run shows 4 gaps: 2 new functions and the bodies of `vehicle_json` and `vehicles_track`.
 There is no dashboard change.
 
-### "באתר" only for a vehicle that drove today; "מאז 21/10" instead of "7 הימים האחרונים" (built 22/10/2026, NOT deployed)
+### "באתר" only for a vehicle that drove today; "מאז 21/10" instead of "7 הימים האחרונים" (built and deployed 22/10/2026, b2e0835)
+
+✅ **Deployed at the owner's word ("כן, לפרסם ולמחוק 8 ביקורים"), together with the two-technicians rule above:**
+- **Preview first** (the new functions inside a rolled-back transaction): of 14 service vehicles, exactly one changed —
+  the old scooter parked by 3488 since tracking began lost "באתר"; the 7 others at sites had driven that day.
+- **SQL:** 6 gaps, 11 s, then "הייצור זהה לקוד". The sync ran 5 s later with `stats_error` and `advance_error` NULL, and
+  closed the four open visits of the vehicles that had not moved. 86 of 89 agents beating.
+- **Data:** the 8 visit records whose start day had no movement were deleted by hand, in one transaction guarded to
+  exactly 8 (3 by 3488 since tracking began, 5 of a non-service scooter whose unit reports no speed or odometer).
+- **Push:** b2e0835, live bundle `index-DBMWrali.js` (the week line is in `TechniciansView-C_nFPSAn.js`).
 
 The owner, on a scooter shown "באתר" at a multiplier for 22 hours next to "0 ק״מ היום" and "יצא לדרך —": *"אם הוא לא נסע איך
 הוא הגיע לאתר? אני רוצה שאם הוא לא נוסע אז אל תכתוב אותו שהוא באתר, כנראה הוא גר שם"*. And on the card's detail: *"מה
